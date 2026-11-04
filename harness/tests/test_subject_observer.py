@@ -149,6 +149,31 @@ def test_missing_output(tmp_path):
     assert results[0].verdict == Verdict.PASS, results
 
 
+@pytest.mark.parametrize('kind', [Kind.REGRESSION, Kind.DEMONSTRATING])
+def test_request204_head_only_inventory_observer_cannot_repair_original_base_regression(repository, kind):
+    path = 'tests/test_bazel_inputs.py'
+    node = path + '::test_a_passing_file_records_its_inventory'
+    original = 'from inventory import recorded\ndef test_existing_control(): assert isinstance(recorded(), bool)\n'
+    observer = 'def test_a_passing_file_records_its_inventory(): assert recorded(), "passing file inventory missing"\n'
+    before = {'inventory.py': 'def recorded(): return False\n', path: original}
+    after = {'inventory.py': 'def recorded(): return True\n', path: original + observer}
+    proof = model.Proof((), (), 'passing file inventory missing') if kind == Kind.DEMONSTRATING else None
+    result, base, head = round_result(repository, before, after,
+        Check('inventory observer', kind, (node,), proof=proof))
+    control, = run_checks(repository[0], base, head,
+        (Check('existing inventory control', Kind.REGRESSION, (path + '::test_existing_control',)),),
+        container=Container(IMAGE))
+    assert control.verdict == Verdict.PASS
+    assert (control.tests[0].base, control.tests[0].head) == (Outcome.PASSED, Outcome.PASSED)
+    assert result[0].tests[0].head == Outcome.PASSED
+    if kind == Kind.REGRESSION:
+        assert result[0].verdict == Verdict.FAIL
+        assert result[0].tests[0].base == Outcome.UNCOLLECTED
+    else:
+        assert result[0].verdict == Verdict.PASS
+        assert result[0].tests[0].base == Outcome.ASSERTION
+
+
 def test_needed_observer_imports_are_derived_without_carrying_the_fix(repository):
     results, _, _ = round_result(repository, {'tests/test_queue.py': BASE},
         {'tests/test_queue.py': 'import pytest\n' + HEAD + OBSERVER.replace('    import pytest\n', '')},
@@ -512,3 +537,38 @@ def test_final662_support_wildcard_import_cannot_replace_base_helper(repository)
     assert results[0].verdict == Verdict.FAIL, results
     assert 'wildcard import' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message and 'support_fix' in results[0].tests[0].message, results
+
+
+def test_request233_same_file_git_configuration_has_assertion_red(repository):
+    # tr-e9f7e102: assertion RED is required; the intermittent race is not RED.
+    path = 'tests/test_checkout_recovery_1465.py'
+    before = """import os
+import subprocess
+
+def _git(root, *arguments):
+    return subprocess.run(['git', '-C', str(root), *arguments], check=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          env={**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull,
+                               'GIT_CONFIG_NOSYSTEM': '1'}).stdout.strip()
+"""
+    fixed = before.replace("str(root), *arguments", "str(root), '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', *arguments")
+    observer = """
+def test_git_disables_maintenance(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    calls = []
+    def capture(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(stdout='ok')
+    monkeypatch.setattr(subprocess, 'run', capture)
+    assert _git(tmp_path, 'status') == 'ok'
+    command, options = calls[0]
+    assert ('-c', 'maintenance.auto=false', '-c', 'gc.auto=0') == tuple(command[3:7]), 'automatic maintenance remains enabled'
+    assert options['env']['GIT_CONFIG_GLOBAL'] == os.devnull
+    assert options['env']['GIT_CONFIG_NOSYSTEM'] == '1'
+"""
+    proof = model.Proof((path + '::_git',), (), 'automatic maintenance remains enabled')
+    results, _, _ = round_result(repository, {path: before}, {path: fixed + observer},
+        Check('deterministic git configuration', Kind.DEMONSTRATING,
+              (path + '::test_git_disables_maintenance',), proof=proof))
+    assert results[0].verdict == Verdict.PASS, results
+

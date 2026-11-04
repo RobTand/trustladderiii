@@ -8,6 +8,7 @@ import re
 from tl3_harness import Check, Forcing, Kind, HarnessInputError
 from tl3_harness.node_ids import selects
 from tl3_harness.forcing_ownership import ForcingError, preflight_owner
+from tl3_workers.evidence import proof_applicability
 from tl3_workers.pb_tests import TestSettings, make_test_tool, _git
 from tl3_workers.session import save
 
@@ -19,6 +20,8 @@ GUIDANCE = (
     'Each delayed target needs a positive invocation count on each named old test, '
     'and the forced base must fail by assertion after an unforced base pass. A declared_symptom '
     'uses its exact exception, node, call/setup phase and fixed repeat/parallel campaign instead. '
+    'Bind goal_ids to the source goals. A source assertion/new-observer obligation must use '
+    'a new deterministic assertion and cannot be replaced by an old-node symptom campaign. '
     f'At most {MAX_REHEARSALS} distinct candidates run, each with at most two PB-admitted actions '
     f'and a {REHEARSAL_SECONDS}-second execution limit per action. '
     'A completed zero-hit or no-assertion-RED candidate is unusable evidence. Use its feedback '
@@ -102,6 +105,7 @@ class ForcingRehearsals:
     def __init__(self, worktree, inputs, *, checkout=None, checkpoint=None):
         self.worktree = worktree
         self.base_sha = inputs.get('base_sha')
+        self.goals = deepcopy(inputs.get('ingest', {}).get('goals', []))
         self.checkpoint = Path(checkpoint) if checkpoint else None
         self.contract = {'base_sha': self.base_sha, 'tests': inputs.get('tests')}
         self.failure = self.infrastructure = self.active = None
@@ -170,8 +174,14 @@ class ForcingRehearsals:
         if self.infrastructure:
             raise ForcingInfrastructureError(self.infrastructure)
 
-    def run(self, tests: list[str], forcing: dict, declared_symptom: dict | None = None) -> dict:
+    def run(self, tests: list[str], forcing: dict, declared_symptom: dict | None = None, *, goal_ids=None) -> dict:
         """Rehearse immutable old tests and cache each distinct candidate's outcome."""
+        check = {'kind': 'demonstrating', 'node_ids': tests, 'goal_ids': goal_ids}
+        if declared_symptom is not None:
+            check['declared_symptom'] = declared_symptom
+        errors = proof_applicability(self.goals, [check], campaign=True)
+        if errors:
+            return {'status': 'refused', 'message': '\n'.join(errors)}
         try:
             parsed = Forcing.parse(forcing)
             if not isinstance(tests, list) or not tests or len(tests) > 256:
@@ -305,12 +315,12 @@ class ForcingRehearsals:
 
 
 def make_rehearsal_tool(worktree):
-    def rehearse_forcing(tests: list[str], forcing: dict, declared_symptom: dict | None = None) -> dict:
+    def rehearse_forcing(tests: list[str], forcing: dict, declared_symptom: dict | None = None, goal_ids: list[int] | None = None) -> dict:
         """Rehearse exact old tests on the immutable base with a declarative forcing."""
         ledger = getattr(worktree, 'forcing_rehearsals', None)
         if ledger is None:
             return {'status': 'refused', 'message': 'Forcing rehearsal is unavailable for this role.'}
-        result = ledger.run(tests, forcing, declared_symptom=declared_symptom)
+        result = ledger.run(tests, forcing, declared_symptom=declared_symptom, goal_ids=goal_ids)
         ledger.raise_infrastructure()
         return result
     return rehearse_forcing

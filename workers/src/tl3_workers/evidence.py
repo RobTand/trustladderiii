@@ -51,6 +51,42 @@ def forcing_guidance(cpus=1):
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
 
 
+def proof_applicability(goals, checks, defined=None, *, campaign=False):
+    """Check whether a method can supply its cited source goals' assertion proof."""
+    required = any('proof_obligation' in goal for goal in goals)
+    errors = []
+    for check in checks:
+        cited = check.get('goal_ids')
+        if cited is None and not required:
+            continue
+        if (not isinstance(cited, list) or not cited
+                or any(type(index) is not int or not 0 <= index < len(goals) for index in cited)
+                or len(set(cited)) != len(cited)):
+            errors.append('Proof applicability requires nonempty goal_ids naming the source goals.')
+            continue
+        for index in cited:
+            obligation = goals[index].get('proof_obligation')
+            if obligation is None:
+                continue
+            prefix = f'Goal {index} source assertion proof ({obligation["source"]})'
+            proof = check.get('proof', {})
+            if (check['kind'] not in ('demonstrating', 'reproducing') or 'declared_symptom' in check
+                    or campaign and obligation['observer'] == 'new'):
+                errors.append(prefix + ' requires an assertion observer; an old-node symptom campaign cannot discharge it.')
+            elif campaign:
+                # Rehearsal establishes old-test assertion RED. The completed plan
+                # must still bind subjects and the reason before maker handoff.
+                continue
+            elif not proof.get('red_message', '').strip():
+                errors.append(prefix + ' requires proof.red_message binding the deterministic assertion.')
+            elif any(not any(subject == chosen or subject.startswith(chosen + '::')
+                             for chosen in proof.get('subjects', [])) for subject in obligation['subjects']):
+                errors.append(prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']))
+            elif obligation['observer'] == 'new' and any(defined(node) for node in check['node_ids']):
+                errors.append(prefix + ' requires a new deterministic observer; an existing base test is insufficient.')
+    return errors
+
+
 def branch_satisfies(required, branch, context, *, prefix=False):
     if '<' not in required:
         return branch.startswith(required) if prefix else branch == required

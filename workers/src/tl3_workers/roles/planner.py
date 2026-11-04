@@ -1,18 +1,19 @@
 """Report plan measurements and rule violations to the controller."""
 
 from copy import deepcopy
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
+from subprocess import CalledProcessError
 
 from jsonschema import Draft202012Validator
 
 from tl3_workers.roles.base import Role
-from tl3_workers.evidence import preflight
+from tl3_workers.evidence import preflight, proof_applicability
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
 from tl3_harness.limits import validate_check_plan
-from tl3_harness.trees import test_function_source
+from tl3_harness.trees import git, test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
@@ -151,6 +152,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
                     violations.append(str(error))
         covered = set()
         forcings = {}
+        exact_nodes = set()
         for index, check in enumerate(reply["checks"]):
             if "forcing" in check:
                 # #393: a forced reproduction is the red for a deflake.
@@ -170,21 +172,28 @@ def check_reply(inputs, reply, *, rehearsals=None):
                 except ValueError:
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
+                exact_nodes.add(node_id)
                 # A forced check runs the old test on the base, so it must exist there too.
                 if check["kind"] in {"regression", "behavior-preserving"} or ("forcing" in check and not check.get("proof", {}).get("subjects")) or "declared_symptom" in check:
                     path = node_id.split("::")[0]
-                    oversized, exists = base_definition(node_id)
+                    oversized, exists = base_definition(node_id, inputs.get('base_sha'))
                     if oversized:
                         violations.append(f"Existing check's test file is over the {HARD_CAP_BYTES}-byte limit: {path}")
                     elif not exists:
                         if check["kind"] == "demonstrating" and "forcing" in check:
                             missing_forced.append(node_id)
                         else:
-                            violations.append(f"Existing check must name a test defined at the base: {node_id}")
+                            guidance = (' A new assertion observer needs a demonstrating check; adding it only '
+                                        'at head cannot repair an original-base regression.'
+                                        if check['kind'] in {'regression', 'behavior-preserving'} else '')
+                            violations.append(f"Existing check must name a test defined at the base: {node_id}.{guidance}")
             cited = set(check["goal_ids"])
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
+        violations.extend(proof_applicability(inputs['ingest']['goals'],
+            [check for check in reply['checks'] if set(check['node_ids']) <= exact_nodes],
+            lambda node: base_definition(node, inputs.get('base_sha'))[1]))
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
         violations.extend(edit_errors)
         if "Checks must name exact pytest node IDs." not in violations:
@@ -309,14 +318,20 @@ def check_reply(inputs, reply, *, rehearsals=None):
     reply["violations"] = list(dict.fromkeys(violations))
 
 
-def base_definition(node_id):
+def base_definition(node_id, base_sha=None):
     """Whether the base defines the test, after whether its file is over the hard cap."""
     # The whole module is parsed to find the test, so the
     # declared-file hard cap bounds it, not a page size.
     try:
-        with Worktree(".") as tree, tree._file(node_id.split("::")[0]) as stream:
-            source = stream.read(HARD_CAP_BYTES + 1)
-    except (OSError, ValueError, UnicodeError):
+        if base_sha is not None:
+            identity = base_sha + ':' + node_id.split('::')[0]
+            if int(git(Path('.'), 'cat-file', '-s', identity)) > HARD_CAP_BYTES:
+                return True, False
+            source = git(Path('.'), 'cat-file', 'blob', identity).decode('utf-8')
+        else:
+            with Worktree(".") as tree, tree._file(node_id.split("::")[0]) as stream:
+                source = stream.read(HARD_CAP_BYTES + 1)
+    except (OSError, ValueError, UnicodeError, CalledProcessError):
         return False, False
     if len(source.encode("utf-8")) > HARD_CAP_BYTES:
         return True, False

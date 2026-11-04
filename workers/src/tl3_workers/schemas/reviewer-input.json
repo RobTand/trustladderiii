@@ -116,6 +116,9 @@
               "proof"
             ],
             "additionalProperties": false
+          },
+          "proof_obligation": {
+            "$ref": "ingest-reply.json#/$defs/proof_obligation"
           }
         },
         "required": [
