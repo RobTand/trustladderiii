@@ -57,8 +57,8 @@ an epoch advance. Each key has its own resource or
 marker. Conflicting target writes to one resource and outside writers are
 outside this model.
 
-Epochs are 1 and 2. The upstream fence starts at 1 and can advance explicitly
-or when it accepts an epoch-2 delivery. Both early cancellation and rejection
+Epochs are 0 and 1. The upstream fence starts at 0 and can advance explicitly
+or when it accepts an epoch-1 delivery. Both early cancellation and rejection
 of an already dispatched stale delivery are explored. A third epoch adds no
 new ordering relation for this bounded model.
 

@@ -103,7 +103,7 @@ impl Model for EffectModel {
                 .enumerate()
                 .map(|(key, &contract)| Effect {
                     contract,
-                    epoch: 1 + key as u8,
+                    epoch: key as u8,
                     phase: Phase::Intended,
                     pending: 0,
                     recorded: false,
@@ -113,7 +113,7 @@ impl Model for EffectModel {
                     race: false,
                 })
                 .collect(),
-            fence: 1,
+            fence: 0,
             losses: 0,
             duplicates: 0,
             retries: 0,
@@ -124,7 +124,7 @@ impl Model for EffectModel {
         let mut states = vec![initial.clone()];
         if initial.effects.len() == 2 {
             let mut same_epoch = initial;
-            same_epoch.effects[1].epoch = 1;
+            same_epoch.effects[1].epoch = 0;
             states.push(same_epoch);
         }
         states
@@ -163,7 +163,7 @@ impl Model for EffectModel {
                 }
             }
         }
-        if state.fence == 1 {
+        if state.fence == 0 {
             actions.push(AdvanceFence);
         }
     }
@@ -177,7 +177,7 @@ impl Model for EffectModel {
             | LoseResponse(k) | MarkUncertain(k) | ReadRecord(k) | RetrySameKey(k)
             | CommitConfirmed(k) | ReconcileCopies(k) | CancelStale(k) => k,
             AdvanceFence => {
-                next.fence = 2;
+                next.fence = 1;
                 return Some(next);
             }
         };

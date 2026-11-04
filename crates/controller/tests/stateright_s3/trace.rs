@@ -208,9 +208,9 @@ fn real_adapter_epoch_fence_conforms() {
     ] {
         step(&model, &mut state, action);
     }
-    fake.execute(&delivery(1, 2)).unwrap();
+    fake.execute(&delivery(1, 1)).unwrap();
     step(&model, &mut state, Action::Deliver(1));
-    assert!(fake.execute(&delivery(0, 1)).is_err());
+    assert!(fake.execute(&delivery(0, 0)).is_err());
     step(&model, &mut state, Action::Deliver(0));
     let counts = adapters::delivery_counts(root.path()).unwrap();
     assert_eq!(counts.len(), 1);
