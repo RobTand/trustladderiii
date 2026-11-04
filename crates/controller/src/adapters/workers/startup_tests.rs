@@ -691,9 +691,10 @@ fn a_postmortem_request_carries_a_valid_case_file() {
 /// out from the second entry on.
 #[test]
 fn a_postmortem_request_falls_back_past_models_that_are_out() {
-    let (f, _db, config, mut store, delivery) = claimed_postmortem("postmortem_fallback", |config| {
-        config.models.postmortem = config.models.maker.clone();
-    });
+    let (f, _db, config, mut store, delivery) =
+        claimed_postmortem("postmortem_fallback", |config| {
+            config.models.postmortem = config.models.maker.clone();
+        });
     let [writer, grader] = [0, 1].map(|index| config.models.postmortem[index].name.clone());
     assert_ne!(writer, grader);
     let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
@@ -704,7 +705,11 @@ fn a_postmortem_request_falls_back_past_models_that_are_out() {
             json!({"fixture": "quotas"}),
             &snapshot,
         );
-        for row in snapshot.rows.iter().filter(|row| row.table == "model_quotas") {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "model_quotas")
+        {
             commit.rows.push(tl3_store::RowChange::Delete {
                 table: row.table.clone(),
                 id: row.id.clone(),
@@ -724,7 +729,10 @@ fn a_postmortem_request_falls_back_past_models_that_are_out() {
             .unwrap();
         (
             request["model"]["name"].as_str().unwrap().to_owned(),
-            request["inputs"]["grade_model"].as_str().unwrap().to_owned(),
+            request["inputs"]["grade_model"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
         )
     };
     const LATER: u64 = 4_000_000_000_000;

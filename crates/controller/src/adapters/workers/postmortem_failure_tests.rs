@@ -366,7 +366,10 @@ print("claimed", flush=True)
             .unwrap();
         (
             request["model"]["name"].as_str().unwrap().to_owned(),
-            request["inputs"]["grade_model"].as_str().unwrap().to_owned(),
+            request["inputs"]["grade_model"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
         )
     };
     assert_eq!(models(0), (writer.clone(), grader.clone()));

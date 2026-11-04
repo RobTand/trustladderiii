@@ -624,7 +624,11 @@ pub(super) fn whole_ladder_out_raises_an_operations_note(settings: &tl3_config::
         1,
         "every model is out, so the step waits"
     );
-    assert_eq!(f.ladder_notes(), Vec::<String>::new(), "no note before the bound");
+    assert_eq!(
+        f.ladder_notes(),
+        Vec::<String>::new(),
+        "no note before the bound"
+    );
     let due: Vec<_> = f
         .quota_waits()
         .iter()

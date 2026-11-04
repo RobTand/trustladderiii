@@ -123,18 +123,34 @@ def observed(stage: Literal["grade", "postmortem"]):
     """
     import mlflow
     from mlflow.environment_variables import MLFLOW_JUDGE_MAX_ITERATIONS
-    from mlflow.genai.judges.adapters import gateway_adapter
+    from mlflow.genai.judges.adapters import gateway_adapter, utils as adapter_utils
+    from mlflow.genai.judges.adapters.utils import ChatCompletionError
     from tl3_workers import memory, tracing
 
     limit = MLFLOW_JUDGE_MAX_ITERATIONS.get()
     turns = Turns()
     send = gateway_adapter.send_chat_request
+    parse = adapter_utils._safe_parse_error
+    replied = {}
+
+    def parsed(response):
+        # ChatCompletionError keeps only the reply's status and message (#759).
+        try:
+            replied["code"] = typed_code(response.json()["error"]["code"])
+        except Exception:
+            replied["code"] = None
+        return parse(response)
 
     def counted(*args, **kwargs):
         turns.count += 1
         # MLflow passes every argument by keyword; only those requests can be repaired.
         turns.request, turns.reply = (None if args else kwargs), None
-        response = send(*args, **kwargs)
+        replied.clear()
+        try:
+            response = send(*args, **kwargs)
+        except ChatCompletionError as error:
+            error.code = replied.get("code")
+            raise
         turns.record(response)
         return response
 
@@ -142,10 +158,12 @@ def observed(stage: Literal["grade", "postmortem"]):
         tracing.active.get() is not None) else nullcontext()
     with context as span:
         gateway_adapter.send_chat_request = counted
+        adapter_utils._safe_parse_error = parsed
         try:
             yield turns
         finally:
             gateway_adapter.send_chat_request = send
+            adapter_utils._safe_parse_error = parse
             if span is not None:
                 span.set_attribute("tl3.judge.turn_count", turns.count)
                 span.set_attribute("tl3.judge.iteration_limit", limit)
@@ -284,7 +302,16 @@ class FailureClass(StrEnum):
 class JudgeFailure:
     category: FailureClass
     status: int | None = None
+    # A typed provider code from TYPED_CODES, never error text (#759).
     code: str | None = None
+
+
+# The proxy's typed error codes that say a model can't be served now (quota.py).
+TYPED_CODES = frozenset({"model_not_found"})
+
+
+def typed_code(code):
+    return code if isinstance(code, str) and code in TYPED_CODES else None
 
 
 # AssessmentError retains a code but discards the exception's typed fields.
@@ -331,16 +358,16 @@ def exception_failure(error):
         chain.append(error)
         error = error.__cause__ or error.__context__
     for error in reversed(chain):
-        status = None
+        status, code = None, None
         if isinstance(error, (ChatCompletionError, APIStatusError)):
-            status = error.status_code
+            status, code = error.status_code, typed_code(getattr(error, "code", None))
         elif isinstance(error, (requests.HTTPError, httpx.HTTPStatusError)):
             if error.response is not None:
                 status = error.response.status_code
         if type(status) is int and 400 <= status <= 599:
             category = (FailureClass.QUOTA if status == 429 else
                         FailureClass.REFUSAL if status in (401, 403) else FailureClass.HTTP)
-            return JudgeFailure(category, status)
+            return JudgeFailure(category, status, code)
         if isinstance(error, (TimeoutError, requests.Timeout, httpx.TimeoutException, APITimeoutError)):
             return JudgeFailure(FailureClass.DEADLINE)
         if isinstance(error, (ConnectionError, requests.ConnectionError, httpx.TransportError,
