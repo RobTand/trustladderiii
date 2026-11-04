@@ -26,14 +26,6 @@ impl Executor for RecordedJudge {
         }
         if let Some(supervisor) = &self.supervisor {
             let (_, attempt) = latest(&supervisor.root(&delivery.key))?.unwrap();
-            let mut store = Store::open(&supervisor.store)?;
-            let before = store.pending_memories(0)?;
-            crate::memory::queue_attempt(&mut store, &delivery.key, &attempt)?;
-            assert_eq!(
-                store.pending_memories(0)?,
-                before,
-                "postmortem run diagnostics must not become Hindsight run records"
-            );
             return inspect(&attempt, delivery);
         }
         let attempt = tempfile::tempdir().unwrap();

@@ -186,6 +186,50 @@ fn one_record_per_role_with_inputs_activity_reply_and_outcome() {
 }
 
 #[test]
+fn failed_postmortem_diagnostic_is_retained_once_across_retries_and_retirement() {
+    let f = Fixture::new();
+    let attempt = f.attempt("postmortem", json!({"case": "Fix greeting"}), Value::Null);
+    let summary_path = attempt.join("memory.json");
+    let mut summary: Value = serde_json::from_slice(&fs::read(&summary_path).unwrap()).unwrap();
+    summary["outcome"] = json!("failed");
+    summary["reason"] = json!({"failure_class": "iteration_limit",
+        "failure_stage": "postmortem judge failure"});
+    summary["judge_runs"] = json!([{"stage": "postmortem", "turn_count": 47,
+        "iteration_limit": 47}]);
+    fs::write(&summary_path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fs::write(attempt.join("exit.json"), r#"{"code":1}"#).unwrap();
+
+    for _ in 0..2 {
+        memory::queue_attempt(&mut f.store(), "run:postmortem", &attempt).unwrap();
+    }
+    assert_eq!(
+        f.store().pending_memories(0).unwrap().len(),
+        1,
+        "a failed judge's diagnostic summary must enqueue one run record"
+    );
+    f.retain.lose_ack.store(true, Ordering::SeqCst);
+    assert!(memory::flush(&mut f.store(), &f.hindsight()).is_err());
+    assert_eq!(f.flush(), 1);
+    assert_eq!(f.flush(), 0);
+
+    // Retirement can replay after the outbox acknowledgement was removed.
+    memory::queue_attempt(&mut f.store(), "run:postmortem", &attempt).unwrap();
+    assert_eq!(f.flush(), 1);
+    assert_eq!(f.flush(), 0);
+    let documents = f.retain.documents.lock().unwrap();
+    assert_eq!(
+        documents.len(),
+        1,
+        "replay must retain the same Hindsight identity"
+    );
+    let item = documents.values().next().unwrap();
+    let record: Value = serde_json::from_str(item["content"].as_str().unwrap()).unwrap();
+    assert_eq!(record["role"], "postmortem");
+    assert_eq!(record["outcome"], "failed");
+    assert_eq!(record["reason"]["failure_class"], "iteration_limit");
+}
+
+#[test]
 fn outage_then_lost_ack_and_retry_retain_exactly_once() {
     let f = Fixture::new();
     let attempt = f.attempt("audit", json!({}), json!({"verdict": "agree"}));
