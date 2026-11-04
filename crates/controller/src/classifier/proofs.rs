@@ -3,6 +3,8 @@
 //! combinations, without a request-count or string-length bound.
 use super::decision::*;
 
+/// Encodes Q15 comment classification, Q49 restart availability, and the
+/// state-table's "Corrections after close" rules, in the existing repair order.
 #[kani::proof]
 // Twelve possible violations plus the loop's terminating check.
 #[kani::unwind(13)]
