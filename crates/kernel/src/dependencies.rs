@@ -390,25 +390,38 @@ impl World {
     }
     }
 
-    pub(super) fn dependency_fact(
-        &mut self,
-        i: usize,
-        target: DependencyTarget,
-        status: DependencyStatus,
-        out: &mut Outbox,
-    ) {
-        if target.number == 0
-            || target.request.is_some_and(|node| {
-                self.index(node)
-                    .is_none_or(|j| self.nodes[i].repo != self.nodes[j].repo)
-            })
-        {
+    kernel_fn! {
+    /// Prerequisite fact rows / #693 / #771: declarations and terminal facts
+    /// preserve every numeric ledger and emit at most one note.
+    pub(super) fn dependency_fact(&mut self, i: usize, target: DependencyTarget,
+        status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
+        requires i < old(self).nodes@.len(), i <= u64::MAX as int,
+            edges_indexable(*old(self)), old(out).len < OUTBOX,
+        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
+                ..old(self).nodes@[i as int].credit },
+            ..old(self).nodes@[i as int]
+        }),
+            final(self).next_ticket == old(self).next_ticket,
+            final(self).next_question == old(self).next_question,
+            final(self).gates@ == old(self).gates@,
+            final(self).pool_capacity == old(self).pool_capacity,
+            final(self).fail_fast == old(self).fail_fast,
+            final(self).file_sets@ == old(self).file_sets@,
+            final(out).len <= old(out).len + 1,
+    ] proof [reveal(edges_indexable);] {
+        if target.number == 0 {
             return;
         }
+        if let Some(node) = target.request {
+            match self.index(node) {
+                None => return,
+                Some(j) => if self.nodes[i].repo != self.nodes[j].repo { return; },
+            }
+        }
         let node = NodeId(i as u64);
-        let existing = self.dependencies.iter().position(|d| {
-            d.node == node && d.target.kind == target.kind && d.target.number == target.number
-        });
+        let existing = self.find_dependency(node, target.kind, target.number);
         if let Some(index) = existing {
             let previous = self.dependencies[index];
             if previous.rejected || previous.status != DependencyStatus::Pending {
@@ -425,10 +438,12 @@ impl World {
         {
             return;
         }
-        let rejected = status == DependencyStatus::Pending
-            && target
-                .request
-                .is_some_and(|target| self.dependency_path(target, node));
+        let rejected = if status == DependencyStatus::Pending {
+            match target.request {
+                Some(target) => self.dependency_path(target, node),
+                None => false,
+            }
+        } else { false };
         let dependency = Dependency {
             node,
             target,
@@ -458,5 +473,37 @@ impl World {
         }
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
         self.withhold_dependency_credit(i);
+    }
+    }
+
+    kernel_fn! {
+    /// #693 / #771: declaration identity selects the first matching table row.
+    fn find_dependency(&self, node: NodeId, kind: PrerequisiteKind,
+        number: u64) -> (result: Option<usize>) [
+        ensures match result {
+            None => forall|i: int| 0 <= i < self.dependencies@.len() ==>
+                self.dependencies@[i].node != node || self.dependencies@[i].target.kind != kind
+                    || self.dependencies@[i].target.number != number,
+            Some(i) => i < self.dependencies@.len() && self.dependencies@[i as int].node == node
+                && self.dependencies@[i as int].target.kind == kind
+                && self.dependencies@[i as int].target.number == number,
+        },
+    ] {
+        let mut index = 0usize;
+        kernel_while! { (index < self.dependencies.len()) [
+            invariant index <= self.dependencies.len(),
+                forall|j: int| 0 <= j < index ==> self.dependencies@[j].node != node
+                    || self.dependencies@[j].target.kind != kind
+                    || self.dependencies@[j].target.number != number,
+            decreases self.dependencies.len() - index,
+        ] {
+            let d = self.dependencies[index];
+            if d.node == node && d.target.kind == kind && d.target.number == number {
+                return Some(index);
+            }
+            index += 1;
+        } }
+        None
+    }
     }
 }

@@ -3174,7 +3174,33 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
 
 // ---------------------------------------------------------------- facts
 
-fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
+kernel_fn! {
+/// Fact rows / #771: compose declaration updates, merge credit and the remaining
+/// fact handlers. No fact assigns a command ID, effect sequence or ticket.
+fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), i <= u64::MAX as int,
+        old(out).len + 4 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned as int + merge_capacity(final(w).nodes@[i as int])
+            <= old(w).nodes@[i as int].credit.earned as int + 1,
+        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(out).len <= old(out).len + 4,
+] {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
@@ -3184,6 +3210,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
         } => pr_merged(w, i, head, checks_passed, out),
         _ => fact_transition(w, i, fact, out),
     }
+}
 }
 
 kernel_fn! {
@@ -3341,6 +3368,9 @@ fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 4,
+        final(w).nodes@[i as int].credit.earned as int + merge_capacity(final(w).nodes@[i as int])
+            <= old(w).nodes@[i as int].credit.earned as int + 1,
+
 ] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
