@@ -32,6 +32,7 @@ pub mod memory;
 pub mod merge_dependencies;
 mod narrowing;
 mod notices;
+pub mod postmortem_reply;
 mod postmortems;
 pub use postmortems::PostmortemPace;
 pub mod pr_body;

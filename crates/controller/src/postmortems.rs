@@ -18,9 +18,6 @@ use tl3_store::{
 /// The world table that keeps a claimed postmortem's delivery live.
 pub(crate) const JOBS: &str = "postmortem_jobs";
 
-/// Q32: a postmortem recommends at most three changes.
-pub(crate) const MAX_RECOMMENDATIONS: usize = 3;
-
 /// Q39, Rob 2026-11-03 (#642): postmortems have their own lane.
 const CONCURRENCY: usize = 2;
 
@@ -48,20 +45,11 @@ pub(crate) fn fingerprint(target: &str, operation: &str, before: &str, after: &s
 /// A postmortem reply as the worker protocol accepts it: the role's schema,
 /// and at most three recommendations, which code checks as well.
 pub(crate) fn check_reply(reply: &Value) -> Result<()> {
-    crate::adapters::workers::protocol::validate_reply("postmortem", reply)?;
-    recommendations(reply).map(|_| ())
+    crate::postmortem_reply::validate(reply)
 }
 
 fn recommendations(reply: &Value) -> Result<&Vec<Value>> {
-    let recommendations = reply["postmortem"]["recommendations"]
-        .as_array()
-        .ok_or(Error::Invalid("a postmortem needs its recommendations"))?;
-    if recommendations.len() > MAX_RECOMMENDATIONS {
-        return Err(Error::Invalid(
-            "a postmortem recommends at most three changes",
-        ));
-    }
-    Ok(recommendations)
+    crate::postmortem_reply::recommendations(reply)
 }
 
 /// Redact every string in a JSON value, as TL3 stores and retains it.

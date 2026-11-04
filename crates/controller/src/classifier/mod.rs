@@ -93,19 +93,19 @@ fn parse(inputs: &Value, reply: &Value) -> crate::Result<Classification> {
 /// The CLI boundary accepts one request and emits one JSON result, without config or DB access.
 pub fn check_reply(role: Option<&str>) -> crate::Result<()> {
     use std::io::{Read, Write};
-    if !matches!(role, Some("classifier" | "reviewer")) {
-        return Err(crate::Error::Invalid("usage: tl3 check-reply classifier"));
+    if !matches!(role, Some("classifier" | "reviewer" | "postmortem")) {
+        return Err(crate::Error::Invalid("usage: tl3 check-reply <role>"));
     }
     let mut bytes = Vec::new();
     std::io::stdin().read_to_end(&mut bytes)?;
     let request = crate::adapters::workers::json::parse(&bytes)
         .map_err(|_| crate::Error::Invalid("invalid check-reply JSON"))?;
-    let validation = if role == Some("reviewer") {
-        crate::reviewer::validate(&request["inputs"], &request["reply"])
-    } else {
-        validate(&request["inputs"], &request["reply"])
+    let result = match role {
+        Some("reviewer") => crate::reviewer::validate(&request["inputs"], &request["reply"]),
+        Some("postmortem") => crate::postmortems::check_reply(&request["reply"]),
+        _ => validate(&request["inputs"], &request["reply"]),
     };
-    let violations = match validation {
+    let violations = match result {
         Ok(()) => Vec::new(),
         Err(crate::Error::Invalid(message)) => vec![message],
         Err(error) => return Err(error),

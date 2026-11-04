@@ -5,6 +5,8 @@ const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 #[path = "workers/classifier.rs"]
 mod classifier;
 mod maker;
+#[path = "workers/postmortem.rs"]
+mod postmortem_reply;
 #[path = "workers/reviewer.rs"]
 mod reviewer;
 use support::scenario_shard::{self, WorkerGroup};
@@ -368,6 +370,12 @@ fn main() {
         prepare_workers();
         reviewer::run();
         println!("4 reviewer scenarios passed; no skips");
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--postmortem-contracts") {
+        prepare_workers();
+        postmortem_reply::run();
+        println!("4 postmortem scenarios passed; no skips");
         return;
     }
     if env::args().nth(1).as_deref() == Some("--classifier-contracts") {
@@ -2763,6 +2771,7 @@ fn run_default() {
     shard.run(WorkerGroup::Reply, || {
         classifier::run();
         reviewer::run();
+        postmortem_reply::run();
         let mut database = Database::start();
         invalid_replies(&database.create("workers_invalid"));
         println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
