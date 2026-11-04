@@ -2293,6 +2293,10 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         final(w).nodes@[i as int].waiting_incident,
         final(w).nodes@[i as int].incident_needs_rob == needs_rob,
         final(w).nodes@[i as int].ticket.is_none(),
+        final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures,
+        final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents,
+        final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures,
+        final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents,
         final(w).next_ticket == old(w).next_ticket,
         final(w).next_question == old(w).next_question,
         final(w).gates@ == old(w).gates@,
@@ -2315,8 +2319,34 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
 }
 }
 
-fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
+kernel_fn! {
+/// #771: the world wrapper emits on exactly one selected node.
+fn emit(w: &mut World, i: usize, kind: EffectKind,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        old(w).nodes@[i as int].next_seq < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].next_seq as int == old(w).nodes@[i as int].next_seq as int + 1,
+        final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+        final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase,
+        final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos,
+        final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures,
+        final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len == old(out).len + 1,
+] {
     emit_node(&mut w.nodes[i], i, kind, out);
+}
 }
 
 kernel_fn! {
@@ -2558,7 +2588,31 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
     }
 }
 
-fn run_failed(w: &mut World, i: usize, out: &mut Outbox) {
+kernel_fn! {
+/// Failed-run rows / #771: a retry and incident allocate at most two generations.
+fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
+        old(w).nodes@[i as int].run_failures <= 1,
+        old(w).nodes@[i as int].run_incidents <= 2,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+        final(w).nodes@[i as int].run_failures <= 1,
+        final(w).nodes@[i as int].run_incidents <= 2,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] {
     let m = &mut w.nodes[i];
     abandon_operation(m);
     m.pos = operation_start(m.phase);
@@ -2571,6 +2625,7 @@ fn run_failed(w: &mut World, i: usize, out: &mut Outbox) {
         let needs_rob = m.run_incidents >= 2;
         raise_incident(w, i, needs_rob, out);
     }
+}
 }
 
 /// Q54 (Rob, 2026-11-02): under `fail_fast`, a step that would retry the work
@@ -2765,7 +2820,33 @@ fn confirmed(m: &mut Node, kind: EffectKind) {
     }
 }
 
-fn delivery_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
+kernel_fn! {
+/// Failed-delivery rows / #771: at most two generations or one retried effect.
+fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
+        old(w).nodes@[i as int].next_seq < u64::MAX,
+        old(w).nodes@[i as int].fx_failures <= 1,
+        old(w).nodes@[i as int].fx_incidents <= 2,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
+        final(w).nodes@[i as int].next_seq as int <= old(w).nodes@[i as int].next_seq as int + 1,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+        final(w).nodes@[i as int].fx_failures <= 1,
+        final(w).nodes@[i as int].fx_incidents <= 2,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] {
     let m = &mut w.nodes[i];
     m.fx_failures += 1;
     if m.fx_failures < 2 {
@@ -2781,6 +2862,7 @@ fn delivery_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) 
         m.generation += 1;
     }
     raise_incident(w, i, needs_rob, out);
+}
 }
 
 fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
