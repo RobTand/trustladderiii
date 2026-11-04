@@ -11,7 +11,7 @@ mod facts;
 mod fake;
 #[cfg(test)]
 mod input_contract_tests;
-mod json;
+pub(crate) mod json;
 pub(crate) mod ladder;
 #[cfg(test)]
 mod postmortem_failure_tests;
@@ -41,7 +41,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
     fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
@@ -72,7 +72,16 @@ pub(super) fn isolate_credentials(
     File::open(&directory)?.sync_all()?;
     request["key_file"] = json!(key);
     command.env("CREDENTIALS_DIRECTORY", &directory);
+    command.env("TL3_BINARY", check_reply_binary()?);
     Ok(())
+}
+
+/// All roles use the CLI from the same immutable release as the controller.
+fn check_reply_binary() -> std::io::Result<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("TL3_BINARY") {
+        return Ok(path.into());
+    }
+    Ok(std::env::current_exe()?.with_file_name("tl3"))
 }
 
 #[derive(Clone, Default)]
@@ -1111,27 +1120,24 @@ impl Supervisor {
         // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
         // restart or deploy leaves the run alive. A launcher failure fails the
         // launch; it never falls back to a supervisor tl3d's stop would kill.
+        let executable = supervisor_executable()?;
         let mut command = match self.settings.launcher.split_first() {
             Some((launcher, args)) => {
                 let mut command = Command::new(launcher);
-                command.args(args).arg(&python);
+                command.args(args).arg(&executable);
                 command
             }
-            None => Command::new(&python),
+            None => Command::new(&executable),
         };
         isolate_credentials(&attempt, &mut request, &mut command)?;
         write(&attempt.join("request.json"), &request)?;
         write(&attempt.join("command.json"), &self.settings.command)?;
         // Deploy keeps every release a live attempt still runs from.
         write(&attempt.join("launch.json"), &json!({"python": python}))?;
-        let mut script = File::create(attempt.join("supervisor.py"))?;
-        script.write_all(include_bytes!("../../tools/worker_supervisor.py"))?;
-        script.sync_all()?;
         File::open(&attempt)?.sync_all()?;
         File::open(&root)?.sync_all()?;
         let errors = File::create(attempt.join("launcher.log"))?;
         let mut child = command
-            .arg(attempt.join("supervisor.py"))
             .arg(&attempt)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -1352,6 +1358,23 @@ fn release_python(python: &Path) -> Result<PathBuf> {
         (Some(directory), Some(name)) => Ok(fs::canonicalize(directory)?.join(name)),
         _ => Err(Error::Invalid("workers.python must name a file")),
     }
+}
+
+fn supervisor_executable() -> Result<PathBuf> {
+    let executable = std::env::current_exe()?;
+    let directory = executable
+        .parent()
+        .ok_or(Error::Invalid("controller has no binary directory"))?;
+    // Cargo places test executables in deps/. Bazel and release bundles put
+    // the helper beside their controller executable.
+    let directory = if directory.file_name().is_some_and(|name| name == "deps") {
+        directory
+            .parent()
+            .ok_or(Error::Invalid("controller has no target directory"))?
+    } else {
+        directory
+    };
+    Ok(directory.join("tl3-worker-supervisor").canonicalize()?)
 }
 
 fn reap(mut child: Child) {

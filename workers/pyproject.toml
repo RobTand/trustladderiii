@@ -38,3 +38,4 @@ tl3_workers = ["schemas/*.json", "prompts/*.md", "evaluation/*.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--durations=10"
+markers = ["durability: retain real disk synchronization for persistence and crash recovery"]
