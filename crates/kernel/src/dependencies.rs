@@ -89,6 +89,57 @@ pub(super) open spec fn declarations_unique(w: World) -> bool {
         ==> !same_declaration(w.dependencies@[a], w.dependencies@[b])
 }
 
+/// #771: the production key lookup selects the unique pending witness row.
+proof fn pending_lookup(w: World, i: int, target: DependencyTarget, existing: Option<usize>)
+    requires dependencies_checked(w), dependency_progress_input(w, i, target, DependencyStatus::Delivered),
+        match existing {
+            Some(index) => index < w.dependencies@.len()
+                && same_declaration(w.dependencies@[index as int], Dependency {
+                    node: NodeId(i as u64), target, status: DependencyStatus::Delivered, rejected: false }),
+            None => forall|j: int| 0 <= j < w.dependencies@.len() ==>
+                !same_declaration(w.dependencies@[j], Dependency {
+                    node: NodeId(i as u64), target, status: DependencyStatus::Delivered, rejected: false }),
+        },
+    ensures existing is Some,
+        w.dependencies@[existing.unwrap() as int].target == target,
+        w.dependencies@[existing.unwrap() as int].node == NodeId(i as u64),
+        !w.dependencies@[existing.unwrap() as int].rejected,
+        w.dependencies@[existing.unwrap() as int].status == DependencyStatus::Pending,
+        target.number > 0,
+        match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
+            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo },
+{
+    let k = choose|k: int| 0 <= k < w.dependencies@.len()
+        && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+        && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending;
+    assert(existing is Some);
+    let index = existing.unwrap() as int;
+    if index < k { assert(!same_declaration(w.dependencies@[index], w.dependencies@[k])); }
+    if k < index { assert(!same_declaration(w.dependencies@[k], w.dependencies@[index])); }
+    assert(index == k);
+}
+
+/// #693 / #771: an exact delivered-row replacement consumes one debt token.
+proof fn delivered_record_progress(before: World, after: World, index: int)
+    requires 0 <= index < before.dependencies@.len(), edges_indexable(before),
+        before.dependencies@[index].status == DependencyStatus::Pending,
+        !(before.nodes@[before.dependencies@[index].node.0 as int].phase is Closed),
+        after.dependencies@ == before.dependencies@.update(index, Dependency {
+            status: DependencyStatus::Delivered, rejected: false, ..before.dependencies@[index] }),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() ==> after.nodes@[j].phase == before.nodes@[j].phase,
+    ensures edges_indexable(after),
+        (forall|j: int| 0 <= j < before.dependencies@.len()
+            ==> dependency_weight(after, j) <= dependency_weight(before, j)),
+        dependency_weight(after, index) < dependency_weight(before, index),
+{
+    reveal(edges_indexable);
+    assert forall|j: int| 0 <= j < before.dependencies@.len() implies
+        dependency_weight(after, j) <= dependency_weight(before, j) by {
+        if j != index { assert(after.dependencies@[j] == before.dependencies@[j]); }
+    }
+}
+
 pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
     recommends end <= seen.len(),
     decreases end,
@@ -549,8 +600,18 @@ impl World {
             final(self).fail_fast == old(self).fail_fast,
             final(self).file_sets@ == old(self).file_sets@,
             final(out).len <= old(out).len + 1,
-    ] proof [reveal(edges_indexable); reveal(dependencies_checked);] {
+    ] {
         kernel_snapshot! { before_dependency = *self }
+        kernel_proof! {
+            if dependencies_checked(*self) && dependency_progress_input(*self, i as int, target, status) {
+                let k = choose|k: int| 0 <= k < self.dependencies@.len()
+                    && self.dependencies@[k].node == NodeId(i as u64) && self.dependencies@[k].target == target
+                    && !self.dependencies@[k].rejected && self.dependencies@[k].status == DependencyStatus::Pending;
+                assert(target.number > 0);
+                assert(match target.request { None => true, Some(node) => node.0 < self.nodes@.len()
+                    && self.nodes@[node.0 as int].repo == self.nodes@[i as int].repo });
+            }
+        }
         if target.number == 0 {
             return;
         }
@@ -562,6 +623,11 @@ impl World {
         }
         let node = NodeId(i as u64);
         let existing = self.find_dependency(node, target.kind, target.number);
+        kernel_proof! {
+            if dependencies_checked(*self) && dependency_progress_input(*self, i as int, target, status) {
+                pending_lookup(*self, i as int, target, existing);
+            }
+        }
         if let Some(index) = existing {
             let previous = self.dependencies[index];
             if previous.rejected || previous.status != DependencyStatus::Pending {
@@ -593,19 +659,7 @@ impl World {
         self.record_dependency(i, existing, dependency, out);
         kernel_proof! {
             if dependency_progress_input(before_dependency@, i as int, target, status) {
-                let k = choose|k: int| 0 <= k < before_dependency@.dependencies@.len()
-                    && before_dependency@.dependencies@[k].node == node
-                    && before_dependency@.dependencies@[k].target == target
-                    && !before_dependency@.dependencies@[k].rejected
-                    && before_dependency@.dependencies@[k].status == DependencyStatus::Pending;
-                assert(existing is Some);
-                let index = existing.unwrap() as int;
-                assert forall|j: int| 0 <= j < before_dependency@.dependencies@.len() implies
-                    dependency_weight(*self, j) <= dependency_weight(before_dependency@, j) by {
-                    if j != index { assert(self.dependencies@[j] == before_dependency@.dependencies@[j]); }
-                }
-                assert(dependency_weight(before_dependency@, index) == 1);
-                assert(dependency_weight(*self, index) == 0);
+                delivered_record_progress(before_dependency@, *self, existing.unwrap() as int);
             }
         }
     }
