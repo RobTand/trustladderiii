@@ -353,6 +353,9 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
     );
 }
 
+/// Set on child processes of a run that already prepared the worker runtime.
+const PREPARED: &str = "TL3_TEST_WORKERS_PREPARED";
+
 const PLANNING_MODES: [&str; 6] = [
     "normal",
     "plan-split",
@@ -361,49 +364,6 @@ const PLANNING_MODES: [&str; 6] = [
     "plan-bad-split",
     "plan-bad-schema",
 ];
-
-fn store_settings(settings: &tl3_config::Store) -> Value {
-    json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs})
-}
-
-/// Variants of one scenario are independent: each has its own database on this
-/// fixture's server and its own temporary root. Run them as concurrent child
-/// processes, which also isolates each variant's daemon worker source (#742).
-/// Two at once fit the CPUs this target reserves (tools/bazel/test_sizing.bzl).
-fn concurrently(database: &mut Database, scenario: &str, variants: &[&str]) {
-    let root = tempfile::tempdir().unwrap();
-    let children: Vec<_> = variants
-        .iter()
-        .map(|variant| {
-            let settings = database.create(&format!("{scenario}_{variant}").replace('-', "_"));
-            let path = root.path().join(format!("{variant}.json"));
-            fs::write(
-                &path,
-                serde_json::to_vec(&store_settings(&settings)).unwrap(),
-            )
-            .unwrap();
-            (*variant, path)
-        })
-        .collect();
-    let pending = std::sync::Mutex::new(children.iter());
-    thread::scope(|scope| {
-        for _ in 0..2 {
-            scope.spawn(|| {
-                loop {
-                    let Some((variant, settings)) = pending.lock().unwrap().next() else {
-                        break;
-                    };
-                    let status = Command::new(env::current_exe().unwrap())
-                        .args(["--variant", scenario, variant])
-                        .arg(settings)
-                        .status()
-                        .unwrap();
-                    assert!(status.success(), "{scenario} variant {variant} failed");
-                }
-            });
-        }
-    });
-}
 
 fn finish_fixture(database: Database, group: &str) {
     database.stop();
@@ -524,24 +484,10 @@ fn main() {
             .unwrap();
         return;
     }
-    if args.get(1).is_some_and(|s| s == "--variant") {
-        // The parent prepared the worker runtime and created this database.
-        let settings: tl3_config::Store =
-            serde_json::from_slice(&fs::read(&args[4]).unwrap()).unwrap();
-        let variant = args[3].as_str();
-        match args[2].as_str() {
-            "planning" => planning::planning(&settings, variant),
-            "controller-kill" => killed_controller(&settings, variant),
-            "invalid-reply" => {
-                materials(&mut Store::open(&settings).unwrap());
-                invalid_reply(&settings, variant)
-            }
-            "reproducing-fix" => maker::reproducing_fix(&settings, variant == "rebase"),
-            _ => panic!("unknown scenario variant"),
-        }
-        return;
+    // A child of a prepared run skips the repeated worker runtime check.
+    if env::var_os(PREPARED).is_none() {
+        prepare_workers();
     }
-    prepare_workers();
     let mut database = Database::start();
     if args
         .get(1)
@@ -2824,23 +2770,41 @@ fn run_default() {
         println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
         finish_fixture(database, "worker_launch");
     });
+    shard.run(WorkerGroup::RestartBlocked, || {
+        let mut database = Database::start();
+        killed_controller(&database.create("controller_kill"), "blocked");
+        println!("test sigkill_controller_reattaches_to_the_same_worker_blocked ... ok");
+        database.stop();
+    });
     shard.run(WorkerGroup::Restart, || {
         let mut database = Database::start();
-        concurrently(
-            &mut database,
-            "controller-kill",
-            &["blocked", "plan-blocked"],
-        );
-        println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
+        killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
+        println!("test sigkill_controller_reattaches_to_the_same_worker_plan-blocked ... ok");
         finish_fixture(database, "worker_restart");
     });
+    for (group, modes) in [
+        (WorkerGroup::InvalidSchema, &INVALID_REPLIES[..4]),
+        (WorkerGroup::InvalidShape, &INVALID_REPLIES[4..7]),
+        (WorkerGroup::InvalidSize, &INVALID_REPLIES[7..10]),
+        (WorkerGroup::InvalidForged, &INVALID_REPLIES[10..]),
+    ] {
+        shard.run(group, || {
+            let mut database = Database::start();
+            let settings = database.create("workers_invalid");
+            materials(&mut Store::open(&settings).unwrap());
+            for mode in modes {
+                invalid_reply(&settings, mode);
+                println!("test schema_missing_nonzero_and_duplicate_replies_fail_{mode} ... ok");
+            }
+            database.stop();
+        });
+    }
     shard.run(WorkerGroup::ReplyInvalid, || {
         let mut database = Database::start();
-        concurrently(&mut database, "invalid-reply", &INVALID_REPLIES);
         let settings = database.create("workers_invalid");
         materials(&mut Store::open(&settings).unwrap());
         diagnostic_failure(&settings);
-        println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
+        println!("test diagnostic_worker_failure_reaches_the_incident_and_status ... ok");
         stop_and_exit_gate(&database.create("workers_stop"));
         println!("test reply_requires_exit_zero_and_stop_waits_for_death ... ok");
         database.stop();
@@ -2931,12 +2895,21 @@ fn run_default() {
         println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
         finish_fixture(database, "worker_retirement");
     });
-    shard.run(WorkerGroup::PlanningModes, || {
-        let mut database = Database::start();
-        concurrently(&mut database, "planning", &PLANNING_MODES);
-        println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
-        database.stop();
-    });
+    for (mode, group) in PLANNING_MODES.into_iter().zip([
+        WorkerGroup::PlanningNormal,
+        WorkerGroup::PlanningSplit,
+        WorkerGroup::PlanningInvalid,
+        WorkerGroup::PlanningCantMeet,
+        WorkerGroup::PlanningBadSplit,
+        WorkerGroup::PlanningBadSchema,
+    ]) {
+        shard.run(group, || {
+            let mut database = Database::start();
+            planning::planning(&database.create(&mode.replace('-', "_")), mode);
+            println!("test planner_leaf_narrowing_and_rule_retry_with_findings_{mode} ... ok");
+            database.stop();
+        });
+    }
     shard.run(WorkerGroup::PlanningRecall, || {
         let mut database = Database::start();
         planning::memories(&database.create("plan_memories"));

@@ -341,10 +341,16 @@ fn scenario_shards_separate_the_measured_worker_hotspots() {
         // The seven other 11-marker shards averaged 7 s per marker.
         _ => 7 * group.markers(),
     };
+    // #742: Shard::new reads measured weights; feed these estimates to the
+    // same partition directly.
+    let groups: Vec<_> = WORKER_GROUPS
+        .iter()
+        .map(|group| (*group, group.markers(), seconds(*group)))
+        .collect();
     let mut loads = [0; 8];
     let mut owners = Vec::new();
     for (index, load) in loads.iter_mut().enumerate() {
-        let mut shard = Shard::new(index, 8);
+        let mut shard = Shard::with_groups(index, 8, &groups);
         for group in WORKER_GROUPS.iter().copied() {
             shard.run(group, || {
                 *load += seconds(group);

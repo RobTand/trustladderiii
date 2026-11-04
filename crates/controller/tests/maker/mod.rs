@@ -960,10 +960,6 @@ pub(super) fn repository_images(database: &mut Database) {
     println!("test maker_repository_image_override_and_global_fallback ... ok");
 }
 
-pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
-    real::reproducing_fix(settings, rebase);
-}
-
 pub(super) fn run(database: &mut Option<Database>, shard: &mut super::scenario_shard::Shard) {
     use super::scenario_shard::WorkerGroup;
     fn started(database: &mut Option<Database>) -> &mut Database {
@@ -978,8 +974,16 @@ pub(super) fn run(database: &mut Option<Database>, shard: &mut super::scenario_s
         println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
     });
     shard.run(WorkerGroup::MakerReproducingFix, || {
-        super::concurrently(started(database), "reproducing-fix", &["fix", "rebase"]);
-        println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
+        real::reproducing_fix(&started(database).create("maker_reproducing_fix"), false);
+        println!(
+            "test review_fix_maps_findings_to_checks_and_carries_reasons_to_review_fix ... ok"
+        );
+    });
+    shard.run(WorkerGroup::MakerReproducingRebase, || {
+        real::reproducing_fix(&started(database).create("maker_reproducing_rebase"), true);
+        println!(
+            "test review_fix_maps_findings_to_checks_and_carries_reasons_to_review_rebase ... ok"
+        );
     });
     shard.run(WorkerGroup::MakerDeclaredWait, || {
         declared_wait(&started(database).create("maker_declared_wait"));
@@ -1061,7 +1065,9 @@ pub(super) fn run(database: &mut Option<Database>, shard: &mut super::scenario_s
             let name = format!("maker_{}_{}", mode.replace('-', "_"), fail);
             // A daemon source lives until process exit; isolate it with its database.
             let mut child = Command::new(env::current_exe().unwrap());
-            child.args(["--maker-failure", mode]);
+            child
+                .args(["--maker-failure", mode])
+                .env(super::PREPARED, "1");
             if fail {
                 child.arg("--checks-fail");
             }
