@@ -47,3 +47,17 @@ manual Bazel target is added. This corpus adds no production implementation,
 proof or test pruning. Glob parity belongs to the later selection/config port;
 this ticket's seven kinds do not port path matching. Unicode `\w` is covered
 by forcing targets; none of these current functions uses a `\d` regex.
+
+The checker compares canonical JSON encodings, including numeric types.
+Changing `1.0` to `1`, or either number to a boolean, is drift. All mismatched
+case IDs are reported together.
+
+`plan-size-collection` expands `count` distinct node IDs with empty parameter
+labels, then distributes enough ASCII padding across their labels to reach
+`total_bytes`. Its `largest_phase_bytes` fact stays below the per-phase limit,
+so the aggregate collection guard alone decides these boundary cases.
+
+The coverage revision also pins file-prefix selection boundaries, exactly 20
+`always_tests`, forbidden path characters, Python's rejection of combining
+marks and join controls in `\w`, U+001F trimming, and complete long or multiline
+RED messages.

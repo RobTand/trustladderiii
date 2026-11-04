@@ -54,6 +54,17 @@ def cases(kind):
             yield f'grammar-{index:02}', {'op': 'grammar', 'node_id': node}
         for index, item in enumerate(item for item in legacy if 'collected' in item):
             yield f'selects-{index}', {'op': 'selects', 'requested': item['node_id'], 'collected': item['collected']}
+        yield 'selects-file-prefix', {'op': 'selects', 'requested': 'tests/test_value.py',
+                                     'collected': ['tests/test_value.py', 'tests/test_value.py::test_value',
+                                                   'tests/test_value.py::TestValue::test_case[one]',
+                                                   'tests/test_value.pyx::test_value',
+                                                   'tests/test_value.py_extra::test_value',
+                                                   'tests/test_value.py/other.py::test_value',
+                                                   'tests/test_values.py::test_value']}
+        yield 'exactly-twenty', {'op': 'always-tests', 'tests': [f'tests/test_{i}.py' for i in range(20)]}
+        for name, path in [('star-path', 'tests/test_*.py'), ('question-path', 'tests/test_?.py'),
+                           ('colon-path', 'tests/test:case.py')]:
+            yield name, {'op': 'always-tests', 'tests': [path]}
         for name, tests in [('tuple-shape', None), ('not-strings', [1]), ('too-many', [NODE] * 21),
                             ('duplicates', [NODE, NODE]), ('empty', [])]:
             yield name, {'op': 'always-tests', 'tests': tests}
@@ -70,6 +81,7 @@ def cases(kind):
                               ('surrogate', '\ud800' * 1001), ('at-limit', '😀' * 1000)]:
             yield name, {'op': 'summary', 'entries': [{'test': NODE, 'outcome': 'failed', 'message': message}]}
         yield 'describe-splitlines-strip', {'op': 'describe', 'message': '\u2003\x85\u00a0`first`\u2003\u2028second\r\nthird'}
+        yield 'describe-unit-separator-strip', {'op': 'describe', 'message': '\x1ffirst\x1f'}
         yield 'describe-unicode-limit', {'op': 'describe', 'message': '😀' * 201}
         for name, message in [('byte-limit-ascii', 'a' * 100), ('byte-limit-unicode', '😀' * 100),
                               ('byte-limit-surrogate', '\udfff' * 100)]:
@@ -90,6 +102,10 @@ def cases(kind):
         yield 'run-failures', {'op': 'envelope', 'limit': 400,
                               'result': {'tests': [], 'totals': {}, 'runs': [{'failed': ['x' * 800, 'y' * 800]}]}}
     elif kind == 'red-match':
+        long_message = 'é😀' * 501
+        for name, message in [('long-explicit-message', long_message),
+                              ('multiline-explicit-message', 'first\nsecond\nthird')]:
+            yield name, {'source': f'assert 1 == 2, {message!r}', 'declared': message}
         statement = 'assert 1 == 2'
         for name, source, declared in [
             ('message', 'assert 1 == 2, "too small"', 'too small'),
@@ -118,12 +134,15 @@ def cases(kind):
                             ('😀', (limits.MAX_REPORT_LINE_BYTES - 8194) // 4)]:
             for delta in (0, 1):
                 yield f'phase-boundary-{ord(char)}-{delta}', {'op': 'plan-size-repeat', 'char': char, 'count': count + delta}
+        for delta in (0, 1):
+            yield f'collection-boundary-{delta}', {'op': 'plan-size-collection', 'count': 4096,
+                                                  'total_bytes': limits.MAX_REPORT_LINE_BYTES + delta}
         for count in (0, 1, 500, 2000):
             yield f'check-plan-{count}', {'op': 'check-plan', 'count': count}
         for value in [0, 1, 1.0, True, 5, 5.01]:
             yield f'delay-{value!r}', {'op': 'forcing', 'forcing': {'symptom': 'delay', 'patches': [
                 {'target': 'pkg.func', 'delay_seconds': value}]}}
-        for target in ['pkg.fé', 'pkg.f١', 'pkg.١', 'pkg.fn']:
+        for target in ['pkg.fé', 'pkg.f١', 'pkg.١', 'pkg.fn', 'pkg.f\u0301', 'pkg.f\u200c']:
             yield 'target-' + target, {'op': 'forcing', 'forcing': {'symptom': 'delay', 'patches': [
                 {'target': target, 'delay_seconds': 1}]}}
     elif kind == 'judge':
@@ -213,10 +232,21 @@ def evaluate(kind, data):
             return outcome(limits.validate_check_plan, [check])
         if op == 'forcing':
             return outcome(lambda value: model.Forcing.parse(value).as_json(), data['forcing'])
-        tests = data['tests'] if op == 'plan-size' else [data['char'] * data['count']]
+        if op == 'plan-size-collection':
+            tests = [f'tests/test_many.py::test_{i:04}[]' for i in range(data['count'])]
+            empty_bytes = len(json.dumps({'event': 'collection', 'tests': tests},
+                                        sort_keys=True, ensure_ascii=False).encode()) + 1
+            fill, extra = divmod(data['total_bytes'] - empty_bytes, len(tests))
+            tests = [test[:-1] + 'x' * (fill + (i < extra)) + ']' for i, test in enumerate(tests)]
+        else:
+            tests = data['tests'] if op == 'plan-size' else [data['char'] * data['count']]
         encoded = json.dumps({'event': 'collection', 'tests': tuple(dict.fromkeys(tests))},
                              sort_keys=True, ensure_ascii=False).encode(errors='backslashreplace') + b'\n'
-        return {'validation': outcome(limits.validate_plan_size, tests), 'collection_bytes': len(encoded)}
+        result = {'validation': outcome(limits.validate_plan_size, tests), 'collection_bytes': len(encoded)}
+        if op == 'plan-size-collection':
+            result['largest_phase_bytes'] = max(len(json.dumps(test, ensure_ascii=False).encode()) + 8192
+                                                for test in tests)
+        return result
     if kind == 'judge':
         proof_mode = data['proof']
         proof = (model.Proof((), (), 'expected')
@@ -265,8 +295,12 @@ def check(kind, root=ROOT / 'core'):
     expected = {case['id']: case for case in committed['cases']}
     actual = {case['id']: case for case in produced['cases']}
     assert expected.keys() == actual.keys(), f'{kind}: case inventory changed; regenerate core vectors'
-    for name, case in actual.items():
-        assert expected[name] == case, f'{kind}/{name}: differs from Python; regenerate core vectors'
+    # Python equality conflates 1, 1.0 and True; their JSON encodings are distinct.
+    def encoded(case):
+        return json.dumps(case, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
+
+    mismatches = [f'{kind}/{name}' for name, case in actual.items() if encoded(expected[name]) != encoded(case)]
+    assert not mismatches, f'{mismatches}: differ from Python; regenerate core vectors'
 
 
 def main():

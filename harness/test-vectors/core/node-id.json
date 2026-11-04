@@ -458,6 +458,98 @@
    }
   },
   {
+   "expected": [
+    true,
+    true,
+    true,
+    false,
+    false,
+    false,
+    false
+   ],
+   "id": "selects-file-prefix",
+   "input": {
+    "collected": [
+     "tests/test_value.py",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::TestValue::test_case[one]",
+     "tests/test_value.pyx::test_value",
+     "tests/test_value.py_extra::test_value",
+     "tests/test_value.py/other.py::test_value",
+     "tests/test_values.py::test_value"
+    ],
+    "op": "selects",
+    "requested": "tests/test_value.py"
+   }
+  },
+  {
+   "expected": {
+    "value": null
+   },
+   "id": "exactly-twenty",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_0.py",
+     "tests/test_1.py",
+     "tests/test_2.py",
+     "tests/test_3.py",
+     "tests/test_4.py",
+     "tests/test_5.py",
+     "tests/test_6.py",
+     "tests/test_7.py",
+     "tests/test_8.py",
+     "tests/test_9.py",
+     "tests/test_10.py",
+     "tests/test_11.py",
+     "tests/test_12.py",
+     "tests/test_13.py",
+     "tests/test_14.py",
+     "tests/test_15.py",
+     "tests/test_16.py",
+     "tests/test_17.py",
+     "tests/test_18.py",
+     "tests/test_19.py"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "not a repo-relative pytest file or node ID: 'tests/test_*.py'"
+   },
+   "id": "star-path",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_*.py"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "not a repo-relative pytest file or node ID: 'tests/test_?.py'"
+   },
+   "id": "question-path",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test_?.py"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "error": "not a repo-relative pytest file or node ID: 'tests/test:case.py'"
+   },
+   "id": "colon-path",
+   "input": {
+    "op": "always-tests",
+    "tests": [
+     "tests/test:case.py"
+    ]
+   }
+  },
+  {
    "expected": {
     "error": "always_tests must list repo-relative pytest files or node IDs"
    },

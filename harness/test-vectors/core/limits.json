@@ -618,6 +618,36 @@
   },
   {
    "expected": {
+    "collection_bytes": 4194304,
+    "largest_phase_bytes": 9214,
+    "validation": {
+     "value": null
+    }
+   },
+   "id": "collection-boundary-0",
+   "input": {
+    "count": 4096,
+    "op": "plan-size-collection",
+    "total_bytes": 4194304
+   }
+  },
+  {
+   "expected": {
+    "collection_bytes": 4194305,
+    "largest_phase_bytes": 9214,
+    "validation": {
+     "error": "Check plan exceeds the 4194304-byte report limit; reduce the selected tests or parameter cases."
+    }
+   },
+   "id": "collection-boundary-1",
+   "input": {
+    "count": 4096,
+    "op": "plan-size-collection",
+    "total_bytes": 4194305
+   }
+  },
+  {
+   "expected": {
     "value": null
    },
    "id": "check-plan-0",
@@ -883,6 +913,42 @@
       {
        "delay_seconds": 1,
        "target": "pkg.fn"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "error": "a patch target must be a dotted module attribute: 'pkg.f\u0301'"
+   },
+   "id": "target-pkg.f\u0301",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.f\u0301"
+      }
+     ],
+     "symptom": "delay"
+    },
+    "op": "forcing"
+   }
+  },
+  {
+   "expected": {
+    "error": "a patch target must be a dotted module attribute: 'pkg.f\\u200c'"
+   },
+   "id": "target-pkg.f\u200c",
+   "input": {
+    "forcing": {
+     "patches": [
+      {
+       "delay_seconds": 1,
+       "target": "pkg.f\u200c"
       }
      ],
      "symptom": "delay"
