@@ -3015,7 +3015,7 @@ fn advance_node(
         final(node).credit.added == old(node).credit.added,
         final(node).credit.spent == old(node).credit.spent,
         !result ==> *final(node) == *old(node) && *final(next_ticket) == *old(next_ticket),
-] {
+] proof [reveal(ranks::distance); reveal(ranks::pending_rank);] {
     let n = *node;
     if n.phase.is_closed() {
         return false;
