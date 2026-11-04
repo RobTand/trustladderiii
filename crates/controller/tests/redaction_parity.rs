@@ -70,7 +70,7 @@ fn matches_python_on_the_shared_matrix() {
 fn matches_python_on_all_planted_forms() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/tests");
     let output = python_command().args(["-I", "-c",
-            "import json,sys; sys.path.insert(0,sys.argv[1]); from tracing_forms import FORMS,PLANTED,PLANTED_LINES; from tracing_forms3 import FORMS as MORE; print(json.dumps([text for _,text,*_ in FORMS+MORE]+[text for text,_ in PLANTED+PLANTED_LINES]))"])
+            "import json,sys; sys.path.insert(0,sys.argv[1]); from redaction_branches import original_inputs,branch_inputs; print(json.dumps(original_inputs()+branch_inputs()))"])
             .arg(directory).output().unwrap();
     assert!(output.status.success());
     let inputs: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();

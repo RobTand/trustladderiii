@@ -4,7 +4,11 @@ mod compatibility;
 
 use fancy_regex::Regex;
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, process::Command, sync::LazyLock};
+use std::{
+    collections::{BTreeSet, HashMap},
+    process::Command,
+    sync::LazyLock,
+};
 
 fn policy() -> Value {
     serde_json::from_str(include_str!("../src/redaction/policy.json")).unwrap()
@@ -64,15 +68,21 @@ fn cases() -> &'static Value {
 fn check_predicates(section: &str) {
     let classes = classes();
     let mut failures = Vec::new();
+    let mut cache = HashMap::new();
     for case in cases()[section].as_array().unwrap() {
-        let translated =
-            compatibility::translate(case["pattern"].as_str().unwrap(), &classes).unwrap();
-        let pattern = match case["mode"].as_str().unwrap() {
-            "full" => format!(r"\A(?:{translated})\z"),
-            "match" => format!(r"\A(?:{translated})"),
-            _ => translated,
-        };
-        let regex = Regex::new(&pattern).unwrap();
+        let key = (
+            case["pattern"].as_str().unwrap(),
+            case["mode"].as_str().unwrap(),
+        );
+        let regex = cache.entry(key).or_insert_with(|| {
+            let translated = compatibility::translate(key.0, &classes).unwrap();
+            let pattern = match key.1 {
+                "full" => format!(r"\A(?:{translated})\z"),
+                "match" => format!(r"\A(?:{translated})"),
+                _ => translated,
+            };
+            Regex::new(&pattern).unwrap()
+        });
         let capture = regex.captures(case["text"].as_str().unwrap()).unwrap();
         let actual = capture.map_or(Value::Null, |capture| {
             let mut result = serde_json::Map::new();

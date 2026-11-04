@@ -51,7 +51,7 @@ pub(super) struct Policy {
 
 pub(super) fn policy() -> Policy {
     Policy {
-        schema_version: 1,
+        schema_version: 2,
         unicode_version: "16.0.0",
         characters: super::unicode::ranges(),
         regex: BTreeMap::from([

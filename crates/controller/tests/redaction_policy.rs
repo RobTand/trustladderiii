@@ -95,3 +95,18 @@ ordinary log line
         redaction::text(input).unwrap()
     );
 }
+
+/// #753 security review: the worker build pins the generated JSON identity and contract.
+#[test]
+fn worker_identity_matches_the_rust_build() {
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/src/tl3_workers");
+    assert_eq!(
+        redaction::generated_policy(),
+        std::fs::read_to_string(directory.join("policy.json")).unwrap()
+    );
+    assert_eq!(
+        redaction::generated_policy_identity(),
+        std::fs::read_to_string(directory.join("_policy_identity.py")).unwrap()
+    );
+}

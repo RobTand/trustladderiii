@@ -79,6 +79,7 @@ py_library(
     srcs = [
         "tl3_workers/__init__.py",
         "tl3_workers/__main__.py",
+        "tl3_workers/_policy_identity.py",
         "tl3_workers/classifier_eval.py",
         "tl3_workers/contracts.py",
         "tl3_workers/diff.py",
@@ -136,4 +137,13 @@ py_library(
         "@tl3_pip//sqlparse",  # keep: imported dynamically by MLflow tracing
         "@tl3_pip//tiktoken",
     ],
+)
+
+filegroup(
+    name = "redaction_contract",
+    srcs = [
+        "tl3_workers/_policy_identity.py",
+        "tl3_workers/policy.json",
+    ],
+    visibility = ["//visibility:public"],
 )

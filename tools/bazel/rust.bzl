@@ -90,8 +90,9 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
-    "test_test_redaction_parity": ["//workers/tests:tracing_forms", "//workers/tests:tracing_forms3"],
+    "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
         "//harness:project_files",
         "//workers/tests:worker_process",

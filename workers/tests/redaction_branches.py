@@ -36,7 +36,8 @@ def branch_inputs():
     inputs = providers + [
         'Private-Lines: 1\n' + alnum + '\nPrivate-MAC: fixture\n',
         'eyJfixture.eyJfixture.signature', '123456789:AA' + alnum,
-        '.example.invalid\tTRUE\t/\tFALSE\t0\tfixture\t' + FAKE,
+        *['.example.invalid\t' + a + '\t/\t' + b + '\t0\tfixture\t' + FAKE
+          for a in ['TRUE', 'FALSE'] for b in ['TRUE', 'FALSE']],
         '#HttpOnly_.example.invalid\tTRUE\t/\tFALSE\t0\tfixture\t' + FAKE,
         *['$' + kind + '$salt$' + alnum for kind in ['apr1', '1', '2', '5', '6', 'y', 'gy', '7']],
         '$2b$12$' + alnum[:53],
@@ -112,7 +113,9 @@ def instrument(pattern):
             result.append('(?P<' + name + '>' + arm + ')')
         return '|'.join(result)
 
-    translated = prefix + expression()
+    body = expression()
+    labels.append('coverage753_whole')
+    translated = prefix + '(?P<coverage753_whole>' + body + ')'
     assert index == len(pattern)
     return translated, labels
 
@@ -191,7 +194,12 @@ def coverage_cases(policy):
         instrumented, branches = instrument(pattern)
         regex = re.compile(instrumented)
         witnesses = {}
+        original = re.compile(pattern)
         for text in inputs:
+            before = [(m.span(), m.groupdict()) for m in original.finditer(text)]
+            after = [(m.span(), {key: m[key] for key in original.groupindex})
+                     for m in regex.finditer(text)]
+            assert before == after, 'coverage instrumentation changed pattern ' + str(index)
             for match in regex.finditer(text):
                 for branch in branches:
                     if match[branch] is not None:

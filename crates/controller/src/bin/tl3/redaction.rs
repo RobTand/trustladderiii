@@ -15,9 +15,21 @@ pub fn run(command: &str, args: &[String]) -> Result<(), Box<dyn std::error::Err
         ("redaction-policy", []) => {
             io::stdout().write_all(tl3_controller::redaction::generated_policy().as_bytes())?;
         }
-        ("redaction-policy", [flag, file]) if flag == "--check" || flag == "--output" => {
-            let expected = tl3_controller::redaction::generated_policy();
-            if flag == "--check" {
+        ("redaction-policy", [flag, file])
+            if [
+                "--check",
+                "--output",
+                "--identity-check",
+                "--identity-output",
+            ]
+            .contains(&flag.as_str()) =>
+        {
+            let expected = if flag.starts_with("--identity-") {
+                tl3_controller::redaction::generated_policy_identity()
+            } else {
+                tl3_controller::redaction::generated_policy()
+            };
+            if flag.ends_with("check") {
                 if std::fs::read_to_string(Path::new(file))? != expected {
                     return Err("redaction policy drift; regenerate with tl3 redaction-policy --output FILE".into());
                 }
@@ -27,7 +39,7 @@ pub fn run(command: &str, args: &[String]) -> Result<(), Box<dyn std::error::Err
         }
         _ => {
             return Err(
-                "usage: tl3 redact | redaction-policy [--check FILE | --output FILE]".into(),
+                "usage: tl3 redact | redaction-policy [--check FILE | --output FILE | --identity-check FILE | --identity-output FILE]".into(),
             );
         }
     }
