@@ -164,10 +164,16 @@ impl World {
             } }
             return Footprint::inline(bits);
         }
-        if let Some(index) = self.file_sets.iter().position(|set| *set == files) {
-            return Footprint(Repr::Interned(index));
-        }
-        let index = self.file_sets.len();
+        let mut index = 0usize;
+        kernel_while! { (index < self.file_sets.len()) [
+            invariant index <= self.file_sets.len(), ordered_table(*self),
+            decreases self.file_sets.len() - index,
+        ] {
+            if self.file_sets[index] == files {
+                return Footprint(Repr::Interned(index));
+            }
+            index += 1;
+        } }
         self.file_sets.push(files);
         Footprint(Repr::Interned(index))
     }

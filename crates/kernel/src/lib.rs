@@ -2137,6 +2137,8 @@ fn end_operation(m: &mut Node) -> (result: ()) [
         final(m).ticket == old(m).ticket,
         final(m).footprint == old(m).footprint,
         final(m).last_cmd == old(m).last_cmd,
+        final(m).fx_failures == old(m).fx_failures,
+        final(m).fx_incidents == old(m).fx_incidents,
 
 ] {
     abandon_operation(m);
@@ -2447,7 +2449,38 @@ fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
 }
 }
 
-fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Outbox) {
+kernel_fn! {
+/// Reply rows / #771: stale operations stutter, invalid replies use the bounded
+/// failure handler, and successful replies use the actual transition bodies.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+        footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
+        footprint::ordered_table(*old(w)),
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start as int <= old(w).nodes@[i as int].credit.start as int + CREDIT_START_STEP_BUDGET,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        footprint::ordered_table(*final(w)),
+        final(w).file_sets@.len() >= old(w).file_sets@.len(),
+        forall|j: int| 0 <= j < old(w).file_sets@.len()
+            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] proof [reveal(reply_bounds);] {
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
@@ -2475,6 +2508,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         Reply::MakerNeedsFiles { files, fits } => reply_files(w, i, files, fits, out),
         _ => reply_transition(w, i, reply, out),
     }
+}
 }
 
 kernel_fn! {
