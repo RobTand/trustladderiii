@@ -2077,8 +2077,7 @@ kernel_fn! {
     }
 }
 
-fn close(w: &mut World, i: usize, outcome: Outcome, out: &mut Outbox) {
-    let m = &mut w.nodes[i];
+fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) {
     m.phase = Phase::Closed(outcome);
     m.pos = 0;
     m.ticket = None;
@@ -2121,7 +2120,10 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool, out: &mut Outbox) {
 }
 
 fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
-    let m = &mut w.nodes[i];
+    emit_node(&mut w.nodes[i], i, kind, out);
+}
+
+fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) {
     let seq = m.next_seq;
     m.next_seq += 1;
     m.effect = Some(InFlight {
@@ -2905,14 +2907,56 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
 }
 
 /// One internal transition for node `i`, if the facts allow one.
+/// Read scheduling predicates at the same branches as the local transition.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Clone, Copy)]
+struct AdvanceContext {
+    node: usize,
+    admit: bool,
+    pool: bool,
+    slot: bool,
+}
+
 fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
     let n = &w.nodes[i];
+    let mut context = AdvanceContext {
+        node: i,
+        admit: false,
+        pool: false,
+        slot: false,
+    };
+    if !n.phase.is_closed() && !n.waiting_incident && n.effect.is_none() {
+        match n.current() {
+            Some(Item::Admit) if !n.paused => {
+                context.admit = w.dependencies_delivered(NodeId(i as u64)) && admits(w, n.repo);
+            }
+            Some(Item::Start(_)) if !n.paused && n.ticket.is_some() => {
+                context.pool = pool_free(w) && first_in_line(w, i);
+            }
+            Some(Item::Slot)
+                if matches!(n.phase, Phase::Ready(_)) && !n.paused && n.ticket.is_some() =>
+            {
+                context.slot = slot_free(w, i) && first_in_line(w, i);
+            }
+            _ => {}
+        }
+    }
+    advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out)
+}
+
+fn advance_node(
+    node: &mut Node,
+    next_ticket: &mut u64,
+    context: AdvanceContext,
+    out: &mut Outbox,
+) -> bool {
+    let n = *node;
     if n.phase.is_closed() {
         return false;
     }
     if n.waiting_incident {
         if n.ticket.is_some() {
-            w.nodes[i].ticket = None;
+            node.ticket = None;
             return true;
         }
         return false;
@@ -2923,11 +2967,11 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
     let Some(item) = n.current() else {
         return match n.phase {
             Phase::Publishing => {
-                set_phase(&mut w.nodes[i], Phase::Queued);
+                set_phase(node, Phase::Queued);
                 true
             }
             Phase::Stopping(outcome) if n.question.is_none() => {
-                close(w, i, outcome, out);
+                close_node(node, context.node, outcome, out);
                 true
             }
             _ => false,
@@ -2936,56 +2980,56 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
     match item {
         Item::Do(kind) => {
             if n.paused {
-                return pause(w, i);
+                return pause_node(node);
             }
-            emit(w, i, kind, out);
+            emit_node(node, context.node, kind, out);
             true
         }
         Item::Start(role) => {
             if n.paused {
-                return pause(w, i);
+                return pause_node(node);
             }
             if n.ticket.is_none() {
-                take_ticket(w, i);
+                take_ticket_node(node, next_ticket);
                 return true;
             }
-            if pool_free(w) && first_in_line(w, i) {
-                let m = &mut w.nodes[i];
+            if context.pool {
+                let m = &mut *node;
                 m.ticket = None;
                 m.pool = true;
                 m.run = Some(m.generation);
                 m.pos += 1;
-                emit(w, i, EffectKind::StartRun(role), out);
+                emit_node(node, context.node, EffectKind::StartRun(role), out);
                 return true;
             }
             false
         }
         Item::StartChecks => {
             if n.paused {
-                return pause(w, i);
+                return pause_node(node);
             }
-            let m = &mut w.nodes[i];
+            let m = &mut *node;
             m.job = Some(m.generation);
             m.pos += 1;
-            emit(w, i, EffectKind::SubmitChecks, out);
+            emit_node(node, context.node, EffectKind::SubmitChecks, out);
             true
         }
         Item::StartRebase => {
             if n.paused {
-                return pause(w, i);
+                return pause_node(node);
             }
-            let m = &mut w.nodes[i];
+            let m = &mut *node;
             m.run = Some(m.generation);
             m.pos += 1;
-            emit(w, i, EffectKind::StartRebase, out);
+            emit_node(node, context.node, EffectKind::StartRebase, out);
             true
         }
         Item::Await | Item::Merge | Item::Answer => false,
         Item::Admit => {
-            if n.paused || !w.dependencies_delivered(NodeId(i as u64)) || !admits(w, n.repo) {
+            if n.paused || !context.admit {
                 return false;
             }
-            let m = &mut w.nodes[i];
+            let m = &mut *node;
             m.credit.withheld = false;
             m.planning_started = true;
             set_phase(m, Phase::Planning { must_split: false });
@@ -2997,17 +3041,17 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
             };
             if n.paused {
                 if n.ticket.is_some() {
-                    w.nodes[i].ticket = None;
+                    node.ticket = None;
                     return true;
                 }
                 return false;
             }
             if n.ticket.is_none() {
-                take_ticket(w, i);
+                take_ticket_node(node, next_ticket);
                 return true;
             }
-            if slot_free(w, i) && first_in_line(w, i) {
-                let m = &mut w.nodes[i];
+            if context.slot {
+                let m = &mut *node;
                 m.holds = true;
                 set_phase(m, r.phase());
                 return true;
@@ -3015,7 +3059,7 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
             false
         }
         Item::Release => {
-            let m = &mut w.nodes[i];
+            let m = &mut *node;
             m.holds = false;
             m.pos += 1;
             true
@@ -3032,14 +3076,14 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
                 _ => false,
             };
             if gone {
-                let m = &mut w.nodes[i];
+                let m = &mut *node;
                 if kind == EffectKind::StopRun {
                     m.pool = false;
                 }
                 m.pos += 1;
                 return true;
             }
-            emit(w, i, kind, out);
+            emit_node(node, context.node, kind, out);
             true
         }
     }
@@ -3047,14 +3091,13 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
 
 /// A paused leaf starts nothing new. In a holding phase it gives back its slot
 /// and files and waits in Ready, resuming at the step it reached.
-fn pause(w: &mut World, i: usize) -> bool {
-    let m = &mut w.nodes[i];
-    if m.phase.holding()
-        && let Some(r) = m.phase.resume()
-    {
-        m.holds = false;
-        set_phase(m, Phase::Ready(r));
-        return true;
+fn pause_node(m: &mut Node) -> bool {
+    if m.phase.holding() {
+        if let Some(r) = m.phase.resume() {
+            m.holds = false;
+            set_phase(m, Phase::Ready(r));
+            return true;
+        }
     }
     if m.ticket.is_some() {
         m.ticket = None;
@@ -3063,10 +3106,10 @@ fn pause(w: &mut World, i: usize) -> bool {
     false
 }
 
-fn take_ticket(w: &mut World, i: usize) {
-    let t = w.next_ticket;
-    w.next_ticket += 1;
-    w.nodes[i].ticket = Some(t);
+fn take_ticket_node(node: &mut Node, next_ticket: &mut u64) {
+    let t = *next_ticket;
+    *next_ticket += 1;
+    node.ticket = Some(t);
 }
 
 fn pool_free(w: &World) -> bool {
