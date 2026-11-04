@@ -840,11 +840,24 @@ from 0.45 s and 67 MB with `mlflow-tracing`. The role runs no Deep Agents graph.
   model's context in the calibration spike. A judge whose Feedback, or any
   ensemble member's, carries an error fails the run.
 - **Bounds (#486).** `make_judge` ignores effort and token budgets, so
-  `judges.configure` sets `MLFLOW_JUDGE_MAX_ITERATIONS` to 12 model turns per
-  judge. The whole run, every judge and MLflow call, gets the case file's
+  `judges.configure` sets `MLFLOW_JUDGE_MAX_ITERATIONS` to 48 model turns per
+  grade judge. The postmortem judge gets 47, reserving one tool-free turn for
+  reply repair. This conservative backstop is four times the original 12;
+  the recent MLflow artifacts lacked judge turn counts for calibration.
+  The whole-run deadline and per-call context fit remain the primary bounds.
+  The whole run, every judge and MLflow call, gets the case file's
   `deadline_secs` of wall clock (`limits.postmortem_deadline_secs`, 20 minutes
   by default). Past it, a `SIGALRM` raises `PostmortemDeadline`, and the
   controller fails the run with the `deadline` class.
+- **Judge diagnostics (#687).** Each grade and postmortem judge span carries
+  integer `tl3.judge.turn_count` and `tl3.judge.iteration_limit` attributes.
+  Turns count attempted model calls, including the final answer or failed call;
+  provider retries inside a call and the separate reply repair are excluded.
+  The run's `memory.json` stores the same integers in `judge_runs`, with a
+  `grade` or `postmortem` stage, on success and failure. Postmortem summaries
+  also retain the safe failure class for reconciliation and pause/status titles.
+  These diagnostic summaries do not enqueue Hindsight run records; postmortem
+  lessons still reach Hindsight through the stored result.
 - **Recommendations (#486).** TL1's rule holds: a recommendation's `target` is a
   file the release ships, as a path from the repository root, and its `before`
   text appears there exactly once. The role drops any other recommendation and

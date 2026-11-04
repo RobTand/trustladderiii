@@ -163,6 +163,11 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
     let Some(request) = read(&attempt.join("request.json"), 16 * 1024 * 1024)? else {
         return Ok(());
     };
+    // Postmortems keep a diagnostic sidecar, but their lessons reach Hindsight
+    // through the stored result rather than a second run record.
+    if request["role"] == "postmortem" {
+        return Ok(());
+    }
     let Some(context) = request.get("memory") else {
         return Ok(());
     };
