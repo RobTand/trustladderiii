@@ -102,6 +102,9 @@ tl3_py_test(
     deps = [
         ":conftest",
         "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//openai",
+        "@tl3_pip//pytest",
     ],
 )
 
