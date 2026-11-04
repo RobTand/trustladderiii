@@ -387,6 +387,10 @@ fn controller(fixture: &Fixture, clock: &FakeClock) -> tl3_controller::Controlle
     use tl3_controller::{Bootstrap, Controller, adapters, executor::Upstream};
     let mut registry = adapters::simulation(fixture._scratch.path()).unwrap();
     registry.register(Upstream::Workers, fixture.supervisor().clone());
+    registry.register(
+        Upstream::GitHub,
+        IncidentRecorder(Arc::new(Mutex::new(Vec::new()))),
+    );
     Controller::open_with_clock(
         Store::open(&fixture.settings).unwrap(),
         registry,
@@ -518,14 +522,28 @@ fn failed_feed_still_retires_worker_sessions_and_returns_the_feed_error() {
 #[test]
 fn repeated_incident_for_the_same_memory_requires_rob_and_cannot_probe_clear() {
     let mut fixture = Fixture::new(false);
+    fixture.config.github.operations = Some(tl3_config::OperationsIssue {
+        owner: "owner".into(),
+        name: "operations".into(),
+        installation_id: 3,
+        number: 17,
+    });
     fixture.barrier();
     let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
     let mut ctl = controller(&fixture, &clock);
     drain(&mut ctl);
     let first = hindsight_incident(&mut ctl);
     assert_eq!(first.value["needs_rob"], false);
-    // Retain a closed historical incident for this still-pending operation.
-    fixture.sql().execute("UPDATE tl3_world SET value = jsonb_set(value, '{open}', 'false') WHERE table_name = 'incidents' AND row_id = $1", &[&first.id]).unwrap();
+    clear_from_operations(&fixture, &mut ctl, &first.id, 7731);
+    drain(&mut ctl);
+    assert!(
+        ctl.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|row| row.table != "incidents" || row.value["open"] != true),
+        "Rob's clearance alone is not a new failure"
+    );
     clock.0.set(clock.0.get() + 120_000);
     ctl.look_due().unwrap();
     fixture.barrier();
@@ -564,6 +582,54 @@ fn repeated_incident_for_the_same_memory_requires_rob_and_cannot_probe_clear() {
         fixture.attempts.try_recv().is_err(),
         "an explicit memory retry cannot bypass Rob's clearance"
     );
+    fixture.runtime.block_on(
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&fixture._server),
+    );
+    fixture
+        .store
+        .record_memory_curation(
+            "curation-773",
+            &tl3_store::MemoryCuration {
+                memory_id: "a-different-memory".into(),
+                state: "valid",
+                verdict: "accepted",
+                source: "fixture".into(),
+                request: None,
+                run: None,
+                claim: None,
+                reason: "independent curation".into(),
+                evidence: json!({}),
+            },
+        )
+        .unwrap();
+    fixture.retry_signal();
+    fixture.retire();
+    fixture.barrier();
+    assert!(
+        fixture.store.pending_memory_curations().unwrap().is_empty(),
+        "an independent curation is acknowledged"
+    );
+    assert_eq!(
+        fixture.store.pending_memory_count().unwrap(),
+        1,
+        "curation-before-retain cannot bypass the retained operation's Rob hold"
+    );
+    assert!(fixture.attempts.try_recv().is_err());
+    clear_from_operations(&fixture, &mut ctl, &second.id, 7732);
+    drain(&mut ctl);
+    assert!(
+        ctl.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|row| row.table != "incidents" || row.value["open"] != true)
+    );
+    ctl.look_now().unwrap();
+    fixture.acknowledged();
+    drain(&mut ctl);
+    assert_eq!(fixture.attempts.try_recv(), Ok(true));
 }
 
 /// #773 / Q7: a different operation starts its own incident lineage.
@@ -595,4 +661,36 @@ fn a_different_memory_operation_gets_its_own_first_incident() {
         "distinct operation UUIDs have distinct lineages"
     );
     assert_eq!(second.value["needs_rob"], false);
+}
+
+fn clear_from_operations(
+    fixture: &Fixture,
+    controller: &mut tl3_controller::Controller,
+    incident: &str,
+    comment: u64,
+) {
+    controller
+        .observe(
+            &format!("operations-clear-{comment}"),
+            tl3_controller::executor::Observation::GitHubComment {
+                repository: tl3_controller::Repository {
+                    owner: "owner".into(),
+                    name: "operations".into(),
+                    installation: 3,
+                },
+                issue: 17,
+                comment: tl3_github::Comment {
+                    id: comment,
+                    body: format!("clear incident {incident}"),
+                    user: tl3_github::Actor {
+                        id: fixture.config.github.rob.id,
+                        login: "rob".into(),
+                    },
+                    created_at: chrono::DateTime::UNIX_EPOCH,
+                    updated_at: chrono::DateTime::UNIX_EPOCH,
+                    issue_url: "https://api.github.com/repos/owner/operations/issues/17".into(),
+                },
+            },
+        )
+        .unwrap();
 }
