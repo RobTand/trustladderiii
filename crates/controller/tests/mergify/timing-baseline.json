@@ -1,0 +1,54 @@
+{
+  "commit": "7e3349f48d78f070566762ff2b4d7460af756daf",
+  "invocation": "https://app.buildbuddy.io/invocation/3b0d8727-f242-4794-ba0e-046d7be474b8",
+  "shard_seconds": [
+    116.68695046500216,
+    101.86984369903803,
+    208.62917125400008,
+    71.86610248299985,
+    109.26536993699847,
+    140.94382492300065,
+    55.23211561800008,
+    124.9966191200001
+  ],
+  "slowest": {
+    "tl3-controller/mergify::dispatch_rechecks_head_conditions_and_human_decisions": 64.0345168749991,
+    "tl3-controller/mergify::ci_evidence_outside": 54.88248588400029,
+    "tl3-controller/mergify::ci_evidence_multiple-drafts": 30.274349454999992,
+    "tl3-controller/mergify::generic_dequeue_dirty_false_lazy_false": 24.068427071997576,
+    "tl3-controller/mergify::refused_or_unacknowledged_requeue_uses_bounded_existing_recovery": 23.486204742002883,
+    "tl3-controller/mergify::ci_evidence_unparsed": 22.27871347600012,
+    "tl3-controller/mergify::ci_evidence_repeat": 18.524194812000133,
+    "tl3-controller/mergify::generic_dequeue_dirty_true_lazy_true": 16.273659337952267,
+    "tl3-controller/mergify::unapproved_merge_does_not_wait_watch": 12.951422541999818,
+    "tl3-controller/mergify::generic_dequeue_dirty_true_lazy_false": 11.739792244,
+    "tl3-controller/mergify::ci_evidence_redelivery": 10.429551328998059,
+    "tl3-controller/mergify::ci_evidence_aggregate": 10.240848543999618,
+    "tl3-controller/mergify::missing_check_clock-missing": 8.929299680999975,
+    "tl3-controller/mergify::recorded_human_removal_before_first_dispatch_requires_explicit_resume": 8.828485078993253,
+    "tl3-controller/mergify::ci_evidence_pytest": 8.809658311016392
+  },
+  "reported_timeout": "https://app.buildbuddy.io/invocation/076af955-6d2e-4bfd-aa2d-10b31ce682f4",
+  "reported_completed_shard_seconds": [
+    42.81,
+    52.248,
+    41.661,
+    59.104,
+    96.181,
+    56.272,
+    393.693
+  ],
+  "reported_missing_shards": 1,
+  "red_commit": "f5e5b5bd36bc3569236ad5c16e4bdb023440f81e",
+  "red_invocation": "https://app.buildbuddy.io/invocation/008d191a-988e-4506-86f7-e50f40ae3d07",
+  "red_shard_seconds": [
+    164.858752551,
+    84.06932685399994,
+    55.36453856600565,
+    285.28835166300087,
+    56.9105699799984,
+    57.89385121399755,
+    92.49039885395905,
+    64.54672853900047
+  ]
+}

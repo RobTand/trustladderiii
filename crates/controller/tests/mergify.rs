@@ -516,17 +516,34 @@ fn queued_for(
     repos: &[tl3_config::Repository],
     config: Bootstrap,
 ) -> Controller {
+    queued_for_clock(settings, api, root, confirmed, repos, config, None)
+}
+fn queued_for_clock(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+    confirmed: bool,
+    repos: &[tl3_config::Repository],
+    config: Bootstrap,
+    clock: Option<head_checks::Clock>,
+) -> Controller {
     let repository = config.repos[0].clone();
     let mut registry = adapters::simulation(root).unwrap();
-    registry.register(
-        Upstream::Mergify,
-        api.adapter(&root.join("mergify"), 0)
-            .with_repositories(repos)
-            .unwrap()
-            .with_store(settings.clone()),
-    );
-    let mut controller =
-        Controller::open(Store::open(settings).unwrap(), registry, config).unwrap();
+    let mut adapter = api
+        .adapter(&root.join("mergify"), 0)
+        .with_repositories(repos)
+        .unwrap()
+        .with_store(settings.clone());
+    if let Some(clock) = &clock {
+        adapter = adapter.with_clock(clock.clone());
+    }
+    registry.register(Upstream::Mergify, adapter);
+    let store = Store::open(settings).unwrap();
+    let mut controller = match clock {
+        Some(clock) => Controller::open_with_clock(store, registry, config, clock),
+        None => Controller::open(store, registry, config),
+    }
+    .unwrap();
     controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
     controller
         .intake(LabelledIssue {
@@ -2666,7 +2683,7 @@ fn legacy_intent_ignores_completed_at() {
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--review-requeue") {
-        waiting_requeue::review();
+        waiting_requeue::review(None);
         let mut database = support::Database::start();
         for mode in ["no-acceptance", "reply-restricted", "refusal", "permission"] {
             requeue::scenario(&database.create(&format!("review_{mode}")), mode);
@@ -2676,7 +2693,7 @@ fn main() {
         return;
     }
     if std::env::args().nth(1).as_deref() == Some("--waiting-requeue") {
-        waiting_requeue::run();
+        waiting_requeue::run(None);
         println!("6 Mergify scenarios passed; no skips; no live upstream calls");
         return;
     }
@@ -2896,27 +2913,23 @@ fn main() {
         database.stop();
         return;
     }
-    // Main solo receipt 52ead699-eee6-4075-87af-78f664661a50, rounded seconds.
-    // The last two groups retain waiting_requeue's six- and three-marker fixtures.
+    // Maximum group/case times from red 375b069c and load trials
+    // 57b14abe, 20611f93 and 3359391c, rounded up to seconds.
+    // timings.py regenerates these weights from inventories and group timing logs.
+    // The final nine entries are individually sharded waiting-requeue cases.
     let seconds = [
-        1, 1, 1, 2, 1, 1, 1, 1, 3, 2, 2, 1, 2, 1, 1, 1, 2, 2, 1, 2, 1, 1, 1, 2, 1, 2, 3, 3, 1, 2,
-        2, 3, 2, 1, 1, 1, 1, 2, 1, 2, 2, 1, 2, 2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 2, 3,
-        2, 3, 2, 3, 2, 3, 3, 4, 3, 2, 3, 2, 3, 2, 4, 2, 2, 3, 2, 3, 4, 3, 2, 2, 1, 1, 2, 1, 2, 2,
-        2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 3, 3, 2, 2, 6, 2, 2, 2, 2, 2, 2, 1, 1, 2, 3, 3, 3, 2, 2, 1,
-        2, 2, 2, 2, 2, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 1, 2, 2, 2, 2, 2,
-        2, 2, 2, 2, 2, 2, 1, 2, 1, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 69, 15,
+        1, 14, 2, 3, 14, 2, 44, 22, 14, 15, 3, 29, 2, 26, 9, 45, 43, 25, 9, 27, 8, 4, 3, 7, 3, 17,
+        5, 6, 10, 5, 10, 15, 5, 8, 2, 2, 18, 3, 2, 4, 24, 7, 44, 31, 8, 24, 3, 2, 26, 6, 8, 9, 13,
+        6, 3, 4, 5, 18, 2, 11, 3, 3, 5, 10, 12, 16, 5, 49, 2, 56, 3, 27, 5, 9, 15, 9, 4, 10, 5, 11,
+        3, 3, 4, 3, 3, 2, 10, 10, 2, 2, 3, 3, 16, 3, 3, 42, 3, 11, 3, 4, 53, 6, 41, 6, 4, 5, 26, 5,
+        5, 28, 3, 8, 2, 6, 5, 9, 15, 47, 6, 5, 14, 4, 11, 4, 7, 6, 7, 28, 7, 35, 15, 21, 3, 18, 7,
+        3, 55, 5, 23, 5, 7, 7, 2, 4, 46, 8, 85, 4, 15, 83, 21, 7, 5, 5, 4, 3, 8, 68, 1, 14, 5, 23,
+        10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29,
     ];
     let groups: Vec<_> = seconds
         .iter()
         .enumerate()
-        .map(|(index, seconds)| {
-            let markers = match index {
-                174 => 6,
-                175 => 3,
-                _ => 1,
-            };
-            (index, markers, *seconds)
-        })
+        .map(|(index, seconds)| (index, 1, *seconds))
         .collect();
     let mut shard = support::scenario_shard::Shard::from_groups(&groups);
     let mut scenario_count = 0;
@@ -2925,8 +2938,13 @@ fn main() {
             let group = scenario_count;
             scenario_count += 1;
             shard.run(group, || {
+                let started = std::time::Instant::now();
                 scenario_progress(stringify!($call));
                 $call;
+                eprintln!(
+                    "mergify group {group}: {:.6}s",
+                    started.elapsed().as_secs_f64()
+                );
             });
         }};
     }
@@ -3259,10 +3277,10 @@ fn main() {
         ));
     }
     database.stop();
-    shard.run(scenario_count, waiting_requeue::run);
-    scenario_count += 1;
-    shard.run(scenario_count, waiting_requeue::review);
-    scenario_count += 1;
+    waiting_requeue::run(Some((&mut shard, scenario_count)));
+    scenario_count += 6;
+    waiting_requeue::review(Some((&mut shard, scenario_count)));
+    scenario_count += 3;
     assert_eq!(scenario_count, groups.len());
     shard.finish("Mergify");
 }

@@ -216,7 +216,20 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     .into();
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued_for(settings, &api, root.path(), true, &[], config.clone());
+    // CI evidence does not exercise allowance timers. Keep fixture work from
+    // accidentally triggering liveness probes when an executor is busy.
+    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
+        std::time::SystemTime::now(),
+    )));
+    let mut controller = queued_for_clock(
+        settings,
+        &api,
+        root.path(),
+        true,
+        &[],
+        config.clone(),
+        Some(clock.clone()),
+    );
     if mode != "missing-plan" {
         let snapshot = controller.snapshot().unwrap();
         let head = api.state.lock().unwrap().pull["head"]["sha"]
@@ -272,10 +285,16 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         registry.register(
             Upstream::Mergify,
             api.adapter(&root.path().join("mergify"), 0)
-                .with_store(settings.clone()),
+                .with_store(settings.clone())
+                .with_clock(clock.clone()),
         );
-        controller =
-            Controller::open(Store::open(settings).unwrap(), registry, config.clone()).unwrap();
+        controller = Controller::open_with_clock(
+            Store::open(settings).unwrap(),
+            registry,
+            config.clone(),
+            clock.clone(),
+        )
+        .unwrap();
         if mode == "redelivery" {
             failure(&api, mode, false);
             let before = api.state.lock().unwrap().get_paths.clone();

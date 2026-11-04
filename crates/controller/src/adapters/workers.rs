@@ -1072,15 +1072,13 @@ impl Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
-        // A postmortem's lessons reach Hindsight through its stored result,
-        // not as a run summary.
-        if !delivery.is_postmortem() {
-            request["memory"] = json!({
-                "summary_file": attempt.join("memory.json"),
-                "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
-                "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
-            });
-        }
+        // Every run needs the diagnostic sidecar, including postmortems whose
+        // failed exit is reconciled from its safe cause in memory.json (#687).
+        request["memory"] = json!({
+            "summary_file": attempt.join("memory.json"),
+            "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+            "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
+        });
         request["trace"]["log"] = json!(attempt.join(trace::LOG));
         request["trace"]["wake"] = json!(self.settings.runs.join(trace::HELD).join(trace::WAKE));
         let python = release_python(&self.settings.python)?;
