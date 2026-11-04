@@ -82,7 +82,7 @@ impl Violation {
 
 /// Return the first violation, in the worker's repair-message order.
 pub fn decide(c: Classification) -> Result<(), Violation> {
-    use Violation::*;
+    use self::Violation::*;
     if c.reconcile_issue || c.kind == Kind::Reconcile {
         return if !c.reconcile_issue || c.kind != Kind::Reconcile {
             Err(ReconcileRequired)
