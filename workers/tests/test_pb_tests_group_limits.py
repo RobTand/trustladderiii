@@ -65,6 +65,9 @@ def test_full_file_base_keeps_all_partition_verdicts_and_receipts(rehearsal):
         assert list(group['proof']['observer_sha256']) == selected
     assert result['groups'][0]['proof']['declaration'] == checks[0]['proof']
     assert result['groups'][0]['totals']['failed'] == 1
+    assert any(test['outcome'] == 'failed' and MESSAGE in test['message'] for test in result['tests'])
+    assert any(test['outcome'] == 'failed' and MESSAGE in test['message']
+               for test in result['groups'][0]['tests'])
     assert 'Truncated' in result['note']
 
 

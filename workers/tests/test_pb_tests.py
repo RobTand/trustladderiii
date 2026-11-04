@@ -524,7 +524,8 @@ def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monk
     assert result['origin'] == 'test_run'
     assert result['execution'] == {'outcome': 'unknown_incomplete', 'phase': 'unknown',
                                    'termination_reason': 'incomplete_report', 'test_started': False}
-    assert result['selectors_omitted'] + len(result['selectors']) == len(selected)
+    from tl3_harness.selector_identity import selection_matches
+    assert selection_matches(result['selectors'], selected)
     assert len(json.dumps(result).encode()) <= SUMMARY_BYTES
     assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
 

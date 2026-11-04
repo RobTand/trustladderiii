@@ -51,27 +51,49 @@ def _summary_limit(result):
     return diagnostic
 
 
+def _summaries(result):
+    yield result
+    for group in result.get('groups', ()):
+        yield from _summaries(group)
+    if 'base' in result:
+        yield from _summaries(result['base'])
+
+
+def _shrink(summaries):
+    for summary in summaries:
+        selected = summary.get('selectors')
+        compact = selector_identity(selected) if isinstance(selected, list) else None
+        if compact is not None and len(json.dumps(compact)) < len(json.dumps(selected)):
+            summary['selectors'] = compact
+            return summary
+    # Preserve failure details ahead of passing entries across the whole envelope.
+    for passing_only in (True, False):
+        for summary in summaries:
+            tests = summary.get('tests', ())
+            index = next((i for i in reversed(range(len(tests)))
+                          if not passing_only or tests[i]['outcome'] == 'passed'), None)
+            if index is not None:
+                tests.pop(index)
+                return summary
+    for summary in summaries:
+        for run in reversed(summary.get('runs', ())):
+            if run.get('failed'):
+                run['failed'].pop()
+                return summary
+    return None
+
+
 def bounded(result, *, limit=SUMMARY_BYTES - 2048):
-    # Bound the envelope after metadata is attached. Digest the full selection
-    # before dropping result entries; the prefix is display text, never proof.
+    # Worker base runs combine separately bounded groups. Bound their display
+    # entries too, without changing any group's proof, totals or receipts.
+    summaries = list(_summaries(result))
     size = len(json.dumps(result).encode())
     while size > limit:
-        selected = result.get('selectors')
-        compact = selector_identity(selected) if isinstance(selected, list) and result['status'] == 'completed' else None
-        if compact is not None and len(json.dumps(compact)) < len(json.dumps(selected)):
-            result['selectors'] = compact
-        elif result['status'] != 'completed' and isinstance(selected, list) and selected:
-            result['selectors'].pop()
-            result['selectors_omitted'] = result.get('selectors_omitted', 0) + 1
-        elif result['tests']:
-            passing = next((i for i in reversed(range(len(result['tests'])))
-                            if result['tests'][i]['outcome'] == 'passed'), -1)
-            result['tests'].pop(passing)
-        elif any(run.get('failed') for run in result.get('runs', ())):
-            next(run for run in reversed(result['runs']) if run.get('failed'))['failed'].pop()
-        else:
+        changed = _shrink(summaries)
+        if changed is None:
             return _summary_limit(result)
         result['note'] = 'Truncated: selectors were compacted or entries were cut. Totals include all results.'
+        changed['note'] = result['note']
         reduced = len(json.dumps(result).encode())
         # The encoded byte count is a decreasing natural number, including the
         # truncation note. Every iteration shrinks it or exits without proof.
