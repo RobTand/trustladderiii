@@ -135,3 +135,57 @@ def test_t613_missing_contract_has_a_safe_repair_diagnostic():
         preflight({'tool_capabilities': [CAPABILITY]}, {'kind': 'brief'})
     assert failure_tags(caught.value)['failure_message'] == (
         'Return evidence_contract with source requirements and separately marked method choices.')
+
+
+def planner_prompt():
+    return " ".join(files("tl3_workers").joinpath("prompts", "planner.md").read_text().split())
+
+
+def test_planner_prompt_states_the_obligation_to_check_mapping():
+    # PQ #3299 (#648 PR 3): the planner cited observer-new goals on regression checks and on
+    # existing tests it edited, so proof applicability refused the completed plan.
+    prompt = planner_prompt()
+    assert "Cite that goal only on demonstrating checks." in prompt
+    assert ("Never cite it on a regression or behavior-preserving check, on a check with a forcing "
+            "or declared_symptom, or in rehearse_forcing goal_ids.") in prompt
+    assert "lists every obligation subject in proof.subjects and gives proof.red_message" in prompt
+    assert "every node_id of that check is a new test that the maker adds" in prompt
+    assert "An existing test cannot prove it, also when the plan edits it." in prompt
+
+
+def _pq3299_shaped_plan(cite_obligations_everywhere):
+    """Goal 1 has an observer-new obligation; goal 2 keeps edited tests green."""
+    goals = [{"description": "Add the adapter.", "verification": "test"},
+             {"description": "Migrate submit.", "verification": "test",
+              "proof_obligation": {"kind": "assertion", "observer": "new",
+                                   "subjects": ["tools/dispatch.py::Gateway::submit"],
+                                   "source": "issue.body", "quote": "Migrate submit."}},
+             {"description": "Keep the named existing tests green.", "verification": "review"}]
+    proof = {"subjects": ["tools/dispatch.py::Gateway::submit"], "observer_support": [],
+             "red_message": "submit returned a key the record did not name"}
+    obligation = [1] if cite_obligations_everywhere else []
+    checks = [
+        {"kind": "demonstrating", "node_ids": ["tests/test_new.py::test_submit_reads_the_record"],
+         "goal_ids": [0, 1], "proof": proof},
+        {"kind": "demonstrating", "node_ids": ["tests/test_old.py::test_edited_producer"],
+         "goal_ids": [2, *obligation], "proof": proof},
+        {"kind": "regression", "node_ids": ["tests/test_old.py::test_unchanged_verdict"],
+         "goal_ids": [2, *obligation]},
+    ]
+    return goals, checks
+
+
+@pytest.mark.parametrize("follows_prompt", [False, True])
+def test_the_prompt_mapping_is_what_proof_applicability_accepts(follows_prompt):
+    from tl3_workers.evidence import proof_applicability
+
+    goals, checks = _pq3299_shaped_plan(cite_obligations_everywhere=not follows_prompt)
+    on_base = {"tests/test_old.py::test_edited_producer", "tests/test_old.py::test_unchanged_verdict"}
+    errors = proof_applicability(goals, checks, on_base.__contains__)
+    if follows_prompt:
+        assert errors == []
+    else:
+        # The two refusals PQ #3299's planner trace received.
+        assert any("requires a new deterministic observer; an existing base test is insufficient" in e
+                   for e in errors), errors
+        assert any("requires an assertion observer" in e for e in errors), errors
