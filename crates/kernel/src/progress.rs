@@ -266,7 +266,7 @@ spec fn successful_reply_input(n: Node, reply: Reply) -> bool {
 verus! {
 /// Question rows / #771: the selector supplies exactly this permitted answer.
 spec fn answer_progress_input(n: Node, id: u64, answer: Answer) -> bool {
-    !n.paused && !n.waiting_incident && n.effect.is_none()
+    (!n.paused || n.phase is Stopping) && !n.waiting_incident && n.effect.is_none()
         && match n.question {
             Some(q) => q.id == id && answer == successful_answer(q.kind),
             None => false,
@@ -276,7 +276,7 @@ spec fn answer_progress_input(n: Node, id: u64, answer: Answer) -> bool {
 /// Command rows / #771: these are the selector's three command cases.
 spec fn command_progress_input(n: Node, command: Command) -> bool {
     (n.paused && !(n.phase is Stopping || n.phase is Closed) && command == Command::Resume)
-        || (!n.paused && !n.waiting_incident && n.effect.is_none() && match command {
+        || ((!n.paused || n.phase is Stopping) && !n.waiting_incident && n.effect.is_none() && match command {
             Command::Answer { question, answer } => answer_progress_input(n, question, answer),
             Command::ChangeRequest => n.phase == Phase::Unplanned && n.question.is_none(),
             _ => false,
@@ -324,5 +324,52 @@ proof fn dependency_sum_compare(before: World, after: World, end: nat)
     decreases end,
 {
     if end > 0 { dependency_sum_compare(before, after, (end - 1) as nat); }
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #771: changing one node strictly lowers the world sum while prerequisite
+/// debt cannot grow. Closed is final, including during cleanup settlement.
+proof fn lift_node_progress(before: World, after: World, i: int)
+    requires 0 <= i < before.nodes@.len(),
+        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
+        after.dependencies@ == before.dependencies@, dependencies::edges_indexable(before),
+        (before.nodes@[i].phase is Closed ==> after.nodes@[i].phase is Closed),
+        distance(after.nodes@[i]) < distance(before.nodes@[i]),
+    ensures progress_measure(after) < progress_measure(before),
+{
+    reveal(progress_measure);
+    reveal(dependencies::edges_indexable);
+    sum_update(before.nodes@, i, after.nodes@[i]);
+    assert forall|j: int| 0 <= j < before.dependencies@.len() implies
+        dependency_weight(after, j) <= dependency_weight(before, j) by {
+        let owner = before.dependencies@[j].node.0 as int;
+        if owner != i { assert(after.nodes@[owner] == before.nodes@[owner]); }
+    }
+    dependency_sum_compare(before, after, before.dependencies@.len());
+}
+
+/// #771: settle preserves prerequisite rows and never reopens a closed owner.
+proof fn settle_measure(before: World, after: World)
+    requires settle_chain(before, after),
+        dependencies::edges_indexable(before),
+        forall|j: int| 0 <= j < before.nodes@.len()
+            ==> (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed),
+    ensures progress_measure(after) <= progress_measure(before),
+{
+    reveal(progress_measure);
+    reveal(dependencies::edges_indexable);
+    assert forall|j: int| 0 <= j < before.dependencies@.len() implies
+        dependency_weight(after, j) <= dependency_weight(before, j) by {}
+    dependency_sum_compare(before, after, before.dependencies@.len());
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #771: an event returned by the real outside-witness selector.
+spec fn witness_event(w: World, event: Event) -> bool {
+    exists|j: int| 0 <= j < w.nodes@.len() && chosen_for_node(w, j, event)
 }
 }

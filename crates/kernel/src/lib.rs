@@ -2271,7 +2271,9 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures forall|j: int| 0 <= j < final(w).nodes@.len() ==>
+    ensures (world_checked(*old(w)) && witness_event(*old(w), event)
+            ==> progress_measure(*final(w)) < progress_measure(*old(w))),
+        forall|j: int| 0 <= j < final(w).nodes@.len() ==>
             settle_shape(final(w).nodes@[j])
                 && footprint::valid_footprint(*final(w), final(w).nodes@[j].footprint),
         forall|j: int| 0 <= j < old(w).nodes@.len() ==>
@@ -2327,21 +2329,50 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
         } => {
             if let Some(i) = w.index(node) {
                 on_reply(w, i, generation, reply, out);
+                kernel_proof! {
+                    if world_checked(before_apply@) && witness_event(before_apply@, event) {
+                        reveal(world_checked);
+                        assert(chosen_for_node(before_apply@, i as int, event));
+                        assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
+                        lift_node_progress(before_apply@, *w, i as int);
+                    }
+                }
             }
         }
         Event::Ack { node, seq, ack } => {
             if let Some(i) = w.index(node) {
                 on_ack(w, i, seq, ack, out);
+                kernel_proof! {
+                    if world_checked(before_apply@) && witness_event(before_apply@, event) {
+                        reveal(world_checked);
+                        assert(chosen_for_node(before_apply@, i as int, event));
+                        assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
+                        lift_node_progress(before_apply@, *w, i as int);
+                    }
+                }
             }
         }
         Event::Fact { node, fact } => {
             if let Some(i) = w.index(node) {
+                kernel_proof! {
+                    if witness_event(before_apply@, event) {
+                        assert(chosen_for_node(before_apply@, i as int, event));
+                    }
+                }
                 on_fact(w, i, fact, out);
             }
         }
         Event::Command { node, id, command } => {
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
+                kernel_proof! {
+                    if world_checked(before_apply@) && witness_event(before_apply@, event) {
+                        reveal(world_checked);
+                        assert(chosen_for_node(before_apply@, i as int, event));
+                        assert(w.nodes@ == before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
+                        lift_node_progress(before_apply@, *w, i as int);
+                    }
+                }
             }
         }
     }
@@ -3637,7 +3668,10 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (world_checked(*old(w))
+            && chosen_for_node(*old(w), i as int, Event::Fact { node: NodeId(i as u64), fact })
+            ==> progress_measure(*final(w)) < progress_measure(*old(w))),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -3658,7 +3692,8 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
-] {
+] proof [reveal(distance); reveal(world_checked); reveal(progress_measure);] {
+    kernel_snapshot! { before_fact = *w }
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
@@ -3667,6 +3702,22 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()
             checks_passed,
         } => pr_merged(w, i, head, checks_passed, out),
         _ => fact_transition(w, i, fact, out),
+    }
+    kernel_proof! {
+        if world_checked(before_fact@)
+            && chosen_for_node(before_fact@, i as int, Event::Fact { node: NodeId(i as u64), fact }) {
+            match fact {
+                Fact::Dependency { target, status } => {
+                    assert(dependency_progress_input(before_fact@, i as int, target, status));
+                    sum_update(before_fact@.nodes@, i as int, w.nodes@[i as int]);
+                    dependency_sum_compare(before_fact@, *w, before_fact@.dependencies@.len());
+                },
+                _ => {
+                    assert(w.nodes@ == before_fact@.nodes@.update(i as int, w.nodes@[i as int]));
+                    lift_node_progress(before_fact@, *w, i as int);
+                },
+            }
+        }
     }
 }
 }
@@ -3684,7 +3735,8 @@ fn fact_transition(w: &mut World, i: usize, fact: Fact,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
     ensures (fact == Fact::IncidentCleared { by_rob: true }
             && old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
-            && !old(w).nodes@[i as int].paused && !(old(w).nodes@[i as int].phase is Closed)
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && !(old(w).nodes@[i as int].phase is Closed)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
@@ -4360,7 +4412,9 @@ proof fn movable_frame(before: World, after: World, i: int)
 
 /// #771: conserved allocations and frames across the real settle loop.
 spec fn settle_chain(before: World, after: World) -> bool {
-    after.nodes@.len() == before.nodes@.len()
+    (forall|j: int| 0 <= j < before.nodes@.len() ==>
+        (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed))
+        &&     after.nodes@.len() == before.nodes@.len()
         && after.next_question == before.next_question && after.gates@ == before.gates@
         && after.pool_capacity == before.pool_capacity && after.fail_fast == before.fail_fast
         && after.file_sets@ == before.file_sets@ && after.dependencies@ == before.dependencies@
@@ -4426,6 +4480,10 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
             let moved = advance(w, i, &mut outbox);
             kernel_proof! {
                 reveal(advance_post);
+                if before_node@.nodes@[i as int].phase is Closed {
+                    assert(internal_height(before_node@.nodes@[i as int]) == 0);
+                    assert(!moved);
+                }
                 if !changed && !moved {
                     assert(w.nodes@ == before_node@.nodes@);
                     assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {
