@@ -55,13 +55,26 @@ fn run() -> io::Result<()> {
         .open(root.join("stderr.log"))?;
     // The proc link pins this running image if a deploy replaces the helper
     // between our claim and the child exec.
-    let mut worker = Command::new("/proc/self/exe")
+    let mut command = Command::new("/proc/self/exe");
+    command
         .arg(root)
         .arg("--worker")
         .stdin(request)
         .stdout(Stdio::from(output.try_clone()?))
-        .stderr(Stdio::from(errors.try_clone()?))
-        .spawn()?;
+        .stderr(Stdio::from(errors.try_clone()?));
+    // SAFETY: this runs only in the forked child before exec and invokes one
+    // syscall, with no allocation or locks. CLOEXEC preserves Rust's spawn-error
+    // pipe until exec while closing every non-stdio descriptor at that boundary,
+    // matching Python Popen(close_fds=True). Failure aborts spawn, never leaks.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::close_range(3, u32::MAX, libc::CLOSE_RANGE_CLOEXEC as libc::c_int) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut worker = command.spawn()?;
     let status = worker.wait()?;
     output.sync_all()?;
     errors.sync_all()?;
