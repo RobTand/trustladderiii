@@ -1,6 +1,7 @@
 """Temporary migration oracle, deleted after the Rust-owned parity run."""
 import json
 import sys
+from jsonschema.exceptions import ValidationError
 from tl3_workers.contracts import validate
 
 def check_reply(inputs, reply):
@@ -50,7 +51,7 @@ for case in json.load(sys.stdin):
         validate("classifier-input", case["inputs"])
         validate("classifier-reply", case["reply"])
         check_reply(case["inputs"], case["reply"])
-    except ValueError as error:
+    except (ValueError, ValidationError) as error:
         results.append([str(error)])
     else:
         results.append([])

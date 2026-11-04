@@ -66,7 +66,11 @@ fn cli_contract() {
         .write_all(doc.to_string().as_bytes())
         .unwrap();
     let result = child.wait_with_output().unwrap();
-    assert!(result.status.success(), "{:?}", result.stderr);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert!(result.stderr.is_empty());
     assert_eq!(
         serde_json::from_slice::<Value>(&result.stdout).unwrap(),
@@ -89,7 +93,11 @@ fn command(mut command: Command, input: &Value) -> std::process::Output {
         .write_all(input.to_string().as_bytes())
         .unwrap();
     let result = child.wait_with_output().unwrap();
-    assert!(result.status.success(), "{:?}", result.stderr);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     result
 }
 
