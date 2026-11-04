@@ -834,15 +834,31 @@ fn quota_replays(database: &mut Database) {
 }
 
 fn quota_fallbacks(database: &mut Database) {
+    quota_planner_fallback(database);
+    quota_whole_ladder(database);
+}
+
+fn quota_planner_fallback(database: &mut Database) {
     quota_ladder::planner_falls_back(&database.create("quota_planner_fallback"));
     println!("test quota_planner_falls_back_to_next_model ... ok");
+}
+
+fn quota_whole_ladder(database: &mut Database) {
     quota_ladder::whole_ladder_waits(&database.create("quota_whole_ladder"));
     println!("test quota_whole_ladder_waits_for_earliest_reset ... ok");
 }
 
 fn quota_removed_models(database: &mut Database) {
+    quota_removed_model(database);
+    quota_removed_legacy_model(database);
+}
+
+fn quota_removed_model(database: &mut Database) {
     quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed"), false);
     println!("test quota_wait_for_removed_model_resumes_on_open ... ok");
+}
+
+fn quota_removed_legacy_model(database: &mut Database) {
     quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed_legacy"), true);
     println!("test quota_legacy_wait_for_removed_model_resumes_on_open ... ok");
 }
@@ -852,21 +868,39 @@ fn unavailable_scenarios(database: &mut Database) {
     unavailable_followups(database);
 }
 
+const UNAVAILABLE: [&str; 3] = ["model_not_found", "allowance_unverified", "retry_limit"];
+
 fn unavailable_fallbacks(database: &mut Database) {
-    for kind in ["model_not_found", "allowance_unverified", "retry_limit"] {
-        quota_ladder::unavailable_model_falls_back(
-            &database.create(&format!("unavailable_{kind}")),
-            kind,
-        );
-        println!("test quota_unavailable_{kind}_falls_back_to_next_model ... ok");
+    for kind in UNAVAILABLE {
+        unavailable_fallback(database, kind);
     }
 }
 
+fn unavailable_fallback(database: &mut Database, kind: &str) {
+    quota_ladder::unavailable_model_falls_back(
+        &database.create(&format!("unavailable_{kind}")),
+        kind,
+    );
+    println!("test quota_unavailable_{kind}_falls_back_to_next_model ... ok");
+}
+
 fn unavailable_followups(database: &mut Database) {
+    unavailable_probe(database);
+    unavailable_request_error(database);
+    unavailable_ladder_out(database);
+}
+
+fn unavailable_probe(database: &mut Database) {
     quota_ladder::unavailable_model_is_probed_after_expiry(&database.create("unavailable_probe"));
     println!("test quota_unavailable_model_is_probed_after_expiry ... ok");
+}
+
+fn unavailable_request_error(database: &mut Database) {
     quota_ladder::request_error_fails(&database.create("unavailable_request_error"));
     println!("test quota_request_caused_400_fails_without_fallback ... ok");
+}
+
+fn unavailable_ladder_out(database: &mut Database) {
     quota_ladder::whole_ladder_out_raises_an_operations_note(
         &database.create("unavailable_ladder_out"),
     );
@@ -2787,12 +2821,15 @@ fn run_default() {
         println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
         finish_fixture("ingest_audit");
     });
-    shard.run(WorkerGroup::Launch, || {
+    shard.run(WorkerGroup::LaunchKills, || {
         let database = fixture.database();
         killed_worker(&database.create("workers_kill"));
         println!("test sigkill_worker_retry_is_idempotent_by_key ... ok");
         kernel_retries_killed_worker(&database.create("workers_kernel_retry"));
         println!("test sigkill_worker_failure_retries_through_kernel ... ok");
+    });
+    shard.run(WorkerGroup::Launch, || {
+        let database = fixture.database();
         late_launcher(&database.create("workers_late"));
         println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
         finish_fixture("worker_launch");
@@ -2837,6 +2874,9 @@ fn run_default() {
         let database = fixture.database();
         early_and_objections(database);
         println!("test early_end_and_audit_disagreement_mapping ... ok");
+    });
+    shard.run(WorkerGroup::ReplyUnclaimed, || {
+        let database = fixture.database();
         never_started(&database.create("workers_unclaimed"));
         println!("test unclaimed_crash_window_emits_no_failure_and_retries_same_key ... ok");
     });
@@ -2908,10 +2948,13 @@ fn run_default() {
         retirement_review::transient_io(&database.create("source_emfile"));
         println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
     });
-    shard.run(WorkerGroup::Retirement, || {
+    shard.run(WorkerGroup::RetirementAbsence, || {
         let database = fixture.database();
         confirmed_absence(&database.create("workers_confirmed_absence"));
         println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
+    });
+    shard.run(WorkerGroup::Retirement, || {
+        let database = fixture.database();
         overflow(&database.create("workers_overflow"));
         println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
         finish_fixture("worker_retirement");
@@ -2930,10 +2973,13 @@ fn run_default() {
             println!("test planner_leaf_narrowing_and_rule_retry_with_findings_{mode} ... ok");
         });
     }
-    shard.run(WorkerGroup::PlanningRecall, || {
+    shard.run(WorkerGroup::PlanningMemories, || {
         let database = fixture.database();
         planning::memories(&database.create("plan_memories"));
         println!("test planner_memories_recall_and_flag ... ok");
+    });
+    shard.run(WorkerGroup::PlanningRecall, || {
+        let database = fixture.database();
         planning::stop(&database.create("planner_stop"));
         println!("test planner_stop ... ok");
     });
@@ -2945,20 +2991,34 @@ fn run_default() {
         let database = fixture.database();
         quota_replays(database);
     });
+    shard.run(WorkerGroup::QuotaFallback, || {
+        quota_planner_fallback(fixture.database());
+    });
     shard.run(WorkerGroup::QuotaFallbacks, || {
-        let database = fixture.database();
-        quota_fallbacks(database);
+        quota_whole_ladder(fixture.database());
+    });
+    shard.run(WorkerGroup::QuotaRemoved, || {
+        quota_removed_model(fixture.database());
     });
     shard.run(WorkerGroup::Planning, || {
-        let database = fixture.database();
-        quota_removed_models(database);
+        quota_removed_legacy_model(fixture.database());
         finish_fixture("worker_planning");
     });
-    shard.run(WorkerGroup::UnavailableFallbacks, || {
-        unavailable_fallbacks(fixture.database());
+    for (kind, group) in UNAVAILABLE.into_iter().zip([
+        WorkerGroup::UnavailableModelNotFound,
+        WorkerGroup::UnavailableAllowance,
+        WorkerGroup::UnavailableRetryLimit,
+    ]) {
+        shard.run(group, || unavailable_fallback(fixture.database(), kind));
+    }
+    shard.run(WorkerGroup::UnavailableProbe, || {
+        unavailable_probe(fixture.database());
+    });
+    shard.run(WorkerGroup::UnavailableRequestError, || {
+        unavailable_request_error(fixture.database());
     });
     shard.run(WorkerGroup::Unavailable, || {
-        unavailable_followups(fixture.database());
+        unavailable_ladder_out(fixture.database());
         finish_fixture("worker_unavailable");
     });
     maker::run(&mut fixture, &mut shard);
