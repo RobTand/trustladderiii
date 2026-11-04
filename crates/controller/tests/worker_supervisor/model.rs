@@ -31,6 +31,7 @@ struct Attempt {
     process: Claim,
     supervisors: [Supervisor; 2],
     worker: Worker,
+    launched: bool,
     writes: u8,
     recorded: bool,
     inspected: bool,
@@ -42,6 +43,7 @@ impl Default for Attempt {
             process: Claim::Free,
             supervisors: [Supervisor::Fresh; 2],
             worker: Worker::Cold,
+            launched: false,
             writes: 0,
             recorded: false,
             inspected: false,
@@ -65,6 +67,7 @@ pub enum Action {
     Start(usize),
     Exit(usize),
     Reap(usize, u8),
+    ReapOrphan(usize),
     Publish(usize, u8),
     Lose(usize, u8),
     Inspect(usize),
@@ -95,7 +98,13 @@ impl Model for Protocol {
         use Action::*;
         actions.extend([CrashController, RestartController, Advance]);
         for run in 0..2 {
-            actions.extend([Start(run), Exit(run), Inspect(run), Replay(run)]);
+            actions.extend([
+                Start(run),
+                Exit(run),
+                ReapOrphan(run),
+                Inspect(run),
+                Replay(run),
+            ]);
             for actor in 0..2 {
                 actions.extend([
                     Claim(run, actor),
@@ -127,11 +136,9 @@ impl Model for Protocol {
                 if state.runs[run].supervisors[actor as usize] == Supervisor::Claimed =>
             {
                 state.runs[run].supervisors[actor as usize] = Supervisor::Spawned;
+                state.runs[run].launched = true;
             }
-            Start(run)
-                if state.runs[run].worker == Worker::Cold
-                    && state.runs[run].supervisors.contains(&Supervisor::Spawned) =>
-            {
+            Start(run) if state.runs[run].worker == Worker::Cold && state.runs[run].launched => {
                 let attempt = &mut state.runs[run];
                 if attempt.process == self::Claim::Free {
                     attempt.process = attempt.claim;
@@ -150,6 +157,12 @@ impl Model for Protocol {
                 state.runs[run].worker = Worker::Reaped;
                 state.runs[run].supervisors[actor as usize] = Supervisor::Reaped;
             }
+            ReapOrphan(run)
+                if state.runs[run].supervisors.contains(&Supervisor::Lost)
+                    && matches!(state.runs[run].worker, Worker::Zombie | Worker::Cancelled) =>
+            {
+                state.runs[run].worker = Worker::Reaped;
+            }
             Publish(run, actor)
                 if state.runs[run].supervisors[actor as usize] == Supervisor::Reaped
                     || (self.mutant
@@ -160,10 +173,13 @@ impl Model for Protocol {
                 attempt.recorded = true;
                 attempt.supervisors[actor as usize] = Supervisor::Finished;
             }
-            // Process loss after waitpid but before the atomic exit rename.
+            // A killed owner cannot publish. Linux adopts and reaps its child.
             Lose(run, actor)
                 if !state.lost
-                    && state.runs[run].supervisors[actor as usize] == Supervisor::Reaped =>
+                    && matches!(
+                        state.runs[run].supervisors[actor as usize],
+                        Supervisor::Claimed | Supervisor::Spawned | Supervisor::Reaped
+                    ) =>
             {
                 state.lost = true;
                 state.runs[run].supervisors[actor as usize] = Supervisor::Lost;
@@ -231,7 +247,7 @@ impl Model for Protocol {
                 s.current == 1
                     && s.runs.iter().all(|r| {
                         r.inspected
-                            && r.worker != Worker::Zombie
+                            && (!r.launched || r.worker == Worker::Reaped)
                             && !r.supervisors.iter().any(|s| {
                                 matches!(
                                     s,
@@ -270,5 +286,5 @@ fn p12_s4_exhaustive_protocol() {
 fn p12_rejects_exit_without_claim_mutant() {
     let checker = Protocol { mutant: true }.checker().spawn_bfs().join();
     let trace = checker.assert_any_discovery("one exit writer owns the claim");
-    eprintln!("seeded counterexample: {trace:?}");
+    eprintln!("seeded counterexample: {trace}");
 }

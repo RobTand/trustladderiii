@@ -41,7 +41,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
     fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };

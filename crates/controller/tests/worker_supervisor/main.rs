@@ -167,74 +167,101 @@ fn old_claims_fence_duplicate_and_cancelled_launches() {
 
 #[test]
 fn real_trace_conforms_across_restart_duplicate_and_new_generation() {
-    use model::{Action::*, Protocol};
-    use stateright::Model;
-    let model = Protocol { mutant: false };
-    let mut state = model.init_states().pop().unwrap();
-    let mut trace = |action| {
-        state = model
-            .next_state(&state, action)
-            .expect("real event must be enabled in model");
-    };
-    let old = tempfile::tempdir().unwrap();
-    // Pipe EOF, rather than a delay, releases the real worker after the controller disconnects.
-    fixture(old.path(), "import sys; sys.stdin.read(); print('done')");
-    // request.json is a FIFO so the worker stays live until the test closes its writer.
-    fs::remove_file(old.path().join("request.json")).unwrap();
-    rustix::fs::mknodat(
-        rustix::fs::CWD,
-        old.path().join("request.json"),
-        rustix::fs::FileType::Fifo,
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-        0,
-    )
-    .unwrap();
-    let mut owner = command(old.path()).spawn().unwrap();
-    claimed(&mut owner);
-    trace(Claim(0, 0));
-    let input = fs::OpenOptions::new()
-        .write(true)
-        .open(old.path().join("request.json"))
+    for legacy in [false, true] {
+        use model::{Action::*, Protocol};
+        use stateright::Model;
+        let model = Protocol { mutant: false };
+        let mut state = model.init_states().pop().unwrap();
+        let mut trace = |action| {
+            state = model
+                .next_state(&state, action)
+                .expect("real event must be enabled in model");
+        };
+        let old = tempfile::tempdir().unwrap();
+        // Pipe EOF, rather than a delay, releases the real worker after the controller disconnects.
+        fixture(old.path(), "import sys; sys.stdin.read(); print('done')");
+        // request.json is a FIFO so the worker stays live until the test closes its writer.
+        fs::remove_file(old.path().join("request.json")).unwrap();
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            old.path().join("request.json"),
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+            0,
+        )
         .unwrap();
-    // process.json is observed via inotify, without a timed rescan.
-    wait_for_file(old.path(), "worker-started.json");
-    trace(Spawn(0, 0));
-    trace(Start(0));
-    trace(CrashController);
-    let duplicate = command(old.path()).output().unwrap();
-    assert!(duplicate.status.success());
-    assert!(duplicate.stdout.is_empty());
-    trace(Claim(0, 1));
-    trace(RestartController);
-    assert!(!old.path().join("exit.json").exists());
-    // A pending inspection changes neither the durable files nor the model state.
-    drop(input);
-    assert!(owner.wait().unwrap().success());
-    trace(Exit(0));
-    trace(Reap(0, 0));
-    trace(Publish(0, 0));
-    assert_eq!(exit_code(old.path()), 0);
-    let worker = check_identity(old.path(), "process.json");
-    assert!(!Path::new(&format!("/proc/{}", worker["pid"])).exists());
-    trace(Inspect(0));
-    trace(Advance);
-    let newer = tempfile::tempdir().unwrap();
-    fixture(newer.path(), "print('new generation')");
-    let mut next = command(newer.path()).spawn().unwrap();
-    claimed(&mut next);
-    trace(Claim(1, 0));
-    trace(Spawn(1, 0));
-    trace(Start(1));
-    assert!(next.wait().unwrap().success());
-    trace(Exit(1));
-    trace(Reap(1, 0));
-    trace(Publish(1, 0));
-    let current = fs::read(newer.path().join("exit.json")).unwrap();
-    assert!(command(old.path()).output().unwrap().status.success());
-    trace(Replay(0));
-    assert_eq!(fs::read(newer.path().join("exit.json")).unwrap(), current);
-    trace(Inspect(1));
-    assert_eq!(state.applied, [1, 1]);
+        let mut owner = if legacy {
+            fs::write(
+                old.path().join("supervisor.py"),
+                include_bytes!("legacy.py"),
+            )
+            .unwrap();
+            Command::new("/usr/bin/python3")
+                .arg(old.path().join("supervisor.py"))
+                .arg(old.path())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap()
+        } else {
+            let image = old.path().join("supervisor-image");
+            fs::copy(env!("CARGO_BIN_EXE_tl3-worker-supervisor"), &image).unwrap();
+            Command::new(image)
+                .arg(old.path())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap()
+        };
+        claimed(&mut owner);
+        if !legacy {
+            // The owner is blocked opening the FIFO before spawn. A deploy can
+            // replace its installed image in this exact window.
+            fs::remove_file(old.path().join("supervisor-image")).unwrap();
+        }
+        trace(Claim(0, 0));
+        let input = fs::OpenOptions::new()
+            .write(true)
+            .open(old.path().join("request.json"))
+            .unwrap();
+        // process.json is observed via inotify, without a timed rescan.
+        wait_for_file(old.path(), "worker-started.json");
+        trace(Spawn(0, 0));
+        trace(Start(0));
+        trace(CrashController);
+        let duplicate = command(old.path()).output().unwrap();
+        assert!(duplicate.status.success());
+        assert!(duplicate.stdout.is_empty());
+        trace(Claim(0, 1));
+        trace(RestartController);
+        assert!(!old.path().join("exit.json").exists());
+        // A pending inspection changes neither the durable files nor the model state.
+        drop(input);
+        assert!(owner.wait().unwrap().success());
+        trace(Exit(0));
+        trace(Reap(0, 0));
+        trace(Publish(0, 0));
+        assert_eq!(exit_code(old.path()), 0);
+        let worker = check_identity(old.path(), "process.json");
+        assert!(!Path::new(&format!("/proc/{}", worker["pid"])).exists());
+        trace(Inspect(0));
+        trace(Advance);
+        let newer = tempfile::tempdir().unwrap();
+        fixture(newer.path(), "print('new generation')");
+        let mut next = command(newer.path()).spawn().unwrap();
+        claimed(&mut next);
+        trace(Claim(1, 0));
+        trace(Spawn(1, 0));
+        trace(Start(1));
+        assert!(next.wait().unwrap().success());
+        trace(Exit(1));
+        trace(Reap(1, 0));
+        trace(Publish(1, 0));
+        let current = fs::read(newer.path().join("exit.json")).unwrap();
+        assert!(command(old.path()).output().unwrap().status.success());
+        trace(Replay(0));
+        assert_eq!(fs::read(newer.path().join("exit.json")).unwrap(), current);
+        trace(Inspect(1));
+        assert_eq!(state.applied, [1, 1]);
+    }
 }
 
 fn wait_for_file(root: &Path, name: &str) {
