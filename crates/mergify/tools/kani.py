@@ -28,6 +28,7 @@ STATUS = "crates/github/src/status.rs"
 PROOF_FILES = [
     (DECIDE + "proofs.rs", "tl3-mergify", "decide::proofs"),
     (STATUS, "tl3-github", "status::proofs"),
+    (DECIDE + "enqueue_proofs.rs", "tl3-mergify", "decide::enqueue_proofs"),
 ]
 # Seeded mutants: (harness, file, exact text, replacement). Each breaks the
 # property its harness states, so the harness must fail. Every harness has at
@@ -85,6 +86,11 @@ MUTANTS = [
     ("facts_outcome", DECIDE + "facts.rs",
      "head_infra.unwrap_or(true)",
      "head_infra.unwrap_or(false)"),
+    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "before.requeue.is_none() && read.check_changed", "read.check_changed"),
+    ("enqueue_stale_head", DECIDE + "enqueue.rs", "read.head != Head::Current || !read.open", "!read.open"),
+    ("enqueue_refused_sticky", DECIDE + "enqueue.rs", "if refused_intent {", "if false && refused_intent {"),
+    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);", "// mutant: omit the durable intent"),
+    ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "now_ms.saturating_sub(since) >= GRACE_MS", "now_ms.saturating_sub(since) >= 0"),
 ]
 
 

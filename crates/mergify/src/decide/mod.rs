@@ -15,10 +15,13 @@
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
 
 pub mod check;
+pub mod enqueue;
 pub mod facts;
 pub mod observe;
 pub mod translate;
 
+#[cfg(kani)]
+mod enqueue_proofs;
 #[cfg(kani)]
 mod proofs;
 
