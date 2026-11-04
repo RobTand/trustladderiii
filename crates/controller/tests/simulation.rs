@@ -1,3 +1,5 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 use serde_json::json;
 use tl3_controller::executor::Output as Out;
 #[path = "support/scenario_shard.rs"]

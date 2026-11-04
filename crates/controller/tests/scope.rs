@@ -1,3 +1,5 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 mod support;
 #[allow(dead_code)]
 mod worktree_fixture;
@@ -33,7 +35,12 @@ fn repository_protected_paths_trim_only_that_repository() {
         let mut repo = identity();
         repo.name = name.to_ascii_uppercase();
         adapter
-            .serve_local(repo.clone(), &f.repo, &f.remote)
+            .serve_local(
+                repo.clone(),
+                &f.repo,
+                &f.remote,
+                &crate::startup_ownership::ownership(),
+            )
             .unwrap();
         let mut delivery = f.delivery(EffectKind::PrepareWorktree, 0);
         delivery.repository = repo;

@@ -3,6 +3,8 @@ mod drain_deadline;
 mod prismabuild_fixture;
 #[path = "publishing/adoption.rs"]
 mod publishing_adoption;
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 mod support;
 mod worktree_fixture;
 
@@ -588,7 +590,8 @@ impl Server {
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {
     let (client, mut settings) = prismabuild_fixture::settings(root, "done", "http://127.0.0.1:9/");
     settings.records = root.join("pb-records");
-    adapters::prismabuild::Adapter::new(client, settings).unwrap()
+    adapters::prismabuild::Adapter::new(client, settings, &crate::startup_ownership::ownership())
+        .unwrap()
 }
 
 fn document(store: &mut Store, table: &str, value: Value) {
@@ -805,7 +808,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .execute(&preparation)
             .expect("configured master base must prepare without a main branch");
     }
-    let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let mut source = supervisor.source();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
     registry.register(

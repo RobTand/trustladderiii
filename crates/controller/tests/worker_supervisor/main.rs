@@ -1,4 +1,8 @@
 mod restart;
+#[path = "../support/ownership.rs"]
+mod startup_ownership;
+#[path = "../../../store/tests/support/mod.rs"]
+mod support;
 
 use serde_json::Value;
 use std::{

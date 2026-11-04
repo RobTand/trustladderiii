@@ -1,3 +1,5 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 // Single-event fixture receives expose no intermediate progress.
 // #673 measured the full PrismaBuild binary at 220.814 s; 450 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
@@ -151,7 +153,7 @@ fn fixture(root: &Path, mode: &str) -> Adapter {
 }
 fn fixture_with_bell(root: &Path, mode: &str, bell_url: &str) -> Adapter {
     let (client, settings) = fixture_settings(root, mode, bell_url);
-    Adapter::new(client, settings).unwrap()
+    Adapter::new(client, settings, &crate::startup_ownership::ownership()).unwrap()
 }
 fn fixture_settings(root: &Path, mode: &str, bell_url: &str) -> (PrismaBuild, Settings) {
     prismabuild_fixture::settings(root, mode, bell_url)
@@ -1477,7 +1479,8 @@ fn tool_errors_wait_for_news() {
         } else {
             fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
         }
-        let mut adapter = Adapter::new(client, settings).unwrap();
+        let mut adapter =
+            Adapter::new(client, settings, &crate::startup_ownership::ownership()).unwrap();
         adapter.execute(&delivery).unwrap();
         let key = adapter.action_key(&delivery).unwrap().unwrap();
         let (sender, receiver) = mpsc::channel();

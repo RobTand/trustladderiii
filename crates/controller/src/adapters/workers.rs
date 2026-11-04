@@ -163,7 +163,11 @@ pub struct Supervisor {
 }
 
 impl Supervisor {
-    pub fn new(config: &tl3_config::Config, records_root: &Path) -> Result<Self> {
+    pub fn new(
+        config: &tl3_config::Config,
+        records_root: &Path,
+        _ownership: &crate::Ownership,
+    ) -> Result<Self> {
         protocol::initialize_schemas()?;
         fs::create_dir_all(config.workers.runs.join(".ready"))?;
         fs::create_dir_all(records_root)?;

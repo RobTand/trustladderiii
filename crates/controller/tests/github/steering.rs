@@ -250,8 +250,12 @@ impl Drop for Daemon {
         let _ = self.child.wait();
         // A controller crash leaves supervisors alive by design. End this fixture's runs.
         let config = tl3_config::Config::load(self.root.path().join("config.toml")).unwrap();
-        let supervisor =
-            adapters::workers::Supervisor::new(&config, &self.root.path().join("fakes")).unwrap();
+        let supervisor = adapters::workers::Supervisor::new(
+            &config,
+            &self.root.path().join("fakes"),
+            &crate::startup_ownership::ownership(),
+        )
+        .unwrap();
         let epoch = self.store.load().unwrap().epoch.get();
         for progress in self.store.worker_progress(None).unwrap() {
             supervisor.stop_run(&progress.key, epoch).unwrap();

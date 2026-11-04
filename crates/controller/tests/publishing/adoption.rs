@@ -117,7 +117,12 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     config.models.key_file = root.path().join("fixture-key");
     config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
     fs::write(&config.models.key_file, "fixture").unwrap();
-    let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let mut source = supervisor.source();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
     let maker_runs = Arc::new(Mutex::new(0));

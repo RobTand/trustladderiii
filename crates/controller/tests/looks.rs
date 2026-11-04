@@ -1,3 +1,5 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 // Single-event fixture receives expose no intermediate progress.
 // #673 measured the full looks binary at 61.957 s; 125 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(125);

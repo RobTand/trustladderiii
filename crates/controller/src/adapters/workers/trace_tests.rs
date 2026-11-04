@@ -298,7 +298,12 @@ fn a_wake_write_sweeps_held_logs_through_the_source() {
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("trace_wake");
     config.workers.runs = root.path().join("runs");
-    let supervisor = Supervisor::new(&config, &root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &root.path().join("records"),
+        &crate::store_support::ownership(),
+    )
+    .unwrap();
     let held = held(&config.workers.runs);
     fs::create_dir_all(&held).unwrap();
     write(

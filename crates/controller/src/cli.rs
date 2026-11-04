@@ -192,9 +192,11 @@ pub fn daemon() -> Result<()> {
         ));
     }
     let bootstrap = Bootstrap::from_config(&config)?;
+    let ownership = crate::Ownership::claim(Store::open(&config.store)?)?;
     let mut sources = crate::ingress::Sources::default();
     let mut adapters = if workers {
-        let (adapters, source) = adapters::simulation_with_workers(&simulation, &config)?;
+        let (adapters, source) =
+            adapters::simulation_with_workers(&simulation, &config, &ownership)?;
         sources.register(source);
         adapters
     } else {
@@ -274,7 +276,7 @@ pub fn daemon() -> Result<()> {
         eprintln!("GitHub webhooks listening on {}", webhooks.address());
         sources.register(webhooks);
     }
-    let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;
+    let mut controller = Controller::open_owned(ownership, adapters, bootstrap)?;
     if let Some(adoption) = adoption {
         controller.register_github_translator("adoption", adoption);
     }
@@ -303,8 +305,8 @@ pub fn daemon() -> Result<()> {
 
 fn production(config: tl3_config::Config) -> Result<()> {
     let registration = crate::production::register(&config)?;
-    let mut controller = Controller::open(
-        Store::open(&config.store)?,
+    let mut controller = Controller::open_owned(
+        registration.ownership,
         registration.adapters,
         Bootstrap::from_config(&config)?,
     )?;

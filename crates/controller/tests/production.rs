@@ -165,7 +165,6 @@ print(json.dumps({'event':'reply','role':'writer','reply':{'text':'The requested
 #[test]
 fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
     use tl3_controller::{Bootstrap, Controller};
-    use tl3_store::Store;
 
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
@@ -175,8 +174,8 @@ fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
     // Ownership must reject the contender. No upstream is contacted.
     let start = || {
         let registration = production::register(&config)?;
-        let controller = Controller::open(
-            Store::open(&config.store)?,
+        let controller = Controller::open_owned(
+            registration.ownership,
             registration.adapters,
             Bootstrap::from_config(&config)?,
         )?;

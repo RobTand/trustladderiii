@@ -303,7 +303,11 @@ impl Adapter {
             })
     }
 
-    pub fn new(client: PrismaBuild, settings: Settings) -> Result<Self> {
+    pub fn new(
+        client: PrismaBuild,
+        settings: Settings,
+        _ownership: &crate::Ownership,
+    ) -> Result<Self> {
         if !settings.records.is_absolute()
             || !settings.harness.is_absolute()
             || settings.python.is_empty()

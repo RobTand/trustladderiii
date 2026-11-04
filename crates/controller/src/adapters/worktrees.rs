@@ -140,12 +140,14 @@ impl Real {
         identity: Repository,
         repository: &Path,
         remote: &Path,
+        ownership: &crate::Ownership,
     ) -> Result<()> {
         self.serve(
             identity,
             repository,
             Remote::local(remote).map_err(adapter)?,
             None,
+            ownership,
         )
     }
 
@@ -154,6 +156,7 @@ impl Real {
         identity: Repository,
         repository: &Path,
         github: tl3_github::GitHub,
+        ownership: &crate::Ownership,
     ) -> Result<()> {
         if github.installation_id() != identity.installation {
             return Err(Error::Invalid("worktree GitHub installation mismatch"));
@@ -163,7 +166,7 @@ impl Real {
             identity.owner, identity.name
         ))
         .map_err(adapter)?;
-        self.serve(identity, repository, remote, Some(github))
+        self.serve(identity, repository, remote, Some(github), ownership)
     }
 
     fn serve(
@@ -172,6 +175,7 @@ impl Real {
         repository: &Path,
         remote: Remote,
         github: Option<tl3_github::GitHub>,
+        _ownership: &crate::Ownership,
     ) -> Result<()> {
         if self
             .repositories

@@ -1,3 +1,5 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 #[allow(dead_code)]

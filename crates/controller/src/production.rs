@@ -3,6 +3,7 @@ use tl3_worktrees::{CommitId, Worktrees};
 
 pub struct Registration {
     pub adapters: Registry,
+    pub ownership: crate::Ownership,
     pub webhooks: Webhooks,
     pub workers: adapters::workers::WorkerOutputSource,
     pub bell: adapters::prismabuild::Source,
@@ -11,10 +12,7 @@ pub struct Registration {
 }
 
 pub fn register(config: &tl3_config::Config) -> Result<Registration> {
-    use crate::{Bootstrap, Error, executor::Upstream, ingress::CatchUp};
-    use std::{collections::BTreeMap, fs, time::Duration};
-    use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
-    use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
+    use crate::{Bootstrap, Error};
     use tl3_store::Store;
 
     config.validate()?;
@@ -29,6 +27,22 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         .github
         .webhook_listen
         .ok_or(Error::Invalid("production requires github.webhook_listen"))?;
+    let ownership = crate::Ownership::claim(Store::open(&config.store)?)?;
+    register_owned(config, bootstrap, listen, ownership)
+}
+
+fn register_owned(
+    config: &tl3_config::Config,
+    bootstrap: crate::Bootstrap,
+    listen: std::net::SocketAddr,
+    mut ownership: crate::Ownership,
+) -> Result<Registration> {
+    use crate::{Error, executor::Upstream, ingress::CatchUp};
+    use std::{collections::BTreeMap, fs, time::Duration};
+    use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
+    use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
+    use tl3_store::Store;
+
     let bytes = fs::read(&config.github.app_credentials_file)?;
     let app: AppConfig = serde_json::from_slice(&bytes)?;
     let secret = app.webhook_secret.as_bytes().to_vec();
@@ -43,8 +57,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
             )?);
         }
     }
-    let mut store = Store::open(&config.store)?;
-    let epoch = store.load()?.epoch.get();
+    let epoch = ownership.store().load()?.epoch.get();
     let records = config.workers.runs.join(".controller");
     fs::create_dir_all(&records)?;
     let mut adapters = Registry::default();
@@ -56,7 +69,12 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         if !path.join("HEAD").exists() {
             Worktrees::init_bare(&path)?;
         }
-        worktrees.serve_github(repo.clone(), &path, clients[&repo.installation].clone())?;
+        worktrees.serve_github(
+            repo.clone(),
+            &path,
+            clients[&repo.installation].clone(),
+            &ownership,
+        )?;
     }
     let operations = bootstrap
         .operations
@@ -70,19 +88,20 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
             ClientOptions::default(),
         )?,
     };
-    let supervisor = adapters::workers::Supervisor::new(config, &records.join("workers"))?
-        .with_materials(Materials {
-            clients: clients.clone(),
-            worktrees: config.worktrees_root.clone(),
-            branches: crate::branches::Branches::new(&config.github.repos)?,
-            #[cfg(test)]
-            local_repository: None,
-        })
-        .with_operations(crate::memory::OperationsIssue {
-            client: operations_client,
-            repo: format!("{}/{}", operations.owner, operations.name),
-            issue: operations.number,
-        });
+    let supervisor =
+        adapters::workers::Supervisor::new(config, &records.join("workers"), &ownership)?
+            .with_materials(Materials {
+                clients: clients.clone(),
+                worktrees: config.worktrees_root.clone(),
+                branches: crate::branches::Branches::new(&config.github.repos)?,
+                #[cfg(test)]
+                local_repository: None,
+            })
+            .with_operations(crate::memory::OperationsIssue {
+                client: operations_client,
+                repo: format!("{}/{}", operations.owner, operations.name),
+                issue: operations.number,
+            });
     let workers = supervisor.source();
     let tools = &config.prismabuild.tools_dir;
     let tool = Tool {
@@ -129,6 +148,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
                 args: vec![tools.join("pbwait.py").into()],
             },
         },
+        &ownership,
     )?;
     let pb = pb
         .with_repositories(&config.github.repos)
@@ -168,6 +188,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     )?;
     Ok(Registration {
         adapters,
+        ownership,
         webhooks,
         workers,
         bell,

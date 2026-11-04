@@ -303,6 +303,23 @@ pub enum Boundary {
     AfterReconcile,
 }
 
+/// Exclusive controller ownership, held by the store session for its lifetime.
+/// #785: destructive adapter initialization requires this unforgeable handle.
+pub struct Ownership {
+    store: Store,
+}
+
+impl Ownership {
+    pub fn claim(mut store: Store) -> Result<Self> {
+        store.claim_controller()?;
+        Ok(Self { store })
+    }
+
+    pub(crate) fn store(&mut self) -> &mut Store {
+        &mut self.store
+    }
+}
+
 pub struct Controller {
     store: Store,
     adapters: Registry,
@@ -327,12 +344,29 @@ impl Controller {
     }
 
     pub fn open_with_clock(
-        mut store: Store,
+        store: Store,
         adapters: Registry,
         bootstrap: Bootstrap,
         clock: impl clock::Clock + 'static,
     ) -> Result<Self> {
-        store.claim_controller()?;
+        Self::open_owned_with_clock(Ownership::claim(store)?, adapters, bootstrap, clock)
+    }
+
+    pub fn open_owned(
+        ownership: Ownership,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+    ) -> Result<Self> {
+        Self::open_owned_with_clock(ownership, adapters, bootstrap, clock::SystemClock)
+    }
+
+    fn open_owned_with_clock(
+        ownership: Ownership,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+        clock: impl clock::Clock + 'static,
+    ) -> Result<Self> {
+        let Ownership { mut store } = ownership;
         let snapshot = store.load()?;
         if snapshot.rows.is_empty() {
             let world = World::new(
