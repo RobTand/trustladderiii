@@ -256,8 +256,7 @@ impl Model for Protocol {
 #[test]
 fn p12_s4_exhaustive_protocol() {
     let started = Instant::now();
-    // Red seed: a rejected duplicate is allowed to publish an exit.
-    let checker = Protocol { mutant: true }.checker().spawn_bfs().join();
+    let checker = Protocol { mutant: false }.checker().spawn_bfs().join();
     eprintln!(
         "P12/S4: {} unique states, {} visited, {:?}",
         checker.unique_state_count(),

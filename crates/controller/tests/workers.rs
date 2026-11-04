@@ -1436,18 +1436,12 @@ fn late_launcher(settings: &tl3_config::Store) {
     let delivery = delivery();
     let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
     fs::create_dir_all(&attempt).unwrap();
-    fs::write(
-        attempt.join("supervisor.py"),
-        include_bytes!("../tools/worker_supervisor.py"),
-    )
-    .unwrap();
     // This is the record left if the controller dies immediately before spawn.
     assert!(matches!(
         supervisor.reconcile(&delivery).unwrap(),
         Reconciliation::Absent
     ));
-    let status = Command::new(&config.workers.python)
-        .arg(attempt.join("supervisor.py"))
+    let status = Command::new(env!("CARGO_BIN_EXE_tl3-worker-supervisor"))
         .arg(&attempt)
         .status()
         .unwrap();
