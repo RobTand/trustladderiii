@@ -93,6 +93,7 @@ fn main() {
                 | "phase_backfill_from_schema_9"
                 | "postmortem_migration_on_schema_12"
                 | "read_only_reader"
+                | "reader_schema_versions"
                 | "console_login_granted_before_migration"
                 | "prompts_open_on_a_store_ahead"
         ) {
@@ -972,7 +973,7 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             .unwrap()
             .get::<_, bool>(0)
     );
-    Store::open(settings).unwrap();
+    migrate(settings).unwrap();
     let migrations = client
         .query(
             "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
