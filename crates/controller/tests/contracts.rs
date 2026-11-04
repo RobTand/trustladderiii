@@ -605,13 +605,18 @@ fn symptom_record() -> BoxedStrategy<Value> {
         vec![],
     );
     prop_oneof![
-        event("start", vec![("schema", Just(json!(1)).boxed())], vec![]),
+        // JSON Schema's `const: 1` is met by 1.0 too (#750 re-review finding 5).
+        event(
+            "start",
+            vec![("schema", select(vec![json!(1), json!(1.0)]).boxed())],
+            vec![]
+        ),
         event(
             "finish",
             vec![(
                 "exit_code",
                 prop_oneof![
-                    any::<i64>().prop_map(Value::from),
+                    (-i64::MAX..=i64::MAX).prop_map(Value::from),
                     (-1000i32..1000).prop_map(|code| json!(f64::from(code))),
                 ]
                 .boxed(),
@@ -1194,15 +1199,14 @@ mod typed {
             });
         let exit_code = wire(
             prop_oneof![
-                any::<i64>().prop_map(Value::from),
+                (-i64::MAX..=i64::MAX).prop_map(Value::from),
                 (-1000i32..1000).prop_map(|code| json!(f64::from(code))),
             ]
             .boxed(),
         );
         prop_oneof![
-            Just(SymptomRecord::Start {
-                schema: RecordSchemaVersion
-            }),
+            wire(select(vec![json!(1), json!(1.0)]).boxed())
+                .prop_map(|schema| SymptomRecord::Start { schema }),
             exit_code.prop_map(|exit_code| SymptomRecord::Finish { exit_code }),
             (
                 vec(text::<1, UNBOUNDED>(), 0..=3),
@@ -1490,28 +1494,162 @@ fn integral_numbers_parse_as_the_schema_allows() {
     );
 }
 
-// Each directory under released/ holds the reports one earlier release's harness wrote,
-// named by the report version it carries. A controller resumes checks that the previous
-// release staged, so it must keep parsing them (#750 review finding 2).
+// One released set per contract the harness has shipped: the reports one release's
+// harness wrote, kept so the next controller is held to them. released-contracts.json
+// records each set's report version, the commit whose harness produced it, and the
+// sha256 of check-report.json at the time (#750 review finding 2, re-review finding 3).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleasedSet {
+    set: String,
+    version: String,
+    harness_commit: String,
+    harness_src_tree: String,
+    check_report_sha256: String,
+}
+
+fn released_sets() -> Vec<ReleasedSet> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Manifest {
+        sets: Vec<ReleasedSet>,
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../harness/test-vectors/released-contracts.json");
+    let manifest: Manifest = serde_json::from_slice(
+        &std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+    )
+    .unwrap();
+    manifest.sets
+}
+
 fn released_vectors() -> Vec<(String, String, Value)> {
     let root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/test-vectors/contracts/released");
     let mut found = vec![];
-    for version in
-        std::fs::read_dir(&root).unwrap_or_else(|error| panic!("{}: {error}", root.display()))
-    {
-        let version = version.unwrap().path();
-        for vector in std::fs::read_dir(&version).unwrap() {
+    for set in released_sets() {
+        let directory = root.join(&set.set);
+        for vector in std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+        {
             let path = vector.unwrap().path();
             found.push((
-                version.file_name().unwrap().to_string_lossy().into_owned(),
-                path.file_stem().unwrap().to_string_lossy().into_owned(),
+                set.version.clone(),
+                format!(
+                    "{}/{}",
+                    set.set,
+                    path.file_stem().unwrap().to_string_lossy()
+                ),
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap(),
             ));
         }
     }
-    found.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    found.sort_by(|a, b| a.1.cmp(&b.1));
     found
+}
+
+/// Encodes: #750 re-review finding 3. Every released set is listed with its provenance,
+/// and every listed set is present.
+#[test]
+fn released_sets_are_listed_with_their_provenance() {
+    let sets = released_sets();
+    assert!(!sets.is_empty(), "no released contract set");
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/test-vectors/contracts/released");
+    let mut present: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    present.sort();
+    let mut listed: Vec<_> = sets.iter().map(|set| set.set.clone()).collect();
+    listed.sort();
+    assert_eq!(
+        present, listed,
+        "released/ and released-contracts.json disagree"
+    );
+    let hex = |text: &str, length: usize| {
+        text.len() == length
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    for set in &sets {
+        assert!(hex(&set.harness_commit, 40), "{}: harness_commit", set.set);
+        assert!(
+            hex(&set.harness_src_tree, 40),
+            "{}: harness_src_tree",
+            set.set
+        );
+        assert!(
+            hex(&set.check_report_sha256, 64),
+            "{}: check_report_sha256",
+            set.set
+        );
+        serde_json::from_value::<tl3_controller::contracts::report::ReportSchema>(json!(
+            set.version
+        ))
+        .unwrap_or_else(|error| {
+            panic!(
+                "{}: {} is not a report version: {error}",
+                set.set, set.version
+            )
+        });
+    }
+}
+
+/// Encodes: #750 re-review finding 3. A contract change must capture compatibility fixtures
+/// from the harness that produces the new shape: the newest released set was captured
+/// against exactly the contract this tree generates.
+#[test]
+fn the_newest_released_set_captures_the_current_contract() {
+    use sha2::{Digest, Sha256};
+    let generated = contracts::generated();
+    let rendered = format!("{:x}", Sha256::digest(generated[0].text.as_bytes()));
+    let newest = released_sets().pop().unwrap();
+    assert_eq!(
+        newest.check_report_sha256, rendered,
+        "check-report.json changed since released set {}. Capture fixtures from the harness \
+         that produces the new shape: copy harness/test-vectors/contracts/*.json into a new \
+         contracts/released/<set>/, and append that set to released-contracts.json with this \
+         sha256, the producing commit and its harness/src tree.",
+        newest.set
+    );
+}
+
+/// Encodes: #750 re-review findings 4 and 5. Integer bounds and numeric constants decide
+/// exactly as Python's validator does, on the raw JSON text, at both ends of every integer
+/// type. workers/tests/test_check_report_vectors.py runs the same cases.
+#[test]
+fn raw_numbers_parse_as_pythons_validator_decides() {
+    use tl3_controller::contracts::report::{CollectionSaturation, SymptomRecord};
+    #[derive(serde::Deserialize)]
+    struct Case {
+        definition: String,
+        document: String,
+        valid: bool,
+    }
+    #[derive(serde::Deserialize)]
+    struct Cases {
+        cases: Vec<Case>,
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../harness/test-vectors/contract-numbers.json");
+    let cases: Cases = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(cases.cases.len() >= 30);
+    for case in cases.cases {
+        let parsed = match case.definition.as_str() {
+            "CollectionSaturation" => {
+                serde_json::from_str::<CollectionSaturation>(&case.document).is_ok()
+            }
+            "DeclaredSymptom" => {
+                serde_json::from_str::<tl3_controller::contracts::DeclaredSymptom>(&case.document)
+                    .is_ok()
+            }
+            "SymptomRecord" => serde_json::from_str::<SymptomRecord>(&case.document).is_ok(),
+            other => panic!("no Rust type for {other}"),
+        };
+        assert_eq!(parsed, case.valid, "{} {}", case.definition, case.document);
+    }
 }
 
 /// Encodes: #750 review finding 2, a new controller resuming a check the previous release's

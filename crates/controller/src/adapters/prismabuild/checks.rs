@@ -27,15 +27,40 @@ pub struct CheckRun {
 
 pub use crate::contracts::{Check, CheckKind as Kind};
 
-/// The trusted harness this controller stages, resolved once from the release it started
-/// from. The configured path runs through `current`, which deploy.py's `install_release`
-/// switches before tl3d restarts; staging through it would let a running controller ship
-/// the next release's harness (#750 review). Releases are immutable, and deploy.py keeps
-/// `previous`, so the resolved directory outlives the running controller.
+/// The trusted harness this controller stages, fixed when the controller starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Harness {
+    /// A private copy of the release's harness modules, which only this controller reads.
+    Copied(PathBuf),
+    /// No harness could be copied at startup. Staging refuses until tl3d restarts.
+    Unavailable(String),
+}
+
+/// The refusal while the harness is unavailable.
+pub(crate) const HARNESS_UNAVAILABLE: &str =
+    "the trusted harness was unavailable when tl3d started; install it, then restart tl3d";
+
+impl Harness {
+    /// Red (#750 re-review): a stub that still stages through the configured path.
+    pub(super) fn pin(configured: &Path, _copies: &Path) -> Self {
+        match configured.canonicalize() {
+            Ok(pinned) => Self::Copied(pinned),
+            Err(_) => Self::Copied(configured.to_owned()),
+        }
+    }
+
+    pub(super) fn path(&self) -> Result<&Path> {
+        match self {
+            Self::Copied(path) => Ok(path),
+            Self::Unavailable(_) => Err(Error::Invalid(HARNESS_UNAVAILABLE)),
+        }
+    }
+}
+
+/// The pre-review pin, kept until the adapter moves to `Harness`.
 pub(super) fn pinned_harness(harness: &Path) -> Result<PathBuf> {
     match harness.canonicalize() {
         Ok(pinned) => Ok(pinned),
-        // Nothing installed there yet: staging refuses it, as it always has.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(harness.to_owned()),
         Err(error) => Err(error.into()),
     }
@@ -257,12 +282,8 @@ mod tests {
         }
     }
 
-    /// Encodes: #750 review finding 2. deploy.py's `install_release` switches `current` before
-    /// tl3d restarts, so a running controller must keep staging its own release's harness.
-    #[test]
-    fn harness_staging_is_pinned_to_the_running_release() {
-        let f = crate::git_tests::Repo::new();
-        let root = f.root.path().join("tl3");
+    // Two releases laid out as deploy.py's install_release lays them out.
+    fn releases(root: &Path) -> PathBuf {
         for release in ["a", "b"] {
             let harness = root
                 .join("releases")
@@ -275,37 +296,98 @@ mod tests {
             )
             .unwrap();
         }
-        let current = root.join("current");
-        std::os::unix::fs::symlink(root.join("releases/a"), &current).unwrap();
-        let configured = current.join("harness/src/tl3_harness");
-        let running = pinned_harness(&configured).unwrap();
-        // install_release: link the new release beside `current`, then replace it.
+        std::os::unix::fs::symlink(root.join("releases/a"), root.join("current")).unwrap();
+        root.join("current/harness/src/tl3_harness")
+    }
+
+    // install_release: link the new release beside `current`, then replace it.
+    fn switch_current(root: &Path, release: &str) {
         let next = root.join("current.tmp");
-        std::os::unix::fs::symlink(root.join("releases/b"), &next).unwrap();
-        fs::rename(&next, &current).unwrap();
-        let staged_release = |harness: &Path, name: &str| {
-            let staged = f.root.path().join(name);
-            stage(
-                &staged,
-                harness,
-                &f.delivery(),
-                "sha256:fixture",
-                &[],
-                &Default::default(),
-            )
-            .unwrap();
-            fs::read_to_string(staged.join("trusted/tl3_harness/release.py")).unwrap()
-        };
+        std::os::unix::fs::symlink(root.join("releases").join(release), &next).unwrap();
+        fs::rename(&next, root.join("current")).unwrap();
+    }
+
+    fn staged_release(f: &crate::git_tests::Repo, harness: &Harness, name: &str) -> Result<String> {
+        let staged = f.root.path().join(name);
+        stage(
+            &staged,
+            harness.path()?,
+            &f.delivery(),
+            "sha256:fixture",
+            &[],
+            &Default::default(),
+        )?;
+        Ok(fs::read_to_string(
+            staged.join("trusted/tl3_harness/release.py"),
+        )?)
+    }
+
+    /// Encodes: #750 review finding 2 and re-review finding 1. install_release switches
+    /// `current` without restarting tl3d, and collect_releases may then delete the release a
+    /// running controller started from. The controller stages its own copy, so neither the
+    /// switch nor the deletion changes what it stages.
+    #[test]
+    fn a_running_controller_stages_its_own_copy_of_its_release() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = releases(&root);
+        let copies = f.root.path().join("records-harness");
+        let running = Harness::pin(&configured, &copies);
+        switch_current(&root, "b");
+        fs::remove_dir_all(root.join("releases/a")).unwrap();
         assert_eq!(
-            staged_release(&running, "input-running"),
+            staged_release(&f, &running, "input-running").unwrap(),
             "RELEASE = \"a\"\n",
-            "the controller started from release a keeps staging release a's harness"
+            "release a was switched away and collected, and the running controller still stages it"
+        );
+        let restarted = Harness::pin(&configured, &copies);
+        assert_eq!(
+            staged_release(&f, &restarted, "input-restarted").unwrap(),
+            "RELEASE = \"b\"\n",
+            "after the restart the controller copies the new release"
         );
         assert_eq!(
-            staged_release(&pinned_harness(&configured).unwrap(), "input-restarted"),
-            "RELEASE = \"b\"\n",
-            "after the restart the controller pins the new release"
+            fs::read_dir(&copies).unwrap().count(),
+            1,
+            "a restart keeps only its own copy"
         );
+    }
+
+    /// Encodes: #750 re-review finding 2. A controller that started before any harness was
+    /// installed stays unavailable; it never stages whatever `current` later points to.
+    #[test]
+    fn a_harness_missing_at_startup_stays_unavailable() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = root.join("current/harness/src/tl3_harness");
+        let copies = f.root.path().join("records-harness");
+        let started = Harness::pin(&configured, &copies);
+        assert!(matches!(started, Harness::Unavailable(_)), "{started:?}");
+        releases(&root);
+        assert!(
+            matches!(
+                staged_release(&f, &started, "input-late"),
+                Err(Error::Invalid(HARNESS_UNAVAILABLE))
+            ),
+            "an installed harness does not reach a controller that started without one"
+        );
+    }
+
+    /// Encodes: #750 re-review finding 2: a copy that fails at startup is the same unavailable
+    /// state, not a fallback to the configured path.
+    #[test]
+    fn a_failed_copy_is_unavailable() {
+        let f = crate::git_tests::Repo::new();
+        let root = f.root.path().join("tl3");
+        let configured = releases(&root);
+        let copies = f.root.path().join("records-harness");
+        fs::write(&copies, "not a directory").unwrap();
+        let started = Harness::pin(&configured, &copies);
+        assert!(matches!(started, Harness::Unavailable(_)), "{started:?}");
+        assert!(matches!(
+            staged_release(&f, &started, "input-failed"),
+            Err(Error::Invalid(HARNESS_UNAVAILABLE))
+        ));
     }
 
     #[test]

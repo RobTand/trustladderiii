@@ -1,0 +1,200 @@
+{
+ "description": "Raw JSON numbers at the edges of each integer type and constant in check-report.json. Rust's serde (tests/contracts.rs) and Python's jsonschema validator (workers/tests/test_check_report_vectors.py) must decide every case alike (#750 re-review).",
+ "cases": [
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":0,\"remaining\":0}",
+   "valid": true
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":-0.0,\"remaining\":0}",
+   "valid": true
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":3.0,\"remaining\":0}",
+   "valid": true
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":1e2,\"remaining\":0}",
+   "valid": true
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":2.5,\"remaining\":0}",
+   "valid": false
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":-1,\"remaining\":0}",
+   "valid": false
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":18446744073709551615,\"remaining\":0}",
+   "valid": true
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":18446744073709551616,\"remaining\":0}",
+   "valid": false
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":18446744073709551615.0,\"remaining\":0}",
+   "valid": false
+  },
+  {
+   "definition": "CollectionSaturation",
+   "document": "{\"unit\":[\"a\"],\"cases\":1e20,\"remaining\":0}",
+   "valid": false
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":1,\"parallel\":0}",
+   "valid": true
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":10,\"parallel\":0}",
+   "valid": true
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":10.0,\"parallel\":0}",
+   "valid": true
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":0,\"parallel\":0}",
+   "valid": false
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":11,\"parallel\":0}",
+   "valid": false
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":10.5,\"parallel\":0}",
+   "valid": false
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":1,\"parallel\":0.0}",
+   "valid": true
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":1,\"parallel\":4.0}",
+   "valid": true
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":1,\"parallel\":2}",
+   "valid": true
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":1,\"parallel\":1}",
+   "valid": false
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":1,\"parallel\":5}",
+   "valid": false
+  },
+  {
+   "definition": "DeclaredSymptom",
+   "document": "{\"node\":\"tests/test_a.py::test_a\",\"exception\":\"builtins.TimeoutError\",\"phase\":\"call\",\"repeat\":1,\"parallel\":true}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":0}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":1.0}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":-1}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":9223372036854775807}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":9223372036854775808}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":-9223372036854775807}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":-9223372036854775808}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":-9223372036854775809}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":18446744073709551616}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"finish\",\"exit_code\":1.5}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"start\",\"schema\":1}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"start\",\"schema\":1.0}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"start\",\"schema\":1e0}",
+   "valid": true
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"start\",\"schema\":2}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"start\",\"schema\":1.5}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"start\",\"schema\":true}",
+   "valid": false
+  },
+  {
+   "definition": "SymptomRecord",
+   "document": "{\"event\":\"start\",\"schema\":\"1\"}",
+   "valid": false
+  }
+ ]
+}
