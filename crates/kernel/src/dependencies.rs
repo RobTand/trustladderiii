@@ -45,6 +45,17 @@ pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
         + if seen[end as int - 1] { 0nat } else { 1nat } }
 }
 
+/// #771: counting a prefix depends only on that prefix's elements.
+pub proof fn unseen_prefix_equal(left: Seq<bool>, right: Seq<bool>, end: nat)
+    requires end <= left.len(), end <= right.len(),
+        forall|i: int| 0 <= i < end ==> left[i] == right[i],
+    ensures unseen_prefix(left, end) == unseen_prefix(right, end),
+    decreases end,
+{
+    reveal(unseen_prefix);
+    if end > 0 { unseen_prefix_equal(left, right, (end - 1) as nat); }
+}
+
 /// #771: visiting an unvisited root pays for at most one complete edge scan.
 pub proof fn visit_reduces_unseen(seen: Seq<bool>, index: int, end: nat)
     requires 0 <= index < end <= seen.len(), !seen[index],
@@ -54,6 +65,8 @@ pub proof fn visit_reduces_unseen(seen: Seq<bool>, index: int, end: nat)
     reveal(unseen_prefix);
     if index < end - 1 {
         visit_reduces_unseen(seen, index, (end - 1) as nat);
+    } else {
+        unseen_prefix_equal(seen.update(index, true), seen, (end - 1) as nat);
     }
 }
 
@@ -91,6 +104,7 @@ impl World {
     /// #693 / #771: both production cycle-detection branches terminate. Bitset
     /// relaxation strictly raises a u64 mask; the large traversal charges each
     /// push to one edge of a newly visited root. Neither branch writes a ledger.
+    #[allow(clippy::collapsible_if)]
     fn dependency_path(&self, from: NodeId, to: NodeId) -> (result: bool) [
         requires from.0 < self.nodes@.len(), to.0 < self.nodes@.len(),
             edges_indexable(*self),
@@ -100,7 +114,8 @@ impl World {
             // the same nodes as the unbounded traversal below, without allocation.
             let mut seen = 1u64 << from.0;
             kernel_loop! { [
-                invariant self.nodes.len() <= 64,
+                invariant self.nodes.len() <= 64, to.0 < self.nodes@.len(),
+                    edges_indexable(*self),
                 decreases u64::MAX as int - seen as int,
             ] {
                 if seen & (1u64 << to.0) != 0 {
@@ -110,6 +125,7 @@ impl World {
                 let mut index = 0usize;
                 kernel_while! { (index < self.dependencies.len()) [
                     invariant index <= self.dependencies.len(), seen >= before,
+                        self.nodes.len() <= 64, edges_indexable(*self),
                     decreases self.dependencies.len() - index,
                 ] {
                     let dependency = self.dependencies[index];
@@ -141,12 +157,13 @@ impl World {
         let mut seen = alloc::vec![false; self.nodes.len()];
         let mut pending = alloc::vec![from];
         kernel_loop! { [
-            invariant seen.len() == self.nodes.len(),
+            invariant seen.len() == self.nodes.len(), edges_indexable(*self),
                 forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len(),
             decreases unseen_prefix(seen@, seen@.len()) * (self.dependencies@.len() + 1)
                 + pending@.len(),
         ] {
-            let pending_before = pending.len();
+            kernel_snapshot! { before_metric = unseen_prefix(seen@, seen@.len())
+                * (self.dependencies@.len() + 1) + pending@.len() }
             let Some(node) = pending.pop() else { return false; };
             if node == to {
                 return true;
@@ -161,8 +178,10 @@ impl World {
             seen[index] = true;
             let mut edge = 0usize;
             kernel_while! { (edge < self.dependencies.len()) [
-                invariant edge <= self.dependencies.len(),
-                    pending@.len() <= pending_before as int - 1 + edge as int,
+                invariant edge <= self.dependencies.len(), edges_indexable(*self),
+                    seen.len() == self.nodes.len(),
+                    unseen_prefix(seen@, seen@.len()) * (self.dependencies@.len() + 1)
+                        + pending@.len() + (self.dependencies@.len() - edge) < before_metric@,
                     forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len(),
                 decreases self.dependencies.len() - edge,
             ] {

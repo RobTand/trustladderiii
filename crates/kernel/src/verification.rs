@@ -1,6 +1,18 @@
 // Both builds compile the same executable body. Ordinary Rust erases only the
 // contracts, while the narrow Verus root checks them against that body.
 #[cfg(not(verus_keep_ghost))]
+macro_rules! kernel_snapshot {
+    ($name:ident = $($value:tt)*) => {};
+}
+
+#[cfg(verus_keep_ghost)]
+macro_rules! kernel_snapshot {
+    ($name:ident = $($value:tt)*) => {
+        let $name = vstd::prelude::verus_exec_expr! { Ghost($($value)*) };
+    };
+}
+
+#[cfg(not(verus_keep_ghost))]
 macro_rules! kernel_loop {
     ([$($contract:tt)*] $body:block) => {
         loop $body
