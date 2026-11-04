@@ -68,7 +68,7 @@ def main():
         # Light checks run these projects' pytest from the project directory.
         import pytest
         os.chdir(relative.split('/')[0])
-        status = pytest.main([str(module), '-v'], plugins=[Shard(*shard)] if shard else [])
+        status = pytest.main([str(module), '-v', *sys.argv[2:]], plugins=[Shard(*shard)] if shard else [])
     elif shard:
         raise RuntimeError(f'{relative}: sharding needs a pytest module')
     else:

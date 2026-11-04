@@ -1,0 +1,460 @@
+{
+ "cases": [
+  {
+   "expected": {
+    "candidate": {
+     "count": 0,
+     "prefix": [],
+     "schema": "tl3.selectors.v1",
+     "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "identity": {
+     "count": 0,
+     "prefix": [],
+     "schema": "tl3.selectors.v1",
+     "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "matches": true
+   },
+   "id": "identity-0",
+   "input": {
+    "comparison": "identity",
+    "selectors": []
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 1,
+     "prefix": [
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "913128310cc7803c1acdd569c3b3f2dfc0dca6705bc8a56834b923d0421278bf"
+    },
+    "identity": {
+     "count": 1,
+     "prefix": [
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "913128310cc7803c1acdd569c3b3f2dfc0dca6705bc8a56834b923d0421278bf"
+    },
+    "matches": true
+   },
+   "id": "identity-1",
+   "input": {
+    "comparison": "identity",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 2,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "3ff2ae8f95f49e0c6dc79f278a9b2f2c98296badef11ac454e2c6d702f6074cb"
+    },
+    "identity": {
+     "count": 2,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "3ff2ae8f95f49e0c6dc79f278a9b2f2c98296badef11ac454e2c6d702f6074cb"
+    },
+    "matches": true
+   },
+   "id": "identity-2",
+   "input": {
+    "comparison": "identity",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 2,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "test_\u00e9.py::test_\ud83d\ude00"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "9e1af58f129d4f7fdfffd11210ef664ffb3af322e8a4716976cbd044673785c4"
+    },
+    "identity": {
+     "count": 2,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "test_\u00e9.py::test_\ud83d\ude00"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "9e1af58f129d4f7fdfffd11210ef664ffb3af322e8a4716976cbd044673785c4"
+    },
+    "matches": true
+   },
+   "id": "identity-3",
+   "input": {
+    "comparison": "identity",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "test_\u00e9.py::test_\ud83d\ude00"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 2,
+     "prefix": [
+      "test_\u00e9.py::test_\ud83d\ude00",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "e5098645316f3961b524f238c80f399564098735acecc8da6aa5d8f724c6aa2f"
+    },
+    "identity": {
+     "count": 2,
+     "prefix": [
+      "test_\u00e9.py::test_\ud83d\ude00",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "e5098645316f3961b524f238c80f399564098735acecc8da6aa5d8f724c6aa2f"
+    },
+    "matches": true
+   },
+   "id": "identity-4",
+   "input": {
+    "comparison": "identity",
+    "selectors": [
+     "test_\u00e9.py::test_\ud83d\ude00",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 4,
+     "prefix": [
+      "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00",
+      "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00",
+      "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "13289b823ce37d1b0d0f245c4f25be79b41d574fbd558ad1b78f305961607ec6"
+    },
+    "identity": {
+     "count": 4,
+     "prefix": [
+      "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00",
+      "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00",
+      "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "13289b823ce37d1b0d0f245c4f25be79b41d574fbd558ad1b78f305961607ec6"
+    },
+    "matches": true
+   },
+   "id": "identity-5",
+   "input": {
+    "comparison": "identity",
+    "selectors": [
+     "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00",
+     "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00",
+     "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00",
+     "\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00\u00e9\ud83d\ude00"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 1,
+     "prefix": [
+      {
+       "python_codepoints": [
+        120,
+        55296,
+        121
+       ]
+      }
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "41e262e89ef07d80bbf965cddc3d04b4bc8ec9e2e0978501b86c3eb3bb32d472"
+    },
+    "identity": {
+     "count": 1,
+     "prefix": [
+      {
+       "python_codepoints": [
+        120,
+        55296,
+        121
+       ]
+      }
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "41e262e89ef07d80bbf965cddc3d04b4bc8ec9e2e0978501b86c3eb3bb32d472"
+    },
+    "matches": true
+   },
+   "id": "identity-6",
+   "input": {
+    "comparison": "identity",
+    "selectors": [
+     {
+      "python_codepoints": [
+       120,
+       55296,
+       121
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 3,
+     "prefix": [
+      "quote\"\\\n\t",
+      "e\u0301",
+      "\u00e9"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "bb40c204c91a7c5ed594300e0e061e7030ef48dc2b785b199451abdeb059e733"
+    },
+    "identity": {
+     "count": 3,
+     "prefix": [
+      "quote\"\\\n\t",
+      "e\u0301",
+      "\u00e9"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "bb40c204c91a7c5ed594300e0e061e7030ef48dc2b785b199451abdeb059e733"
+    },
+    "matches": true
+   },
+   "id": "identity-7",
+   "input": {
+    "comparison": "identity",
+    "selectors": [
+     "quote\"\\\n\t",
+     "e\u0301",
+     "\u00e9"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ],
+    "identity": {
+     "count": 4,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "matches": true
+   },
+   "id": "full-list",
+   "input": {
+    "comparison": "full-list",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ],
+    "identity": {
+     "count": 4,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "matches": false
+   },
+   "id": "prefix-only",
+   "input": {
+    "comparison": "prefix-only",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 4.0,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "identity": {
+     "count": 4,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "matches": false
+   },
+   "id": "float-count",
+   "input": {
+    "comparison": "float-count",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": true,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "identity": {
+     "count": 4,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "matches": false
+   },
+   "id": "bool-count",
+   "input": {
+    "comparison": "bool-count",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "other.py::test_other"
+    ],
+    "identity": {
+     "count": 4,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "matches": false
+   },
+   "id": "wrong-tail",
+   "input": {
+    "comparison": "wrong-tail",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  },
+  {
+   "expected": {
+    "candidate": {
+     "count": 4,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "identity": {
+     "count": 4,
+     "prefix": [
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value",
+      "tests/test_value.py::test_value"
+     ],
+     "schema": "tl3.selectors.v1",
+     "sha256": "91f6fd2feb6f67f9e83086363e0c970d3a972e1fdbc0089ba8b3c4fa3c671091"
+    },
+    "matches": false
+   },
+   "id": "wrong-digest",
+   "input": {
+    "comparison": "wrong-digest",
+    "selectors": [
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value",
+     "tests/test_value.py::test_value"
+    ]
+   }
+  }
+ ],
+ "kind": "selector-identity"
+}

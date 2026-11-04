@@ -42,7 +42,7 @@ pub struct Status {
     pub requests: Vec<RequestStatus>,
     pub memory: MemoryStatus,
     pub unassigned_incidents: Vec<String>,
-    /// Q53: models out of quota until their announced reset.
+    /// Q53: models unavailable or out of quota until their probe or reset.
     pub quota_models: Vec<String>,
 }
 
@@ -147,7 +147,8 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         http_parked: counts.get(2),
         rejected_status: health.map(|row| row.get(0)),
     };
-    // Q53: models out of quota until their announced reset.
+    // Q53: models out of quota until their announced reset, or unavailable
+    // until their probe (#745). The record doesn't say which (#759).
     let now = chrono::Utc::now().timestamp_millis();
     let quota_models = tx
         .query(
@@ -162,7 +163,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             let reset = value["reset_ms"].as_i64().filter(|reset| *reset > now)?;
             let reset = chrono::DateTime::from_timestamp_millis(reset)?;
             Some(format!(
-                "{model} is out of quota until {}. Its steps use the next model in their ladder.",
+                "{model} is unavailable or out of quota until {}. Its steps use the next model in their ladder.",
                 reset.format("%Y-%m-%d %H:%M:%S UTC")
             ))
         })

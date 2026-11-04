@@ -33,6 +33,7 @@ worker_groups! {
     Sessions: 4,
     Retirement: 5,
     Planning: 12,
+    Unavailable: 7,
     MakerRepositoryImages: 1,
     MakerAdoptedFix: 1,
     MakerReproducingFix: 1,

@@ -970,8 +970,10 @@ it holds no pool grant, and no delivery work waits on it.
   block it, and running postmortems never consume delivery grants (Q39 amended
   by Rob on 2026-11-03, #642).
 - **Quota and recovery.** `start_postmortem` asks the store for an owed row first.
-  It claims nothing while either model the postmortem uses has a `model_quotas`
-  row: entry 0 writes the postmortem and entry 1, if present, grades it. There is
+  Entry 0 writes the postmortem and entry 1, if present, grades it. Each falls
+  down the whole ladder past models whose `model_quotas` record hasn't expired,
+  as other roles fall back (Q53, #759), and the lane claims nothing only while
+  every entry is out. There is
   no daily allowance. Three consecutive failures pause new claims. Recovery
   resets the failure boundary and retains every claim and outcome for audit.
   A single validation run must succeed before the lane resumes; failure pauses
@@ -1349,6 +1351,15 @@ model no longer configured ends when tl3d opens. A wait recorded before Q53
 names its model only in the attempt's `request.json`, which the adapter reads.
 The maker's reply records its model in `maker_session`, and the reviewer stays a
 different family from it.
+
+When every model a step may use is out, and has been for 30 minutes since the
+step's first ending with no model turn served since, the look posts one
+operations note with the fixed reason `model_ladder_unavailable` and keeps
+waiting (#759). The wait wakes at that bound if it comes before the earliest
+reset. A progress checkpoint clears the step's record, so a later outage posts
+again. A postmortem's quota event may name its case file's grade model, and the
+controller charges that model; its grade judges run on the first model not out
+from the ladder's second entry on.
 
 The looks checks cover the workspace, worker protocol tests, kernel tests and
 the stall proof. Check every terminal record, log and CAS receipt before

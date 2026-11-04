@@ -19,7 +19,7 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
     }
 }
 
-pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'static str> {
+pub(crate) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'static str> {
     use crate::executor::{CommentKind, Output};
     match delivery.output {
         Output::Comment {

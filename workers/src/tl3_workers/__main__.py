@@ -44,10 +44,10 @@ def main():
         run(request, emit)
         return 0
     except Exception as error:
-        from tl3_workers.quota import reset_ms
-        reset = reset_ms(error, time.time()) if phase == "run" else None
-        if reset is not None:
-            emit({"event": "quota", "role": request["role"], "reset_ms": reset})
+        from tl3_workers.quota import event
+        ending = event(error, time.time(), request) if phase == "run" else None
+        if ending is not None:
+            emit(ending)
             return 0
         # Provider errors can contain credentials or model text. Keep them off the wire.
         print(f"tl3_workers: {phase} failed", file=sys.stderr)

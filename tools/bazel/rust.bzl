@@ -151,6 +151,8 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     for binary in binaries:
         env["CARGO_BIN_EXE_" + binary[1:]] = WORKSPACE + "/$(rootpath " + binary + ")"
     runtime = _CONTROLLER_RUNTIME.get(name, []) if controller else _RUNTIME.get(package, [])
+    if package == "crates/config" and name.startswith("test_test_tokenizer_"):
+        runtime = runtime + ["@o200k_base//file"]
     if workers:
         runtime = runtime + ["//tools/bazel:worker_python", "@o200k_base//file"]
     postgres = select({
