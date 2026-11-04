@@ -2814,7 +2814,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).fail_fast == old(w).fail_fast,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(reply_bounds); reveal(footprint::ordered_table);] {
+] proof [reveal(reply_bounds); reveal(footprint::ordered_table);] proof [reveal(distance);] {
     kernel_snapshot! { before_reply = *w }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
@@ -2939,7 +2939,7 @@ fn reply_transition(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] {
+] proof [reveal(distance);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
@@ -2961,7 +2961,7 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, 0, 0),
-] proof [reveal(reply_bounds);] {
+] proof [reveal(distance); reveal(reply_bounds);] {
     let m = &mut w.nodes[i];
     if !m.credit.ready {
         m.credit.ready = true;
@@ -2988,7 +2988,7 @@ fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);
@@ -3038,7 +3038,7 @@ fn reply_plan(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::PlanLeaf { footprint, fits } => {
             let m = &mut w.nodes[i];
@@ -3076,7 +3076,7 @@ fn reply_work(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
@@ -3130,7 +3130,7 @@ fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::RebaseClean { head } => {
             let m = &mut w.nodes[i];
@@ -3380,7 +3380,7 @@ fn recheck(w: &mut World, i: usize, target: Phase,
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-] proof [reveal(retry_bounds);] {
+] proof [reveal(distance); reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
@@ -3419,7 +3419,12 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
+                Some(e) => e.seq == seq, None => false,
+            }) ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
             ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
@@ -3439,7 +3444,7 @@ fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
-] {
+] proof [reveal(distance);] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
         return;
@@ -3467,7 +3472,14 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+            ==> distance(*final(m)) == distance(*old(m))),
+        (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
+            && (!old(m).paused || old(m).phase is Stopping)
+            && (current_item(*old(m)) == Some(Item::Do(kind))
+                || current_item(*old(m)) == Some(Item::Teardown(kind)))
+            ==> distance(*final(m)) + 2 <= distance(*old(m)),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m))
             && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
             ==> settle_shape(*final(m))),
@@ -3476,7 +3488,7 @@ fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
-] {
+] proof [reveal(distance);] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
