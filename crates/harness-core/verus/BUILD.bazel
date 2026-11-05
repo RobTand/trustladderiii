@@ -37,7 +37,7 @@ verus_test(
     src = "limits_accumulation.rs",
     srcs = ["//crates/harness-core:src/limits.rs"],
     module = "limits::accumulation",
-    expected_obligations = 5,
+    expected_obligations = 8,
     tags = ["rust", "verus"],
     size = "small",
     timeout = "short",

@@ -166,13 +166,32 @@ pub mod accumulation {
             if charges.len() > 0 { accumulation_step(start, charges.drop_last()); }
         }
 
-        /// #835 conditional accounting only: every retained byte has a charge.
-        /// The inferred receipt map violates this premise today. No unconditional
-        /// theorem about validate_check_plan or the real result serializer is claimed.
-        fn accounted_result_fits(measured: u64, retained: u64) -> (out: bool)
-            requires retained <= measured,
-            ensures out ==> retained <= 8388608,
-        { super::line::result_fits(measured) }
+        /// #835: each retained field must be measured or independently bounded.
+        proof fn retained_sum_bound(retained: Seq<u64>, charged: Seq<u64>)
+            requires retained.len() == charged.len(),
+                forall|i: int| 0 <= i < retained.len() ==> retained[i] <= charged[i],
+            ensures sum(retained) <= sum(charged),
+            decreases retained.len(),
+        {
+            if retained.len() > 0 {
+                retained_sum_bound(retained.drop_last(), charged.drop_last());
+            }
+        }
+
+        /// #835 conditional accounting model: one bound per retained field plus
+        /// the bounded outer envelope. The real inferred receipt map violates
+        /// these premises today. This does not prove validate_check_plan implies
+        /// the actual result_json ceiling of 8 MiB minus 64 KiB.
+        proof fn accounted_result_fits(start: u64, envelope: u64,
+            charged: Seq<u64>, retained: Seq<u64>)
+            requires envelope <= start, retained.len() == charged.len(),
+                forall|i: int| 0 <= i < retained.len() ==> retained[i] <= charged[i],
+            ensures accumulated(start, charged) <= 8388608 ==>
+                envelope as int + sum(retained) <= 8388608,
+        {
+            accumulation_step(start, charged);
+            retained_sum_bound(retained, charged);
+        }
 
         /// #835: two/three sides and per-occurrence witnesses; universal u64 costs.
         fn witnesses() {
@@ -183,6 +202,7 @@ pub mod accumulation {
             let rust = check_cost(100, Some(0), false);
             assert(normal == 15341 && forced == 22961 && repeated == 30682);
             assert(python == 65641 && rust == 65637);
+            accounted_result_fits(305538, 65536, seq![15341u64], seq![1200u64]);
         }
     }
 }
