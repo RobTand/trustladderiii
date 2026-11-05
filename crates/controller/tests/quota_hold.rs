@@ -1312,6 +1312,31 @@ fn upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success() {
         });
         f.store.commit(&commit).unwrap();
         let mut f = f.restart();
+        // A restart can redeliver an already-known pre-upgrade quota ending.
+        // It cannot supply the identity of the unknown shared legacy record.
+        f.controller
+            .observe(
+                "legacy-quota-redelivery",
+                Observation::Quota {
+                    key: key.clone(),
+                    reset_ms: RESET,
+                    model: Some("alternate-model".into()),
+                },
+            )
+            .unwrap();
+        f.drain();
+        let global = f
+            .controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|row| row.table == "model_quotas" && row.id == "alternate-model")
+            .unwrap();
+        assert!(
+            global.value["finished_ms"].is_null() && global.value["family"].is_null(),
+            "a redelivered ending cannot invent the legacy shared hold's identity/order"
+        );
         let before_success: Vec<_> = f
             .controller
             .snapshot()
