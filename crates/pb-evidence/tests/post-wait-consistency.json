@@ -1,0 +1,1403 @@
+{
+  "version": 1,
+  "kind": "post-wait-consistency",
+  "cases": [
+    {
+      "case": "consistent",
+      "input": {
+        "operation": "wait",
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          }
+        },
+        "proof": {
+          "mode": "head-observer"
+        },
+        "forcing": {
+          "symptom": "Old node fails",
+          "environment": {},
+          "patches": [
+            {
+              "target": "subject.adopt",
+              "returns": false
+            }
+          ]
+        },
+        "declared_symptom": {
+          "node": "tests/test_old.py::test_old",
+          "exception": "ValueError",
+          "message": "broken",
+          "phase": "call",
+          "repeat": 2,
+          "parallel": 0
+        },
+        "base": true
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          },
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "base_semantics": "base_subject_head_observer",
+          "demonstrating_proof": "pending_checking",
+          "tree": "1111111111111111111111111111111111111111"
+        }
+      }
+    },
+    {
+      "case": "proof-mismatch",
+      "input": {
+        "operation": "wait",
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {},
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          }
+        },
+        "proof": {
+          "mode": "head-observer"
+        },
+        "forcing": {
+          "symptom": "Old node fails",
+          "environment": {},
+          "patches": [
+            {
+              "target": "subject.adopt",
+              "returns": false
+            }
+          ]
+        },
+        "declared_symptom": {
+          "node": "tests/test_old.py::test_old",
+          "exception": "ValueError",
+          "message": "broken",
+          "phase": "call",
+          "repeat": 2,
+          "parallel": 0
+        },
+        "base": true
+      },
+      "output": {
+        "return": {
+          "status": "infrastructure_error",
+          "message": "Test execution transport_failure in summary: proof_mismatch. No test verdict is available; inspect this action, not fleet availability.",
+          "tests": [],
+          "totals": {
+            "passed": 0,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "proof_mismatch",
+            "test_started": false
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "case": "forcing-mismatch",
+      "input": {
+        "operation": "wait",
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {},
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          }
+        },
+        "proof": {
+          "mode": "head-observer"
+        },
+        "forcing": {
+          "symptom": "Old node fails",
+          "environment": {},
+          "patches": [
+            {
+              "target": "subject.adopt",
+              "returns": false
+            }
+          ]
+        },
+        "declared_symptom": {
+          "node": "tests/test_old.py::test_old",
+          "exception": "ValueError",
+          "message": "broken",
+          "phase": "call",
+          "repeat": 2,
+          "parallel": 0
+        },
+        "base": true
+      },
+      "output": {
+        "return": {
+          "status": "infrastructure_error",
+          "message": "Test execution transport_failure in summary: forcing_or_selection_mismatch. No test verdict is available; inspect this action, not fleet availability.",
+          "tests": [],
+          "totals": {
+            "passed": 0,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "forcing_or_selection_mismatch",
+            "test_started": false
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "case": "selection-mismatch",
+      "input": {
+        "operation": "wait",
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": [
+            "other.py"
+          ],
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          }
+        },
+        "proof": {
+          "mode": "head-observer"
+        },
+        "forcing": {
+          "symptom": "Old node fails",
+          "environment": {},
+          "patches": [
+            {
+              "target": "subject.adopt",
+              "returns": false
+            }
+          ]
+        },
+        "declared_symptom": {
+          "node": "tests/test_old.py::test_old",
+          "exception": "ValueError",
+          "message": "broken",
+          "phase": "call",
+          "repeat": 2,
+          "parallel": 0
+        },
+        "base": true
+      },
+      "output": {
+        "return": {
+          "status": "infrastructure_error",
+          "message": "Test execution transport_failure in summary: forcing_or_selection_mismatch. No test verdict is available; inspect this action, not fleet availability.",
+          "tests": [],
+          "totals": {
+            "passed": 0,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "forcing_or_selection_mismatch",
+            "test_started": false
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "case": "symptom-mismatch",
+      "input": {
+        "operation": "wait",
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "declared_symptom": {}
+        },
+        "proof": {
+          "mode": "head-observer"
+        },
+        "forcing": {
+          "symptom": "Old node fails",
+          "environment": {},
+          "patches": [
+            {
+              "target": "subject.adopt",
+              "returns": false
+            }
+          ]
+        },
+        "declared_symptom": {
+          "node": "tests/test_old.py::test_old",
+          "exception": "ValueError",
+          "message": "broken",
+          "phase": "call",
+          "repeat": 2,
+          "parallel": 0
+        },
+        "base": true
+      },
+      "output": {
+        "return": {
+          "status": "infrastructure_error",
+          "message": "Test execution transport_failure in summary: symptom_mismatch. No test verdict is available; inspect this action, not fleet availability.",
+          "tests": [],
+          "totals": {
+            "passed": 0,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "symptom_mismatch",
+            "test_started": false
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "case": "infrastructure-skips-proof-forcing",
+      "input": {
+        "operation": "wait",
+        "result": {
+          "status": "infrastructure_error",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          }
+        },
+        "proof": {
+          "mode": "head-observer"
+        },
+        "forcing": {
+          "symptom": "Old node fails",
+          "environment": {},
+          "patches": [
+            {
+              "target": "subject.adopt",
+              "returns": false
+            }
+          ]
+        },
+        "declared_symptom": {
+          "node": "tests/test_old.py::test_old",
+          "exception": "ValueError",
+          "message": "broken",
+          "phase": "call",
+          "repeat": 2,
+          "parallel": 0
+        },
+        "base": true
+      },
+      "output": {
+        "return": {
+          "status": "infrastructure_error",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          },
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "base_semantics": "base_subject_head_observer",
+          "demonstrating_proof": "pending_checking",
+          "tree": "1111111111111111111111111111111111111111"
+        }
+      }
+    },
+    {
+      "case": "compact-selection",
+      "input": {
+        "operation": "wait",
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": {
+            "schema": "tl3.selectors.v1",
+            "count": 1,
+            "sha256": "930d7cf72990af345a7d1916e18f9ff73a68dcda86ba0ed73ee903855ef804fd",
+            "prefix": [
+              "tests/test_old.py::test_old"
+            ]
+          },
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          }
+        },
+        "proof": {
+          "mode": "head-observer"
+        },
+        "forcing": {
+          "symptom": "Old node fails",
+          "environment": {},
+          "patches": [
+            {
+              "target": "subject.adopt",
+              "returns": false
+            }
+          ]
+        },
+        "declared_symptom": {
+          "node": "tests/test_old.py::test_old",
+          "exception": "ValueError",
+          "message": "broken",
+          "phase": "call",
+          "repeat": 2,
+          "parallel": 0
+        },
+        "base": true
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "proof": {
+            "mode": "head-observer"
+          },
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          },
+          "selectors": {
+            "schema": "tl3.selectors.v1",
+            "count": 1,
+            "sha256": "930d7cf72990af345a7d1916e18f9ff73a68dcda86ba0ed73ee903855ef804fd",
+            "prefix": [
+              "tests/test_old.py::test_old"
+            ]
+          },
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          },
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "base_semantics": "base_subject_head_observer",
+          "demonstrating_proof": "pending_checking",
+          "tree": "1111111111111111111111111111111111111111"
+        }
+      }
+    },
+    {
+      "case": "selectors-empty",
+      "input": {
+        "operation": "selectors",
+        "value": []
+      },
+      "output": {
+        "return": []
+      }
+    },
+    {
+      "case": "selectors-deduplicated",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "tests/test_old.py::test_old",
+          "tests/test_old.py::test_old"
+        ]
+      },
+      "output": {
+        "return": [
+          "tests/test_old.py::test_old"
+        ]
+      }
+    },
+    {
+      "case": "selectors-unicode",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "tests/test_é.py::test_雪"
+        ]
+      },
+      "output": {
+        "return": [
+          "tests/test_é.py::test_雪"
+        ]
+      }
+    },
+    {
+      "case": "selectors-not-list",
+      "input": {
+        "operation": "selectors",
+        "value": "tests/test_old.py::test_old"
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use a list of at most 256 test selectors"
+        }
+      }
+    },
+    {
+      "case": "selectors-too-many",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py",
+          "t.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use a list of at most 256 test selectors"
+        }
+      }
+    },
+    {
+      "case": "selectors-blank",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          ""
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-absolute",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "/x.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-parent",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "a/../x.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-git",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          ".git/a.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-option",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "-x"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-nul",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "x\u0000.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-backslash",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "a\\b.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-newline",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "x\n.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-carriage-return",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "x\r.py"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-too-long",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "selectors-node-without-file",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          "::test_x"
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use relative pytest paths or node IDs"
+        }
+      }
+    },
+    {
+      "case": "priority-None",
+      "input": {
+        "operation": "priority",
+        "value": null
+      },
+      "output": {
+        "return": null
+      }
+    },
+    {
+      "case": "priority--10",
+      "input": {
+        "operation": "priority",
+        "value": -10
+      },
+      "output": {
+        "return": -10
+      }
+    },
+    {
+      "case": "priority-0",
+      "input": {
+        "operation": "priority",
+        "value": 0
+      },
+      "output": {
+        "return": 0
+      }
+    },
+    {
+      "case": "priority--11",
+      "input": {
+        "operation": "priority",
+        "value": -11
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+        }
+      }
+    },
+    {
+      "case": "priority-1",
+      "input": {
+        "operation": "priority",
+        "value": 1
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+        }
+      }
+    },
+    {
+      "case": "priority-True",
+      "input": {
+        "operation": "priority",
+        "value": true
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+        }
+      }
+    },
+    {
+      "case": "priority-0.0",
+      "input": {
+        "operation": "priority",
+        "value": 0.0
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+        }
+      }
+    },
+    {
+      "case": "priority-'0'",
+      "input": {
+        "operation": "priority",
+        "value": "0"
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+        }
+      }
+    },
+    {
+      "case": "settings-default",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tools_path": "/fixture/tools"
+        }
+      },
+      "output": {
+        "return": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tools_path": "/fixture/tools",
+          "cpus": 1,
+          "mem_gb": 2,
+          "quiet_seconds": 120
+        }
+      }
+    },
+    {
+      "case": "settings-mutable-image",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "ubuntu:latest",
+          "tools_path": "/fixture/tools"
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use an immutable container image digest"
+        }
+      }
+    },
+    {
+      "case": "settings-relative-tools",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tools_path": "relative"
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "PrismaBuild tools_path must be absolute"
+        }
+      }
+    },
+    {
+      "case": "settings-cpus-zero",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tools_path": "/fixture/tools",
+          "cpus": 0
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Test resource and quiet allowances must be positive integers"
+        }
+      }
+    },
+    {
+      "case": "settings-mem-bool",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tools_path": "/fixture/tools",
+          "mem_gb": true
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Test resource and quiet allowances must be positive integers"
+        }
+      }
+    },
+    {
+      "case": "settings-quiet-float",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tools_path": "/fixture/tools",
+          "quiet_seconds": 1.0
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Test resource and quiet allowances must be positive integers"
+        }
+      }
+    }
+  ]
+}
