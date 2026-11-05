@@ -5,10 +5,10 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[4]
 HERE = Path(__file__).resolve().parent
 BASE = 'cdacce8f99c28ca8dba8f5f76831b77b4dfcd836'
-# #828 adds durable status metadata to these shells after extraction. Keep the
+# #828 intentionally changes these Q53 shells after the extraction. Keep the
 # original extraction comparison, with real quota paths covered by quota_hold.
 QUOTA_BASE = '8b49b5cdff79a1a56290e3e6aa0572c4518c1e7c'
-FROZEN_METHODS = {'look_state', 'quota_allowance'}
+FROZEN_METHODS = {'look_state', 'look_observations', 'quota_allowance'}
 METHODS = ['look_state', 'look_alive', 'finish_stall', 'rearm', 'look_failed',
            'look_observations', 'probe_passed', 'save_allowance', 'allowance_row', 'record_progress',
            'progress_allowance', 'quota_allowance', 'expire_model_quotas']
