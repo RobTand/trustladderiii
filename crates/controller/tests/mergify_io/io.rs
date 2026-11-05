@@ -1155,7 +1155,7 @@ pub(super) mod c1_payloads {
     use super::*;
 
     #[derive(Clone, Copy, Debug, Serialize)]
-    pub(crate) enum Outcome {
+    pub(in crate::mergify_io) enum Outcome {
         Accepted,
         Http408,
         AppAccess,
@@ -1163,7 +1163,7 @@ pub(super) mod c1_payloads {
         OtherRefusal,
     }
     #[derive(Clone, Debug)]
-    pub(crate) struct Payloads {
+    pub(in crate::mergify_io) struct Payloads {
         pub schedule: Schedule,
         pub statuses: Vec<Vec<Value>>,
         pub runs: Vec<Vec<WorkflowRun>>,
@@ -1173,7 +1173,7 @@ pub(super) mod c1_payloads {
         static PAYLOAD: RefCell<Option<(Payloads, usize, usize)>> = const { RefCell::new(None) };
     }
     #[derive(Clone)]
-    pub(crate) struct GitHub(super::GitHub);
+    pub(in crate::mergify_io) struct GitHub(super::GitHub);
     impl ::std::ops::Deref for GitHub {
         type Target = super::GitHub;
         fn deref(&self) -> &Self::Target {
@@ -1244,12 +1244,12 @@ pub(super) mod c1_payloads {
         }
     }
     #[derive(Debug)]
-    pub(crate) struct Side {
+    pub(in crate::mergify_io) struct Side {
         pub result: Value,
         pub receipt: Option<Value>,
         pub posts: Vec<String>,
     }
-    pub(crate) struct Report {
+    pub(in crate::mergify_io) struct Report {
         pub sides: [Side; 2],
         pub comparisons: usize,
         pub receipt_crashes: usize,
@@ -1295,7 +1295,10 @@ pub(super) mod c1_payloads {
             }
         })
     }
-    pub(crate) fn compare(p: &Payloads, execute: impl Fn(bool, &Delivery) -> Value) -> Report {
+    pub(in crate::mergify_io) fn compare(
+        p: &Payloads,
+        execute: impl Fn(bool, &Delivery) -> Value,
+    ) -> Report {
         let old = record(p, false, None, &execute);
         let new = record(p, true, None, &execute);
         assert_eq!(old, new, "C1 payload divergence: {p:?}");
@@ -1354,7 +1357,12 @@ pub(super) mod c1_payloads {
             receipt_crashes,
         }
     }
-    pub(crate) fn workflow(id: u64, event: &str, conclusion: &str, attempt: u64) -> WorkflowRun {
+    pub(in crate::mergify_io) fn workflow(
+        id: u64,
+        event: &str,
+        conclusion: &str,
+        attempt: u64,
+    ) -> WorkflowRun {
         let mut run = run_value(&Frame {
             word: 0,
             elapsed_ms: 0,
