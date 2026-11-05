@@ -74,6 +74,7 @@ pub fn nonnegative_integer(value: &Value) -> bool {
 /// CPython rounds floating tokens once at decoding; integer lexemes stay exact.
 pub fn normalize_floats(value: &mut Value) {
     match value {
+        Value::Number(number) if number.to_string() == "-0" => *number = 0.into(),
         Value::Number(number) if number.to_string().contains(['.', 'e', 'E']) => {
             if let Some(rounded) = number.as_f64().and_then(serde_json::Number::from_f64) {
                 *number = rounded;

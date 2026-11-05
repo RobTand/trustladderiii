@@ -410,6 +410,23 @@
     {
       "type": "object",
       "properties": {
+        "helper": {
+          "$ref": "#/$defs/Helper"
+        },
+        "operation": {
+          "type": "string",
+          "const": "generator-helper"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "helper"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
         "artifact": true,
         "budget": true,
         "command": {
@@ -604,6 +621,100 @@
         "image",
         "implementation",
         "budget"
+      ]
+    },
+    "Helper": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "raw": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "raw"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "path"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "after": true,
+            "before": true,
+            "contract": {
+              "$ref": "#/$defs/GeneratorContract"
+            },
+            "kind": {
+              "type": "string",
+              "const": "changed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "before",
+            "after",
+            "contract"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "budget"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "argv"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "argv"
+          ]
+        }
       ]
     },
     "PbEnding": {

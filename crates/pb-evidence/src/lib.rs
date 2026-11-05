@@ -224,6 +224,7 @@ pub fn evaluate(request: Request) -> Result<Value> {
     }
 }
 pub fn decide(operation: &str, mut document: Value) -> Value {
+    python_json::normalize_floats(&mut document);
     document["operation"] = json!(operation);
     let decision = serde_json::from_value(document)
         .map_err(|_| Refusal::value("invalid PB evidence request"))
