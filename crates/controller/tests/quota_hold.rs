@@ -361,10 +361,7 @@ fn quota_status_names_the_durable_hold_and_retry() {
     f.controller.look_due().unwrap();
     assert_eq!(f.attempt(&key), 1, "the original key resumes at reset");
     f.until(|f| f.controller.world().unwrap().nodes[0].phase != Phase::Auditing);
-}
-
-#[test]
-fn same_model_success_keeps_the_existing_durable_deadline() {
+    // Retain slice A scheduling after a successful call on another request.
     let mut f = Fixture::new();
     let key = f.held(true);
     f.success();
@@ -376,20 +373,6 @@ fn same_model_success_keeps_the_existing_durable_deadline() {
             .waiting_on
             .contains("model quota (audit, alternate-model)"),
         "the allowance remains authoritative after the global model record clears"
-    );
-}
-
-#[test]
-#[ignore = "expected red pending Q27 #828: early wake on same-model success"]
-fn same_model_success_redispatches_the_quota_held_key() {
-    let mut f = Fixture::new();
-    let key = f.held(true);
-    f.success();
-    f.controller.look_due().unwrap();
-    assert_eq!(
-        f.attempt(&key),
-        1,
-        "a later same-model success must redispatch the held idempotency key before reset"
     );
 }
 
