@@ -3011,6 +3011,7 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
+ "tl3-delivery",
  "chrono",
  "fancy-regex 0.18.0",
  "hex",
@@ -3045,6 +3046,10 @@ dependencies = [
  "ts-rs",
  "wiremock",
 ]
+
+[[package]]
+name = "tl3-delivery"
+version = "0.1.0"
 
 [[package]]
 name = "tl3-github"

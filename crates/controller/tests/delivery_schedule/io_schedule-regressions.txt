@@ -1,0 +1,1 @@
+# proptest regression seeds are retained here. Fixed RNG seed: 73005.

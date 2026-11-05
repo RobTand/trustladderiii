@@ -200,6 +200,9 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/writer_references.rs": ["tests/writer_reference_model.py"],
 }
 
+# CC-E: verbatim delivery references, recorded I/O and persisted proptest seeds.
+_CONTROLLER_TEST_SOURCES["tests/delivery_schedule/main.rs"] = ["tests/delivery_schedule/*.txt"]
+
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
