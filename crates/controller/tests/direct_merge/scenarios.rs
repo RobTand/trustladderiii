@@ -59,7 +59,7 @@ impl Respond for DirectApi {
         self.base.respond(request)
     }
 }
-struct DirectFixture { api: Server, root: tempfile::TempDir, direct: Arc<Mutex<DirectState>>, wakes: direct_merge::Wakes }
+struct DirectFixture { api: Server, root: tempfile::TempDir, direct: Arc<Mutex<DirectState>>, wakes: direct_merge::Wakes, clock: head_checks::Clock }
 fn direct_repo() -> tl3_config::Repository {
     serde_json::from_value(json!({"owner":"owner", "name":"sandbox", "installation_id":3, "delivery":"direct"})).unwrap()
 }
@@ -72,7 +72,7 @@ impl DirectFixture {
             Mock::given(|_: &Request| true).respond_with(DirectApi { base: Api(api.state.clone()), direct: direct.clone() }).with_priority(1).mount(&api.server).await;
         });
         api.state.lock().unwrap().pull["mergeable"] = json!(true);
-        Self { api, root, direct, wakes: direct_merge::Wakes::default() }
+        Self { api, root, direct, wakes: direct_merge::Wakes::default(), clock: head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now()))) }
     }
     fn adapter(&self, settings: &tl3_config::Store) -> direct_merge::Adapter {
         direct_merge::Adapter::new(self.api.clients(), 0, &self.root.path().join("direct"), settings.clone()).unwrap().with_wakes(self.wakes.clone())
@@ -80,7 +80,7 @@ impl DirectFixture {
     fn open(&self, settings: &tl3_config::Store) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
         registry.register(Upstream::Mergify, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), self.adapter(settings), &[direct_repo()]));
-        let mut controller = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+        let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
         controller.reconcile_repository_delivery(&[direct_repo()]).unwrap();
         controller.register_github_translator("mergify", direct_merge::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
         controller
@@ -419,4 +419,120 @@ fn status_webhook_wakes_direct_protection_wait() {
     deliver(&settings, &fixture.api, "status", &body);
     drain(&mut controller);
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+}
+
+
+#[test]
+fn r1_mixed_successful_check_and_pending_status_waits_for_event() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_mixed_status");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    {
+        let mut state = fixture.api.state.lock().unwrap();
+        state.required_app = None;
+        state.statuses = json!([{"id":1200,"context":"Sandbox tests","state":"pending"}]);
+    }
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    assert!(fixture.direct.lock().unwrap().puts.is_empty(), "a pending reported legacy status must prevent PUT even with a successful check run");
+    let reads = fixture.direct.lock().unwrap().reads;
+    for _ in 0..3 { assert!(!controller.drive_once().unwrap()); }
+    assert_eq!(fixture.direct.lock().unwrap().reads, reads);
+    fixture.api.state.lock().unwrap().statuses[0]["state"] = json!("success");
+    fixture.check_event(&settings);
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+}
+
+#[test]
+fn r1_unlanded_put_silence_timer_cannot_retry_without_event() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_uncertain_timer");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().status = Some(503);
+    let (mut controller, _) = fixture.start(&settings);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.github_mergify.silence_secs = 1;
+    controller.set_allowances(allowances);
+    fixture.direct.lock().unwrap().status = None;
+    fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(10));
+    controller.look_due().unwrap();
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "a silence timer cannot authorize a retry PUT");
+    fixture.check_event(&settings);
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+}
+
+#[test]
+fn r1_actions_infrastructure_and_pending_are_classified_by_q47() {
+    let mut database = support::Database::start();
+    for conclusion in ["startup_failure", "timed_out", "cancelled", "action_required", "stale"] {
+        let settings = database.create(&format!("direct_class_{conclusion}"));
+        let fixture = DirectFixture::new();
+        fixture.check(Some(conclusion));
+        fixture.api.state.lock().unwrap().head_checks.iter_mut().find(|c|c["id"] == 1100).unwrap()["app"]["slug"] = json!("github-actions");
+        let (mut controller, _) = fixture.start(&settings);
+        drain(&mut controller);
+        assert!(fixture.direct.lock().unwrap().puts.is_empty());
+        let snapshot = controller.snapshot().unwrap();
+        let failures: Vec<_> = snapshot.rows.iter().filter(|r|r.table == "queue_facts" && r.value["evidence"]["CiFailed"].is_object()).collect();
+        if matches!(conclusion, "action_required" | "stale") {
+            assert!(failures.is_empty(), "{conclusion} must wait rather than fail");
+            assert_eq!(controller.world().unwrap().nodes[0].round, 0);
+        } else {
+            assert!(failures.iter().any(|r|r.value["evidence"]["CiFailed"]["infra"] == true), "{conclusion} must retain infrastructure classification");
+        }
+    }
+}
+
+fn catch_up(fixture: &DirectFixture, controller: &mut Controller, changed: bool) {
+    use tl3_controller::ingress::GitHubTranslator;
+    let pull = fixture.api.state.lock().unwrap().pull.clone();
+    let changes = serde_json::from_value(json!({"repository":"owner/sandbox","issues":[],"comments":[],"labels":[],"closed":[],"pull_requests":if changed {vec![pull]} else {vec![]},"check_runs":[],"check_suites":[]})).unwrap();
+    direct_merge::Translator::new(fixture.api.clients()).unwrap().translate(&ingress::GitHubDelivery::CatchUp { repository: Repository {owner:"owner".into(),name:"sandbox".into(),installation:3}, changes:Box::new(changes) }, &controller.snapshot().unwrap()).unwrap();
+}
+#[test]
+fn r1_catch_up_skips_unchanged_closed_delivery_history() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_catch_history");
+    let fixture = DirectFixture::new();
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let reads = fixture.direct.lock().unwrap().reads;
+    catch_up(&fixture, &mut controller, false);
+    assert_eq!(fixture.direct.lock().unwrap().reads, reads, "unchanged completed history must not be reread");
+    catch_up(&fixture, &mut controller, true);
+    assert!(fixture.direct.lock().unwrap().reads <= reads + 1);
+}
+#[test]
+fn r1_retirement_reclaims_terminal_direct_records() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_reclaim");
+    let fixture = DirectFixture::new();
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let files: Vec<_> = std::fs::read_dir(fixture.root.path().join("direct")).unwrap().map(|e|e.unwrap().path()).filter(|p|p.extension().is_some_and(|e|e=="intent"||e=="merged")).collect();
+    assert!(files.is_empty(), "retired terminal evidence must be reclaimed: {files:?}");
+    let mut adapter = fixture.adapter(&settings);
+    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+}
+#[test]
+fn r1_board_retains_actual_delivery_mode_after_configuration_change() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_board_history");
+    let fixture = DirectFixture::new();
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let mut repo = direct_repo();repo.delivery = tl3_config::Delivery::Queue;
+    controller.reconcile_repository_delivery(&[repo]).unwrap();
+    let mut reader = Store::open(&settings).unwrap().reader().unwrap();
+    let mut tx = reader.transaction().unwrap();
+    let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
+    assert!(rows.requests[0].direct_delivery, "switching config must not erase completed direct delivery history");
 }

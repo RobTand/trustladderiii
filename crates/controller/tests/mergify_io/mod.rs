@@ -2006,6 +2006,10 @@ mod router_queue {
         }
         &source[start..cursor]
     }
+    #[test]
+    fn router_source_pins_preserve_literal_whitespace() {
+        assert_ne!(tokens(r#"fn example() { "x y" }"#), tokens(r#"fn example() { "xy" }"#));
+    }
     fn tokens(s: &str) -> String {
         s.split_whitespace().collect()
     }
