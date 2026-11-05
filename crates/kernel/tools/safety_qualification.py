@@ -151,6 +151,22 @@ CASES = {
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
                     '//crates/kernel:verus_controller_boundary'),
+    'gate_classification': ('crates/kernel/src/witness.rs',
+                            'Phase::Making => Reply::MakerDone {\n                            head: n.head.unwrap_or(HeadId(0)),',
+                            'Phase::Making => Reply::MakerDone {\n                            head: HeadId(7),',
+                            '//crates/kernel:verus_witness'),
+    'gate_waiting': ('crates/kernel/src/checking.rs',
+                     'if advance(&mut w, i, &mut out) { return false; }',
+                     'if advance(&mut w, i, &mut out) { return true; }',
+                     '//crates/kernel:verus_checking'),
+    'gate_permutation': ('crates/kernel/verus/progress_gate_permutation.rs',
+                         'w.nodes[actor] = first;', 'w.nodes[actor] = selected;',
+                         '//crates/kernel:verus_progress_gate_permutation'),
+    'gate_maker': ('crates/kernel/src/work_replies.rs',
+                   'm.head = Some(head);\n            m.checked = None;\n            set_phase(m, Phase::Checking);',
+                   'm.head = Some(head);\n            m.checked = Some(head);\n            set_phase(m, Phase::Checking);',
+                   '//crates/kernel:verus_work_replies'),
+
 }
 
 

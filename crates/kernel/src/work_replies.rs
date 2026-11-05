@@ -53,7 +53,14 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         !matches!(reply, Reply::MakerNeedsFiles { .. } | Reply::IngestDone { .. }
             | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+    ensures match reply {
+            Reply::MakerDone { head } => final(w).nodes@[i as int] == retirement::phased(
+                Node { head: Some(head), checked: None, ..old(w).nodes@[i as int] }, Phase::Checking)
+                && final(w).next_question == old(w).next_question
+                && final(w).file_sets@ == old(w).file_sets@ && *final(out) == *old(out),
+            _ => true,
+        },
+        (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,

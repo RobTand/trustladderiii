@@ -2027,3 +2027,35 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_gate.rs"]
 mod progress_gate;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_classification.rs"]
+mod progress_gate_classification;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_waiting.rs"]
+mod progress_gate_waiting;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: storage scope of the complete four-leaf gate checker bridge.
+pub closed spec fn progress_gate_domain(w: World) -> bool { progress_gate::domain(w) }
+/// #806: all production consistency checks in the four-leaf gate domain.
+pub closed spec fn progress_gate_accepted(w: World) -> bool { progress_gate::accepted(w) }
+}
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_permutation.rs"]
+mod progress_gate_permutation;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_maker.rs"]
+mod progress_gate_maker;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_fixture.rs"]
+mod progress_gate_fixture;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_covers.rs"]
+mod progress_gate_covers;

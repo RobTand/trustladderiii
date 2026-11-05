@@ -51,6 +51,7 @@ kernel_fn! {
 /// Reply rows / #771: stale operations stutter, invalid replies use the bounded
 /// failure handler, and successful replies use the actual transition bodies.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -58,7 +59,17 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+    ensures match reply {
+            Reply::MakerDone { head } => old(w).nodes@[i as int].effect.is_none()
+                && old(w).nodes@[i as int].phase == Phase::Making
+                && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+                && old(w).nodes@[i as int].run == Some(generation) ==>
+                final(w).nodes@[i as int] == progress_gate::maker_completed(old(w).nodes@[i as int], head)
+                && final(w).next_question == old(w).next_question
+                && final(w).file_sets@ == old(w).file_sets@ && *final(out) == *old(out),
+            _ => true,
+        },
+        (node_checked(*old(w), old(w).nodes@[i as int])
             && generation == old(w).nodes@[i as int].generation
             && successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
@@ -134,6 +145,11 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         _ => {
             reply_transition(w, i, reply, out);
             kernel_proof! {
+                if let Reply::MakerDone { head } = reply {
+                    if before_operation@.nodes@[i as int].effect.is_none() {
+                        assert(w.nodes@[i as int] == progress_gate::maker_completed(before_operation@.nodes@[i as int], head));
+                    }
+                }
                 if let Reply::PlanLeaf { footprint, .. } = reply {
                     footprint::valid_under_table_growth(before_operation@, *w, footprint);
                 }
@@ -219,7 +235,14 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+    ensures match reply {
+            Reply::MakerDone { head } => final(w).nodes@[i as int] == retirement::phased(
+                Node { head: Some(head), checked: None, ..old(w).nodes@[i as int] }, Phase::Checking)
+                && final(w).next_question == old(w).next_question
+                && final(w).file_sets@ == old(w).file_sets@ && *final(out) == *old(out),
+            _ => true,
+        },
+        (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint

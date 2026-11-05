@@ -79,3 +79,36 @@ pub(super) fn verify_checked(w: &World) -> (result: ()) [
     assert!(checked.is_ok());
 }
 }
+
+verus! {
+/// Maker completion row / #806: exact result of end_operation then MakerDone.
+pub(super) open spec fn maker_completed(n: Node, head: HeadId) -> Node {
+    retirement::phased(Node { run: None, job: None, pool: false, run_failures: 0,
+        run_incidents: 0, head: Some(head), checked: None, ..n }, Phase::Checking)
+}
+
+/// #806: original constructor fields establish every enforced arithmetic reserve.
+pub(super) proof fn input_scope(w: World)
+    requires input(w),
+    ensures world_headroom(w), storage_ordered(w), fresh_commands(w),
+{
+    reveal(initial_node); reveal(world_headroom); reveal(storage_ordered);
+    reveal(footprint::ordered_table); reveal(fresh_commands);
+    reveal_with_fuel(open_prefix, 5);
+    assert forall|i: int| 0 <= i < 4 implies node_headroom(w.nodes@[i]) by {}
+}
+}
+
+verus! {
+/// #806: original four-leaf ranks fit u64; this is only a bound on #805's spec,
+/// leaving the executable World::measure bridge to builder A.
+pub(super) proof fn input_measure_bound(w: World)
+    requires input(w),
+    ensures progress_measure(w) <= 8000,
+{
+    reveal(initial_node); reveal(distance); reveal_with_fuel(phase_rank, 3);
+    assert forall|i: int| 0 <= i < 4 implies distance(w.nodes@[i]) <= 2000 by {}
+    reveal_with_fuel(node_total, 5);
+    progress::empty_edges(w);
+}
+}

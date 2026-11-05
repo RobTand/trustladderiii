@@ -78,6 +78,12 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_priority", "facts_transition"),
     ("apply_pr_closed", "facts_transition"),
     ("apply_conflict", "facts_transition"),
+    ("gate_progress_w2", "progress_gate_classification"),
+    ("gate_progress_w3", "progress_gate_classification"),
+    ("gate_waiting_progress_w2", "progress_gate_waiting"),
+    ("gate_waiting_progress_w3", "progress_gate_waiting"),
+    ("gate_maker_progress_w2", "progress_gate_maker"),
+    ("gate_maker_progress_w3", "progress_gate_maker"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

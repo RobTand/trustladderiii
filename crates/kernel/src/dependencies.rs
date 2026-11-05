@@ -836,3 +836,14 @@ impl World {
     }
     }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Prerequisite rows / #806: the original empty gate table has no delivery obstruction.
+pub(super) proof fn empty_delivered(w: World, node: NodeId)
+    requires w.dependencies@.len() == 0,
+    ensures delivered(w.dependencies@, node),
+{
+    reveal(delivered);
+}
+}
