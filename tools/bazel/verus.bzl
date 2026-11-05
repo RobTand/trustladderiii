@@ -352,6 +352,22 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+    # #836 RED matching: independent of the other wave-B proof inventories.
+    if native.package_name() == "crates/harness-core":
+        verus_test(
+            name = "verus_red_match",
+            src = "verus/red_match.rs",
+            srcs = ["src/red_match.rs"],
+            specs = native.glob(["verus/red_match*.rs"]),
+            expected_obligations = 24,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
     if native.package_name() == "crates/kernel":
         # Every body called by step is checked in one of these groups. Module
         # filters bound solver context; exact counts refuse empty selections.
