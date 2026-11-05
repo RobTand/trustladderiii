@@ -746,7 +746,7 @@ fn bounded_failure_details() {
     );
 }
 
-fn reproducing_check_plan_and_verdict() {
+fn reproducing_check_case(mode: &str, expected: bool) {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
     let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
@@ -759,28 +759,26 @@ fn reproducing_check_plan_and_verdict() {
         "the check plan must carry reproducing checks"
     );
     delivery.checks = Some(parsed.unwrap());
-    for (mode, expected) in [("done", true), ("check_fail", false)] {
-        let trial = tempfile::tempdir().unwrap();
-        let mut adapter = fixture(trial.path(), mode);
-        adapter.execute(&delivery).unwrap();
-        let requests = fs::read_dir(trial.path().join("queue")).unwrap();
-        let path = requests
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "request")
-            })
-            .unwrap();
-        let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(
-            request["reviewed"],
-            reviewed.as_str(),
-            "freeze the exact reviewed commit"
-        );
-        let (report, pass, _) = observed(completion(&mut adapter, &delivery));
-        assert!(report);
-        assert_eq!(pass, expected, "a failed reproducer is a failed round");
-    }
+    let trial = tempfile::tempdir().unwrap();
+    let mut adapter = fixture(trial.path(), mode);
+    adapter.execute(&delivery).unwrap();
+    let requests = fs::read_dir(trial.path().join("queue")).unwrap();
+    let path = requests
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "request")
+        })
+        .unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        request["reviewed"],
+        reviewed.as_str(),
+        "freeze the exact reviewed commit"
+    );
+    let (report, pass, _) = observed(completion(&mut adapter, &delivery));
+    assert!(report);
+    assert_eq!(pass, expected, "a failed reproducer is a failed round");
 }
 
 /// #393: a forced demonstrating check stages its forcing for the harness, and its
@@ -2632,10 +2630,12 @@ fn main() {
             moving_job_reconcile_is_pending,
         ),
         ("job_look_states", job_look_states as fn()),
-        (
-            "reproducing_check_plan_and_verdict",
-            reproducing_check_plan_and_verdict,
-        ),
+        ("reproducing_check_pass", || {
+            reproducing_check_case("done", true)
+        }),
+        ("reproducing_check_fail", || {
+            reproducing_check_case("check_fail", false)
+        }),
         (
             "forced_check_is_staged_and_reaches_review",
             forced_check_is_staged_and_reaches_review,
