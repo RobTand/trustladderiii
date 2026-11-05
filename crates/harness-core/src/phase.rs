@@ -103,10 +103,7 @@ pub fn checking(setup: Status, call: Option<Fact>, teardown: Status) -> Option<F
     {
         return Some(Fold::Skipped);
     }
-    let fact = match call {
-        Some(fact) => fact,
-        None => return None,
-    };
+    let fact = call?;
     Some(if matches!(fact.status, Status::Failed) {
         if fact.assertion {
             Fold::Failed
