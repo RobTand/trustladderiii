@@ -2846,9 +2846,11 @@ impl Controller {
             }
             Observation::Queue(mut fact) => {
                 let identity = fact.identity();
-                if fact.recorded(snapshot)? {
+                let Some(translation) =
+                    tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
+                else {
                     return Ok(None);
-                }
+                };
                 let Some(node) = fact.node(snapshot)? else {
                     return Ok(None);
                 };
@@ -2964,7 +2966,7 @@ impl Controller {
                     Evidence::PushByOther { .. } => core::EvidenceKind::PushByOther,
                     _ => core::EvidenceKind::Other,
                 };
-                let kernel = match core::dispatch(route, kind) {
+                let kernel = match core::dispatch(translation, route, kind) {
                     Decision::Record => {
                         commit.rows.push(put("queue_facts", identity, value));
                         return Ok(None);
@@ -3096,9 +3098,11 @@ impl Controller {
                 issue,
                 comment,
             } => {
-                if comment.user.id == self.bootstrap.rob
-                    && self.bootstrap.repos.contains(&repository)
-                {
+                let author_matches = comment.user.id == self.bootstrap.rob;
+                if tl3_controller_core::translate_misc::admit_comment(
+                    author_matches,
+                    author_matches && self.bootstrap.repos.contains(&repository),
+                ) {
                     let id = format!(
                         "{}/{}/{}/{}",
                         repository.owner.to_ascii_lowercase(),
@@ -3106,12 +3110,15 @@ impl Controller {
                         repository.installation,
                         comment.id
                     );
-                    if !self.store.comment_retired(&id)?
-                        && !snapshot
-                            .rows
-                            .iter()
-                            .any(|row| row.table == "github_comments" && row.id == id)
-                    {
+                    let retired = self.store.comment_retired(&id)?;
+                    if tl3_controller_core::translate_misc::record_comment(
+                        retired,
+                        !retired
+                            && snapshot
+                                .rows
+                                .iter()
+                                .any(|row| row.table == "github_comments" && row.id == id),
+                    ) {
                         let value =
                             json!({"repository": repository, "issue": issue, "comment": comment});
                         commit
