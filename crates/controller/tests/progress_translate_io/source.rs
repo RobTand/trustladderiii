@@ -16,7 +16,7 @@ fn arms(source: &str) -> &str {
 fn method<'a>(source: &'a str, name: &str) -> &'a str {
     let token = format!("fn {name}(");
     let token = source.find(&token).unwrap();
-    let start = source[..token].rfind('\n').unwrap() + 1;
+    let start = source[..token].rfind('\n').map_or(0, |index| index + 1);
     &source[start..start + source[start..].find("\n    }\n").unwrap() + 7]
 }
 #[test]

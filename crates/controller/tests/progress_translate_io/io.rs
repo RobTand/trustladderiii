@@ -166,7 +166,15 @@ fn run(s: &Schedule, current: bool, cut: Option<(usize, bool)>) -> Run {
 }
 pub(super) fn compare(s: &Schedule) -> Run {
     let old = run(s, false, None);
-    assert_eq!(old, run(s, true, None), "complete schedule {s:?}");
+    let new = run(s, true, None);
+    assert!(
+        old == new,
+        "complete schedule {s:?}; old results {:?}, new results {:?}; old trace {:?}, new trace {:?}",
+        old.results,
+        new.results,
+        old.trace,
+        new.trace
+    );
     for index in 0..old.writes {
         for after in [false, true] {
             assert_eq!(

@@ -6,7 +6,7 @@ use proptest::{
 };
 
 fn allowance() -> Value {
-    json!({"delivery":{"key":"step","epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":null,"repository":{"owner":"owner","name":"repo"},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0},
+    json!({"delivery":{"key":"step","epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":null,"repository":{"owner":"owner","name":"repo","installation":1},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0},
         "due_ms":9000,"progress":null,"progress_ms":0,"quota_ms":null,"stopping":false,"incident":null,
         "unserved_since_ms":100,"ladder_out_noticed":true})
 }
