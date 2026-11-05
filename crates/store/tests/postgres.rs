@@ -20,6 +20,12 @@ fn main() {
     let mut database = Database::start();
     let cases = [
         (
+            "ownership_release",
+            ownership_release as fn(&tl3_config::Store),
+        ),
+        ("ownership_drop", ownership_drop),
+        ("ownership_release_after_loss", ownership_release_after_loss),
+        (
             "mvp_schema_6_upgrades_to_hindsight",
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
         ),
@@ -94,7 +100,8 @@ fn main() {
     for (name, test) in &selected {
         let settings = if matches!(
             *name,
-            "mvp_schema_6_upgrades_to_hindsight"
+            "ownership_release"
+                | "mvp_schema_6_upgrades_to_hindsight"
                 | "phase_backfill_from_schema_9"
                 | "postmortem_migration_on_schema_12"
                 | "read_only_reader"
@@ -127,7 +134,7 @@ fn main() {
 fn migrate(settings: &tl3_config::Store) -> tl3_store::Result<Store> {
     let mut ownership = Ownership::claim(Store::connect(settings)?)?;
     ownership.migrate()?;
-    drop(ownership);
+    ownership.release()?;
     Store::open(settings)
 }
 
@@ -140,6 +147,78 @@ fn raw(settings: &tl3_config::Store) -> Client {
         .password("tl3-disposable-test-password")
         .connect(NoTls)
         .unwrap()
+}
+
+/// #785 / batch 10: a successor must not wait for the old backend to exit.
+fn ownership_release(settings: &tl3_config::Store) {
+    let mut owner = Ownership::claim(Store::connect(settings).unwrap()).unwrap();
+    owner.migrate().unwrap();
+    let mut observer = raw(settings);
+    let pid = owner_pid(&mut observer);
+    let owner = Ownership::claim(owner.into_store()).unwrap();
+    assert!(
+        Ownership::claim(Store::open(settings).unwrap()).is_err(),
+        "live owners still refuse contenders"
+    );
+    // Keep the exact old session alive after release. This makes a missing
+    // unlock deterministic, independently of when Postgres processes Terminate.
+    let mut released = owner.release().unwrap();
+    released.load().unwrap();
+    assert_eq!(
+        observer
+            .query_one(
+                "SELECT count(*) FROM pg_stat_activity WHERE pid = $1",
+                &[&pid]
+            )
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    assert_eq!(observer.query_one("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = $1 AND classid::bigint = 1414280003 AND objid::bigint = 1330533458 AND objsubid = 1 AND granted", &[&pid]).unwrap().get::<_, i64>(0), 0, "release must acknowledge the unlock while the old backend is still alive");
+    let mut successor = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    successor.ensure_held().unwrap();
+    released.load().unwrap();
+    successor.release().unwrap();
+}
+
+fn owner_pid(observer: &mut Client) -> i32 {
+    observer.query_one("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid::bigint = 1414280003 AND objid::bigint = 1330533458 AND objsubid = 1 AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND granted", &[]).unwrap().get(0)
+}
+
+/// #785: a failed release reports session loss rather than claiming success.
+fn ownership_release_after_loss(settings: &tl3_config::Store) {
+    let owner = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    let mut observer = raw(settings);
+    let pid = owner_pid(&mut observer);
+    assert!(
+        observer
+            .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    assert!(matches!(owner.release(), Err(Error::OwnershipLost)));
+}
+
+/// #785: transfer keeps ownership; normal drop and unwinding release it.
+fn ownership_drop(settings: &tl3_config::Store) {
+    for panic in [false, true] {
+        let owner = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+        let mut observer = raw(settings);
+        let pid = owner_pid(&mut observer);
+        let transferred = owner.into_store();
+        assert!(
+            Ownership::claim(Store::open(settings).unwrap()).is_err(),
+            "transferring the session must not unlock it"
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = transferred;
+            assert_eq!(owner_pid(&mut observer), pid);
+            assert!(!panic, "exercise ownership cleanup during unwinding");
+        }));
+        assert_eq!(result.is_err(), panic);
+        let successor = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+        successor.release().unwrap();
+    }
 }
 
 fn review_fixes_worker_document(settings: &tl3_config::Store) {
@@ -2989,7 +3068,8 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
         0,
         "a refused auxiliary backfill cannot move its cursor"
     );
-    let mut store = Ownership::claim(store).unwrap().into_store();
+    let mut ownership = Ownership::claim(store).unwrap();
+    let store = ownership.store();
     assert!(store.migrate_dispatch_evidence().unwrap());
     assert_eq!(
         client
@@ -3012,11 +3092,9 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
         "the same 256-row batch also recovers unresolved legacy dispatches"
     );
     assert!(recovery.contains(&"pending".into()) && recovery.contains(&"cancelled".into()));
-    drop(store);
-    client.batch_execute("SET lock_timeout = '180s'; SELECT pg_advisory_lock(6074286361602315346); SELECT pg_advisory_unlock(6074286361602315346)").unwrap();
-    let mut store = Ownership::claim(Store::open(settings).unwrap())
-        .unwrap()
-        .into_store();
+    ownership.release().unwrap();
+    let mut ownership = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    let store = ownership.store();
     assert!(
         store
             .dispatched_effect_matching(&identity, "legacy-b")

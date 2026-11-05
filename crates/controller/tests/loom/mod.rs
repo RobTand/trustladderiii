@@ -102,7 +102,7 @@ pub(crate) fn model(
         let mut ownership =
             crate::Ownership::claim(tl3_store::Store::connect(&settings).unwrap()).unwrap();
         ownership.migrate().unwrap();
-        drop(ownership);
+        ownership.release().unwrap();
         check(&settings);
     });
 }

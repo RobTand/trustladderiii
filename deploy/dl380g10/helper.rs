@@ -50,7 +50,9 @@ fn run() -> Result<()> {
                 .status()?;
             std::process::exit(status.code().unwrap_or(1));
         }
-        "database" => database(&tl3_config::Config::load_status(path)?)?,
+        "database" => {
+            database(&tl3_config::Config::load_status(path)?)?;
+        }
         "console-role" => console_role(&tl3_config::Config::load_status(path)?)?,
         "store-check" => {
             let config = tl3_config::Config::load_status(path)?;
@@ -68,7 +70,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn database(config: &tl3_config::Config) -> Result<()> {
+fn database(config: &tl3_config::Config) -> Result<tl3_store::Store> {
     let settings = &config.store;
     if settings.database != "tl3" || settings.user != "tl3" {
         return Err("deployment initializes only database and user tl3".into());
@@ -98,13 +100,14 @@ fn database(config: &tl3_config::Config) -> Result<()> {
     }
     let mut ownership = tl3_store::Ownership::claim(tl3_store::Store::connect(settings)?)?;
     ownership.migrate()?;
+    let store = ownership.release()?;
     println!("Postgres: database exists, fsync on, migrations applied");
     // This runs on every tl3-postgres start, which tl3d and the status page
     // require. A console fault must never stop the database.
     if let Err(error) = console_role(config) {
         println!("Postgres: console login not granted: {error}");
     }
-    Ok(())
+    Ok(store)
 }
 
 /// The console reads through its own login, which may read every table,
@@ -591,6 +594,47 @@ mod database_support;
 #[cfg(test)]
 mod database_tests {
     use super::*;
+
+    /// #785 / batch 10: deploy hands off before its backend has exited.
+    #[test]
+    fn database_initialization_releases_before_controller_start() {
+        let mut postgres = database_support::Database::start();
+        let admin = postgres.create("deploy_handoff");
+        let mut client = postgres::Config::new()
+            .host(&admin.host)
+            .port(admin.port)
+            .user(&admin.user)
+            .dbname(&admin.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap();
+        client
+            .batch_execute(
+                "CREATE ROLE tl3 LOGIN SUPERUSER PASSWORD 'tl3-disposable-test-password'",
+            )
+            .unwrap();
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../crates/config/example.toml")).unwrap();
+        config.store = tl3_config::Store {
+            database: "tl3".into(),
+            user: "tl3".into(),
+            ..admin
+        };
+        config.console = None;
+        let mut deploy_session = database(&config).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let mut controller = tl3_controller::Controller::open(
+            tl3_store::Store::open(&config.store).unwrap(),
+            tl3_controller::adapters::simulation(scratch.path()).unwrap(),
+            tl3_controller::Bootstrap::from_config(&config).unwrap(),
+        )
+        .unwrap();
+        // The old deployment connection remains usable throughout admission.
+        deploy_session.load().unwrap();
+        controller.world().unwrap();
+        drop((controller, deploy_session, client));
+        postgres.stop();
+    }
 
     /// tl3d and the status page require tl3-postgres, whose start runs
     /// `database`. A console login problem must never stop it.

@@ -57,6 +57,7 @@ pub enum Error {
 /// One synchronous connection. The controller owns its writer; readers can open others.
 pub struct Store {
     client: Client,
+    controller_claim: bool,
     settings: tl3_config::Store,
     boundary_hook: Option<BoundaryHook>,
 }
@@ -78,6 +79,13 @@ pub struct Ownership {
 
 impl Ownership {
     pub fn claim(mut store: Store) -> Result<Self> {
+        // A transferred controller session already holds one claim. Do not
+        // reenter Postgres's counted advisory lock when wrapping it again.
+        if store.controller_claim {
+            let mut ownership = Self { store };
+            ownership.ensure_held()?;
+            return Ok(ownership);
+        }
         if !store
             .client
             .query_one("SELECT pg_try_advisory_lock($1)", &[&CONTROLLER_CLAIM])?
@@ -87,6 +95,7 @@ impl Ownership {
                 "controller ownership is still held by a Postgres session; exit and let the service manager restart after that session ends",
             ));
         }
+        store.controller_claim = true;
         Ok(Self { store })
     }
 
@@ -111,6 +120,13 @@ impl Ownership {
     /// Transfer the claimed session without closing it or releasing its lock.
     pub fn into_store(self) -> Store {
         self.store
+    }
+
+    /// #785: acknowledge the unlock before a successor can claim, without
+    /// waiting for backend exit. Return the same session for auxiliary use.
+    pub fn release(mut self) -> Result<Store> {
+        self.store.release_controller_claim()?;
+        Ok(self.into_store())
     }
 
     pub fn migrate(&mut self) -> Result<()> {
@@ -146,6 +162,32 @@ impl Ownership {
         }
         tx.commit()?;
         Ok(())
+    }
+}
+
+impl Store {
+    fn release_controller_claim(&mut self) -> Result<()> {
+        let released = self
+            .client
+            .query_one("SELECT pg_advisory_unlock($1)", &[&CONTROLLER_CLAIM])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0);
+        if !released {
+            return Err(Error::OwnershipLost);
+        }
+        self.controller_claim = false;
+        Ok(())
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        // #785: cleanup also follows ownership transferred into a controller,
+        // including unwinding. Normal handoffs use Ownership::release so an
+        // unlock failure is reported; destructor cleanup is best effort.
+        if self.controller_claim {
+            let _ = self.release_controller_claim();
+        }
     }
 }
 
@@ -807,6 +849,7 @@ impl Store {
     pub fn connect(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self {
             client: connect(settings, false)?,
+            controller_claim: false,
             boundary_hook: None,
             settings: settings.clone(),
         };

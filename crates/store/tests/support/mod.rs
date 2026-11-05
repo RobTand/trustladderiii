@@ -150,28 +150,7 @@ impl Database {
         let mut ownership =
             tl3_store::Ownership::claim(tl3_store::Store::connect(&settings).unwrap()).unwrap();
         ownership.migrate().unwrap();
-        drop(ownership);
-        // #785: the fixture's initializer must release its server-side claim
-        // before a controller can open. Closing the client alone is asynchronous.
-        let mut barrier = postgres::Config::new()
-            .host(&settings.host)
-            .port(settings.port)
-            .dbname(&settings.database)
-            .user(&settings.user)
-            .password("tl3-disposable-test-password")
-            .connect(postgres::NoTls)
-            .unwrap();
-        barrier.batch_execute("SET lock_timeout = '180s'").unwrap();
-        let claim = 0x544c33434f4e5452_i64;
-        barrier
-            .query_one("SELECT pg_advisory_lock($1)", &[&claim])
-            .unwrap();
-        assert!(
-            barrier
-                .query_one("SELECT pg_advisory_unlock($1)", &[&claim])
-                .unwrap()
-                .get::<_, bool>(0)
-        );
+        ownership.release().unwrap();
         settings
     }
 

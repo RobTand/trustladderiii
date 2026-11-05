@@ -514,7 +514,7 @@ fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe(
         assert!(started.elapsed() < Duration::from_secs(180));
         thread::sleep(Duration::from_millis(10));
     };
-    drop(old_owner);
+    old_owner.release().unwrap();
     let waiter = waiting.join().unwrap();
     let claim = Store::open(&settings).and_then(tl3_store::Ownership::claim);
     drop(waiter);

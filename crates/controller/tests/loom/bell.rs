@@ -24,7 +24,10 @@ fn model_bell(outage: bool) {
     let url = server.uri();
     crate::loom_tests::bounded(1, move || {
         let root = tempfile::tempdir().unwrap();
-        let mut adapter = waits::adapter_with_bell(root.path(), &url);
+        // A real claim admits fixture initialization; the model covers bell wake-ups.
+        let mut ownership = crate::store_support::ownership();
+        let mut adapter = waits::adapter_with_bell(root.path(), &url, &mut ownership);
+        drop(ownership);
         let mut source = adapter.source();
         source.rebuild().unwrap();
         let path = root.path().to_owned();

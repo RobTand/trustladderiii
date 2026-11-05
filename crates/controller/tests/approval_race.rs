@@ -2097,7 +2097,7 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
             .iter()
             .any(|r| r.table == "approval_dispatch_recovery")
     );
-    drop(owner);
+    owner.release().unwrap();
     // Stop arrives before the first new controller drive/backfill on its claimed session.
     let mut controller = case.open();
     assert!(

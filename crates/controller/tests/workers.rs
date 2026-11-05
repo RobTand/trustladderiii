@@ -475,6 +475,7 @@ fn main() {
         let mut ownership =
             tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
         let supervisor = Supervisor::new(&config, &root.join("fakes"), &mut ownership).unwrap();
+        ownership.release().unwrap();
         let mut source = supervisor.source();
         let (tx, rx) = mpsc::channel();
         source
@@ -2799,7 +2800,7 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
         );
         registry.register(
             tl3_controller::executor::Upstream::PrismaBuild,
-            waits::adapter(root.path()),
+            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
         );
         let mut c = Controller::open_with_clock(
             Store::open(settings).unwrap(),
