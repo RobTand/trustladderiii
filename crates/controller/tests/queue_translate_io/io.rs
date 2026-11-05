@@ -97,7 +97,9 @@ impl Store {
             if r.cut.is_some_and(|c| c.write == write && c.after) {
                 std::panic::panic_any(Crash);
             }
-            id.ok_or(Error::Invalid("injected intern failure"))
+            id.ok_or(Error::Store(tl3_store::Error::Invalid(
+                "injected intern failure",
+            )))
         })
     }
 }
@@ -122,7 +124,9 @@ pub(super) fn check_run(_: &Snapshot, node: NodeId, sha: Option<&str>) -> Result
         plan
     });
     call("check_run", json!({"node":node,"sha":sha,"result":plan}));
-    plan.map_err(Error::Invalid)
+    plan.map_err(|_| {
+        Error::StoredJson(serde_json::from_value::<CheckRun>(Value::Null).unwrap_err())
+    })
 }
 impl Controller {
     pub(super) fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {

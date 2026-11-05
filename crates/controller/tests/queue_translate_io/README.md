@@ -17,3 +17,12 @@ Run //crates/controller:test_test_queue_translate_io alone on BuildBuddy.
 256 fixed-seed schedules use 0x004717602026; 128 event sequences use
 0x004717602027. Both replay persisted regression seeds.
 mandatory_* cases assert route reachability and concrete outcomes.
+
+An additional 256 generated shape schedules use 0x004717602028. Mandatory shell
+cases cover empty/nonempty CI checks, tests, permissions, queue conditions and
+plan entries; app IDs, changed paths, plans and previous SHA presence/absence;
+malformed bindings/incidents/plans, invalid SHAs and intern errors. Helper copies
+are compared to both the pinned old blobs and current production source. The
+only changed production shell body, Queue translation, is compiled separately
+on each side; new pure decisions are exercised only by the current body and
+verified directly in controller-core. No changed function is a shared shim.
