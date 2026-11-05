@@ -1,0 +1,1618 @@
+use super::record::Records;
+use crate::executor::Output as Out;
+use crate::{
+    Result,
+    executor::{CommentKind, Completion, Delivery, Executor, Look, Observation, Reconciliation},
+};
+use std::path::Path;
+use tl3_kernel::EffectKind;
+
+mod publishing;
+pub use publishing::APPROVAL_CHECK;
+
+pub struct Fake(Records, std::path::PathBuf);
+impl Fake {
+    pub fn new(root: &Path) -> Self {
+        Self(Records::new(root), root.to_path_buf())
+    }
+}
+
+fn fake_issue_path(root: &Path, number: u64) -> std::path::PathBuf {
+    root.join("github-issues").join(format!("{number}.json"))
+}
+
+/// Set the issue the fake GitHub reports as current.
+pub fn set_fake_issue(root: &Path, issue: &tl3_github::Issue) {
+    let path = fake_issue_path(root, issue.number);
+    std::fs::create_dir_all(path.parent().expect("issue directory"))
+        .expect("create issue directory");
+    std::fs::write(path, serde_json::to_vec(issue).expect("encode issue")).expect("write issue");
+}
+
+impl Executor for Fake {
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        // Simulation has local completion records, not visible upstream copy counts.
+        Ok((self.reconcile(delivery)?, None))
+    }
+    fn prerequisite(
+        &mut self,
+        repository: &crate::Repository,
+        _kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_kernel::DependencyStatus> {
+        Ok(crate::merge_dependencies::issue_status(
+            &self.issue(repository, number)?,
+        ))
+    }
+    fn issue(&mut self, _repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
+        let bytes = std::fs::read(fake_issue_path(&self.1, number))?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let node = delivery.node();
+        let observations = match delivery.output {
+            Out::Effect {
+                kind: EffectKind::OpenPr,
+                ..
+            } => vec![Observation::PullRequest {
+                node,
+                number: node.0 + 100,
+            }],
+            Out::Effect {
+                kind: EffectKind::PostApproval | EffectKind::ClosePr,
+                ..
+            }
+            | Out::Notice { .. }
+            | Out::Comment {
+                kind: CommentKind::ConsoleNote | CommentKind::OperationsNote,
+                ..
+            } => vec![],
+            _ => return Err(crate::Error::Invalid("unsupported GitHub effect")),
+        };
+        let mut posted = delivery.clone();
+        if matches!(
+            delivery.output,
+            Out::Notice {
+                notice: Notice::Incident { .. },
+                ..
+            }
+        ) && let Some(instruction) = fixed_notice_text(delivery)?
+        {
+            posted.note = Some(format!(
+                "{}\n\n{instruction}",
+                delivery.note.as_deref().unwrap_or_default()
+            ));
+        }
+        self.0.deliver(&posted, Completion::confirmed(observations))
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        self.0.reconcile(delivery)
+    }
+}
+
+use super::workers::writer::{MessageKind, WriteRequest, Writer, checked_draft, fixed_question};
+use crate::Error;
+use serde_json::json;
+use std::collections::BTreeMap;
+use tl3_github::{
+    CloseReason, GitHub,
+    message::{OptionDraft, Policy},
+};
+use tl3_kernel::{NoteKind, Notice, Outcome, QKind};
+
+/// The REST client owns markers, paging and deletion of duplicate app comments.
+pub struct Adapter {
+    clients: BTreeMap<u64, GitHub>,
+    branches: crate::branches::Branches,
+    writer: Box<dyn Writer>,
+    epoch: i64,
+    policy: Policy,
+    runtime: &'static tokio::runtime::Runtime,
+    records: Records,
+    legacy_approval_scan: Option<std::fs::ReadDir>,
+    operations: Option<tl3_config::OperationsIssue>,
+    /// Each served repository's PR-body policy (#447).
+    body_lines: Vec<(crate::Repository, Vec<tl3_config::BodyLine>, Vec<String>)>,
+}
+impl Adapter {
+    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
+        self.branches = crate::branches::Branches::new(repos)?;
+        self.body_lines = repos
+            .iter()
+            .map(|repo| {
+                (
+                    crate::Repository {
+                        owner: repo.owner.clone(),
+                        name: repo.name.clone(),
+                        installation: repo.installation_id,
+                    },
+                    repo.pr_body_lines.clone(),
+                    repo.generated_files.clone(),
+                )
+            })
+            .collect();
+        Ok(self)
+    }
+
+    /// The repository's PR-body policy; empty when it has none.
+    pub(crate) fn body_lines(&self, repo: &crate::Repository) -> &[tl3_config::BodyLine] {
+        self.body_lines
+            .iter()
+            .find(|(served, _, _)| served == repo)
+            .map_or(&[], |(_, rules, _)| rules)
+    }
+
+    fn semantic_paths(&self, delivery: &Delivery) -> Vec<String> {
+        let generated = self
+            .body_lines
+            .iter()
+            .find(|(repo, _, _)| *repo == delivery.repository)
+            .map_or(&[][..], |(_, _, generated)| generated.as_slice());
+        delivery
+            .paths
+            .iter()
+            .filter(|path| !tl3_config::path_is_protected(path, generated))
+            .cloned()
+            .collect()
+    }
+
+    pub fn new(
+        clients: BTreeMap<u64, GitHub>,
+        writer: impl Writer + 'static,
+        epoch: i64,
+        policy: Policy,
+        simulation: &Path,
+        operations: Option<tl3_config::OperationsIssue>,
+    ) -> Result<Self> {
+        if operations.is_none() {
+            return Err(Error::Invalid(
+                "real GitHub adapter requires [github.operations]",
+            ));
+        }
+        std::fs::create_dir_all(simulation)?;
+        Ok(Self {
+            clients,
+            branches: crate::branches::Branches::new(&[])?,
+            writer: Box::new(writer),
+            epoch,
+            policy,
+            runtime: crate::executor::runtime()?,
+            records: Records::new(simulation),
+            legacy_approval_scan: if simulation.join("approval-attempts.migrated").exists() {
+                None
+            } else {
+                Some(std::fs::read_dir(simulation)?)
+            },
+            operations,
+            body_lines: Vec::new(),
+        })
+    }
+    fn fence(&mut self, delivery: &Delivery) -> Result<()> {
+        if delivery.epoch < self.epoch {
+            return Err(Error::Invalid("GitHub effect epoch is fenced"));
+        }
+        self.records.fence(delivery.epoch)?;
+        self.epoch = delivery.epoch;
+        Ok(())
+    }
+    fn client(&self, delivery: &Delivery) -> Result<GitHub> {
+        self.clients
+            .get(&delivery.repository.installation)
+            .cloned()
+            .ok_or(Error::Invalid("missing GitHub installation client"))
+    }
+    fn request_notice(delivery: &Delivery) -> Option<Notice> {
+        match delivery.output {
+            Out::Notice {
+                notice:
+                    notice @ (Notice::Ask { .. }
+                    | Notice::MeasuresPosted
+                    | Notice::Summary(_)
+                    | Notice::Note(_)
+                    | Notice::Incident { .. }),
+                ..
+            } => Some(notice),
+            Out::Notice {
+                notice: Notice::FileReplacement,
+                ..
+            }
+            | Out::Effect { .. }
+            | Out::Comment { .. } => None,
+        }
+    }
+    fn linked(delivery: &Delivery, issue: tl3_github::Issue) -> Completion {
+        Completion::confirmed(vec![Observation::LinkedRequest {
+            repository: delivery.repository.clone(),
+            issue,
+            original: delivery.node(),
+        }])
+    }
+    fn file_request(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let Some(crate::steering::Task::FileRequest {
+            text,
+            comment,
+            correction: true,
+            revert,
+            since,
+            comment_issue,
+            ..
+        }) = &delivery.steering
+        else {
+            unreachable!()
+        };
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let title = format!("Correction for #{}", delivery.issue);
+        let comment_path = if *comment_issue == delivery.issue {
+            "issues"
+        } else {
+            "pull"
+        };
+        let body = format!(
+            "{text}\n\nCorrects #{}, authorized by the owner's [comment](https://github.com/{repo}/{comment_path}/{}#issuecomment-{comment}).{}",
+            delivery.issue,
+            comment_issue,
+            if *revert {
+                "\n\nThe owner requested a revert as part of this correction."
+            } else {
+                ""
+            }
+        );
+        let issue = self.runtime.block_on(client.create_request_issue(
+            &repo,
+            delivery.marker_key(),
+            since,
+            &title,
+            &body,
+        ))?;
+        Ok(Self::linked(delivery, issue))
+    }
+    /// PRD #327: redact code-written audit notes before posting, without the writer model.
+    fn console_note(&mut self, delivery: &Delivery, text: &str) -> Result<Completion> {
+        let text = crate::redaction::text(text)?;
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        if self
+            .runtime
+            .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
+            .is_none()
+        {
+            self.fence(delivery)?;
+            self.runtime.block_on(client.post_comment(
+                &repo,
+                delivery.issue,
+                delivery.marker_key(),
+                &text,
+            ))?;
+        }
+        Ok(Completion::confirmed(vec![]))
+    }
+    /// Q49: read the issue's current text, and reopen it only if TL3 closed it.
+    fn restart(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        if issue.state == "closed" {
+            let app = format!("{}[bot]", client.app_slug());
+            let events = self
+                .runtime
+                .block_on(client.issue_events(&repo, delivery.issue))?;
+            if events
+                .iter()
+                .rev()
+                .find(|event| event.event == "closed")
+                .and_then(|event| event.actor.as_ref())
+                .is_some_and(|actor| actor.login == app)
+            {
+                issue = self
+                    .runtime
+                    .block_on(client.reopen_issue(&repo, delivery.issue))?;
+            }
+        }
+        Ok(Self::linked(delivery, issue))
+    }
+    fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
+        match delivery.output {
+            Out::Notice {
+                notice: Notice::Summary(Outcome::Merged | Outcome::AlreadyDone),
+                ..
+            } => Some(CloseReason::Completed),
+            Out::Notice {
+                notice: Notice::Summary(Outcome::Duplicate | Outcome::NotActionable),
+                ..
+            } => Some(CloseReason::NotPlanned),
+            _ => None,
+        }
+    }
+}
+impl Executor for Adapter {
+    fn app_login(&self, installation: u64) -> Option<String> {
+        self.clients
+            .get(&installation)
+            .map(|client| format!("{}[bot]", client.app_slug()))
+    }
+
+    fn reconcile_message(
+        &mut self,
+        repository: &crate::Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        if self.app_login(repository.installation).as_deref() != Some(comment.user.login.as_str()) {
+            return Ok(());
+        }
+        let Some(key) = GitHub::comment_effect_key(&comment.body) else {
+            return Ok(());
+        };
+        self.records.fence(self.epoch)?;
+        let client = self
+            .clients
+            .get(&repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", repository.owner, repository.name);
+        self.runtime
+            .block_on(client.reconcile_comments(&repo, issue, &key))?;
+        Ok(())
+    }
+
+    fn prerequisite(
+        &mut self,
+        repository: &crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_kernel::DependencyStatus> {
+        use tl3_kernel::{DependencyStatus, PrerequisiteKind};
+        match kind {
+            PrerequisiteKind::Issue => Ok(crate::merge_dependencies::issue_status(
+                &self.issue(repository, number)?,
+            )),
+            PrerequisiteKind::PullRequest => {
+                let client = self
+                    .clients
+                    .get(&repository.installation)
+                    .ok_or(Error::Invalid("missing GitHub installation client"))?;
+                let pr = self.runtime.block_on(
+                    client
+                        .pull_request(&format!("{}/{}", repository.owner, repository.name), number),
+                )?;
+                Ok(if pr.merged_at.is_some() {
+                    DependencyStatus::Delivered
+                } else {
+                    DependencyStatus::Pending
+                })
+            }
+        }
+    }
+    fn issue(&mut self, repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
+        let client = self
+            .clients
+            .get(&repository.installation)
+            .cloned()
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", repository.owner, repository.name);
+        Ok(self.runtime.block_on(client.issue(&repo, number))?)
+    }
+    fn input_incident(
+        &mut self,
+        notice: &crate::input_errors::IncidentNotice,
+        epoch: i64,
+    ) -> Result<()> {
+        if epoch < self.epoch {
+            return Err(Error::Invalid("GitHub intake epoch is fenced"));
+        }
+        self.records.fence(epoch)?;
+        self.epoch = epoch;
+        let client = self
+            .clients
+            .get(&notice.target.repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!(
+            "{}/{}",
+            notice.target.repository.owner, notice.target.repository.name
+        );
+        if self
+            .runtime
+            .block_on(client.reconcile_comments(&repo, notice.target.issue, &notice.key))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.runtime
+            .block_on(client.issue(&repo, notice.target.issue))?;
+        let mut policy = self.policy.clone();
+        policy.request_title = Some(notice.title.clone());
+        policy.request_body.clear();
+        policy.own_repository = Some(repo.clone());
+        policy.own_issue = Some(notice.target.issue);
+        let input = WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title":notice.title, "request":notice.title, "change":notice.summary}),
+            violations: vec![],
+            request: None,
+        };
+        let mut draft = checked_draft(self.writer.as_mut(), &notice.key, input, &policy)?;
+        draft.push_str(&format!(
+            "\n\nReply with \"clear incident {}\" after fixing the cause.",
+            notice.id
+        ));
+        self.runtime.block_on(client.post_comment(
+            &repo,
+            notice.target.issue,
+            &notice.key,
+            &draft,
+        ))?;
+        Ok(())
+    }
+    fn intake_question(
+        &mut self,
+        question: &crate::adoption::Clarification,
+        epoch: i64,
+    ) -> Result<()> {
+        if epoch < self.epoch {
+            return Err(Error::Invalid("GitHub intake epoch is fenced"));
+        }
+        self.records.fence(epoch)?;
+        self.epoch = epoch;
+        let client = self
+            .clients
+            .get(&question.repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", question.repository.owner, question.repository.name);
+        self.runtime.block_on(client.post_comment(&repo, question.number, &question.key(), "Which issue should this pull request complete? Please add its closing keyword to the description and apply the tl3 label again."))?;
+        Ok(())
+    }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        // The current owner authorizes repair of evidence from an older delivery.
+        self.records.fence(self.epoch)?;
+        self.repair_approval_copies(delivery)
+    }
+
+    fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        Ok(true)
+    }
+
+    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+        self.execute_delivery(delivery)
+    }
+    fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
+        let Some(client) = self.clients.values().next().cloned() else {
+            return Ok(None);
+        };
+        let mut cursor = None;
+        let mut newest = after;
+        let mut oldest = u64::MAX;
+        let mut pending = None;
+        loop {
+            let page = self
+                .runtime
+                .block_on(client.hook_deliveries(cursor.as_deref()))?;
+            let mut reached = false;
+            let previous_oldest = oldest;
+            for delivery in page.deliveries {
+                newest = newest.max(delivery.id);
+                oldest = oldest.min(delivery.id);
+                if delivery.id <= after
+                    || delivery.delivered_at.timestamp_millis() < since_ms as i64
+                {
+                    reached = true;
+                    continue;
+                }
+                let Some(status) = delivery.status_code else {
+                    pending = Some(pending.map_or(delivery.id, |old: u64| old.min(delivery.id)));
+                    continue;
+                };
+                if !(200..300).contains(&status) {
+                    self.runtime.block_on(client.redeliver_hook(delivery.id))?;
+                }
+            }
+            if reached {
+                break;
+            }
+            match page.next_cursor {
+                Some(next) if oldest < previous_oldest && cursor.as_ref() != Some(&next) => {
+                    cursor = Some(next)
+                }
+                Some(_) => return Err(Error::Invalid("GitHub delivery cursor did not advance")),
+                None => break,
+            }
+        }
+        Ok(Some(
+            pending
+                .map_or(newest, |id| newest.min(id.saturating_sub(1)))
+                .max(after),
+        ))
+    }
+
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        match self.reconcile(delivery)? {
+            Reconciliation::Found(c) => return Ok(Look::Found(c)),
+            Reconciliation::Absent => return Ok(Look::Absent),
+            Reconciliation::Pending => {}
+        }
+        let Some(number) = delivery.pull_request else {
+            return Ok(Look::Pending);
+        };
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let pull = self.runtime.block_on(client.pull_request(&repo, number))?;
+        let checks = self
+            .runtime
+            .block_on(client.check_runs(&repo, &pull.head.sha))?;
+        Ok(Look::Alive {
+            progress: serde_json::to_string(&(
+                pull.head.sha,
+                pull.state,
+                pull.merged_at,
+                checks
+                    .iter()
+                    .filter(|c| c.status == "completed")
+                    .map(|c| (c.id, &c.conclusion))
+                    .collect::<Vec<_>>(),
+            ))?,
+        })
+    }
+
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if crate::approval_delivery::is_approval(delivery) {
+            self.records.fence(self.epoch)?;
+            // Stop retires the local operation, never sends another approval.
+            // An outstanding remote POST may still land; webhook repair remains keyed.
+            return Ok(Reconciliation::Absent);
+        }
+        self.reconcile(delivery)
+    }
+
+    fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
+        self.records.fence(self.epoch)?;
+        let Some(scan) = &mut self.legacy_approval_scan else {
+            return Ok(());
+        };
+        // #766: one-time legacy sidecar migration, at most 64 directory entries
+        // per drive. Recovery thereafter uses retirement/repair rows exclusively.
+        for _ in 0..64 {
+            let Some(entry) = scan.next() else {
+                let marker = self
+                    .records
+                    .path("unused")
+                    .parent()
+                    .ok_or(Error::Invalid("approval directory missing"))?
+                    .join("approval-attempts.migrated");
+                self.records.write(&marker, b"1")?;
+                self.legacy_approval_scan = None;
+                return Ok(());
+            };
+            let path = entry?.path();
+            if !path.extension().is_some_and(|ext| ext == "approval") {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            let bytes = (0..stem.len())
+                .step_by(2)
+                .map(|i| {
+                    stem.get(i..i + 2)
+                        .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            let decoded = String::from_utf8(bytes)
+                .map_err(|_| Error::Invalid("invalid approval record name"))?;
+            let (key, _) = decoded
+                .rsplit_once(':')
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            if store
+                .effect(key)?
+                .is_none_or(|effect| !effect.state.is_pending())
+            {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => std::fs::File::open(
+                        path.parent()
+                            .ok_or(Error::Invalid("approval directory missing"))?,
+                    )?
+                    .sync_all()?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
+        if crate::approval_delivery::is_approval(delivery) {
+            self.retire_approval(delivery)?;
+        }
+        Ok(())
+    }
+
+    fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        // The current owner fences mutations while reading the original effect epoch.
+        self.records.fence(self.epoch)?;
+        if crate::approval_delivery::is_approval(delivery) {
+            // A failed read proves neither absence nor an outstanding POST.
+            return self.reconcile_publication(delivery);
+        }
+        if publishing::handles(delivery) {
+            return match self.reconcile_publication(delivery) {
+                Err(Error::Permanent {
+                    class: "pr_evidence",
+                    ..
+                }) => Ok(Reconciliation::Found(Box::new(Completion::permanent(
+                    "pr_evidence",
+                )))),
+                // The controller records the refusal while leaving reconciliation pending.
+                Err(error @ Error::Permanent { .. }) => Err(error),
+                result => Ok(result.unwrap_or(Reconciliation::Pending)),
+            };
+        }
+        if let Some(crate::steering::Task::FileRequest {
+            correction: true,
+            since,
+            ..
+        }) = &delivery.steering
+        {
+            let client = self.client(delivery)?;
+            let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+            return Ok(
+                match self.runtime.block_on(client.reconcile_issue(
+                    &repo,
+                    delivery.marker_key(),
+                    since,
+                )) {
+                    Ok(Some(issue)) => {
+                        Reconciliation::Found(Box::new(Self::linked(delivery, issue)))
+                    }
+                    Ok(None) => Reconciliation::Absent,
+                    Err(_) => Reconciliation::Pending,
+                },
+            );
+        }
+        // A restart only reads the issue and reopens it, so running it again is safe.
+        if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
+            return Ok(Reconciliation::Absent);
+        }
+        if let Some(crate::steering::Task::ConsoleNote { .. }) = &delivery.steering {
+            let client = self.client(delivery)?;
+            let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+            return Ok(
+                match self.runtime.block_on(client.reconcile_comments(
+                    &repo,
+                    delivery.issue,
+                    delivery.marker_key(),
+                )) {
+                    Ok(Some(_)) => Reconciliation::Found(Box::new(Completion::confirmed(vec![]))),
+                    Ok(None) => Reconciliation::Absent,
+                    Err(_) => Reconciliation::Pending,
+                },
+            );
+        }
+        if Self::request_notice(delivery).is_none()
+            && !matches!(
+                delivery.output,
+                Out::Comment {
+                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
+                    ..
+                }
+            )
+        {
+            return self.records.reconcile(delivery);
+        }
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        match self.runtime.block_on(client.reconcile_comments(
+            &repo,
+            delivery.issue,
+            delivery.marker_key(),
+        )) {
+            Ok(Some(_)) => {
+                if Self::close_reason(delivery).is_some() {
+                    match self.runtime.block_on(client.issue(&repo, delivery.issue)) {
+                        Ok(issue) if issue.state == "closed" => {}
+                        Ok(_) => {
+                            if self
+                                .runtime
+                                .block_on(client.close_issue(
+                                    &repo,
+                                    delivery.issue,
+                                    Self::close_reason(delivery).expect("summary reason"),
+                                ))
+                                .is_err()
+                            {
+                                return Ok(Reconciliation::Pending);
+                            }
+                        }
+                        Err(_) => return Ok(Reconciliation::Pending),
+                    }
+                }
+                if self.close_original(delivery).is_err() {
+                    return Ok(Reconciliation::Pending);
+                }
+                Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                    vec![],
+                ))))
+            }
+            Ok(None) => Ok(Reconciliation::Absent),
+            Err(_) => Ok(Reconciliation::Pending),
+        }
+    }
+}
+
+/// The facts a notice's text is written from. Public so the operator console
+/// (RobTand/tl3-console) shows a question's options and a closing summary from
+/// the same facts, without calling GitHub or the writer.
+pub fn writer_input(
+    delivery: &Delivery,
+    notice: Option<Notice>,
+    title: &str,
+    request: &str,
+) -> Result<WriteRequest> {
+    let mut input = writer_facts(delivery, notice, title, request)?;
+    if let Some(context) = &delivery.question_context
+        && let Some(diagnostic) = context
+            .get("publication_diagnostic")
+            .filter(|value| !value.is_null())
+    {
+        input.facts["publication_diagnostic"] = diagnostic.clone();
+        input.facts["occurrences"] = context["occurrences"].clone();
+    }
+    if let Some(failure) = delivery
+        .question_context
+        .as_ref()
+        .and_then(|context| context.get("worker_input_failure"))
+        .filter(|value| !value.is_null())
+    {
+        input.facts["worker_input_failure"] = failure.clone();
+    }
+    // #427: the draft is written for this delivery's request.
+    input.request = Some(super::workers::writer::WriteFor {
+        node: delivery.node().0,
+        generation: delivery.generation,
+        repo: format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+        issue: delivery.issue,
+        attempt: delivery.attempt,
+        round: delivery.round,
+    });
+    Ok(input)
+}
+
+fn writer_facts(
+    delivery: &Delivery,
+    notice: Option<Notice>,
+    title: &str,
+    request: &str,
+) -> Result<WriteRequest> {
+    let request = delivery.request_text.as_deref().unwrap_or(request);
+    let request = if request.trim().is_empty() {
+        title
+    } else {
+        request
+    };
+    if let Some(crate::steering::Task::ReplacementDropped { text, outcome }) = &delivery.steering {
+        let change = if *outcome == Outcome::Merged {
+            "The old version merged before your change could start. Please file your change again."
+        } else {
+            "Work on the old version ended before your change could start. Please file your change again."
+        };
+        return Ok(WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title": title, "request": request,
+                "change": change, "change_quote": text}),
+            violations: vec![],
+            request: None,
+        });
+    }
+    if let Some(crate::steering::Task::RestartDropped { text }) = &delivery.steering {
+        return Ok(WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title": title, "request": request,
+                "change": "The issue for this request could not be found, so the restart was dropped. Nothing was filed.",
+                "change_quote": text}),
+            violations: vec![],
+            request: None,
+        });
+    }
+    if let Some(crate::steering::Task::ClarifyComment { question, excerpt }) = &delivery.steering {
+        return Ok(WriteRequest {
+            kind: MessageKind::Clarification,
+            facts: json!({"issue_title": title, "request": request, "question": question, "comment_excerpt": excerpt}),
+            violations: vec![],
+            request: None,
+        });
+    }
+    let (kind, mut facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
+        Notice::Ask { question } => {
+            let binding = delivery
+                .question
+                .filter(|binding| binding.id == question)
+                .ok_or(Error::Invalid("question notice needs its kernel question"))?;
+            let (obstacle, actions): (&str, &[(&str, &str)]) = match binding.kind {
+                QKind::AuditDisagreement => (
+                    "Two readings of your request still disagree.",
+                    &[
+                        (
+                            "Continue with the original reading",
+                            "I will continue with the original understanding of your request and set the check's open objections aside.",
+                        ),
+                        (
+                            "Change the request",
+                            "I will stop this work and start from your new request.",
+                        ),
+                        ("Stop", "I will stop this work."),
+                    ],
+                ),
+                QKind::NeedsSplitting => (
+                    "This request needs more than one change, so I need you to narrow it.",
+                    &[
+                        (
+                            "Change the request",
+                            "I will start again from the smaller request you provide.",
+                        ),
+                        ("Stop", "I will stop this work."),
+                    ],
+                ),
+                QKind::CantMeet => (
+                    "I could not finish your request with the approach I tried.",
+                    &[
+                        (
+                            "Try again with guidance",
+                            "I will try again using the guidance you provide.",
+                        ),
+                        (
+                            "Change the request",
+                            "I will stop this work and start from your new request.",
+                        ),
+                        ("Stop", "I will stop this work."),
+                    ],
+                ),
+                QKind::OutOfCredit => (
+                    "This request has used its agreed allowance for further attempts.",
+                    &[
+                        (
+                            "Add credit",
+                            "I will continue with the extra allowance you provide.",
+                        ),
+                        (
+                            "Change the request",
+                            "I will stop this work and start from your new request.",
+                        ),
+                        ("Stop", "I will stop this work."),
+                    ],
+                ),
+                QKind::EffectFailed => (
+                    "A required action needs your help before work can continue.",
+                    &[
+                        (
+                            "Continue after fixing the cause",
+                            "I will continue once you confirm the cause is fixed.",
+                        ),
+                        ("Stop", "I will stop this work."),
+                    ],
+                ),
+                QKind::CleanupFailed => (
+                    "I need your help to finish cleaning up this work.",
+                    &[
+                        (
+                            "Retry after fixing the cause",
+                            "I will try the cleanup again.",
+                        ),
+                        (
+                            "Mark the step handled",
+                            "I will accept that you have handled this cleanup step.",
+                        ),
+                    ],
+                ),
+            };
+            // #322: the deciding worker's findings, redacted by the worker process.
+            let findings = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context.get("findings"))
+                .filter(|findings| findings.is_object());
+            let options: Vec<_> = actions
+                .iter()
+                .map(|(action, outcome)| OptionDraft {
+                    action: (*action).into(),
+                    outcome: if findings.is_some() && *action == "Try again with guidance" {
+                        "I will try again using your answer to the question above and any guidance you provide.".into()
+                    } else {
+                        (*outcome).into()
+                    },
+                })
+                .collect();
+            let mut facts = json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
+                "options": options, "recommended_option": 0,
+                "recommendation_reason": "This option gives your request a clear next step.",
+                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")});
+            if let Some(findings) = findings {
+                facts["findings"] = findings.clone();
+            }
+            (MessageKind::Question, facts)
+        }
+        Notice::Incident { .. } => (
+            MessageKind::Note,
+            json!({"issue_title":title, "request": request,
+                "change": delivery.note.as_deref().unwrap_or("Work needs help before it can continue.")}),
+        ),
+        Notice::Summary(outcome) => {
+            // Q54: a stop for TL3 review names its step and carries its evidence.
+            let review_stop = delivery
+                .question_context
+                .as_ref()
+                .filter(|_| outcome == Outcome::Stopped);
+            let stopped = review_stop.and_then(crate::review_stops::outcome);
+            let mut facts = json!({"issue_title": title, "request": request,
+            "outcome": match outcome {
+                Outcome::Merged => "Your change was merged.",
+                Outcome::AlreadyDone => "The requested work was already done.",
+                Outcome::Duplicate => "This request duplicates work already tracked elsewhere.",
+                Outcome::NotActionable => "This request could not be acted on.",
+                Outcome::Stopped => stopped.as_deref().unwrap_or("Work on this request has stopped."),
+                Outcome::Replaced => "This request has been replaced. Work continues on your new request.",
+            }, "unmet_goals": crate::evidence::unmet_goals(delivery.evidence.as_ref()),
+            "evidence_status": if delivery.evidence.is_some() {"captured"} else {"not_captured"},
+            "merge_status": if outcome == Outcome::Merged || delivery.evidence.as_ref().is_some_and(|e| e.pull_request_status == crate::evidence::PullRequestStatus::Merged) {"merged"} else {"not_recorded"},
+            "evidence": delivery.evidence,
+            "recorded_summary": crate::evidence::summary(delivery)?,
+            "pull_request": delivery.pull_request.map(|number| json!({"number":number,
+                "url":format!("https://github.com/{}/{}/pull/{number}",delivery.repository.owner,delivery.repository.name)}))});
+            if let Some(findings) = review_stop.and_then(crate::review_stops::findings) {
+                facts["findings"] = findings;
+            }
+            (MessageKind::Summary, facts)
+        }
+        notice => (
+            MessageKind::Note,
+            json!({"issue_title": title, "request": request, "change": match notice {
+                Notice::MeasuresPosted => delivery.note.as_deref().unwrap_or("The reading of your request passed its independent check. Work will continue without waiting for your approval."),
+                Notice::Note(NoteKind::UnapprovedMerge) => "A change was merged without the required approval. I have recorded the merge and the problem.",
+                Notice::Note(NoteKind::Replanned) => "The earlier approach did not work. I will try a different plan for your request.",
+                Notice::Note(NoteKind::PrClosed) => "The proposed change was closed. Work on this request is stopping.",
+                Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
+                Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
+                Notice::Note(NoteKind::DependencyAbandoned { .. } | NoteKind::DependencyCycle { .. }) => delivery.note.as_deref().unwrap_or("A merge prerequisite prevents work from starting. Please change or stop the request."),
+                Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",
+                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } => unreachable!(),
+            }}),
+        ),
+    };
+    if kind == MessageKind::Summary
+        && let Some(removed) = &delivery.scope_removals
+    {
+        facts["removed_changes"] = json!(removed);
+    }
+    Ok(WriteRequest {
+        kind,
+        facts,
+        violations: vec![],
+        request: None,
+    })
+}
+
+impl Adapter {
+    fn execute_delivery(&mut self, delivery: &Delivery) -> Result<Completion> {
+        self.fence(delivery)?;
+        if publishing::handles(delivery) {
+            return self.publish(delivery);
+        }
+        if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
+            return self.file_request(delivery);
+        }
+        if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
+            return self.restart(delivery);
+        }
+        if let Some(crate::steering::Task::ConsoleNote { text }) = &delivery.steering {
+            return self.console_note(delivery, text);
+        }
+        let notice = Self::request_notice(delivery);
+        if notice.is_none()
+            && !matches!(
+                delivery.output,
+                Out::Comment {
+                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
+                    ..
+                }
+            )
+        {
+            return self
+                .records
+                .deliver(delivery, Completion::confirmed(vec![]));
+        }
+        if matches!(notice, Some(Notice::Incident { .. }))
+            && !self.operations.as_ref().is_some_and(|o| {
+                o.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                    && o.name.eq_ignore_ascii_case(&delivery.repository.name)
+                    && o.installation_id == delivery.repository.installation
+                    && o.number == delivery.issue
+            })
+        {
+            return Err(Error::Invalid(
+                "incident delivery needs the configured operations issue",
+            ));
+        }
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        if self
+            .runtime
+            .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
+            .is_none()
+        {
+            let mut policy = self.policy.clone();
+            // These posts can't read the request's issue: it lives elsewhere or is gone.
+            let input = if matches!(notice, Some(Notice::Incident { .. }))
+                || matches!(
+                    delivery.steering,
+                    Some(crate::steering::Task::RestartDropped { .. })
+                ) {
+                let context = delivery
+                    .question_context
+                    .as_ref()
+                    .ok_or(Error::Invalid("incident needs its request context"))?;
+                let title = context["issue_title"]
+                    .as_str()
+                    .ok_or(Error::Invalid("incident request title missing"))?;
+                policy.request_title = Some(title.into());
+                policy.request_body.clear();
+                writer_input(
+                    delivery,
+                    notice,
+                    title,
+                    context["request"]
+                        .as_str()
+                        .ok_or(Error::Invalid("incident request link missing"))?,
+                )?
+            } else {
+                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                policy.request_title = Some(issue.title.clone());
+                policy.request_body = issue.body.clone().unwrap_or_default();
+                writer_input(
+                    delivery,
+                    notice,
+                    &issue.title,
+                    issue.body.as_deref().unwrap_or(""),
+                )?
+            };
+            policy.own_repository = Some(repo.clone());
+            policy.own_issue = Some(delivery.issue);
+            policy.own_pull_request = delivery.pull_request;
+            policy
+                .internal_terms
+                .extend([delivery.key.clone(), "TL3".into()]);
+            if let Some(sha) = &delivery.head_sha {
+                policy.internal_terms.push(sha.clone());
+            }
+            policy.known_paths.extend(
+                delivery
+                    .paths
+                    .iter()
+                    .filter(|path| path.contains('/'))
+                    .cloned(),
+            );
+            let mut draft = match question_draft(self.writer.as_mut(), delivery, input, &policy) {
+                Ok(draft) => draft,
+                Err(Error::MessageRejected)
+                    if matches!(
+                        delivery.output,
+                        Out::Comment {
+                            kind: CommentKind::Clarify,
+                            ..
+                        }
+                    ) =>
+                {
+                    let fallback = "I couldn't act on your comment. Could you rephrase it?";
+                    tl3_github::message::check_prose(fallback, &policy)
+                        .map_err(|_| Error::MessageRejected)?;
+                    fallback.into()
+                }
+                Err(Error::MessageRejected) => {
+                    return Ok(Completion::permanent("message_rejected"));
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(text) = fixed_notice_text(delivery)? {
+                draft.push_str("\n\n");
+                draft.push_str(&text);
+            }
+            self.fence(delivery)?;
+            self.runtime.block_on(client.post_comment(
+                &repo,
+                delivery.issue,
+                delivery.marker_key(),
+                &draft,
+            ))?;
+        }
+        if let Some(reason) = Self::close_reason(delivery) {
+            self.runtime
+                .block_on(client.close_issue(&repo, delivery.issue, reason))?;
+        }
+        self.close_original(delivery)?;
+        Ok(Completion::confirmed(vec![]))
+    }
+}
+
+/// Draft a message for Rob. A question always posts (#322): when every draft
+/// is rejected, Rob gets the fixed obstacle, options and the kind's decision.
+pub(crate) fn question_draft(
+    writer: &mut dyn Writer,
+    delivery: &Delivery,
+    input: WriteRequest,
+    policy: &Policy,
+) -> Result<String> {
+    let fallback = (input.kind == MessageKind::Question).then(|| input.clone());
+    match (
+        checked_draft(writer, &delivery.key, input, policy),
+        fallback,
+    ) {
+        (Err(Error::MessageRejected), Some(input)) => fixed_question(
+            &input,
+            delivery
+                .question
+                .and_then(|question| crate::question_findings::fixed_decision(question.kind)),
+            policy,
+        ),
+        (result, _) => result,
+    }
+}
+
+fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
+    match delivery.output {
+        Out::Notice {
+            notice: Notice::Incident { .. },
+            ..
+        } => {
+            let id = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["incident_id"].as_str())
+                .or_else(|| {
+                    delivery
+                        .note
+                        .as_deref()
+                        .and_then(|note| note.split_once("clear incident ").map(|(_, tail)| tail))
+                        .and_then(|tail| {
+                            tail.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+                                .next()
+                        })
+                })
+                .ok_or(Error::Invalid("incident id missing"))?;
+            let destination = format!(
+                "https://github.com/{}/{}/issues/{}",
+                delivery.repository.owner, delivery.repository.name, delivery.issue
+            );
+            let request = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["request"].as_str())
+                .and_then(|request| request.rsplit_once('('))
+                .and_then(|(_, url)| url.strip_suffix(')'))
+                .unwrap_or(&destination);
+            let diagnostic = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context.get("publication_diagnostic"))
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    crate::decode_stored::<crate::publication_failure::Diagnostic>(value.clone())
+                })
+                .transpose()?;
+            let recurrence = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["occurrences"].as_u64())
+                .map(|count| format!("Recorded occurrence {count}."))
+                .unwrap_or_else(|| "Occurrence count unavailable.".into());
+            let input_failure = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context.get("worker_input_failure"))
+                .filter(|value| !value.is_null())
+                .map(|value| crate::decode_stored::<crate::worker_inputs::Context>(value.clone()))
+                .transpose()?;
+            let mut details = diagnostic
+                .as_ref()
+                .map(|diagnostic| format!("{recurrence} {}\n\n", diagnostic.render()))
+                .unwrap_or_default();
+            if let Some(failure) = input_failure {
+                details.push_str(&format!("{failure}\n\n"));
+            }
+            Ok(Some(format!(
+                "{details}Reply with \"clear incident {id}\" on {destination} or on the request's issue at {request} after fixing the cause."
+            )))
+        }
+        Out::Notice {
+            notice: Notice::Summary(outcome),
+            ..
+        } => {
+            let restart = (outcome == Outcome::Stopped)
+                .then_some("Comment `restart` on this issue to start again.");
+            Ok(match (restart, delivery.note.as_deref()) {
+                (Some(restart), Some(note)) => Some(format!("{restart}\n\n{note}")),
+                (restart, note) => restart.or(note).map(str::to_owned),
+            })
+        }
+        _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod scope_summary_tests {
+    use super::*;
+
+    #[test]
+    fn stopped_summary_keeps_issue_open_and_offers_restart() {
+        let summary = |outcome: Outcome, note: Option<&str>| -> Delivery {
+            serde_json::from_value(json!({
+                "key":"summary:0", "epoch":1,
+                "output":Out::Notice {node:tl3_kernel::NodeId(0), notice:Notice::Summary(outcome)},
+                "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+                "issue":42, "paths":[], "attempt":1, "round":0, "note":note
+            }))
+            .unwrap()
+        };
+        let restart = "Comment `restart` on this issue to start again.";
+        assert!(Adapter::close_reason(&summary(Outcome::Stopped, None)).is_none());
+        assert_eq!(
+            fixed_notice_text(&summary(Outcome::Stopped, None)).unwrap(),
+            Some(restart.into())
+        );
+        let saved = "Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0";
+        let text = fixed_notice_text(&summary(Outcome::Stopped, Some(saved)))
+            .unwrap()
+            .unwrap();
+        assert!(text.starts_with(restart) && text.ends_with(saved));
+        for outcome in [
+            Outcome::Duplicate,
+            Outcome::NotActionable,
+            Outcome::AlreadyDone,
+        ] {
+            assert!(Adapter::close_reason(&summary(outcome, None)).is_some());
+            assert_eq!(fixed_notice_text(&summary(outcome, None)).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn scope_summary_keeps_scratch_and_trim_notes_separate_and_appends_each_once() {
+        let saved = "Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0";
+        let removed =
+            "Changes not part of this request were removed: `__init__.py`, `example.com`.";
+        let delivery: Delivery = serde_json::from_value(json!({
+            "key":"summary:0", "epoch":1,
+            "output":Out::Notice {node:tl3_kernel::NodeId(0), notice:Notice::Summary(Outcome::Stopped)},
+            "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+            "issue":42, "paths":[], "attempt":1, "round":0,
+            "note":saved, "scope_removals":removed
+        })).unwrap();
+        let request = writer_input(
+            &delivery,
+            Some(Notice::Summary(Outcome::Stopped)),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap();
+        assert_eq!(request.facts["removed_changes"], removed);
+        let prose = checked_draft(
+            &mut super::super::workers::writer::FakeWriter,
+            "summary",
+            request,
+            &Policy::default(),
+        )
+        .unwrap();
+        let rendered = format!(
+            "{prose}\n\n{}",
+            fixed_notice_text(&delivery).unwrap().unwrap()
+        );
+        assert_eq!(rendered.matches(removed).count(), 1);
+        assert_eq!(rendered.matches(saved).count(), 1);
+        assert!(rendered.ends_with(saved));
+    }
+}
+
+#[cfg(test)]
+mod question_findings_tests {
+    use super::super::workers::writer::{QuestionDraft, WriterReply};
+    use super::*;
+    use serde_json::Value;
+    use tl3_kernel::{Cont, NodeId, Question, Resume};
+
+    fn ask(kind: QKind, cont: Cont, findings: Value) -> Delivery {
+        let question = Question {
+            id: 10,
+            kind,
+            cont,
+            cost: 1,
+            clarified: false,
+        };
+        serde_json::from_value(json!({
+            "key":"ask:10", "epoch":1,
+            "output":Out::Notice {node:NodeId(0), notice:Notice::Ask {question:10}},
+            "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+            "issue":42, "paths":[], "attempt":1, "round":0, "question":question,
+            "question_context":{"node":0, "question":10, "findings":findings}
+        }))
+        .unwrap()
+    }
+
+    fn input(delivery: &Delivery) -> WriteRequest {
+        writer_input(
+            delivery,
+            Some(Notice::Ask { question: 10 }),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn writer_input_names_the_request_it_writes_for() {
+        // #427: the writer run's operation and trace tags come from this.
+        let delivery: Delivery = serde_json::from_value(json!({
+            "key":"notice:5:0", "epoch":1,
+            "output":Out::Notice {node:NodeId(4), notice:Notice::Summary(tl3_kernel::Outcome::Merged)},
+            "generation":6, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+            "issue":42, "paths":[], "attempt":2, "round":1
+        }))
+        .unwrap();
+        let request = writer_input(
+            &delivery,
+            Some(Notice::Summary(tl3_kernel::Outcome::Merged)),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap();
+        assert_eq!(
+            request.request,
+            Some(super::super::workers::writer::WriteFor {
+                node: 4,
+                generation: 6,
+                repo: "RobTand/sandbox".into(),
+                issue: 42,
+                attempt: 2,
+                round: 1,
+            })
+        );
+        // Every question and note for a request is written for that request.
+        assert_eq!(
+            input(&ask(QKind::CantMeet, Cont::Nowhere, Value::Null))
+                .request
+                .unwrap()
+                .node,
+            0
+        );
+    }
+
+    fn outcome(request: &WriteRequest, action: &str) -> String {
+        request.facts["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["action"] == action)
+            .unwrap_or_else(|| panic!("missing option {action}"))["outcome"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn every_question_kind_passes_the_deciding_worker_findings_to_the_writer() {
+        for (kind, cont) in [
+            (QKind::AuditDisagreement, Cont::Unplanned),
+            (QKind::NeedsSplitting, Cont::Nowhere),
+            (QKind::CantMeet, Cont::Planning { must_split: false }),
+            (QKind::OutOfCredit, Cont::Ready(Resume::Making)),
+            (QKind::EffectFailed, Cont::Ready(Resume::Making)),
+        ] {
+            let findings = json!({"source":"planner",
+                "report":"The digest test pins the current file, so any edit fails six tests.",
+                "decision":"May this change also update the pinned digest entry?"});
+            let request = input(&ask(kind, cont, findings.clone()));
+            assert_eq!(request.facts["findings"], findings, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn options_say_what_they_do_with_the_decision() {
+        let request = input(&ask(
+            QKind::AuditDisagreement,
+            Cont::Unplanned,
+            json!({"source":"audit", "reading":"Add a JSON export.",
+                "objections":["The brief never says where the file is written."],
+                "decision":"Should I build this reading even though the check still has objections?"}),
+        ));
+        assert_eq!(
+            outcome(&request, "Continue with the original reading"),
+            "I will continue with the original understanding of your request and set the check's open objections aside.",
+            "continue must say what happens to the open objections"
+        );
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"May this change also update the pinned digest entry?"}),
+        ));
+        assert_eq!(
+            outcome(&request, "Try again with guidance"),
+            "I will try again using your answer to the question above and any guidance you provide."
+        );
+    }
+
+    struct Scripted(Vec<Option<&'static str>>, Vec<WriteRequest>);
+    impl Writer for Scripted {
+        fn draft(&mut self, _: &str, input: &WriteRequest) -> Result<WriterReply> {
+            self.1.push(input.clone());
+            Ok(WriterReply::Question(QuestionDraft {
+                request_quote: "Add a blue button".into(),
+                obstacle: "A test records the exact contents of the file you asked me to change, so every edit breaks it.".into(),
+                options: serde_json::from_value(input.facts["options"].clone()).unwrap(),
+                recommended_option: 0,
+                recommendation_reason: "This lets the change land as you asked.".into(),
+                how_to_answer: "Reply on the issue with your chosen option.".into(),
+                decision: self.0.remove(0).map(str::to_owned),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_question_with_findings_must_state_its_decision() {
+        let decision = "May I also update the recorded checksum for that file in its test?";
+        let mut writer = Scripted(vec![None, Some(decision)], vec![]);
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"May this change also update the pinned digest entry?"}),
+        ));
+        let message = checked_draft(&mut writer, "ask:10", request, &Policy::default()).unwrap();
+        assert_eq!(writer.1.len(), 2, "a draft without the decision is redone");
+        assert!(
+            writer.1[1]
+                .violations
+                .iter()
+                .any(|violation| violation.contains("decision")),
+            "{:?}",
+            writer.1[1].violations
+        );
+        assert!(message.contains(decision), "{message}");
+    }
+
+    #[test]
+    fn a_faithful_rewrite_of_the_2662_decision_passes_the_checker() {
+        // prismaquant#2662: the planner asked whether the change may also edit the
+        // `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS`.
+        let decision = "May this change also update the `digests.py` entry in `CURRENT_SOURCE_BLOBS`, in the digest retention test?";
+        let mut writer = Scripted(vec![Some(decision)], vec![]);
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"may this leaf also edit the `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS`?"}),
+        ));
+        let message = checked_draft(&mut writer, "ask:10", request, &Policy::default()).unwrap();
+        assert!(message.contains(decision), "{message}");
+    }
+
+    #[test]
+    fn a_rejected_question_still_posts_with_the_fixed_decision() {
+        // Every draft names a path the checker refuses; Rob must still get a question.
+        let bad = "May I edit prismaquant/digests.py as well?";
+        let mut writer = Scripted(vec![Some(bad); 3], vec![]);
+        let delivery = ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"may this leaf also edit `prismaquant/digests.py`?"}),
+        );
+        let message =
+            question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
+        assert_eq!(
+            writer.1.len(),
+            3,
+            "the writer gets its usual three drafts first"
+        );
+        assert!(message.contains("I could not finish your request with the approach I tried."));
+        assert!(
+            message.contains("What should I change about the approach so the request can be met?"),
+            "{message}"
+        );
+        assert!(message.contains("1. Try again with guidance: "));
+        assert!(!message.contains("digests"), "{message}");
+    }
+
+    #[test]
+    fn three_generic_drafts_still_post_the_worker_blocker() {
+        let reply: Value = serde_json::from_str(include_str!(
+            "../../../../workers/tests/fixtures/question-findings/prismabuild-2636-planner-cant-meet.json"
+        )).unwrap();
+        for source in ["planner", "maker"] {
+            let delivery = ask(
+                QKind::CantMeet,
+                Cont::Planning { must_split: false },
+                json!({"source":source, "outcome":"cant_meet", "report":reply["report"],
+                    "decision":"May I edit the protected file?"}),
+            );
+            let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
+            let message =
+                question_draft(&mut writer, &delivery, input(&delivery), &Policy::default())
+                    .unwrap();
+            assert_eq!(writer.1.len(), 3);
+            assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
+            assert!(message.contains("protected"), "{message}");
+            assert!(message.contains("1. Try again with guidance:"));
+            assert!(message.contains("2. Change the request:"));
+            assert!(message.contains("3. Stop:"));
+        }
+    }
+
+    #[test]
+    fn fallback_redacts_secrets_and_clips_report_sentences() {
+        for report in [
+            format!(
+                "The controller forbids tools/ci/bazel_gate.py with password=secret123. {}",
+                "Extra detail. ".repeat(100)
+            ),
+            "The leaf cannot edit tools/ci/bazel_gate.py because of owner/repo#42 with password=secret123.".into(),
+            format!("The controller forbids {} tools/ci/bazel_gate.py.", "changes ".repeat(100)),
+        ] {
+            let delivery = ask(
+                QKind::CantMeet,
+                Cont::Planning { must_split: false },
+                json!({"source":"planner", "outcome":"cant_meet", "report":report,
+                    "decision":"May I edit the protected file?"}),
+            );
+            let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
+            let message =
+                question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
+            assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
+            for omitted in ["secret123", "Extra detail", "owner/repo#42", "leaf"] {
+                assert!(!message.contains(omitted), "{message}");
+            }
+            assert!(message.chars().count() < 2_000);
+        }
+    }
+}
+
+#[cfg(test)]
+mod publication_notice_tests {
+    use super::*;
+
+    #[test]
+    fn t604_machine_footer_retains_recorded_recurrence_even_when_writer_omits_it() {
+        let fixture = crate::git_tests::Repo::new();
+        let diagnostic =
+            crate::publication_failure::Diagnostic::capture(&fixture.delivery(), None, "pr_policy")
+                .unwrap();
+        let mut notice = fixture.delivery();
+        notice.output = Out::Notice {
+            node: notice.node(),
+            notice: Notice::Incident { needs_rob: true },
+        };
+        notice.note = Some("Work needs help.".into());
+        for count in [1, 2] {
+            notice.question_context = Some(
+                json!({"incident_id":"30.0", "publication_diagnostic":diagnostic,"occurrences":count}),
+            );
+            let footer = fixed_notice_text(&notice).unwrap().unwrap();
+            assert!(
+                footer.contains(&format!("Recorded occurrence {count}.")),
+                "{footer}"
+            );
+            assert!(footer.contains("pr_policy"));
+        }
+        notice
+            .question_context
+            .as_mut()
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("occurrences");
+        assert!(
+            fixed_notice_text(&notice)
+                .unwrap()
+                .unwrap()
+                .contains("Occurrence count unavailable.")
+        );
+    }
+}
