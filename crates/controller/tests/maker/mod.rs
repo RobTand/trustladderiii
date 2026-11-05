@@ -1148,7 +1148,10 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
     let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
     let open = || {
         let (mut registry, source, _) = registry(&config, &root.path().join("fakes"), false);
-        registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+        registry.register(
+            Upstream::PrismaBuild,
+            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+        );
         let mut controller = Controller::open_with_clock(
             Store::open(settings).unwrap(),
             registry,

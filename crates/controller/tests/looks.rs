@@ -2256,7 +2256,10 @@ fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
                 checkout: root.path().join("worktree"),
             },
         );
-        registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+        registry.register(
+            Upstream::PrismaBuild,
+            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+        );
         let mut c = Controller::open_with_clock(
             Store::open(settings).unwrap(),
             registry,
@@ -2389,7 +2392,11 @@ fn r3(settings: &tl3_config::Store, case: &str) {
         },
     );
     let bell = bell::Bell::new();
-    let pb = waits::adapter_with_bell(root.path(), &bell.url);
+    let pb = waits::adapter_with_bell(
+        root.path(),
+        &bell.url,
+        &mut crate::startup_ownership::ownership(),
+    );
     let source = pb.source();
     registry.register(Upstream::PrismaBuild, pb);
     registry.register(
@@ -2612,7 +2619,10 @@ fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
             resumed: resumed.clone(),
         },
     );
-    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    registry.register(
+        Upstream::PrismaBuild,
+        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+    );
     waits::record(root.path(), "claimed");
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
@@ -2698,7 +2708,10 @@ fn moving_maker_wait_keeps_registration(settings: &tl3_config::Store) {
             checkout: root.path().join("worktree"),
         },
     );
-    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    registry.register(
+        Upstream::PrismaBuild,
+        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+    );
     waits::record(root.path(), "claimed");
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
@@ -2829,7 +2842,10 @@ fn successful_wait_read_breaks_failure_streak(settings: &tl3_config::Store) {
             checkout: root.path().join("worktree"),
         },
     );
-    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    registry.register(
+        Upstream::PrismaBuild,
+        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+    );
     waits::record(root.path(), "claimed");
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
@@ -3046,7 +3062,10 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
     );
     registry.register(
         Upstream::PrismaBuild,
-        SubscriptionFailure(waits::adapter(root.path())),
+        SubscriptionFailure(waits::adapter(
+            root.path(),
+            &mut crate::startup_ownership::ownership(),
+        )),
     );
     waits::record(root.path(), "claimed");
     let clock = FakeClock::new();

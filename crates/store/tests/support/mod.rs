@@ -150,6 +150,7 @@ impl Database {
         let mut ownership =
             tl3_store::Ownership::claim(tl3_store::Store::connect(&settings).unwrap()).unwrap();
         ownership.migrate().unwrap();
+        ownership.release().unwrap();
         settings
     }
 
