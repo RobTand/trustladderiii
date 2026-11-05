@@ -494,9 +494,15 @@ pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Obse
 // The current arm resolves `adapters::workers::reproducing` to the current
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared
-// shim spans the changed leaf. Every other adapter module is shared, unchanged.
+// shim spans the changed leaf. The plan-size leaf likewise has a separate current copy (#835).
 mod adapters {
-    pub use super::super::adapters::{prismabuild, results};
+    pub use super::super::adapters::results;
+    pub mod prismabuild {
+        use super::super::super::*;
+        pub use tl3_controller::adapters::prismabuild::*;
+        const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+        include!("plan-size-current.rs");
+    }
     pub mod workers {
         pub use super::super::super::adapters::workers::review;
         pub mod protocol {
