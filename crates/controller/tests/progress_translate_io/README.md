@@ -14,7 +14,8 @@ production allowance state. `sync.py` refreshes these copies from Git and source
 it is a test-only source copier, with no product decisions.
 
 The recorded leaf is the clock. Every sample consumes a separate tape entry.
-Actual store Commit/RowChange types capture ordered buffered changes. The outer
+The production RowChange type and a recording Commit row sink capture each
+buffered push at its real call site, including its position relative to clocks. The outer
 transaction boundary is modeled as one atomic write of serialized rows. Every
 attempted commit, including failures, is replayed with a crash immediately before
 and after it. Compare results, clock/call traces, buffered rows and persisted

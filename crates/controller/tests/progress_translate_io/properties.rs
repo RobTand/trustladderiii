@@ -61,7 +61,7 @@ fn mandatory_progress_new_same_and_external_wait() {
             assert_eq!(
                 ops(&r),
                 if waiting {
-                    vec!["translate", "clock", "row.push", "row.push", "store.commit"]
+                    vec!["translate", "row.push", "clock", "row.push", "store.commit"]
                 } else {
                     vec!["translate", "clock", "row.push", "store.commit"]
                 }
@@ -119,8 +119,36 @@ fn mandatory_all_quota_model_reset_and_replay_shapes() {
         let r = compare(&s);
         assert_eq!(stored(&r, "allowances/step")["unserved_since_ms"], 10000);
         assert_eq!(stored(&r, "model_quotas/model-a")["reset_ms"], reset);
-        assert_eq!(r.trace[1], json!(["clock", 10000]));
-        assert_eq!(r.trace[2], json!(["clock", 12000]));
+        assert_eq!(r.trace[1][0], "row.push");
+        assert_eq!(r.trace[2], json!(["clock", 10000]));
+        assert_eq!(r.trace[3], json!(["clock", 12000]));
+    }
+}
+/// Preserved existing behavior: all upstream allowance projections and saturating deadlines.
+#[test]
+fn mandatory_progress_upstreams_and_saturating_deadline() {
+    for kind in [
+        "StopRun",
+        "SubmitChecks",
+        "PrepareWorktree",
+        "OpenPr",
+        "Enqueue",
+    ] {
+        let mut s = schedule(progress("tool"));
+        s.rows[0].2["delivery"]["output"]["Effect"]["kind"] = json!(kind);
+        s.clocks = vec![u64::MAX];
+        let r = compare(&s);
+        assert_eq!(stored(&r, "allowances/step")["progress_ms"], u64::MAX);
+        assert_eq!(stored(&r, "allowances/step")["due_ms"], u64::MAX);
+        assert_eq!(ops(&r), ["translate", "clock", "row.push", "store.commit"]);
+    }
+    for reset in [99, 101] {
+        let mut s = schedule(quota(Some("model-a"), reset));
+        s.rows[0].2["last_quota_ms"] = json!(100);
+        s.rows[0].2["last_quota_model"] = json!("model-a");
+        let r = compare(&s);
+        assert_eq!(stored(&r, "allowances/step")["quota_ms"], reset);
+        assert_eq!(ops(&r).iter().filter(|op| **op == "clock").count(), 2);
     }
 }
 /// Preserved existing behavior: missing/malformed rows and transaction errors, no kernel fact.
@@ -257,11 +285,22 @@ fn generated_changing_clocks_shapes_sequences_and_crashes() {
                     _ => quota(Some("model-b"), u64::from(reset)),
                 })
                 .collect();
+            s.observations.extend([
+                quota(Some("model-a"), 0),
+                quota(Some("model-a"), 0),
+                progress(""),
+                progress("tool"),
+                progress("tool"),
+                quota(None, 1),
+                quota(Some(""), 1),
+                quota(Some("model-b"), 1),
+            ]);
             compare(&s);
             Ok(())
         })
         .unwrap();
     println!(
-        "G2d: 256 generated schedules plus committed minimized-seed replay; crash before/after every attempted commit"
+        "G2d: 256 generated schedules plus committed minimized-seed replay; {} comparisons including crashes before/after every attempted commit",
+        io::comparisons()
     );
 }

@@ -5,7 +5,7 @@ use std::{
 };
 
 // Test-only red switch. The production arms and both compiled copies stay pinned.
-const CURRENT_STUB: bool = true;
+const CURRENT_STUB: bool = false;
 
 #[derive(Clone, Debug)]
 pub(super) struct Schedule {
@@ -41,6 +41,13 @@ pub(super) fn now() -> SystemTime {
         ms
     });
     UNIX_EPOCH + Duration::from_millis(ms)
+}
+pub(super) fn row_push(row: &RowChange) {
+    let row = match row {
+        RowChange::Put { table, id, value } => json!(["put", table, id, value]),
+        RowChange::Delete { table, id } => json!(["delete", table, id]),
+    };
+    with(|r| r.trace.push(json!(["row.push", row])));
 }
 fn rows(commit: &Commit) -> Vec<Value> {
     commit
@@ -106,9 +113,6 @@ fn run(s: &Schedule, current: bool, cut: Option<(usize, bool)>) -> Run {
                 reference::run(&snapshot, observation.clone(), &mut commit)
             };
             run.buffered = rows(&commit);
-            for row in &run.buffered {
-                with(|r| r.trace.push(json!(["row.push", row])));
-            }
             match result {
                 Err(error) => {
                     run.results.push(json!(["error", error.to_string()]));
@@ -132,7 +136,7 @@ fn run(s: &Schedule, current: bool, cut: Option<(usize, bool)>) -> Run {
                 std::panic::panic_any(Crash);
             }
             if mode == 0 {
-                for row in &commit.rows {
+                for row in commit.rows.iter() {
                     match row {
                         RowChange::Put { table, id, value } => {
                             run.files.insert(
@@ -164,7 +168,21 @@ fn run(s: &Schedule, current: bool, cut: Option<(usize, bool)>) -> Run {
     run.trace = ACTIVE.with(|active| active.borrow_mut().take().unwrap().trace);
     run
 }
+thread_local! { static COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+pub(super) fn comparisons() -> usize {
+    COMPARISONS.get()
+}
 pub(super) fn compare(s: &Schedule) -> Run {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !info.payload().is::<Crash>() {
+                previous(info);
+            }
+        }));
+    });
+    COMPARISONS.set(COMPARISONS.get() + 1);
     let old = run(s, false, None);
     let new = run(s, true, None);
     assert!(
@@ -177,6 +195,7 @@ pub(super) fn compare(s: &Schedule) -> Run {
     );
     for index in 0..old.writes {
         for after in [false, true] {
+            COMPARISONS.set(COMPARISONS.get() + 1);
             assert_eq!(
                 run(s, false, Some((index, after))),
                 run(s, true, Some((index, after))),

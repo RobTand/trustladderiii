@@ -1,1 +1,3 @@
-# G2d fixed-seed generated schedule regressions.
+# Minimized red stub schedule; saved to writable test.outputs on b432183927.
+# Shrinks to (shape=0, entries=[(0, 0)], clocks=[], write_results=[]).
+cc 00f1a34d51b42bd232deef124aa8368722d36c020e907b542ef3765a240a97bb
