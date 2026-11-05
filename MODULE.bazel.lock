@@ -365,19 +365,19 @@
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "REPO_MAPPING:rules_rust+,rules_rust rules_rust+",
-          "FILE:@@+cargo_feature_lock+bazel_cargo_lock//Cargo.lock 727babd2217e3ef495ab17218f7ce380d0cf3c42d842fa6fd1f39b89f673cebc",
+          "FILE:@@+cargo_feature_lock+bazel_cargo_lock//Cargo.lock 94810df29b64e0b98b84a727f9ef17b1856b44e4c56740881ed97e86352e67ae",
           "FILE:@@//Cargo.toml 7c80a39bd212ea0f30a05dd6f008195b8efcc37447d5521160de942781499675",
           "FILE:@@//crates/config/Cargo.toml da34abb220a0eca65b4ac9f481048cc4d70554fc5a1c02b740e76205a2ecb0f6",
           "FILE:@@//crates/worktrees/Cargo.toml 97aecec236d8e485cba2af2f82a0d841d696e362bf62dd31d6face435906bc93",
           "FILE:@@//crates/contracts/Cargo.toml e5694610038349e855b6524b545eca2ef4744244d4d0c9c0826ab0175c680a1d",
-          "FILE:@@//crates/controller/Cargo.toml 304a53b079e11b928327191e62655a9b312dee647408f06847310184189b7588",
+          "FILE:@@//crates/controller/Cargo.toml a131061385eef144c736721b899f8e2de197f85f07d704d1026792a975c6c4b5",
           "FILE:@@//crates/controller-core/Cargo.toml e46693ef1baf5e463f0448d904cf35063940893def24df626050dd80d73df17f",
           "FILE:@@//crates/github/Cargo.toml 57cb058f659b9a088094fabf4b1165f2649d2b2aa37e7d858e8d94c70d31dcb5",
+          "FILE:@@//crates/harness-core/Cargo.toml 2d86b3166c85ca5f3b899b4c9907a58fedc3a6aaa6e91b15dbc848faad0f9e1e",
           "FILE:@@//crates/kernel/Cargo.toml 66645e760a8a02fae42c17c5e9be8d9cad35617dec9199288bef3b4b511fc981",
           "FILE:@@//crates/mergify/Cargo.toml 445220ad6d0b90e933d139a43426e0b9f12f3b7737e960944c65349538df8a6b",
           "FILE:@@//crates/prismabuild/Cargo.toml d94963a8d312dfcf7d6d89ac61b899cb9c940d162357220bb86ca9f9ca2b3207",
-          "FILE:@@//crates/store/Cargo.toml 2d4eb6de9df10a061fb7b3818a54fd703c15645e6c5c33ef1c5c00345a419b82",
-          "FILE:@@//crates/harness-core/Cargo.toml 0385e9574876fac2bfa6f10a14ac0b921146a33850018ad7e5fd40518df529f1"
+          "FILE:@@//crates/store/Cargo.toml 2d4eb6de9df10a061fb7b3818a54fd703c15645e6c5c33ef1c5c00345a419b82"
         ],
         "generatedRepoSpecs": {
           "crates": {

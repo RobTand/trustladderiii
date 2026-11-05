@@ -3047,6 +3047,7 @@ dependencies = [
  "tl3-contracts",
  "tl3-controller-core",
  "tl3-github",
+ "tl3-harness-core",
  "tl3-kernel",
  "tl3-mergify",
  "tl3-prismabuild",
