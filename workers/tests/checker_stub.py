@@ -55,13 +55,13 @@ def difference(expected, actual, path='$'):
     return ''
 
 
-def replay(case, cursor, command, document):
+def replay(case, cursor, command, document, *, script=None):
     """A unit fake follows its script; Rust checks the original facts elsewhere."""
     # Parent threads and separately launched checker processes share one cursor.
     with _LOCK, cursor.with_suffix('.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         position = int(cursor.read_text()) if cursor.exists() else 0
-        script = cases().get(case, [])
+        script = cases().get(case, []) if script is None else script
         if position >= len(script):
             raise RuntimeError(f"unrecorded Rust checker call in {case}: {command}")
         row = script[position]
@@ -145,11 +145,16 @@ def main():
             data = json.dumps(corpus, ensure_ascii=False, separators=(",", ":")).encode()
             VECTORS.write_bytes(gzip.compress(data, mtime=0))
         return
+    if len(sys.argv) >= 6 and sys.argv[1] == "--replay-file":
+        result = replay(sys.argv[3], Path(sys.argv[4]), sys.argv[5:], json.load(sys.stdin),
+                        script=json.loads(Path(sys.argv[2]).read_text()))
+        print(json.dumps(result, ensure_ascii=False))
+        return
     if len(sys.argv) >= 5 and sys.argv[1] == "--replay":
         result = replay(sys.argv[2], Path(sys.argv[3]), sys.argv[4:], json.load(sys.stdin))
         print(json.dumps(result, ensure_ascii=False))
         return
-    raise RuntimeError("usage: checker_stub.py --check/--generate <oracle> or --replay <case> <cursor> <command>")
+    raise RuntimeError("usage: checker_stub.py --check/--generate <oracle> or --replay-file <script> <case> <cursor> <command>")
 
 
 if __name__ == "__main__":

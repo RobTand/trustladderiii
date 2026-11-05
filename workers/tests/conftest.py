@@ -72,11 +72,15 @@ def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
         return
 
     cursor = tmp_path / "checker-cursor"
+    # A child needs only this immutable script, not the complete parity corpus.
+    script = checker_stub.cases().get(request.node.nodeid, [])
+    script_path = tmp_path / "checker-script.json"
+    script_path.write_text(json.dumps(script))
     checker = tmp_path / "recorded-rust-checker"
     checker.write_text(
         f"#!{sys.executable}\n"
         "import runpy, sys\n"
-        f"sys.argv[1:1] = ['--replay', {request.node.nodeid!r}, {str(cursor)!r}]\n"
+        f"sys.argv[1:1] = ['--replay-file', {str(script_path)!r}, {request.node.nodeid!r}, {str(cursor)!r}]\n"
         f"runpy.run_path({str(Path(checker_stub.__file__).resolve())!r}, run_name='__main__')\n")
     checker.chmod(0o755)
     monkeypatch.setenv("TL3_BINARY", str(checker))
@@ -86,7 +90,7 @@ def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
         if isinstance(command, (list, tuple)) and command and command[0] == str(checker):
             try:
                 value = checker_stub.replay(request.node.nodeid, cursor, list(command[1:]),
-                                            json.loads(kwargs["input"]))
+                                            json.loads(kwargs["input"]), script=script)
                 code, stdout, stderr = 0, json.dumps(value, ensure_ascii=False), ""
             except RuntimeError as error:
                 print(error, file=sys.stderr)
@@ -102,6 +106,5 @@ def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
     # stub executable is doubled; child workers inherit its actual replay script.
     monkeypatch.setattr(subprocess, "run", recorded)
     yield
-    script = checker_stub.cases().get(request.node.nodeid, [])
     consumed = int(cursor.read_text()) if cursor.exists() else 0
     assert consumed == len(script), f"unconsumed Rust checker steps in {request.node.nodeid}: {consumed}/{len(script)}"
