@@ -1,6 +1,7 @@
 """Small required Verus proofs with declared source, spec and toolchain inputs."""
 
 load("//tools/bazel:verus_toolchain.bzl", "VerusToolchainInfo")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 def _verus_test_impl(ctx):
     if ctx.attr.expected_obligations <= 0:
@@ -92,6 +93,12 @@ def verus_proofs():
 
     if native.package_name() == "crates/controller":
         # #830: direct delivery, full SHA pins, approval, known merge and write order.
+        py_binary(
+            name = "direct_merge_resources",
+            srcs = ["proofs/direct_merge_resources.py"],
+            main = "proofs/direct_merge_resources.py",
+            visibility = ["//visibility:public"],
+        )
         verus_test(
             name = "verus_direct_merge",
             src = "proofs/direct_merge.rs",
