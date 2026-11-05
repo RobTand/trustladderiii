@@ -37,9 +37,9 @@ pub mod queue {
         missing
     }
     /// Q52, docs/state-table.md:543: CheckReported belongs to both the open incidents and reported requirements.
-    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (open && reported),))]
-    pub fn reported(open: bool, reported: bool) -> bool {
-        open && reported
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (open && has_report),))]
+    pub fn reported(open: bool, has_report: bool) -> bool {
+        open && has_report
     }
     /// Preserved existing behaviour (no rule): recorded evidence skips detail reads and emission.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (!recorded),))]
@@ -269,9 +269,9 @@ pub mod projection {
         same_head && same_node && incident_open
     }
     /// docs/state-table.md:669: catch-up person events belong to the tracked PR; close/dequeue mapping preserves existing behaviour.
-    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (same_number && person),))]
-    pub fn person(same_number: bool, person: bool) -> bool {
-        same_number && person
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (same_number && human),))]
+    pub fn person(same_number: bool, human: bool) -> bool {
+        same_number && human
     }
 
     #[cfg(verus_keep_ghost)]
