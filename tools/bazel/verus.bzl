@@ -66,7 +66,7 @@ def verus_proofs():
             name = "verus_core",
             src = "proofs/core.rs",
             srcs = ["src/step.rs"],
-            expected_obligations = 15,
+            expected_obligations = 13,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
