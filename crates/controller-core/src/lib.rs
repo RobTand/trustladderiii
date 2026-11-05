@@ -7,3 +7,4 @@
 #![forbid(unsafe_code)]
 pub mod translate;
 pub mod translate_arms;
+pub mod worker_events;
