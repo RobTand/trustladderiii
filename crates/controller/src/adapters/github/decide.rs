@@ -71,6 +71,7 @@ pub enum HookAction {
         },
     )
 )]
+#[allow(clippy::manual_range_contains)] // Verus reasons about the explicit bounds.
 pub fn hook_action(outside_window: bool, status: Option<u16>) -> HookAction {
     if outside_window {
         HookAction::Ignore
