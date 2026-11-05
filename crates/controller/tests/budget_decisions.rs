@@ -45,7 +45,9 @@ fn numeric_cache_truthiness_matches_python() {
             for field in ["cache_read", "cache_creation"] {
                 let value: serde_json::Value = serde_json::from_str(form).unwrap();
                 let result = decide(Request::Account {
-                    usage: vec![json!({"input_tokens": 1, "input_token_details": {(field): value}})],
+                    usage: vec![
+                        json!({"input_tokens": 1, "input_token_details": {(field): value}}),
+                    ],
                     bound: 1,
                     weights: [1.0, 1.25, 0.1],
                     spent: 0,

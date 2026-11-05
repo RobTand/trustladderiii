@@ -431,10 +431,13 @@ def run(model, request, worktree, emit):
         start = len(history)
         history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
 
-    def checkpoint():
+    def checkpoint(pending=None):
         if not progress:
             return
-        pending = {call["id"] for call in _pending_calls(history, start)}
+        # #780: one Rust classification per durable event. A PB submission has
+        # already classified this unchanged history before updating inflight.
+        calls = _pending_calls(history, start) if pending is None else pending
+        pending = {call["id"] for call in calls}
         for call_id in [call_id for call_id in inflight if call_id not in pending]:
             del inflight[call_id]
         # The checkpoint includes progress fingerprints, so a resumed visit cannot
@@ -446,11 +449,12 @@ def run(model, request, worktree, emit):
             "worktree": {"evidence": worktree.evidence.state()}})
 
     def submitted(key, base, tree):
-        for call in _pending_calls(history, start):
+        pending = _pending_calls(history, start)
+        for call in pending:
             if call["name"] == "run_tests":
                 inflight.setdefault(call["id"], []).append({"base": base, "key": key, "tree": tree,
                                                            "identity": worktree.pb_identity})
-        checkpoint()
+        checkpoint(pending)
 
     worktree.pb_submitted = submitted
     if getattr(worktree, "pb_reattach", None):

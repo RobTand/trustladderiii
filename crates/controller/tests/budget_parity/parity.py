@@ -115,6 +115,18 @@ def run(mode, schedules):
                 expected = weights.charge(n, details)
                 assert check("charge", tokens=n, read=n // 2, creation=n // 7,
                              weights=[1.0, 1.25, 0.1]) == expected
+                forms = ["0", "-0", "0.0", "-0.0", "0e0", "0E+99", "-0.00e-123", "0e-999",
+                         "1e-324", "-1e-324", "1", "-1", "1.0", "-1.0", "1e0", "-1E+99", "0.01",
+                         "5e-324", "-5e-324", "1e-320", "1.7976931348623157e308",
+                         "18446744073709551615", "18446744073709551616"]
+                for field in ["cache_read", "cache_creation"]:
+                    usage = {"input_tokens": 1, "input_token_details": {field: json.loads(forms[n % len(forms)])}}
+                    original = old["exploration"].ExplorationMiddleware(old["exploration"].ExplorationBudget(), "maker")
+                    original._account(types.SimpleNamespace(result=[AIMessage.model_construct(
+                        content="", usage_metadata=usage)]), 1)
+                    result = check("account", usage=[usage], bound=1, weights=[1.0, 1.25, 0.1],
+                                   spent=0, turns=0, no_progress=0, final=False, repairing=False)
+                    assert result["cache_active"] == original.cache_active
             elif mode == "history":
                 messages = [HumanMessage(content="inputs"), AIMessage(content="", tool_calls=[
                     {"name": "read", "args": {}, "id": str(i)} for i in range(n % 4)]),
@@ -135,6 +147,27 @@ def run(mode, schedules):
                              no_progress_window=0, no_progress_turns=0, last_progress_kind=None,
                              implementation_files=False, implementation_started=False,
                              phase=None, exhaustion=None, finalizing=False, final=False) == expected
+                from tl3_workers import exploration
+                pair = [module.ExplorationMiddleware(module.ExplorationBudget(no_progress_window=n % 3),
+                                                     "maker" if n & 1 else "planner")
+                        for module in [old["exploration"], exploration]]
+                for allowance in pair:
+                    allowance.finalizing, allowance.final, allowance.repairing = bool(n & 2), bool(n & 4), bool(n & 8)
+                for name in ["read", "grep", "glob", "run_tests", "write", "edit", "list", "diff", "custom"]:
+                    request = types.SimpleNamespace(tool_call={"name": name, "args": {}, "id": name})
+                    outputs = [allowance.wrap_tool_call(request, lambda _: ToolMessage(content="result", tool_call_id=name))
+                               for allowance in pair]
+                    assert outputs[0].model_dump() == outputs[1].model_dump()
+                    for fresh in [False, True]:
+                        for changed in [False, True]:
+                            text = str((n, fresh, changed))
+                            result = ({"matches": [text], "entries": [text], "status": text}
+                                      if name in {"grep", "glob", "run_tests"} else text)
+                            for _ in range(2):
+                                for allowance in pair:
+                                    allowance.no_progress_turns = 3
+                                    allowance.observe_tool(name, {}, result, fresh=fresh, changed=changed)
+                                assert pair[0].state() == pair[1].state(), (name, fresh, changed, n)
             elif mode == "compaction":
                 from tl3_workers import exploration
                 from langchain_core.messages import SystemMessage

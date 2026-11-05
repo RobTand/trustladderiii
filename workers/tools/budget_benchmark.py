@@ -61,7 +61,7 @@ def main():
             state["middleware"] = False
             if state["record"]:
                 calls = rows[begin:]
-                assert len(calls) <= 19, calls
+                assert len(calls) <= 20, calls
                 assert sum(row["kind"] == "retained" for row in calls) <= 1
                 boundaries.append({"turn": state["turn"], "calls": len(calls),
                                    "kinds": dict(Counter(row["kind"] for row in calls))})
@@ -140,7 +140,8 @@ def main():
     report = {"platform": platform.platform(), "units": "milliseconds_per_check_budget_call",
               "scope": "real maker visits; scripted provider; warmed schema and release-id caches",
               "samples": len(values), "p50": statistics.median(values), "p95": percentile(values, .95),
-              "middleware_call_bound": 19,
+              "middleware_call_bound": 20,
+              "tool_checkpoint_call_bound": 1,
               "retention_call_bound": 1,
               "boundaries": boundaries,
               "by_kind": {kind: {"calls": sum(r["kind"] == kind for r in rows),

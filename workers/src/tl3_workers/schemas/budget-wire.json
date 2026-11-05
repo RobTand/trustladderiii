@@ -1004,27 +1004,21 @@
       {
         "additionalProperties": false,
         "properties": {
-          "changed": {
+          "final": {
             "type": "boolean"
           },
-          "evidence_new": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "fresh": {
+          "finalizing": {
             "type": "boolean"
           },
           "kind": {
-            "const": "progress",
+            "const": "tools",
             "type": "string"
           },
           "maker": {
             "type": "boolean"
           },
-          "name": {
-            "type": "string"
+          "repairing": {
+            "type": "boolean"
           },
           "window": {
             "format": "uint64",
@@ -1036,42 +1030,9 @@
           "kind",
           "maker",
           "window",
-          "name",
-          "changed",
-          "fresh"
-        ],
-        "type": "object"
-      },
-      {
-        "additionalProperties": false,
-        "properties": {
-          "final": {
-            "type": "boolean"
-          },
-          "finalizing": {
-            "type": "boolean"
-          },
-          "kind": {
-            "const": "tool_allowed",
-            "type": "string"
-          },
-          "maker": {
-            "type": "boolean"
-          },
-          "name": {
-            "type": "string"
-          },
-          "repairing": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "kind",
-          "maker",
           "finalizing",
           "final",
-          "repairing",
-          "name"
+          "repairing"
         ],
         "type": "object"
       },
@@ -1487,11 +1448,6 @@
       "title": "uint64",
       "type": "integer"
     },
-    "progress": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "title": "boolean",
-      "type": "boolean"
-    },
     "remaining": {
       "$defs": {
         "Counter": {
@@ -1714,15 +1670,67 @@
       "title": "Retained",
       "type": "object"
     },
-    "tool_allowed": {
+    "tools": {
+      "$defs": {
+        "ToolAction": {
+          "enum": [
+            "unavailable",
+            "reserve",
+            "allowed"
+          ],
+          "type": "string"
+        },
+        "ToolRule": {
+          "additionalProperties": false,
+          "properties": {
+            "permission": {
+              "$ref": "#/$defs/ToolAction"
+            },
+            "progress": {
+              "items": {
+                "items": {
+                  "items": {
+                    "type": "boolean"
+                  },
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "type": "array"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "permission",
+            "progress"
+          ],
+          "type": "object"
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "enum": [
-        "unavailable",
-        "reserve",
-        "allowed"
+      "additionalProperties": false,
+      "properties": {
+        "other": {
+          "$ref": "#/$defs/ToolRule"
+        },
+        "tools": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ToolRule"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "tools",
+        "other"
       ],
-      "title": "ToolAction",
-      "type": "string"
+      "title": "ToolPolicy",
+      "type": "object"
     }
   }
 }

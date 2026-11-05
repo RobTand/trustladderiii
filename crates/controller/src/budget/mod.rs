@@ -183,20 +183,12 @@ pub enum Request {
         reserve: u64,
         allowed: u64,
     },
-    Progress {
+    Tools {
         maker: bool,
         window: u64,
-        name: String,
-        changed: bool,
-        fresh: bool,
-        evidence_new: Option<bool>,
-    },
-    ToolAllowed {
-        maker: bool,
         finalizing: bool,
         r#final: bool,
         repairing: bool,
-        name: String,
     },
     Restore {
         state: Value,
@@ -605,38 +597,15 @@ pub fn decide(request: Request) -> Result<Value> {
             let spent = sum([spent, in_flight])?;
             json!({"spent":spent,"fits":u128::from(spent)+u128::from(in_flight)+u128::from(reserve)<=u128::from(allowed)})
         }
-        Progress {
+        Tools {
             maker,
             window,
-            name,
-            changed,
-            fresh,
-            evidence_new,
-        } => json!(
-            maker
-                && window != 0
-                && evidence_new.unwrap_or(changed && matches!(name.as_str(), "write" | "edit"))
-                && (fresh || name == "run_tests")
-        ),
-        ToolAllowed {
-            maker,
             finalizing,
             r#final: final_,
             repairing,
-            name,
-        } => json!(if final_ || repairing {
-            "unavailable"
-        } else if maker
-            && finalizing
-            && !matches!(
-                name.as_str(),
-                "list" | "read" | "glob" | "grep" | "diff" | "run_tests"
-            )
-        {
-            "reserve"
-        } else {
-            "allowed"
-        }),
+        } => {
+            serde_json::to_value(tool_policy(maker, window, finalizing, final_, repairing)).unwrap()
+        }
         Restore { mut state, maker } => match validate_restore(&state) {
             Err(message) => serde_json::to_value(RestoreVerdict::Invalid {
                 message: message.into(),
@@ -659,7 +628,15 @@ fn truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(v) => *v,
-        Value::Number(_) => true, // RED: numeric decoding is implemented after parity fails.
+        // Number is normalized at JSON decoding, including binary64 underflow.
+        // Only the significand determines zero; exponent digits do not.
+        Value::Number(n) => n
+            .to_string()
+            .split(['e', 'E'])
+            .next()
+            .unwrap()
+            .bytes()
+            .any(|byte| matches!(byte, b'1'..=b'9')),
         Value::String(s) => !s.is_empty(),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
@@ -863,6 +840,74 @@ pub enum ToolAction {
     Reserve,
     Allowed,
 }
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ToolRule {
+    permission: ToolAction,
+    // Indexed by fresh, changed, then evidence None/false/true.
+    progress: [[[bool; 3]; 2]; 2],
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPolicy {
+    tools: BTreeMap<String, ToolRule>,
+    other: ToolRule,
+}
+
+/// #780/#692: batch both sides of tool I/O without moving observation or saves.
+/// Flags are fixed across a tool batch. Rust decides all possible progress facts;
+/// the worker applies the selected entry only after sampling the actual result.
+fn tool_policy(
+    maker: bool,
+    window: u64,
+    finalizing: bool,
+    final_: bool,
+    repairing: bool,
+) -> ToolPolicy {
+    let rule = |name| ToolRule {
+        permission: if final_ || repairing {
+            ToolAction::Unavailable
+        } else if maker
+            && finalizing
+            && !matches!(
+                name,
+                "list" | "read" | "glob" | "grep" | "diff" | "run_tests"
+            )
+        {
+            ToolAction::Reserve
+        } else {
+            ToolAction::Allowed
+        },
+        progress: std::array::from_fn(|fresh| {
+            std::array::from_fn(|changed| {
+                [None, Some(false), Some(true)].map(|evidence| {
+                    maker
+                        && window != 0
+                        && evidence.unwrap_or(changed != 0 && matches!(name, "write" | "edit"))
+                        && (fresh != 0 || name == "run_tests")
+                })
+            })
+        }),
+    };
+    ToolPolicy {
+        tools: [
+            "list",
+            "read",
+            "glob",
+            "grep",
+            "diff",
+            "run_tests",
+            "write",
+            "edit",
+        ]
+        .into_iter()
+        .map(|name| (name.into(), rule(name)))
+        .collect(),
+        other: rule(""),
+    }
+}
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Dimension {
@@ -922,7 +967,7 @@ fn cutoff_sample(
 pub fn wire_schema() -> Value {
     let mut responses = BTreeMap::new();
     macro_rules! schema {($ty:ty; $($name:literal),+) => {$(responses.insert($name,schemars::schema_for!($ty));)+};}
-    schema!(bool; "cutoff","compaction","compact_now","context_full","reply","finalizing","progress");
+    schema!(bool; "cutoff","compaction","compact_now","context_full","reply","finalizing");
     schema!(u64; "charge","predict","reserve","context","estimate");
     schema!(CutoffObservation; "cutoff_sample");
     schema!(ForecastEvidence; "forecast");
@@ -932,7 +977,7 @@ pub fn wire_schema() -> Value {
     schema!(Account; "account");
     schema!(Dropped; "dropped");
     schema!(compaction::Retained; "retained");
-    schema!(ToolAction; "tool_allowed");
+    schema!(ToolPolicy; "tools");
     schema!(Option<Dimension>; "exhaustion");
     schema!(RestoreVerdict; "restore");
     json!({"$schema":"https://json-schema.org/draft/2020-12/schema",

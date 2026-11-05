@@ -152,11 +152,30 @@ class ExplorationMiddleware(AgentMiddleware):
         self.compacted_below = False
         self.compaction_prefix = []
         self.compaction_offset = 0
+        self._tool_policy_key = None
+        self._tool_policy_value = None
 
     def _context(self, estimate):
         # Calibrate byte estimates to the latest provider count, then add new text.
         return budget_check("context", estimate=estimate, last_input=self.last_input,
                             last_estimate=self.last_estimate)
+
+    def _tool_rule(self, name):
+        """#780: no subprocess per tool for permission or progress.
+
+        Rust batches both decisions for every result shape once per flag change.
+        The model boundary prepares the policy before dispatch. Each subsequent
+        tool event only applies it; the maker's durable checkpoint uses at most
+        one history subprocess per streamed update or PB-submission callback.
+        """
+        key = (self.role == "maker", self.budget.no_progress_window,
+               self.finalizing, self.final, self.repairing)
+        if key != self._tool_policy_key:
+            maker, window, finalizing, final, repairing = key
+            policy = budget_check("tools", maker=maker, window=window, finalizing=finalizing,
+                                  final=final, repairing=repairing)
+            self._tool_policy_key, self._tool_policy_value = key, policy
+        return self._tool_policy_value["tools"].get(name, self._tool_policy_value["other"])
 
     def begin_tool(self, name, arguments):
         """Call identity excludes provider ids and survives visit recovery."""
@@ -196,8 +215,8 @@ class ExplorationMiddleware(AgentMiddleware):
                 seen, signature = evidence
                 evidence_new = signature not in seen
                 seen.add(signature)
-            progress = budget_check("progress", maker=self.role == "maker", window=self.budget.no_progress_window,
-                                    name=name, changed=changed, fresh=fresh, evidence_new=evidence_new)
+            progress = self._tool_rule(name)["progress"][fresh][changed][
+                {None: 0, False: 1, True: 2}[evidence_new]]
             if progress:
                 self.no_progress_turns = 0
                 self.last_progress_kind = name
@@ -213,8 +232,7 @@ class ExplorationMiddleware(AgentMiddleware):
                             exhaustion=self.exhaustion, finalizing=self.finalizing, final=self.final)
 
     def wrap_tool_call(self, request, handler):
-        action = budget_check("tool_allowed", maker=self.role == "maker", finalizing=self.finalizing,
-                              final=self.final, repairing=self.repairing, name=request.tool_call["name"])
+        action = self._tool_rule(request.tool_call["name"])["permission"]
         if action == "unavailable":
             return ToolMessage(content="Tools are unavailable for this turn.",
                                tool_call_id=request.tool_call["id"], status="error")
@@ -309,6 +327,7 @@ class ExplorationMiddleware(AgentMiddleware):
                             context_full=False, spent=self.spent, predicted=predicted, reserve=0,
                             input_limit=self.budget.input_tokens):
                 raise BudgetUnavailable("No final model call fits the remaining input-token allowance.")
+        self._tool_rule("")
         response = handler(request)
         if notice is not None:
             # Persist budget notices with the call they preceded so subsequent
