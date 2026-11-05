@@ -349,7 +349,8 @@ def lifecycle(module, directory, schedule):
         (Path(target) / 'marker').write_bytes(b'trusted harness')
 
     def git(root, *args):
-        return change(('stage-git', args), lambda: 'c' * 40 if args[0] == 'write-tree' else '')
+        observed = tuple(str(arg).replace(str(directory), '<root>') for arg in args)
+        return change(('stage-git', observed), lambda: 'c' * 40 if args[0] == 'write-tree' else '')
 
     proof = {'mode':'pytest-outcome', 'sample':schedule['initial']}
     facts = {'status':'completed', 'tests':[], 'totals':dict.fromkeys(test_tool.OUTCOMES, 0), 'note':''}
@@ -451,8 +452,13 @@ REFUSALS_CHECKED = False
 
 def equivalent(before, after, context):
     if before != after:
-        detail = next(((index, old, new) for index, (old, new) in enumerate(zip(before, after)) if old != new), ('length', len(before), len(after)))
-        raise AssertionError((context, str(detail)[:1600]))
+        def first(old, new, path=()):
+            if type(old) is type(new) and isinstance(old, (list, tuple)):
+                for index, (left, right) in enumerate(zip(old, new)):
+                    if left != right: return first(left, right, (*path, index))
+                return (path, 'length', len(old), len(new))
+            return (path, old, new)
+        raise AssertionError((context, str(first(before, after))[:1600]))
 
 
 def compare_crashes(function, before_module, after_module, schedule):
