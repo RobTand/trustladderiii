@@ -445,6 +445,8 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                     return None;
                 }
             }
+        } else if check.proof.is_some() && result.tests.iter().any(|test| test.passed) {
+            return None;
         }
         // A forced check passes only on evidence from its forced head run (#393).
         if result.forcing.is_some() != check.forcing.is_some() {
@@ -522,6 +524,16 @@ fn phase_agrees(run: &crate::contracts::report::PhaseRun, outcome: Outcome) -> b
 fn rejudged(report: &Report, job: &Job) -> bool {
     for (index, result) in report.results.iter().enumerate() {
         let check = job.run.plan.get(index);
+        // These report invariants also apply to campaigns and shell overrides.
+        if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|test| test.passed)
+            || result.forcing.is_some()
+                && result
+                    .tests
+                    .iter()
+                    .any(|test| test.passed && !matches!(test.head_forced, Some(Outcome::Passed)))
+        {
+            return false;
+        }
         if result.declared_symptom.is_some() {
             continue;
         }
