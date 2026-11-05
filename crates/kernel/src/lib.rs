@@ -3011,3 +3011,5 @@ fn first_in_line(w: &World, i: usize) -> bool {
     }
     first_runnable == mine
 }
+
+// Scratch kernel touch to measure the PR tier; no behavior change.
