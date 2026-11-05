@@ -80,28 +80,8 @@ impl Controller {
                 ));
             }
         }
-        self.quota_models = Some(models.clone());
         self.quota_horizon_ms = horizon.as_millis().min(u128::from(u64::MAX)) as u64;
         Ok(())
-    }
-
-    pub(super) fn quota_family(&self, name: &str) -> Option<String> {
-        let m = self.quota_models.as_ref()?;
-        [
-            &m.ingest,
-            &m.audit,
-            &m.planner,
-            &m.maker,
-            &m.reviewer,
-            &m.rebaser,
-            &m.comment_classifier,
-            &m.writer,
-            &m.postmortem,
-        ]
-        .into_iter()
-        .flatten()
-        .find(|model| model.name == name)
-        .map(|model| model.family.to_ascii_lowercase())
     }
 
     pub(super) fn attempt_family(

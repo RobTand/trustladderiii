@@ -341,7 +341,6 @@ pub struct Controller {
     #[cfg(test)]
     refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
     allowances: tl3_config::Allowances,
-    quota_models: Option<tl3_config::Models>,
     quota_horizon_ms: u64,
     /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
     postmortems: Option<PostmortemPace>,
@@ -442,7 +441,6 @@ impl Controller {
             #[cfg(test)]
             refusal_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
-            quota_models: None,
             quota_horizon_ms: 6 * 3_600_000,
             postmortems: None,
             postmortem_since: 0,

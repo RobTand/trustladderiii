@@ -1730,7 +1730,6 @@ impl Controller {
                 .or_else(|| {
                     attempt.and_then(|attempt| self.attempt_family(snapshot, key, attempt, model))
                 })
-                .or_else(|| self.quota_family(model))
         });
         if let Some(attempt) = attempt {
             self.release_model_probe(snapshot, key, Some(attempt), commit)?;
