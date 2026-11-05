@@ -347,9 +347,10 @@ pub fn person_fact(event: IssueEvent) -> Option<PersonFact> {
 /// A person's dequeue or close, in event order. A merged PR has none: the
 /// merge decides.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
-    ensures result.valid(), result.events == events,
-        result.suppressed == (merged || exists|i: int| 0 <= i < events@.len() && events@[i].kind == EventKind::Merged),
-        result.position == 0,
+    ensures result.valid(), result.remaining() ==
+        if merged || exists|i: int| 0 <= i < events@.len() && events@[i].kind == EventKind::Merged {
+            Seq::<PersonFact>::empty()
+        } else { person_sequence(events@, 0) },
 ))]
 pub fn person_facts(events: &[IssueEvent], merged: bool) -> PersonFacts<'_> {
     let mut merge_seen = merged;
@@ -386,13 +387,10 @@ impl PersonFacts<'_> {
     /// #743/K-person-facts: next fact preserves event order and merge suppression.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
         requires old(self).valid(),
-        ensures self.valid(), self.events == old(self).events,
-            self.suppressed == old(self).suppressed,
-            self.position >= old(self).position,
+        ensures final(self).valid(),
             match result {
-                Some(fact) => old(self).remaining() == seq![fact] + self.remaining()
-                    && self.position > old(self).position,
-                None => old(self).remaining().len() == 0 && self.remaining().len() == 0,
+                Some(fact) => old(self).remaining() == seq![fact] + final(self).remaining(),
+                None => old(self).remaining().len() == 0 && final(self).remaining().len() == 0,
             },
     ))]
     pub fn next_fact(&mut self) -> Option<PersonFact> {
@@ -437,9 +435,9 @@ impl Iterator for PersonFacts<'_> {
 verus! {
 impl PersonFacts<'_> {
     /// #743/K-person-facts: the cursor always names a slice suffix.
-    pub open spec fn valid(&self) -> bool { self.position <= self.events@.len() }
+    pub closed spec fn valid(&self) -> bool { self.position <= self.events@.len() }
     /// #743/K-person-facts: exact remaining event-ordered output.
-    pub open spec fn remaining(&self) -> Seq<PersonFact> {
+    pub closed spec fn remaining(&self) -> Seq<PersonFact> {
         if self.suppressed { seq![] } else { person_sequence(self.events@, self.position as int) }
     }
 }

@@ -2,12 +2,13 @@
 use super::check::Status;
 use super::facts::*;
 use super::observe::QueueState;
+use super::translate::admit;
 use super::translate::*;
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
 /// Q52/#743: the original node constructor spans all four phases.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == NodeView { phase, merged, enqueue_pending: pending },))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (NodeView { phase, merged, enqueue_pending: pending }),))]
 fn node(phase: Phase, merged: bool, pending: bool) -> NodeView {
     NodeView {
         phase,

@@ -4,6 +4,7 @@ use super::facts::*;
 use super::check::Status;
 use super::observe::QueueState;
 use super::translate::*;
+use super::translate::admit;
 
 verus! {
 /// Q52: all four setup routes avoid the kernel; missing checks and suites are exact.
