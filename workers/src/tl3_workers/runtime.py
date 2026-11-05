@@ -33,6 +33,7 @@ from tl3_workers.recall import redacted_memories
 from tl3_workers.exploration import ExplorationMiddleware
 from tl3_workers.turns import TurnControl, repaired
 from tl3_workers.session import is_unaccepted_session
+from tl3_workers.prompt_render import render as render_prompt, selection as prompt_renderer
 
 
 BUILTIN_TOOL_DESCRIPTIONS = {
@@ -140,6 +141,9 @@ run_test_cpus = ContextVar("run_test_cpus", default=1)
 
 def role_prompt(role, *, text=None, test_cpus=None):
     supplied = run_prompt.get() if text is None else text
+    if rendered := render_prompt('role', {'role': role.name, 'text': supplied,
+                                        'test_cpus': run_test_cpus.get() if test_cpus is None else test_cpus}):
+        return rendered['text']
     prompt = supplied if supplied is not None else files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     if role.name in {"ingest", "audit", "planner"}:
         prompt += "\n\n" + forcing_guidance(run_test_cpus.get() if test_cpus is None else test_cpus)
@@ -159,6 +163,11 @@ def prompt_cache_identity(request):
     if role.name not in {"ingest", "audit", "planner"}:
         return session_identity(request)
     prompt = request.get("prompt", {})
+    supplied = prompt.get('text')
+    if supplied is None:
+        supplied = run_prompt.get()
+    if rendered := render_prompt('cache', {**request, 'prompt': {**prompt, 'text': supplied}}):
+        return rendered['identity']
     shared = {
         "role": role.name,
         "version": prompt.get("version"),
@@ -174,6 +183,17 @@ def prompt_cache_identity(request):
 
 
 def initial_message(request, inputs):
+    rendered = render_prompt('prefix', {**request, 'inputs': inputs})
+    if rendered is not None:
+        prefix = rendered['prefix']
+        if prefix is None:
+            return HumanMessage(content=json.dumps(inputs, ensure_ascii=False))
+        prefix = {'type': prefix['type'], 'text': prefix['text'],
+                  **{name: value for name, value in prefix.items() if name not in {'type', 'text'}}}
+        specific = {name: value for name, value in inputs.items() if name not in {'repo', 'base_sha'}}
+        return HumanMessage(content=[prefix, {
+            'type': 'text', 'text': json.dumps(specific, ensure_ascii=False)[1:],
+        }])
     shared = shared_inputs(inputs) if request["role"] in {"ingest", "audit", "planner"} else {}
     if not shared:
         return HumanMessage(content=json.dumps(inputs, ensure_ascii=False))
@@ -256,6 +276,7 @@ def run(request, emit: Callable[[dict], None]):
         token = current.set(summary)
         prompt = run_prompt.set(request.get("prompt", {}).get("text"))
         test_cpus = run_test_cpus.set(request.get("test_cpus", 1))
+        renderer = prompt_renderer.set({})
         summary.save()
         reply, error = None, None
         try:
@@ -266,6 +287,7 @@ def run(request, emit: Callable[[dict], None]):
             raise
         finally:
             summary.finish(reply, error)
+            prompt_renderer.reset(renderer)
             run_prompt.reset(prompt)
             run_test_cpus.reset(test_cpus)
             current.reset(token)

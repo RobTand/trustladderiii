@@ -1230,6 +1230,34 @@ py_binary(
     ],
 )
 
+filegroup(
+    name = "prompt_render_recordings",
+    srcs = [
+        "fixtures/prompt-render.json.gz",
+        "prompt-identity-vectors.json",
+        "prompt_identity_vectors.py",
+        "prompt_render_stub.py",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "prompt_render_stub",
+    srcs = ["prompt_render_stub.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_prompt_renderer",
+    srcs = ["test_prompt_renderer.py"],
+    deps = [
+        ":conftest",
+        ":prompt_render_stub",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
 py_binary(
     name = "harness_io_schedule",
     srcs = ["harness_io_schedule.py"],
