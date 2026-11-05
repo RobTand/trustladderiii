@@ -106,6 +106,51 @@ struct Function {
     definition_only: bool,
 }
 
+// Only plain signatures qualify. Contract expressions can contain braces before
+// a later decreases clause, so ambiguous headers must retain a selector.
+fn plain_definition_header(ts: &[Token]) -> bool {
+    if ts.first() != Some(&Token::Punct('(')) {
+        return false;
+    }
+    let mut delimiters = Vec::new();
+    for (i, token) in ts.iter().enumerate() {
+        match token {
+            Token::Name(name)
+                if matches!(
+                    name.as_str(),
+                    "requires"
+                        | "recommends"
+                        | "ensures"
+                        | "returns"
+                        | "decreases"
+                        | "opens_invariants"
+                        | "no_unwind"
+                        | "unwind"
+                        | "where"
+                ) =>
+            {
+                return false;
+            }
+            Token::Punct('(' | '[' | '<') => delimiters.push(token),
+            Token::Punct('>') if i > 0 && ts[i - 1] == Token::Punct('-') => {}
+            Token::Punct(close @ (')' | ']' | '>')) => {
+                let open = match close {
+                    ')' => '(',
+                    ']' => '[',
+                    _ => '<',
+                };
+                if delimiters.pop() != Some(&Token::Punct(open)) {
+                    return false;
+                }
+            }
+            Token::Punct('{') => return delimiters.is_empty(),
+            Token::Punct(';' | '!' | '=') => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn functions(source: &str, module: &str) -> Vec<Function> {
     fn walk(ts: &[Token], module: &str, owner: &str, verifiable: bool, result: &mut Vec<Function>) {
         let mut i = 0;
@@ -201,10 +246,7 @@ fn functions(source: &str, module: &str) -> Vec<Function> {
                     verifiable: verifiable || annotated,
                     definition_only: ts.get(i.wrapping_sub(1)).and_then(Token::name)
                         == Some("spec")
-                        && !ts[i + 2..]
-                            .iter()
-                            .take_while(|token| **token != Token::Punct('{'))
-                            .any(|token| token.name() == Some("decreases")),
+                        && plain_definition_header(&ts[i + 2..]),
                 });
             }
             if ts[i].name() == Some("fn") {
@@ -552,4 +594,21 @@ fn plain_spec_definitions_can_use_definition_only_reasons() {
         "Logical definition; no standalone obligation.".into(),
     )]);
     assert!(check(&fs, &[], &reason).is_ok());
+}
+
+#[test]
+fn ambiguous_spec_headers_require_selectors() {
+    for source in [
+        "verus! { spec fn candidate(n: nat) -> nat recommends n > 0, { n } }",
+        "verus! { spec fn candidate(n: Value<{ 1 }>) -> nat decreases 1, { 0 } }",
+        "verus! { spec fn candidate(n: nat) -> Value<{ 1 }> decreases n, { candidate(n - 1) } }",
+        "verus! { spec fn candidate<T>(n: T) -> nat { 0 } }",
+    ] {
+        rejects_definition_only_reason(source);
+    }
+    let fs = functions(
+        "verus! { spec fn candidate(n: Seq<(nat, Seq<nat>)>) -> Seq<nat> { Seq::empty() } }",
+        "kernel",
+    );
+    assert!(fs[0].definition_only);
 }
