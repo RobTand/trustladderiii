@@ -38,10 +38,11 @@ pub(super) proof fn original_bounds_supply_reserves(w: World)
 
 verus! {
 /// #806: real witness and real apply, even while the other root can still settle.
-pub(super) fn verify_outside(mut world: World) -> (result: World)
+pub(super) fn verify_outside(mut world: World) -> (result: (World, Event))
     requires scope(world), obstructed(world.nodes@[0]),
-    ensures result.nodes@.len() == 2, result.nodes@[1] == world.nodes@[1],
-        progress_measure(result) < progress_measure(world),
+    ensures result.0.nodes@.len() == 2, result.0.nodes@[1] == world.nodes@[1],
+        progress_measure(result.0) < progress_measure(world),
+        result.1 == outside_event(world.nodes@[0]), witness_selection(world, Some(result.1)),
 {
     let ghost before = world;
     proof {
@@ -57,7 +58,8 @@ pub(super) fn verify_outside(mut world: World) -> (result: World)
     }
     let mut out = Outbox::new();
     proof { reveal(empty_outbox); }
-    apply(&mut world, event.unwrap(), &mut out);
-    world
+    let selected = event.unwrap();
+    apply(&mut world, selected, &mut out);
+    (world, selected)
 }
 }

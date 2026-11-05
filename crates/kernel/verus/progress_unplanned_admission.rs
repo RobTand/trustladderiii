@@ -4,7 +4,7 @@ use super::*;
 
 verus! {
 /// State-table Unplanned: real admission enters exactly unsplit Planning.
-pub(super) fn verify_admission(mut world: World) -> (result: (World, bool))
+pub(super) fn verify_admission(mut world: World) -> (result: (World, bool, bool))
     requires scope(world), !obstructed(world.nodes@[0]),
         dependencies::delivered(world.dependencies@, NodeId(0)),
     ensures result.1 == (slot_waiters(world.nodes@, world.nodes@.len(), world.nodes@[0].repo)
@@ -13,6 +13,7 @@ pub(super) fn verify_admission(mut world: World) -> (result: (World, bool))
         && result.0.nodes@[1] == world.nodes@[1]
         && progress_measure(result.0) < progress_measure(world),
         !result.1 ==> world.nodes@[1].phase is Ready && world.nodes@[1].ticket.is_some(),
+        result.2 == !result.1,
 {
     let ghost before = world;
     proof {
@@ -42,10 +43,11 @@ pub(super) fn verify_admission(mut world: World) -> (result: (World, bool))
             potential_member(world.nodes@, 1, world.nodes@.len(), |n: Node| ticket_capacity(n));
         }
     }
+    let mut occupant_moved = false;
     if !admitted {
-        let moved = advance(&mut world, 1, &mut out);
-        assert(moved);
+        occupant_moved = advance(&mut world, 1, &mut out);
+        assert(occupant_moved);
     }
-    (world, admitted)
+    (world, admitted, occupant_moved)
 }
 }

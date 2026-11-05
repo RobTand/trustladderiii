@@ -11,16 +11,17 @@ pub(super) open spec fn unchanged(a: World, b: World) -> bool {
 }
 
 /// State-table Unplanned wait: no move, output, resource ownership, or credit.
-pub(super) fn verify_waiting(mut world: World, blocker: usize) -> (result: World)
+pub(super) fn verify_waiting(mut world: World, blocker: usize) -> (result: (World, bool, usize, i128))
     requires scope(world), blocker < world.dependencies@.len(),
         world.dependencies@[blocker as int].node == NodeId(0),
         world.dependencies@[blocker as int].rejected
             || world.dependencies@[blocker as int].status != DependencyStatus::Delivered,
-    ensures unchanged(world, result), !result.nodes@[0].holds && !result.nodes@[0].pool
-        && result.nodes@[0].ticket.is_none() && result.nodes@[0].run.is_none(),
-        result.nodes@[0].credit.withheld || result.nodes@[0].credit.start as int
-            + result.nodes@[0].credit.earned as int + result.nodes@[0].credit.added as int
-                == result.nodes@[0].credit.spent as int,
+    ensures unchanged(world, result.0), !result.0.nodes@[0].holds && !result.0.nodes@[0].pool
+        && result.0.nodes@[0].ticket.is_none() && result.0.nodes@[0].run.is_none(),
+        result.0.nodes@[0].credit.withheld || result.0.nodes@[0].credit.start as int
+            + result.0.nodes@[0].credit.earned as int + result.0.nodes@[0].credit.added as int
+                == result.0.nodes@[0].credit.spent as int,
+        !result.1, result.2 == 0, result.3 == 0,
 {
     let ghost before = world;
     proof {
@@ -47,6 +48,6 @@ pub(super) fn verify_waiting(mut world: World, blocker: usize) -> (result: World
     }
     let balance = world.nodes[0].credit.balance();
     assert(balance == 0);
-    world
+    (world, moved, out.len, balance)
 }
 }

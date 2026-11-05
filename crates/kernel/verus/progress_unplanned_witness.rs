@@ -138,19 +138,56 @@ pub(super) fn cover_world(case: u8, count: usize) -> (world: World)
     world
 }
 
-/// #806: all original covers execute the real selector/apply or scheduler path.
-fn run_cover(case: u8, count: usize)
+/// #806: every original cover is exported after real selector/apply or advance.
+/// Tuple fields: before snapshot, actual successor, selected event, admitted,
+/// gate occupant moved, waiting outbox length, and real waiting credit balance.
+fn run_cover(case: u8, count: usize) -> (result: (Ghost<World>, World, Option<Event>, bool, bool, usize, i128))
     requires case < 8, count <= 2, case >= 5 ==> count > 0,
+    ensures original_domain(result.0@), scope(result.0@),
+        result.0@.dependencies@.len() == count,
+        case < 3 ==> settled_world(result.0@) && result.0@.nodes@[1].phase is Closed
+            && obstructed(result.0@.nodes@[0]) && result.2.is_some()
+            && result.2 == Some(outside_event(result.0@.nodes@[0]))
+            && witness_selection(result.0@, result.2)
+            && result.1.nodes@[1] == result.0@.nodes@[1]
+            && progress_measure(result.1) < progress_measure(result.0@),
+        case == 0 ==> result.0@.nodes@[0].paused && result.0@.nodes@[0].effect.is_some()
+            && result.0@.nodes@[0].waiting_incident,
+        case == 1 ==> !result.0@.nodes@[0].paused && result.0@.nodes@[0].effect.is_some()
+            && result.0@.nodes@[0].waiting_incident,
+        case == 2 ==> !result.0@.nodes@[0].paused && result.0@.nodes@[0].effect.is_none()
+            && result.0@.nodes@[0].waiting_incident,
+        case < 5 ==> dependencies::delivered(result.0@.dependencies@, NodeId(0)),
+        case >= 3 ==> !obstructed(result.0@.nodes@[0]) && result.2.is_none(),
+        result.3 == (case == 3), result.4 == (case == 4),
+        case == 3 ==> result.1.nodes@[0].phase == (Phase::Planning { must_split: false })
+            && result.1.nodes@[1] == result.0@.nodes@[1]
+            && progress_measure(result.1) < progress_measure(result.0@),
+        case == 4 ==> result.0@.nodes@[1].phase is Ready
+            && result.0@.nodes@[1].ticket.is_some(),
+        case >= 5 ==> progress_unplanned_waiting::unchanged(result.0@, result.1)
+            && !result.1.nodes@[0].holds && !result.1.nodes@[0].pool
+            && result.1.nodes@[0].ticket.is_none() && result.1.nodes@[0].run.is_none()
+            && result.5 == 0 && result.6 == 0,
+        case == 5 ==> result.0@.dependencies@[0].status == DependencyStatus::Pending
+            && !result.0@.dependencies@[0].rejected,
+        case == 6 ==> result.0@.dependencies@[0].status == DependencyStatus::Abandoned,
+        case == 7 ==> result.0@.dependencies@[0].rejected
+            && result.0@.dependencies@[0].target.request == Some(NodeId(0)),
 {
     let world = cover_world(case, count);
+    let ghost before = world;
     if case < 3 {
-        let _after = verify_outside(world);
+        let (after, event) = verify_outside(world);
+        (Ghost(before), after, Some(event), false, false, 0, 0)
     } else if case < 5 {
-        let (_after, admitted) = progress_unplanned_admission::verify_admission(world);
+        let (after, admitted, occupant_moved) = progress_unplanned_admission::verify_admission(world);
         proof { reveal_with_fuel(potential_prefix, 3); }
         assert(admitted == (case == 3));
+        (Ghost(before), after, None, admitted, occupant_moved, 0, 0)
     } else {
-        let _after = progress_unplanned_waiting::verify_waiting(world, 0);
+        let (after, admitted, output_len, balance) = progress_unplanned_waiting::verify_waiting(world, 0);
+        (Ghost(before), after, None, admitted, false, output_len, balance)
     }
 }
 }

@@ -163,6 +163,10 @@ CASES = {
                           'context.admit = w.dependencies_delivered(NodeId(i as u64)) && admits(w, n.repo);',
                           'context.admit = admits(w, n.repo);',
                           '//crates/kernel:verus_scheduler'),
+    'unplanned_cover_occupant': ('crates/kernel/src/scheduler.rs',
+                                 'context.slot = slot_free(w, i) && first_in_line(w, i);',
+                                 'context.slot = false;',
+                                 '//crates/kernel:verus_scheduler'),
 
 }
 
