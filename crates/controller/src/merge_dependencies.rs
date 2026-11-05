@@ -1434,5 +1434,6 @@ mod tests {
             assert_eq!(issue_status(&issue), expected);
         }
     }
+    mod closed_prerequisites;
     mod refusal_properties;
 }

@@ -1176,4 +1176,31 @@ mod priority_tests {
             assert!(fact(&catch_up.unwrap()));
         }
     }
+
+    /// #839 / Q59: an unmerged PR closure is an upstream fact, not silence.
+    #[test]
+    fn closed_unmerged_pr_survives_webhook_and_catch_up() {
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let bootstrap = Bootstrap::from_config(&config).unwrap();
+        let repository = bootstrap.repos[0].clone();
+        let body = json!({"action":"closed", "repository":{"id":9,"name":repository.name,"owner":{"id":3,"login":repository.owner}}, "installation":{"id":repository.installation}, "sender":{"id":7,"login":"requester"}, "pull_request":{"number":2761,"user":{"id":7,"login":"requester"},"state":"closed","merged_at":null,"head":{"ref":"feature","sha":"abc","repo":null},"base":{"ref":"main","sha":"def","repo":null},"updated_at":"2026-11-03T23:00:00Z"}});
+        let delivery = tl3_github::webhook::parse(
+            "t839-closed-pr",
+            "pull_request",
+            body.to_string().as_bytes(),
+        )
+        .unwrap();
+        let pr = serde_json::from_value(body["pull_request"].clone()).unwrap();
+        let webhook = inputs("t839-closed-pr", delivery.event, &bootstrap);
+        let catch_up = prerequisite_pr(&repository, &pr);
+        let fact = |input: &Input| matches!(input, Input::Observation { observation: Observation::Prerequisite(fact), .. } if fact.number == 2761 && fact.kind == tl3_kernel::PrerequisiteKind::PullRequest && fact.status == tl3_kernel::DependencyStatus::Abandoned);
+        assert!(
+            webhook.iter().any(fact),
+            "closed PR webhook lost the prerequisite fact"
+        );
+        assert!(
+            catch_up.as_ref().is_some_and(fact),
+            "catch-up lost the prerequisite fact"
+        );
+    }
 }
