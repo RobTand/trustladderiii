@@ -1,38 +1,13 @@
 use super::decide;
+use super::decide::writer_facts;
 use super::fixture::*;
 type Adapter = Shell<false>;
 impl Adapter {
     fn request_notice(delivery: &Delivery) -> Option<Notice> {
-        match delivery.output {
-            Out::Notice {
-                notice:
-                    notice @ (Notice::Ask { .. }
-                    | Notice::MeasuresPosted
-                    | Notice::Summary(_)
-                    | Notice::Note(_)
-                    | Notice::Incident { .. }),
-                ..
-            } => Some(notice),
-            Out::Notice {
-                notice: Notice::FileReplacement,
-                ..
-            }
-            | Out::Effect { .. }
-            | Out::Comment { .. } => None,
-        }
+        decide::request_notice(delivery)
     }
     fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
-        match delivery.output {
-            Out::Notice {
-                notice: Notice::Summary(Outcome::Merged | Outcome::AlreadyDone),
-                ..
-            } => Some(CloseReason::Completed),
-            Out::Notice {
-                notice: Notice::Summary(Outcome::Duplicate | Outcome::NotActionable),
-                ..
-            } => Some(CloseReason::NotPlanned),
-            _ => None,
-        }
+        decide::close_reason(delivery)
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
@@ -43,15 +18,24 @@ impl Adapter {
         }
         if publishing::handles(delivery) {
             return match self.reconcile_publication(delivery) {
-                Err(Error::Permanent {
-                    class: "pr_evidence",
-                    ..
-                }) => Ok(Reconciliation::Found(Box::new(Completion::permanent(
-                    "pr_evidence",
-                )))),
-                // The controller records the refusal while leaving reconciliation pending.
-                Err(error @ Error::Permanent { .. }) => Err(error),
-                result => Ok(result.unwrap_or(Reconciliation::Pending)),
+                Ok(result) => Ok(result),
+                Err(error) => {
+                    let read = match &error {
+                        Error::Permanent {
+                            class: "pr_evidence",
+                            ..
+                        } => decide::PublicationRead::PrEvidence,
+                        Error::Permanent { .. } => decide::PublicationRead::OtherPermanent,
+                        _ => decide::PublicationRead::Transient,
+                    };
+                    match decide::publication_refusal(read) {
+                        decide::Refusal::PermanentCompletion => Ok(Reconciliation::Found(
+                            Box::new(Completion::permanent("pr_evidence")),
+                        )),
+                        decide::Refusal::ReturnError => Err(error),
+                        decide::Refusal::Pending => Ok(Reconciliation::Pending),
+                    }
+                }
             };
         }
         if let Some(crate::steering::Task::FileRequest {
@@ -299,18 +283,20 @@ impl Adapter {
             for delivery in page.deliveries {
                 newest = newest.max(delivery.id);
                 oldest = oldest.min(delivery.id);
-                if delivery.id <= after
-                    || delivery.delivered_at.timestamp_millis() < since_ms as i64
-                {
-                    reached = true;
-                    continue;
-                }
-                let Some(status) = delivery.status_code else {
-                    pending = Some(pending.map_or(delivery.id, |old: u64| old.min(delivery.id)));
-                    continue;
-                };
-                if !(200..300).contains(&status) {
-                    self.runtime.block_on(client.redeliver_hook(delivery.id))?;
+                match decide::hook_action(
+                    delivery.id <= after
+                        || delivery.delivered_at.timestamp_millis() < since_ms as i64,
+                    delivery.status_code,
+                ) {
+                    decide::HookAction::Ignore => reached = true,
+                    decide::HookAction::Pending => {
+                        pending =
+                            Some(pending.map_or(delivery.id, |old: u64| old.min(delivery.id)));
+                    }
+                    decide::HookAction::Redeliver => {
+                        self.runtime.block_on(client.redeliver_hook(delivery.id))?;
+                    }
+                    decide::HookAction::Delivered => {}
                 }
             }
             if reached {
@@ -324,11 +310,7 @@ impl Adapter {
                 None => break,
             }
         }
-        Ok(Some(
-            pending
-                .map_or(newest, |id| newest.min(id.saturating_sub(1)))
-                .max(after),
-        ))
+        Ok(Some(decide::recovery_cursor(after, newest, pending)))
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
@@ -467,218 +449,6 @@ pub fn writer_input(
         round: delivery.round,
     });
     Ok(input)
-}
-fn writer_facts(
-    delivery: &Delivery,
-    notice: Option<Notice>,
-    title: &str,
-    request: &str,
-) -> Result<WriteRequest> {
-    let request = delivery.request_text.as_deref().unwrap_or(request);
-    let request = if request.trim().is_empty() {
-        title
-    } else {
-        request
-    };
-    if let Some(crate::steering::Task::ReplacementDropped { text, outcome }) = &delivery.steering {
-        let change = if *outcome == Outcome::Merged {
-            "The old version merged before your change could start. Please file your change again."
-        } else {
-            "Work on the old version ended before your change could start. Please file your change again."
-        };
-        return Ok(WriteRequest {
-            kind: MessageKind::Note,
-            facts: json!({"issue_title": title, "request": request,
-                "change": change, "change_quote": text}),
-            violations: vec![],
-            request: None,
-        });
-    }
-    if let Some(crate::steering::Task::RestartDropped { text }) = &delivery.steering {
-        return Ok(WriteRequest {
-            kind: MessageKind::Note,
-            facts: json!({"issue_title": title, "request": request,
-                "change": "The issue for this request could not be found, so the restart was dropped. Nothing was filed.",
-                "change_quote": text}),
-            violations: vec![],
-            request: None,
-        });
-    }
-    if let Some(crate::steering::Task::ClarifyComment { question, excerpt }) = &delivery.steering {
-        return Ok(WriteRequest {
-            kind: MessageKind::Clarification,
-            facts: json!({"issue_title": title, "request": request, "question": question, "comment_excerpt": excerpt}),
-            violations: vec![],
-            request: None,
-        });
-    }
-    let (kind, mut facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
-        Notice::Ask { question } => {
-            let binding = delivery
-                .question
-                .filter(|binding| binding.id == question)
-                .ok_or(Error::Invalid("question notice needs its kernel question"))?;
-            let (obstacle, actions): (&str, &[(&str, &str)]) = match binding.kind {
-                QKind::AuditDisagreement => (
-                    "Two readings of your request still disagree.",
-                    &[
-                        (
-                            "Continue with the original reading",
-                            "I will continue with the original understanding of your request and set the check's open objections aside.",
-                        ),
-                        (
-                            "Change the request",
-                            "I will stop this work and start from your new request.",
-                        ),
-                        ("Stop", "I will stop this work."),
-                    ],
-                ),
-                QKind::NeedsSplitting => (
-                    "This request needs more than one change, so I need you to narrow it.",
-                    &[
-                        (
-                            "Change the request",
-                            "I will start again from the smaller request you provide.",
-                        ),
-                        ("Stop", "I will stop this work."),
-                    ],
-                ),
-                QKind::CantMeet => (
-                    "I could not finish your request with the approach I tried.",
-                    &[
-                        (
-                            "Try again with guidance",
-                            "I will try again using the guidance you provide.",
-                        ),
-                        (
-                            "Change the request",
-                            "I will stop this work and start from your new request.",
-                        ),
-                        ("Stop", "I will stop this work."),
-                    ],
-                ),
-                QKind::OutOfCredit => (
-                    "This request has used its agreed allowance for further attempts.",
-                    &[
-                        (
-                            "Add credit",
-                            "I will continue with the extra allowance you provide.",
-                        ),
-                        (
-                            "Change the request",
-                            "I will stop this work and start from your new request.",
-                        ),
-                        ("Stop", "I will stop this work."),
-                    ],
-                ),
-                QKind::EffectFailed => (
-                    "A required action needs your help before work can continue.",
-                    &[
-                        (
-                            "Continue after fixing the cause",
-                            "I will continue once you confirm the cause is fixed.",
-                        ),
-                        ("Stop", "I will stop this work."),
-                    ],
-                ),
-                QKind::CleanupFailed => (
-                    "I need your help to finish cleaning up this work.",
-                    &[
-                        (
-                            "Retry after fixing the cause",
-                            "I will try the cleanup again.",
-                        ),
-                        (
-                            "Mark the step handled",
-                            "I will accept that you have handled this cleanup step.",
-                        ),
-                    ],
-                ),
-            };
-            // #322: the deciding worker's findings, redacted by the worker process.
-            let findings = delivery
-                .question_context
-                .as_ref()
-                .and_then(|context| context.get("findings"))
-                .filter(|findings| findings.is_object());
-            let options: Vec<_> = actions
-                .iter()
-                .map(|(action, outcome)| OptionDraft {
-                    action: (*action).into(),
-                    outcome: if findings.is_some() && *action == "Try again with guidance" {
-                        "I will try again using your answer to the question above and any guidance you provide.".into()
-                    } else {
-                        (*outcome).into()
-                    },
-                })
-                .collect();
-            let mut facts = json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
-                "options": options, "recommended_option": 0,
-                "recommendation_reason": "This option gives your request a clear next step.",
-                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")});
-            if let Some(findings) = findings {
-                facts["findings"] = findings.clone();
-            }
-            (MessageKind::Question, facts)
-        }
-        Notice::Incident { .. } => (
-            MessageKind::Note,
-            json!({"issue_title":title, "request": request,
-                "change": delivery.note.as_deref().unwrap_or("Work needs help before it can continue.")}),
-        ),
-        Notice::Summary(outcome) => {
-            // Q54: a stop for TL3 review names its step and carries its evidence.
-            let review_stop = delivery
-                .question_context
-                .as_ref()
-                .filter(|_| outcome == Outcome::Stopped);
-            let stopped = review_stop.and_then(crate::review_stops::outcome);
-            let mut facts = json!({"issue_title": title, "request": request,
-            "outcome": match outcome {
-                Outcome::Merged => "Your change was merged.",
-                Outcome::AlreadyDone => "The requested work was already done.",
-                Outcome::Duplicate => "This request duplicates work already tracked elsewhere.",
-                Outcome::NotActionable => "This request could not be acted on.",
-                Outcome::Stopped => stopped.as_deref().unwrap_or("Work on this request has stopped."),
-                Outcome::Replaced => "This request has been replaced. Work continues on your new request.",
-            }, "unmet_goals": crate::evidence::unmet_goals(delivery.evidence.as_ref()),
-            "evidence_status": if delivery.evidence.is_some() {"captured"} else {"not_captured"},
-            "merge_status": if outcome == Outcome::Merged || delivery.evidence.as_ref().is_some_and(|e| e.pull_request_status == crate::evidence::PullRequestStatus::Merged) {"merged"} else {"not_recorded"},
-            "evidence": delivery.evidence,
-            "recorded_summary": crate::evidence::summary(delivery)?,
-            "pull_request": delivery.pull_request.map(|number| json!({"number":number,
-                "url":format!("https://github.com/{}/{}/pull/{number}",delivery.repository.owner,delivery.repository.name)}))});
-            if let Some(findings) = review_stop.and_then(crate::review_stops::findings) {
-                facts["findings"] = findings;
-            }
-            (MessageKind::Summary, facts)
-        }
-        notice => (
-            MessageKind::Note,
-            json!({"issue_title": title, "request": request, "change": match notice {
-                Notice::MeasuresPosted => delivery.note.as_deref().unwrap_or("The reading of your request passed its independent check. Work will continue without waiting for your approval."),
-                Notice::Note(NoteKind::UnapprovedMerge) => "A change was merged without the required approval. I have recorded the merge and the problem.",
-                Notice::Note(NoteKind::Replanned) => "The earlier approach did not work. I will try a different plan for your request.",
-                Notice::Note(NoteKind::PrClosed) => "The proposed change was closed. Work on this request is stopping.",
-                Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
-                Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
-                Notice::Note(NoteKind::DependencyAbandoned { .. } | NoteKind::DependencyCycle { .. }) => delivery.note.as_deref().unwrap_or("A merge prerequisite prevents work from starting. Please change or stop the request."),
-                Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",
-                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } => unreachable!(),
-            }}),
-        ),
-    };
-    if kind == MessageKind::Summary
-        && let Some(removed) = &delivery.scope_removals
-    {
-        facts["removed_changes"] = json!(removed);
-    }
-    Ok(WriteRequest {
-        kind,
-        facts,
-        violations: vec![],
-        request: None,
-    })
 }
 
 pub fn reconcile(shell: &mut Adapter, delivery: &Delivery) -> Result<Reconciliation> {
