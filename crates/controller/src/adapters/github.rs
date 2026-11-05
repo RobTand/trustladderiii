@@ -5,6 +5,7 @@ use crate::{
     executor::{CommentKind, Completion, Delivery, Executor, Look, Observation, Reconciliation},
 };
 use std::path::Path;
+use tl3_controller_core::publication;
 use tl3_kernel::EffectKind;
 
 mod publishing;
@@ -187,6 +188,44 @@ impl Adapter {
             body_lines: Vec::new(),
         })
     }
+    fn publication_comment(delivery: &Delivery) -> publication::Comment {
+        match delivery.output {
+            Out::Comment {
+                kind: CommentKind::Clarify,
+                ..
+            } => publication::Comment::Clarify,
+            Out::Comment {
+                kind: CommentKind::ReplacementDropped,
+                ..
+            } => publication::Comment::ReplacementDropped,
+            _ => publication::Comment::Other,
+        }
+    }
+
+    fn publication_route(delivery: &Delivery) -> publication::ReconcileRoute {
+        let output = if crate::approval_delivery::is_approval(delivery) {
+            publication::Output::Approval
+        } else if publishing::handles(delivery) {
+            publication::Output::Publication
+        } else if publication::message_delivery(
+            Self::request_notice(delivery).is_some(),
+            Self::publication_comment(delivery),
+        ) {
+            publication::Output::Message
+        } else {
+            publication::Output::Other
+        };
+        let steering = match delivery.steering {
+            Some(crate::steering::Task::FileRequest {
+                correction: true, ..
+            }) => publication::Steering::Correction,
+            Some(crate::steering::Task::Restart { .. }) => publication::Steering::Restart,
+            Some(crate::steering::Task::ConsoleNote { .. }) => publication::Steering::ConsoleNote,
+            _ => publication::Steering::Other,
+        };
+        publication::reconcile_route(output, steering)
+    }
+
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
             return Err(Error::Invalid("GitHub effect epoch is fenced"));
@@ -688,28 +727,37 @@ impl Executor for Adapter {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
         self.records.fence(self.epoch)?;
-        if crate::approval_delivery::is_approval(delivery) {
+        let route = Self::publication_route(delivery);
+        if matches!(route, publication::ReconcileRoute::Approval) {
             // A failed read proves neither absence nor an outstanding POST.
             return self.reconcile_publication(delivery);
         }
-        if publishing::handles(delivery) {
-            return match self.reconcile_publication(delivery) {
+        if matches!(route, publication::ReconcileRoute::Publication) {
+            let result = self.reconcile_publication(delivery);
+            let read = match &result {
+                Ok(_) => publication::PublicationRead::Reconciled,
                 Err(Error::Permanent {
                     class: "pr_evidence",
                     ..
-                }) => Ok(Reconciliation::Found(Box::new(Completion::permanent(
-                    "pr_evidence",
-                )))),
-                // The controller records the refusal while leaving reconciliation pending.
-                Err(error @ Error::Permanent { .. }) => Err(error),
-                result => Ok(result.unwrap_or(Reconciliation::Pending)),
+                }) => publication::PublicationRead::EvidencePermanent,
+                Err(Error::Permanent { .. }) => publication::PublicationRead::OtherPermanent,
+                Err(_) => publication::PublicationRead::Failed,
+            };
+            return match publication::publication_reconciliation(read) {
+                publication::ReconcileAction::FoundPermanent => Ok(Reconciliation::Found(
+                    Box::new(Completion::permanent("pr_evidence")),
+                )),
+                publication::ReconcileAction::Preserve
+                | publication::ReconcileAction::Propagate => result,
+                publication::ReconcileAction::Pending => Ok(Reconciliation::Pending),
             };
         }
-        if let Some(crate::steering::Task::FileRequest {
-            correction: true,
-            since,
-            ..
-        }) = &delivery.steering
+        if matches!(route, publication::ReconcileRoute::Issue)
+            && let Some(crate::steering::Task::FileRequest {
+                correction: true,
+                since,
+                ..
+            }) = &delivery.steering
         {
             let client = self.client(delivery)?;
             let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -728,10 +776,10 @@ impl Executor for Adapter {
             );
         }
         // A restart only reads the issue and reopens it, so running it again is safe.
-        if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
+        if matches!(route, publication::ReconcileRoute::Restart) {
             return Ok(Reconciliation::Absent);
         }
-        if let Some(crate::steering::Task::ConsoleNote { .. }) = &delivery.steering {
+        if matches!(route, publication::ReconcileRoute::ConsoleNote) {
             let client = self.client(delivery)?;
             let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
             return Ok(
@@ -746,15 +794,7 @@ impl Executor for Adapter {
                 },
             );
         }
-        if Self::request_notice(delivery).is_none()
-            && !matches!(
-                delivery.output,
-                Out::Comment {
-                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
-                    ..
-                }
-            )
-        {
+        if matches!(route, publication::ReconcileRoute::Records) {
             return self.records.reconcile(delivery);
         }
         let client = self.client(delivery)?;
@@ -766,9 +806,14 @@ impl Executor for Adapter {
         )) {
             Ok(Some(_)) => {
                 if Self::close_reason(delivery).is_some() {
-                    match self.runtime.block_on(client.issue(&repo, delivery.issue)) {
-                        Ok(issue) if issue.state == "closed" => {}
-                        Ok(_) => {
+                    let issue = match self.runtime.block_on(client.issue(&repo, delivery.issue)) {
+                        Ok(issue) if issue.state == "closed" => publication::IssueRead::Closed,
+                        Ok(_) => publication::IssueRead::Open,
+                        Err(_) => publication::IssueRead::Failed,
+                    };
+                    match publication::close_after_reconcile(issue) {
+                        publication::CloseAction::Complete => {}
+                        publication::CloseAction::Close => {
                             if self
                                 .runtime
                                 .block_on(client.close_issue(
@@ -781,7 +826,7 @@ impl Executor for Adapter {
                                 return Ok(Reconciliation::Pending);
                             }
                         }
-                        Err(_) => return Ok(Reconciliation::Pending),
+                        publication::CloseAction::Pending => return Ok(Reconciliation::Pending),
                     }
                 }
                 if self.close_original(delivery).is_err() {
@@ -1072,27 +1117,22 @@ impl Adapter {
             return self.console_note(delivery, text);
         }
         let notice = Self::request_notice(delivery);
-        if notice.is_none()
-            && !matches!(
-                delivery.output,
-                Out::Comment {
-                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
-                    ..
-                }
-            )
-        {
+        if !publication::message_delivery(notice.is_some(), Self::publication_comment(delivery)) {
             return self
                 .records
                 .deliver(delivery, Completion::confirmed(vec![]));
         }
-        if matches!(notice, Some(Notice::Incident { .. }))
-            && !self.operations.as_ref().is_some_and(|o| {
-                o.owner.eq_ignore_ascii_case(&delivery.repository.owner)
-                    && o.name.eq_ignore_ascii_case(&delivery.repository.name)
-                    && o.installation_id == delivery.repository.installation
-                    && o.number == delivery.issue
-            })
-        {
+        if !publication::incident_admitted(
+            matches!(notice, Some(Notice::Incident { .. })),
+            self.operations
+                .as_ref()
+                .map(|o| publication::OperationsTarget {
+                    owner: o.owner.eq_ignore_ascii_case(&delivery.repository.owner),
+                    repository: o.name.eq_ignore_ascii_case(&delivery.repository.name),
+                    installation: o.installation_id == delivery.repository.installation,
+                    issue: o.number == delivery.issue,
+                }),
+        ) {
             return Err(Error::Invalid(
                 "incident delivery needs the configured operations issue",
             ));
@@ -1106,11 +1146,16 @@ impl Adapter {
         {
             let mut policy = self.policy.clone();
             // These posts can't read the request's issue: it lives elsewhere or is gone.
-            let input = if matches!(notice, Some(Notice::Incident { .. }))
-                || matches!(
-                    delivery.steering,
-                    Some(crate::steering::Task::RestartDropped { .. })
-                ) {
+            let input = if matches!(
+                publication::title_source(
+                    matches!(notice, Some(Notice::Incident { .. })),
+                    matches!(
+                        delivery.steering,
+                        Some(crate::steering::Task::RestartDropped { .. })
+                    ),
+                ),
+                publication::TitleSource::Context
+            ) {
                 let context = delivery
                     .question_context
                     .as_ref()
@@ -1172,11 +1217,8 @@ impl Adapter {
                 Ok(draft) => draft,
                 Err(Error::MessageRejected)
                     if matches!(
-                        delivery.output,
-                        Out::Comment {
-                            kind: CommentKind::Clarify,
-                            ..
-                        }
+                        publication::rejected_message(Self::publication_comment(delivery)),
+                        publication::MessageRejection::Fallback
                     ) =>
                 {
                     let fallback = "I couldn't act on your comment. Could you rephrase it?";
