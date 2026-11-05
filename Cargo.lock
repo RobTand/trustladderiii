@@ -3036,6 +3036,7 @@ dependencies = [
  "thiserror",
  "tl3-config",
  "tl3-github",
+ "tl3-harness-core",
  "tl3-kernel",
  "tl3-mergify",
  "tl3-prismabuild",
@@ -3072,6 +3073,7 @@ dependencies = [
 name = "tl3-harness-core"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "serde",
  "serde_json",
 ]
