@@ -42,7 +42,10 @@ fn planner_variants_round_trip_and_reject_unknown_fields() {
                 "id":"approval","source_comment":null,"question":{},"answer":"Approved.",
                 "allowed_scope":[],"restrictions":[],"origin_request_version":0.0,"superseded_by":null}]}}),
         json!({"kind":"split","reason":"multiple_repos","pieces":[]}),
-        json!({"kind":"cant_meet","report":"No useful change.","files":[]}),
+        json!({"kind":"cant_meet","report":"No useful change.","files":[],
+            "evidence_contract":[{"tool":"run_tests","executor":"prismabuild",
+                "runner_features":[],"artifacts":[],"methods":[],"protected_files":[],
+                "requirement":"Run the declared check.","provenance":{"kind":"method"}}]}),
     ];
     for value in cases {
         let typed: PlannerReply = serde_json::from_value(value.clone()).unwrap();

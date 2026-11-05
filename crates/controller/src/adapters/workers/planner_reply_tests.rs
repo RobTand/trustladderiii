@@ -108,6 +108,17 @@ fn planner_reply_mapping_preserves_nested_schema_acceptance() {
                 "origin_request_version":0.0,"superseded_by":null}]});
         cases.push(case);
     }
+    for provenance in [
+        json!({"kind":"method"}),
+        json!({"kind":"source",
+        "source":"issue","quote":"Run the declared check."}),
+    ] {
+        let mut case = leaf.clone();
+        case["evidence_contract"] = json!([{"tool":"run_tests","executor":"prismabuild",
+            "runner_features":[],"artifacts":[],"methods":[],"protected_files":[],
+            "requirement":"Run the declared check.","provenance":provenance}]);
+        cases.push(case);
+    }
     for exception in ["module.Erreuré", "module.A\u{301}", "module.Error\n"] {
         let mut case = leaf.clone();
         case["checks"][0]["declared_symptom"]["exception"] = exception.into();

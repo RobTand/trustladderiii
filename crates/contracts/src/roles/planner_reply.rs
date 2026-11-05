@@ -195,8 +195,7 @@ impl JsonSchema for DecisionContext {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-// P1b owns the shared evidence type; replace this inner value after its reviewed merge.
-pub struct EvidenceContract(pub Vec<Value>);
+pub struct EvidenceContract(pub crate::roles::ingest_reply::EvidenceContract);
 impl JsonSchema for EvidenceContract {
     fn inline_schema() -> bool {
         true
