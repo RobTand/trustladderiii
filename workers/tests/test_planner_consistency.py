@@ -76,8 +76,6 @@ def test_request156_gets_one_tool_free_consistency_correction(planner_request, r
 
 def test_request156_second_mismatch_stops_with_both_named_diagnostics(planner_request, request156, monkeypatch):
     from tl3_workers import runtime
-    from tl3_workers.tracing import failure_tags
-    from tl3_workers.turns import InvalidReply
 
     second = copy.deepcopy(request156)
     second['checks'][0]['node_ids'] = [CONTROL]
@@ -93,7 +91,6 @@ def test_request156_second_mismatch_stops_with_both_named_diagnostics(planner_re
 @pytest.mark.parametrize('first', [{'kind': 'not-a-plan'}, {**LEAF, 'forecast': {'fits': True}}])
 def test_request156_shares_the_single_format_correction(planner_request, request156, monkeypatch, first):
     from tl3_workers import runtime
-    from tl3_workers.turns import InvalidReply
 
     model = planner_model(monkeypatch, first, request156, LEAF)
     events = []
@@ -179,7 +176,6 @@ def test_request156_trace_diagnostics_redact_model_text():
 @pytest.mark.parametrize('resolution', ['base_nodes', 'cant_meet', 'still_invented'])
 def test_request162_forced_check_gets_the_same_single_correction(planner_request, request162, monkeypatch, resolution):
     from tl3_workers import runtime
-    from tl3_workers.turns import InvalidReply
 
     fixed = copy.deepcopy(request162)
     if resolution == 'base_nodes':
@@ -264,7 +260,6 @@ def test_request162_correction_cannot_drop_mutant_coverage(planner_request, requ
 @pytest.mark.parametrize('resolution', ['base_node', 'cant_meet', 'still_invented', 'drop_tier_goal'])
 def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request, request165, monkeypatch, resolution):
     from tl3_workers import runtime
-    from tl3_workers.turns import InvalidReply
 
     fixed = copy.deepcopy(request165)
     fixed['checks'][0]['node_ids'] = [FINISHED]
@@ -397,7 +392,6 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
 def test_missing_exploration_and_consistency_share_one_format_repair(
         planner_request, request156, monkeypatch, fix_consistency):
     from tl3_workers import runtime
-    from tl3_workers.turns import InvalidReply
 
     missing = copy.deepcopy(request156)
     del missing['estimated_exploration_turns']

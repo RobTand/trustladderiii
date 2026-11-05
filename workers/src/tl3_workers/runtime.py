@@ -20,7 +20,6 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
-from jsonschema import ValidationError
 
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
