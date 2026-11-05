@@ -11,6 +11,7 @@ use tl3_controller::adapters::workers::writer::{
 use tl3_controller::executor::{
     CommentKind, Completion, Delivery, Observation, Output as Out, Reconciliation,
 };
+use tl3_controller_core::publication;
 use tl3_github::{CloseReason, message::Policy};
 use tl3_kernel::{EffectKind, Notice, Outcome};
 mod io;
@@ -128,7 +129,7 @@ macro_rules! entry {
             io::Entry::Reconcile => io::reconciliation($a.reconcile($d)),
             io::Entry::Publish => io::completed($a.publish($d)),
             io::Entry::Execute => io::completed($a.execute_delivery($d)),
-            io::Entry::Repair => match $a.repair_approval_copies($d) { Ok((r,n))=>json!({"result":io::reconciliation(Ok(r)),"copies":n}), Err(e)=>json!({"error":e.to_string()}) },
+            io::Entry::Repair => match $a.repair_approval($d) { Ok((r,n))=>json!({"result":io::reconciliation(Ok(r)),"copies":n}), Err(e)=>json!({"error":e.to_string()}) },
         }
     }
 }
@@ -153,8 +154,7 @@ mod current {
     }
     pub(super) fn run(e: io::Entry, d: &Delivery) -> Value {
         let mut a = Adapter::new();
-        let _ = (&mut a, e, d);
-        json!("E1 extraction stub")
+        entry!(a, e, d)
     }
 }
 #[path = "properties.rs"]

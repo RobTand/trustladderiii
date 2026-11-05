@@ -10,7 +10,7 @@ GITHUB = "crates/controller/src/adapters/github.rs"
 PUBLISHING = "crates/controller/src/adapters/github/publishing.rs"
 RECORDS = "crates/controller/src/adapters/record.rs"
 METHODS = ["body_lines", "semantic_paths", "fence", "client", "request_notice", "linked",
-           "file_request", "console_note", "restart", "close_reason", "execute_delivery", "reconcile"]
+           "file_request", "console_note", "restart", "close_reason", "execute_delivery", "reconcile", "repair_approval", "reconcile_cancellation", "publication_comment", "publication_route"]
 
 def function(source, name, indent=0, after=""):
     offset = source.index(after) if after else 0
@@ -24,7 +24,9 @@ def function(source, name, indent=0, after=""):
 def render(source):
     bodies = []
     for name in METHODS:
-        after = "impl Executor for Adapter {" if name == "reconcile" else ""
+        if name in ("publication_comment", "publication_route") and f"fn {name}(" not in source:
+            continue
+        after = "impl Executor for Adapter {" if name in ("reconcile", "repair_approval", "reconcile_cancellation") else ""
         bodies.append(function(source, name, 4, after))
     return "use super::*;\nimpl Adapter {\n" + "".join(bodies) + "}\n"
 

@@ -402,4 +402,18 @@ impl Adapter {
             Err(_) => Ok(Reconciliation::Pending),
         }
     }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        // The current owner authorizes repair of evidence from an older delivery.
+        self.records.fence(self.epoch)?;
+        self.repair_approval_copies(delivery)
+    }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if crate::approval_delivery::is_approval(delivery) {
+            self.records.fence(self.epoch)?;
+            // Stop retires the local operation, never sends another approval.
+            // An outstanding remote POST may still land; webhook repair remains keyed.
+            return Ok(Reconciliation::Absent);
+        }
+        self.reconcile(delivery)
+    }
 }

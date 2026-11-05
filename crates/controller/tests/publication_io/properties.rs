@@ -152,7 +152,7 @@ fn mandatory_duplicate_convergence() {
 }
 #[test]
 fn mandatory_stale_epoch_fence_refusal() {
-    for e in [Entry::Reconcile, Entry::Execute] {
+    for e in [Entry::Reconcile, Entry::Execute, Entry::Repair] {
         let mut s = Schedule::stable(Scenario::Duplicates);
         s.fence_epoch = 2;
         io::compare(&s, e).unwrap();
@@ -268,12 +268,14 @@ fn current_functions_are_production() {
         "close_reason",
         "execute_delivery",
         "reconcile",
+        "repair_approval",
+        "reconcile_cancellation",
     ] {
         assert_eq!(
             function(
                 prod,
                 name,
-                if name == "reconcile" {
+                if ["reconcile", "repair_approval", "reconcile_cancellation"].contains(&name) {
                     "impl Executor for Adapter {"
                 } else {
                     ""
@@ -283,6 +285,9 @@ fn current_functions_are_production() {
             function(copy, name, "", 4),
             "production drift: {name}"
         );
+    }
+    for name in ["publication_comment", "publication_route"] {
+        assert_eq!(function(prod, name, "", 4), function(copy, name, "", 4));
     }
     assert_eq!(
         include_str!("../../src/adapters/github/publishing.rs"),
@@ -307,12 +312,14 @@ fn references_are_frozen_bodies() {
         "close_reason",
         "execute_delivery",
         "reconcile",
+        "repair_approval",
+        "reconcile_cancellation",
     ] {
         assert_eq!(
             function(
                 base,
                 name,
-                if name == "reconcile" {
+                if ["reconcile", "repair_approval", "reconcile_cancellation"].contains(&name) {
                     "impl Executor for Adapter {"
                 } else {
                     ""
@@ -407,5 +414,61 @@ fn frozen_sha256_pins() {
     assert_eq!(
         format!("{:x}", Sha256::digest(include_bytes!("base-client.rs.txt"))),
         "5bde5cbc901f35a409b55028cbfb073d86b68ba3179a80abedd57eb50b8dfbcd"
+    );
+}
+
+/// #769/#766: maintenance fences, duplicate convergence and attempt states are unchanged.
+#[test]
+fn protected_approval_helpers_are_unchanged() {
+    for (old, new, names) in [
+        (
+            include_str!("base-github.rs.txt"),
+            include_str!("../../src/adapters/github.rs"),
+            vec![
+                "fence",
+                "repair_approval",
+                "reconcile_cancellation",
+                "retire",
+                "retire_delivery",
+            ],
+        ),
+        (
+            include_str!("base-publishing.rs.txt"),
+            include_str!("../../src/adapters/github/publishing.rs"),
+            vec![
+                "retire_approval",
+                "converge_approvals",
+                "repair_approval_copies",
+                "approval_was_refused",
+            ],
+        ),
+    ] {
+        for name in names {
+            let after = if [
+                "repair_approval",
+                "reconcile_cancellation",
+                "retire",
+                "retire_delivery",
+            ]
+            .contains(&name)
+            {
+                "impl Executor for Adapter {"
+            } else {
+                ""
+            };
+            assert_eq!(
+                function(old, name, after, 4),
+                function(new, name, after, 4),
+                "protected helper changed: {name}"
+            );
+        }
+    }
+    fn attempt(s: &str) -> &str {
+        let at = s.find("enum ApprovalAttempt {").unwrap();
+        &s[at..at + s[at..].find("\n}\n").unwrap() + 3]
+    }
+    assert_eq!(
+        attempt(include_str!("base-publishing.rs.txt")),
+        attempt(include_str!("../../src/adapters/github/publishing.rs"))
     );
 }
