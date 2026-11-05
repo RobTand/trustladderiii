@@ -16,6 +16,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from traceback import walk_tb
 import types
 
 import pytest
@@ -372,6 +373,7 @@ class Reporter:
         self.collection_errors = []
         self.reported = set()
         self.started = False
+        self.finished = None
         # Keep journals outside the checkout and pytest's writable scratch tree.
         # Explicit /tmp also avoids TMPDIR values supplied by the served repository.
         self.accounting_owner = os.getpid()
@@ -617,9 +619,12 @@ class Reporter:
         self.emit(event="result", test=report.nodeid, outcome=outcome, **extra,
                   message=message[:1000], truncated=len(message) > 1000 or any(p[3] for p in failures))
 
+    # First, so the finish record precedes xdist stopping its workers in this hook (#799).
+    @pytest.hookimpl(tryfirst=True)
     def pytest_sessionfinish(self, exitstatus):
         self.emit_collection_errors()
         self.emit(event="finish", exit_code=int(exitstatus))
+        self.finished = int(exitstatus)
         if self.accounting_directory is not None and os.getpid() == self.accounting_owner:
             shutil.rmtree(self.accounting_directory)
 
@@ -634,6 +639,26 @@ def pytest_configure(config):
     if data and data['declared_symptom'] is not None:
         config.pluginmanager.register(Reporter(data['tests'], -1, summary=True, patches=data['patches'],
                                                declared_symptom=data['declared_symptom'], worker=True))
+
+
+def worker_teardown_exhausted(error):
+    """Stopping xdist workers needs a new thread. Code under test that exhausts
+    the container's pid limit makes that fail after every result (#799)."""
+    return (type(error) is RuntimeError and str(error) == "can't start new thread"
+            and any(frame.f_code.co_name == "teardown_nodes"
+                    and Path(frame.f_code.co_filename).match("xdist/workermanage.py")
+                    for frame, _ in walk_tb(error.__traceback__)))
+
+
+def run_pytest(reporter, arguments):
+    try:
+        return int(pytest.main(arguments, plugins=[reporter]))
+    except BaseException as error:
+        if reporter.finished is not None and worker_teardown_exhausted(error):
+            return reporter.finished
+        # The finish record precedes later hooks, including the checkout's. Their
+        # uncaught exit would be 1, which a finish record of failed tests matches.
+        return int(pytest.ExitCode.INTERNAL_ERROR)
 
 
 def main():
@@ -681,16 +706,16 @@ def main():
             # Pytest owns the short plugin name "runner". Use the mounted package's name.
             os.environ['PYTHONPATH'] = str(harness.parent)
             worker_plugin = ['-p', f'{harness.name}.runner']
-        return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
-                                "--", *(tests or ["."])], plugins=[reporter]))
+        return run_pytest(reporter, ["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
+                                     "--", *(tests or ["."])])
     if summary:
-        return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[reporter]))
+        return run_pytest(reporter, ["--rootdir=.", "--", *(tests or ["."])])
     files = sorted({test.split("::")[0] for test in tests if Path(test.split("::")[0]).is_file()})
     if not files:
         reporter.emit(event="collection", tests=[])
         reporter.pytest_sessionfinish(5)
         return 5
-    return int(pytest.main(["--rootdir=.", "--continue-on-collection-errors", *files], plugins=[reporter]))
+    return run_pytest(reporter, ["--rootdir=.", "--continue-on-collection-errors", *files])
 
 
 if __name__ == "__main__":
