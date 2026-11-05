@@ -45,7 +45,7 @@ impl Executor for Audit {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         match d.output {
             Output::Effect {
-                kind: EffectKind::StartRun(Role::Audit),
+                kind: EffectKind::StartRun(Role::Audit) | EffectKind::StopRun,
                 ..
             } => self.0.execute(d),
             Output::Effect {
@@ -58,7 +58,7 @@ impl Executor for Audit {
     fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
         match d.output {
             Output::Effect {
-                kind: EffectKind::StartRun(Role::Audit),
+                kind: EffectKind::StartRun(Role::Audit) | EffectKind::StopRun,
                 ..
             } => {
                 let result = self.0.reconcile(d)?;
@@ -166,10 +166,15 @@ if attempt.name != 'attempt-00000000' and (root / 'probe-block').exists():
         time.sleep(0.01)
 quota = (node == 0 or (root / 'quota-all').exists()) and not (root / 'restored').exists()
 now = int(time.time() * 1000)
-facts = dict(started_ms=now, finished_ms=now, outcome='quota' if quota else 'succeeded', release=None,
+failed = attempt.name != 'attempt-00000000' and (root / 'probe-fail').exists()
+if failed:
+    (root / 'probe-fail').unlink()
+facts = dict(started_ms=now, finished_ms=now, outcome='failed' if failed else 'quota' if quota else 'succeeded', release=None,
              model=r['model']['name'], input_tokens=None, cached_tokens=None, output_tokens=None,
              trace_id=None, failure=None)
 pathlib.Path(r['trace']['completion']).write_text(json.dumps(facts))
+if failed:
+    sys.exit(1)
 if quota:
     reset = 1899913600000 if r['model']['name'] == 'earlier-model' else 1900000000000
     print(json.dumps(dict(event='quota', role='audit', reset_ms=reset)), flush=True)
@@ -662,7 +667,7 @@ fn late_success_wakes_another_request_after_its_node_moved_on() {
 
 /// Q53 / #828: retrying the same hint is a new ending, with an hourly shared budget.
 #[test]
-fn failed_probes_repeat_hourly_and_report_a_missed_reset() {
+fn failed_probes_repeat_hourly_without_a_new_incident() {
     let mut f = Fixture::new();
     let key = f.held(false);
     let start = f.clock.0.get();
@@ -709,12 +714,23 @@ fn failed_probes_repeat_hourly_and_report_a_missed_reset() {
                 && row.value["signature"]["class"] == "model_quota_hint_expired"
         })
         .collect();
-    assert_eq!(
-        incidents.len(),
-        1,
-        "failed probe past hint raises one infrastructure incident"
+    assert!(
+        incidents.is_empty(),
+        "Q27 authorizes hourly probes, not a new incident"
     );
-    assert_eq!(incidents[0].value["cause"], "upstream");
+    let notes: Vec<_> = f
+        .controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| row.table == "allowances" && row.value["ladder_out_noticed"] == true)
+        .collect();
+    assert_eq!(
+        notes.len(),
+        1,
+        "the existing #759 outage note still applies"
+    );
     f.controller.look_due().unwrap();
     assert_eq!(
         f.attempt(&key),
@@ -907,4 +923,220 @@ fn legacy_restart_restores_the_earliest_ladder_deadline() {
         assert!(status::render_html(&view).contains(wait));
         assert_eq!(f.attempt(&key), 1, "migration does not dispatch");
     }
+}
+
+/// Q53 / #828: an older successful ending cannot clear newer quota with an equal reset hint.
+#[test]
+fn late_success_between_equal_hint_endings_cannot_wake_the_newer_hold() {
+    let mut f = Fixture::new();
+    let key = f.held(true);
+    f.defer_success.set(true);
+    fs::write(f.root.path().join("success"), "yes").unwrap();
+    f.until(|f| f.success_reply.is_some() || f.observed_success.borrow().is_some());
+    let reply = f
+        .success_reply
+        .clone()
+        .or_else(|| f.observed_success.borrow().clone())
+        .unwrap();
+    let first = f
+        .store
+        .latest_worker_quota(&key, Some("alternate-model"))
+        .unwrap()
+        .unwrap();
+    let success = f
+        .store
+        .latest_worker_success("1", "alternate-model")
+        .unwrap()
+        .unwrap();
+    f.clock.0.set(f.clock.0.get() + 3_600_000);
+    f.controller.look_due().unwrap();
+    f.until(|f| {
+        f.hold()
+            .is_some_and(|(_, hold)| hold["last_quota_attempt"] == 1)
+    });
+    f.controller.look_due().unwrap();
+    let newer = f
+        .store
+        .latest_worker_quota(&key, Some("alternate-model"))
+        .unwrap()
+        .unwrap();
+    assert!(first.facts.finished_ms < success.facts.finished_ms);
+    assert!(success.facts.finished_ms < newer.facts.finished_ms);
+    f.defer_success.set(false);
+    f.controller
+        .observe("late-success-between-quotas", reply)
+        .unwrap();
+    f.drain();
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "success older than the held ending must not redispatch it"
+    );
+    let snapshot = f.controller.snapshot().unwrap();
+    let global = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "model_quotas" && row.id == "alternate-model")
+        .unwrap();
+    assert_eq!(
+        global.value["finished_ms"],
+        newer.facts.finished_ms.unwrap()
+    );
+}
+
+fn two_probe_holds() -> (Fixture, String, String) {
+    let mut f = Fixture::new();
+    fs::write(f.root.path().join("quota-all"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-block"), "yes").unwrap();
+    f.intake(2662);
+    f.intake(2663);
+    f.until(|f| f.hold_for(0).is_some() && f.hold_for(1).is_some());
+    f.controller.look_due().unwrap();
+    let key0 = f.hold_for(0).unwrap().0;
+    let key1 = f.hold_for(1).unwrap().0;
+    f.clock.0.set(f.clock.0.get() + 3_600_000);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key0) + f.attempt(&key1), 1);
+    (f, key0, key1)
+}
+
+/// Q53 / #817(c): ordinary worker failure ends the probe lease and wakes its dependent retry.
+#[test]
+fn ordinary_probe_failure_releases_the_other_held_key_across_restart() {
+    let (mut f, key0, key1) = two_probe_holds();
+    let (owner, waiter, waiting_node) = if f.attempt(&key0) == 1 {
+        (key0, key1, 1)
+    } else {
+        (key1, key0, 0)
+    };
+    fs::write(f.root.path().join("probe-fail"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-release"), "yes").unwrap();
+    f.until(|f| {
+        f.store
+            .latest_worker_ending(&owner)
+            .unwrap()
+            .is_some_and(|ending| ending.attempt == 1 && ending.facts.outcome == "failed")
+    });
+    let snapshot = f.controller.snapshot().unwrap();
+    let wait = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "allowances" && row.id == waiter)
+        .unwrap();
+    assert!(
+        wait.value["due_ms"].is_u64(),
+        "a terminal probe cannot leave a timerless waiter"
+    );
+    let mut f = f.restart();
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    f.clock.0.set(f.clock.0.get() + 3_600_000);
+    f.controller.look_due().unwrap();
+    f.until(|f| {
+        f.attempt(&waiter) == 1
+            && f.controller.world().unwrap().nodes[waiting_node].phase != Phase::Auditing
+    });
+    f.clock.0.set(RESET);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&waiter), 1);
+}
+
+/// Q53 / #817(c): a real stop releases an owner's lease; a stopped waiter never dispatches.
+#[test]
+fn stopping_either_held_destination_does_not_strand_the_other() {
+    for stop_owner in [true, false] {
+        let (mut f, key0, key1) = two_probe_holds();
+        let owner_node = if f.attempt(&key0) == 1 { 0 } else { 1 };
+        let stopped = if stop_owner {
+            owner_node
+        } else {
+            1 - owner_node
+        };
+        let other = 1 - stopped;
+        let stopped_key = if stopped == 0 { &key0 } else { &key1 };
+        let other_key = if other == 0 { &key0 } else { &key1 };
+        let stopped_attempt = f.attempt(stopped_key);
+        f.controller
+            .observe(
+                "stop-held-destination",
+                Observation::Steering {
+                    node: tl3_kernel::NodeId(stopped),
+                    command: tl3_kernel::Command::Stop,
+                },
+            )
+            .unwrap();
+        f.drain();
+        let mut f = f.restart();
+        fs::write(f.root.path().join("restored"), "yes").unwrap();
+        fs::write(f.root.path().join("probe-release"), "yes").unwrap();
+        f.clock.0.set(f.clock.0.get() + 3_600_000);
+        f.controller.look_due().unwrap();
+        f.until(|f| {
+            f.attempt(other_key) == 1
+                && f.controller.world().unwrap().nodes[other as usize].phase != Phase::Auditing
+        });
+        f.clock.0.set(RESET);
+        f.controller.look_due().unwrap();
+        assert_eq!(
+            f.attempt(stopped_key),
+            stopped_attempt,
+            "stopped destination must never redispatch"
+        );
+        assert_eq!(
+            f.attempt(other_key),
+            1,
+            "the other destination eventually dispatches exactly once"
+        );
+    }
+}
+
+/// Q53 / #828: a successful shared probe must eventually dispatch both original held keys once.
+#[test]
+fn successful_probe_wakes_both_held_keys_exactly_once() {
+    let (mut f, key0, key1) = two_probe_holds();
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-release"), "yes").unwrap();
+    f.until(|f| {
+        f.controller.look_due().unwrap();
+        f.attempt(&key0) == 1
+            && f.attempt(&key1) == 1
+            && f.controller
+                .world()
+                .unwrap()
+                .nodes
+                .iter()
+                .all(|node| node.phase != Phase::Auditing)
+    });
+    let reply = f
+        .success_reply
+        .clone()
+        .or_else(|| f.observed_success.borrow().clone())
+        .unwrap();
+    for key in ["shared-duplicate-1", "shared-duplicate-2"] {
+        f.controller.observe(key, reply.clone()).unwrap();
+        f.drain();
+    }
+    f.clock.0.set(RESET);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key0), 1);
+    assert_eq!(f.attempt(&key1), 1);
+}
+
+/// Q53 / #828: attempt metadata must not grow in every controller snapshot after ending.
+#[test]
+fn completed_attempt_identity_retires_from_world_rows() {
+    let mut f = Fixture::new();
+    let key = f.held(false);
+    let ending = f.store.latest_worker_ending(&key).unwrap().unwrap();
+    assert_eq!(ending.facts.model, "alternate-model");
+    let id = serde_json::to_string(&(&key, ending.attempt)).unwrap();
+    assert!(
+        !f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "model_attempts" && row.id == id),
+        "terminal attempt identity must be retained with the immutable ending, not the world snapshot"
+    );
 }
