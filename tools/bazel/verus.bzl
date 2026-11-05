@@ -689,6 +689,10 @@ def verus_proofs():
             "facts_ci_failed_retry_frame": ("kernel::facts_ci_failed_lemmas#retry_frame", 1),
             "facts_ci_failed_cancellation_input": ("kernel::facts_ci_failed_lemmas#cancellation_input", 1),
             "kernel_cont_rank_ready": ("kernel#cont_rank_ready", 1),
+            "events_input": ("kernel::events_lemmas#selected_input", 1),
+            "events_footprints": ("kernel::events_lemmas#footprints_after", 1),
+            "cleanup_teardown_progress": ("kernel::cleanup_lemmas#teardown_progress", 1),
+            "cleanup_resource_distance": ("kernel::cleanup_lemmas#resource_distance", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

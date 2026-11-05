@@ -171,6 +171,20 @@ CASES = {
                               'Cont::Stop(_) | Cont::Nowhere => 2,',
                               'Cont::Stop(_) | Cont::Nowhere => 3,',
                               '//crates/kernel:verus_kernel_cont_rank'),
+    'events_ack_skipped': ('crates/kernel/src/events.rs',
+                           'on_ack(w, i, seq, ack, out);',
+                           'let _ = (i, seq, ack);',
+                           '//crates/kernel:verus_events'),
+    'events_adoption_storage': ('crates/kernel/src/events.rs',
+                                'node.proposed = Some(head);',
+                                'node.proposed = Some(head);\n                w.file_sets = Vec::new();',
+                                '//crates/kernel:verus_events'),
+    'cleanup_mark_handled_pos': ('crates/kernel/src/command_helpers.rs',
+                                 'm.pos += 1;', 'm.pos += 0;',
+                                 '//crates/kernel:verus_command_helpers_mark_handled'),
+    'cleanup_confirmed_agenda_skipped': ('crates/kernel/src/acknowledgements.rs',
+                                        'confirmed_agenda(m, kind);', 'let _ = kind;',
+                                        '//crates/kernel:verus_acknowledgements_confirmed'),
 }
 
 

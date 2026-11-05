@@ -35,7 +35,13 @@ use ranks::advance_node;
 use ranks::*;
 
 mod checking;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/cleanup_lemmas.rs"]
+mod cleanup_lemmas;
 mod events;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/events_lemmas.rs"]
+mod events_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;
