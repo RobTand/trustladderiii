@@ -1033,18 +1033,10 @@ impl Controller {
             {
                 continue;
             }
-            let mut commit = Commit::new(
+            self.submit_kernel_input(
                 format!("start-replacement:{}", pending.id),
-                json!({"replacement": original}),
-                snapshot,
-            );
-            let issue = replacement_issue(snapshot, original, &pending.value)?;
-            if let Some(event) =
-                self.linked_request(snapshot, old.repo, issue, original, &mut commit)?
-            {
-                self.apply_or_defer(snapshot, snapshot::decode(snapshot)?, event, &mut commit)?;
-            }
-            self.store.commit(&commit)?;
+                crate::input_errors::PendingKernelInput::Replacement { original },
+            )?;
             return Ok(true);
         }
         Ok(false)

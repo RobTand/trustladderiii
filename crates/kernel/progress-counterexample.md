@@ -138,8 +138,36 @@ and share arrival order with the inbox. Rob's clearance can pass the retained
 queue through the existing operations-comment path. The **Counter headroom** state-table row records Rob's
 [Q27 approval](https://github.com/RobTand/trustladderiii/issues/771#issuecomment-6648842596).
 Complete issue edits join that queue before timestamp or priority filtering.
-A merge and its dependency deliveries form one atomic kernel batch: if any
-step refuses, no kernel change or ending announcement from that batch commits.
+Each complete inbox input has one store transaction, opened before translation.
+It includes interning, queue receipts, classifier jobs and watches, request and
+intake rows, completion keys, dependency announcements, the world and input
+consumption. Helper commits release savepoints inside that transaction. If any
+step refuses, the outer transaction rolls back before a separate transaction
+records the deduplicated counter incident. The complete input remains queued.
+Complete direct inputs use the same boundary, including acknowledgements,
+cancellations, replacements, priority rereads, intake and issue edits.
+
+The real-store refusal property inventories every observation variant and each
+private input kind, refuses before every real kernel step and after the final
+SQL writes, and checks every persisted table and sequence. After clearance and
+restart, replay must match an uninterrupted run. The comparison removes only
+incident audit receipts, maps their revision offsets out of identifiers and
+references, ignores SQL wall-clock timestamps and compares arrival ordering.
+Fixed regressions retain the Queue(Merged), Classified and queued-intake edit
+failures from review. Deterministic proptest seeds and persisted regressions
+make the generated inputs repeatable.
+
+PostgreSQL sequences do not roll back. Migration 22 therefore supplies a locked,
+transactional allocator for IDs allocated during input processing, including
+the phase-history trigger. Existing sequence values remain allocation floors.
+An aborted allocation leaves neither a row nor a sequence gap.
+
+The external-write audit found wait-subscription removal inside input handling.
+It now stages a durable retirement intent. Only a committed intent may call
+`watch_wait(delivery, None)`; a failed call waits for its incident's clearance.
+Other input translation adapter calls read prerequisite or issue evidence and
+capture diagnostics. Effect dispatch, cancellation, adapter retirement and
+worker cleanup run outside input translation, after their durable intent.
 The contracts on `step_with_passes`, `apply`, `settle`, and their actual
 handlers establish the bounds below. Helper equivalence alone would not do so.
 

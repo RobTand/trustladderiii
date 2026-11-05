@@ -15,6 +15,21 @@ pub(crate) const PENDING_KERNEL: &str = "pending_kernel_events";
 #[derive(Serialize, Deserialize)]
 pub(crate) enum PendingKernelInput {
     Event(tl3_kernel::Event),
+    Completion {
+        key: String,
+        completion: crate::executor::Completion,
+    },
+    CancelAbsent {
+        key: String,
+    },
+    Replacement {
+        original: NodeId,
+    },
+    PriorityReread {
+        id: String,
+        row: crate::Reconcile,
+        now: u64,
+    },
     IssueChange(crate::IssueChange),
     Intake {
         issue: crate::LabelledIssue,
@@ -49,12 +64,6 @@ fn retain_input(commit: &mut Commit) {
 
 pub(crate) fn deferred(commit: &Commit) -> bool {
     commit.result["kernel_deferred"] == true
-}
-
-/// #771 / facts are never dropped. Failed attempts cannot consume the stable
-/// receipt key that the eventual successful retry must use.
-pub(crate) fn held_attempt(commit: &mut Commit, snapshot: &Snapshot) {
-    commit.event_key = format!("held:{}:{}", snapshot.revision.get(), commit.event_key);
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -128,7 +137,41 @@ fn post_backoff_ms(class: &str) -> u64 {
     }
 }
 
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct RefusalInjection {
+    pub at: Option<usize>,
+    pub visited: usize,
+}
+
 impl Controller {
+    /// State-table "Counter headroom": tests refuse immediately before every
+    /// real kernel step, including fan-out, and at the final store commit.
+    /// This hook never substitutes a model for translation or for the store.
+    pub(crate) fn input_checkpoint(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+    ) -> Result<bool> {
+        #[cfg(test)]
+        {
+            let mut injection = self.refusal_injection.borrow_mut();
+            let visited = injection.visited;
+            injection.visited += 1;
+            if injection.at == Some(visited) {
+                self.counter_exhausted(
+                    snapshot,
+                    commit,
+                    None,
+                    format!("kernel counter headroom exhausted: test checkpoint {visited}"),
+                )?;
+                return Ok(false);
+            }
+        }
+        let _ = (snapshot, commit);
+        Ok(true)
+    }
+
     /// State-table "Counter headroom" / Q27: a persisted counter incident halts kernel
     /// inputs across wakes and restarts. Only its authorized clearance can pass
     /// the retained head of the queue. A repair must also restore headroom.
@@ -183,29 +226,145 @@ impl Controller {
         Ok(Some(true))
     }
 
-    /// Trusted internal events already constructed by the controller, such as
-    /// effect acknowledgements, retain their order with external inbox inputs.
-    /// This table is private storage, not a raw-command observation API.
-    pub(crate) fn apply_or_defer(
+    /// State-table "Counter headroom": translation, interning, fan-out and
+    /// consuming the input have one durability boundary. Refusal rolls back
+    /// before the independent incident transaction. No staged business row is
+    /// allowed into that transaction.
+    pub(crate) fn consume_kernel_input(
         &mut self,
         snapshot: &Snapshot,
-        world: tl3_kernel::World,
-        event: tl3_kernel::Event,
-        commit: &mut Commit,
-    ) -> Result<()> {
-        if kernel_backlog(snapshot) {
-            retain_input(commit);
+        row: &tl3_store::WorldRow,
+    ) -> Result<bool> {
+        self.store.begin_input()?;
+        let holds = self.held_effects.clone();
+        let postmortem_since = self.postmortem_since;
+        let attempted = self.prepare_kernel_input(snapshot, row);
+        let result = match attempted {
+            Ok(mut commit) if !deferred(&commit) => {
+                commit.rows.push(RowChange::Delete {
+                    table: row.table.clone(),
+                    id: row.id.clone(),
+                });
+                self.store
+                    .commit(&commit)
+                    .map_err(Error::from)
+                    .and_then(|_| {
+                        // Exercise rollback after SQL writes as well as before steps.
+                        self.input_checkpoint(snapshot, &mut commit)?;
+                        Ok((!deferred(&commit), commit))
+                    })
+            }
+            Ok(commit) => Ok((false, commit)),
+            Err(error) => Err(error),
+        };
+        let accepted = result.as_ref().is_ok_and(|(accepted, _)| *accepted);
+        self.store.finish_input(accepted)?;
+        if !accepted {
+            self.held_effects = holds;
+            self.postmortem_since = postmortem_since;
+        }
+        let (accepted, attempted) = result?;
+        if !accepted {
+            let current = self.store.load()?;
+            let mut incident = Commit::new(
+                format!("kernel-refusal:{}:{}", row.id, current.revision.get()),
+                json!({"kernel_refusal": row.id}),
+                &current,
+            );
+            incident.result = json!({"kernel_deferred":true});
+            // This projection is the only persistence path after rollback.
+            incident
+                .rows
+                .extend(attempted.rows.into_iter().filter(|change| {
+                    matches!(change, RowChange::Put {table, value, ..}
+                    if table == "incidents" && value["signature"]["class"] == COUNTER_HEADROOM)
+                }));
+            if !incident.rows.is_empty() {
+                self.store.commit(&incident)?;
+            }
+        }
+        if accepted && row.table == PENDING_KERNEL {
+            let input: PendingKernelInput = crate::decode_stored(row.value.clone())?;
+            if let PendingKernelInput::Completion { key, .. }
+            | PendingKernelInput::CancelAbsent { key } = input
+                && let Some(effect) = snapshot.pending_effects.iter().find(|e| e.key == key)
+            {
+                self.remove_hold(&crate::decode_stored(effect.payload.clone())?);
+            }
+        }
+        Ok(accepted)
+    }
+
+    fn prepare_kernel_input(
+        &mut self,
+        snapshot: &Snapshot,
+        row: &tl3_store::WorldRow,
+    ) -> Result<Commit> {
+        let mut world = crate::snapshot::decode(snapshot)?;
+        let mut commit = Commit::new(format!("consume:{}", row.id), row.value.clone(), snapshot);
+        if row.table == "inbox" {
+            let observation: Observation = crate::decode_stored(row.value.clone())?;
+            match self.translate(snapshot, &mut world, observation.clone(), &mut commit) {
+                Ok(Some(event)) => self.apply(snapshot, world, event, &mut commit)?,
+                Ok(None) => {}
+                Err(error) => {
+                    // This entire transaction is discarded on an error too;
+                    // input diagnostics must not publish translation writes.
+                    return Err(error);
+                }
+            }
         } else {
-            self.apply(snapshot, world, event, commit)?;
+            let input: PendingKernelInput = crate::decode_stored(row.value.clone())?;
+            let event = match input {
+                PendingKernelInput::Event(event) => Some(event),
+                PendingKernelInput::Completion { key, completion } => {
+                    return self.prepare_completion(snapshot, &key, completion);
+                }
+                PendingKernelInput::CancelAbsent { key } => {
+                    let effect = snapshot
+                        .pending_effects
+                        .iter()
+                        .find(|e| e.key == key)
+                        .ok_or(Error::Invalid("cancellation has no pending effect"))?;
+                    let delivery = crate::decode_stored(effect.payload.clone())?;
+                    return self.prepare_cancel_absent(snapshot, effect, &delivery);
+                }
+                PendingKernelInput::Replacement { original } => {
+                    let old = crate::request(snapshot, original)?;
+                    let Some(pending) = snapshot.rows.iter().find(|r| {
+                        r.table == "replacement_pending" && r.id == original.0.to_string()
+                    }) else {
+                        return Ok(commit);
+                    };
+                    let issue =
+                        crate::steering::replacement_issue(snapshot, original, &pending.value)?;
+                    self.linked_request(snapshot, old.repo, issue, original, &mut commit)?
+                }
+                PendingKernelInput::PriorityReread { id, row, now } => {
+                    return self.prepare_reread(&id, row, now);
+                }
+
+                PendingKernelInput::IssueChange(change) => {
+                    self.prepare_issue_change(snapshot, &change, &mut commit)?;
+                    None
+                }
+                PendingKernelInput::Intake { issue, proposed } => {
+                    let repository = self
+                        .intake_repository(&issue)
+                        .ok_or(Error::Invalid("retained intake is no longer authorized"))?;
+                    commit.event_key = format!("github:{}", issue.delivery);
+                    commit.event = json!({"labelled_issue": issue, "proposed": proposed});
+                    if !self.kernel_headroom(snapshot, &world, &mut commit)? {
+                        return Ok(commit);
+                    }
+                    self.prepare_intake(snapshot, &issue, repository, proposed, &mut commit)?
+                }
+            };
+            if let Some(event) = event {
+                self.apply(snapshot, world, event, &mut commit)?;
+            }
         }
-        if deferred(commit) {
-            commit.rows.push(put(
-                PENDING_KERNEL,
-                format!("{}:kernel", commit.event_key),
-                json!(PendingKernelInput::Event(event)),
-            ));
-        }
-        Ok(())
+        Ok(commit)
     }
 
     pub(crate) fn replay_kernel_input(
@@ -213,53 +372,94 @@ impl Controller {
         snapshot: &Snapshot,
         row: &tl3_store::WorldRow,
     ) -> Result<()> {
+        match self.consume_kernel_input(snapshot, row) {
+            Ok(_) => Ok(()),
+            Err(error) => self.reject_kernel_input(snapshot, row, error),
+        }
+    }
+
+    fn reject_kernel_input(
+        &mut self,
+        snapshot: &Snapshot,
+        row: &tl3_store::WorldRow,
+        error: Error,
+    ) -> Result<()> {
         let input: PendingKernelInput = crate::decode_stored(row.value.clone())?;
-        let world = crate::snapshot::decode(snapshot)?;
-        let mut commit = Commit::new(format!("consume:{}", row.id), row.value.clone(), snapshot);
-        let event = match input {
-            PendingKernelInput::Event(event) => Some(event),
-            PendingKernelInput::IssueChange(change) => {
-                self.prepare_issue_change(snapshot, &change, &mut commit, true)?;
-                None
-            }
-            PendingKernelInput::Intake { issue, proposed } => {
-                let repository = self
-                    .intake_repository(&issue)
-                    .ok_or(Error::Invalid("retained intake is no longer authorized"))?;
-                commit.event_key = format!("github:{}", issue.delivery);
-                commit.event = json!({"labelled_issue": issue, "proposed": proposed});
-                self.prepare_intake(snapshot, &issue, repository, proposed, &mut commit)?
-            }
+        let (target, title, node) = match input {
+            PendingKernelInput::Intake { issue, .. } => (
+                Some(IssueTarget {
+                    repository: Repository {
+                        owner: issue.owner,
+                        name: issue.repo,
+                        installation: issue.installation,
+                    },
+                    issue: issue.number,
+                }),
+                issue.title,
+                None,
+            ),
+            PendingKernelInput::IssueChange(change) => (
+                Some(IssueTarget {
+                    repository: Repository {
+                        owner: change.owner,
+                        name: change.repo,
+                        installation: change.installation,
+                    },
+                    issue: change.number,
+                }),
+                change.title,
+                None,
+            ),
+            _ => (None, "Kernel input".into(), None),
         };
-        if let Some(event) = event {
-            self.apply(snapshot, world, event, &mut commit)?;
-        }
-        if deferred(&commit) {
-            held_attempt(&mut commit, snapshot);
-        } else {
-            commit.rows.push(RowChange::Delete {
-                table: row.table.clone(),
-                id: row.id.clone(),
-            });
-        }
+        let mut commit = Commit::new(format!("reject:{}", row.id), row.value.clone(), snapshot);
+        self.input_failed(
+            snapshot,
+            &row.id,
+            target,
+            &title,
+            node,
+            Upstream::GitHub,
+            error,
+            &mut commit,
+        )?;
+        commit.rows.push(RowChange::Delete {
+            table: row.table.clone(),
+            id: row.id.clone(),
+        });
         self.store.commit(&commit)?;
         Ok(())
     }
 
-    /// State-table "Counter headroom": one inbox input and its dependency
-    /// deliveries are one atomic kernel batch. Discard every staged change if
-    /// any step refuses, then record only the incident against the exhausted
-    /// staged world. The original input remains available for a complete retry.
-    pub(crate) fn defer_kernel_batch(
-        &self,
-        snapshot: &Snapshot,
-        exhausted: &tl3_kernel::World,
-        checkpoint: Commit,
-        commit: &mut Commit,
-    ) -> Result<()> {
-        *commit = checkpoint;
-        self.kernel_headroom(snapshot, exhausted, commit)?;
-        Ok(())
+    /// Accept complete direct input durably before attempting any translation.
+    /// It joins older retained input instead of looking at a frozen world.
+    pub(crate) fn submit_kernel_input(
+        &mut self,
+        id: String,
+        input: PendingKernelInput,
+    ) -> Result<bool> {
+        let snapshot = self.store.load()?;
+        let mut queued = Commit::new(format!("queue:{id}"), json!(&input), &snapshot);
+        queued
+            .rows
+            .push(put(PENDING_KERNEL, id.clone(), json!(input)));
+        self.store.commit(&queued)?;
+        let current = self.store.load()?;
+        if current.rows.iter().any(counter_incident) {
+            return Ok(true);
+        }
+        if !kernel_backlog(&snapshot)
+            && let Some(row) = current
+                .rows
+                .iter()
+                .find(|r| r.table == PENDING_KERNEL && r.id == id)
+        {
+            if let Err(error) = self.consume_kernel_input(&current, row) {
+                self.reject_kernel_input(&current, row, error)?;
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub(crate) fn kernel_headroom(

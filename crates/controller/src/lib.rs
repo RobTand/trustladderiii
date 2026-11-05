@@ -267,7 +267,7 @@ const ISSUE_EDITS: &str = "issue_edits";
 /// Neither edit is applied; a timer rereads the issue until it settles.
 const PRIORITY_RECONCILE: &str = "priority_reconcile";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Reconcile {
     pub(crate) repository: Repository,
     pub(crate) number: u64,
@@ -327,6 +327,8 @@ pub struct Controller {
     github_translators: Vec<ingress::Translation>,
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
+    #[cfg(test)]
+    refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
     allowances: tl3_config::Allowances,
     /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
     postmortems: Option<PostmortemPace>,
@@ -418,6 +420,8 @@ impl Controller {
             github_translators: Vec::new(),
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
+            #[cfg(test)]
+            refusal_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
             postmortems: None,
             postmortem_since: 0,
@@ -576,73 +580,15 @@ impl Controller {
         issue: LabelledIssue,
         proposed: Option<adoption::ProposedPullRequest>,
     ) -> Result<bool> {
-        let Some(repository) = self.intake_repository(&issue) else {
+        if self.intake_repository(&issue).is_none() {
             return Ok(false);
-        };
-        let snapshot = self.store.load()?;
-        let world = snapshot::decode(&snapshot)?;
-        let mut commit = Commit::new(
-            format!("github:{}", issue.delivery),
-            json!({"labelled_issue": issue, "proposed": proposed}),
-            &snapshot,
-        );
-        if input_errors::kernel_backlog(&snapshot)
-            || !self.kernel_headroom(&snapshot, &world, &mut commit)?
-        {
-            commit.event_key = format!("held-intake:{}", issue.delivery);
-            commit.rows.push(put(
-                input_errors::PENDING_KERNEL,
-                format!("intake:{}", issue.delivery),
-                json!(input_errors::PendingKernelInput::Intake { issue, proposed }),
-            ));
-            self.store.commit(&commit)?;
-            return Ok(true);
         }
-        let event =
-            match self.prepare_intake(&snapshot, &issue, repository.clone(), proposed, &mut commit)
-            {
-                Ok(event) => event,
-                Err(error) => {
-                    let mut failure = Commit::new(
-                        format!(
-                            "intake-failed:{}:{}",
-                            issue.delivery,
-                            snapshot.revision.get()
-                        ),
-                        json!({"labelled_issue":issue}),
-                        &snapshot,
-                    );
-                    self.input_failed(
-                        &snapshot,
-                        &format!(
-                            "intake:{}/{}/{}:{}",
-                            repository.owner.to_ascii_lowercase(),
-                            repository.name.to_ascii_lowercase(),
-                            repository.installation,
-                            issue.number
-                        ),
-                        Some(input_errors::IssueTarget {
-                            repository,
-                            issue: issue.number,
-                        }),
-                        &issue.title,
-                        None,
-                        executor::Upstream::GitHub,
-                        error,
-                        &mut failure,
-                    )?;
-                    if !failure.rows.is_empty() {
-                        self.store.commit(&failure)?;
-                    }
-                    return Ok(false);
-                }
-            };
-        if let Some(event) = event {
-            self.apply_or_defer(&snapshot, world, event, &mut commit)?;
-        }
-        self.store.commit(&commit)?;
+        let accepted = self.submit_kernel_input(
+            format!("intake:{}", issue.delivery),
+            input_errors::PendingKernelInput::Intake { issue, proposed },
+        )?;
         self.retry_held_effects(executor::Upstream::GitHub);
-        Ok(true)
+        Ok(accepted)
     }
 
     fn queue_adoption_question(&mut self, question: adoption::Clarification) -> Result<()> {
@@ -689,16 +635,29 @@ impl Controller {
     /// which sets its credit reserve (#416).
     pub fn issue_changed(&mut self, change: &IssueChange) -> Result<()> {
         let snapshot = self.store.load()?;
-        let mut commit = Commit::new(
-            format!("github-issue:{}", change.delivery),
-            json!({"issue_change": change}),
-            &snapshot,
-        );
-        self.prepare_issue_change(&snapshot, change, &mut commit, false)?;
-        if !commit.rows.is_empty() {
-            self.store.commit(&commit)?;
+        // A halted intake has no request row yet. Only the ordinary, unhalted
+        // path may discard an edit to an issue TL3 does not track.
+        if !input_errors::kernel_backlog(&snapshot)
+            && !snapshot.rows.iter().any(|r| {
+                r.table == "incidents"
+                    && r.value["open"] == true
+                    && r.value["signature"]["class"] == input_errors::COUNTER_HEADROOM
+            })
+            && snapshot::decode(&snapshot)?.headroom_ok()
+            && !stored_repositories(&snapshot)?.iter().any(|repo| {
+                repo.owner.eq_ignore_ascii_case(&change.owner)
+                    && repo.name.eq_ignore_ascii_case(&change.repo)
+                    && repo.installation == change.installation
+                    && latest_request(&snapshot, repo, change.number).is_some()
+            })
+        {
+            return Ok(());
         }
-        Ok(())
+        self.submit_kernel_input(
+            format!("github-issue:{}", change.delivery),
+            input_errors::PendingKernelInput::IssueChange(change.clone()),
+        )
+        .map(|_| ())
     }
 
     /// State-table "Counter headroom": retain complete edits before comparing
@@ -708,8 +667,11 @@ impl Controller {
         snapshot: &Snapshot,
         change: &IssueChange,
         commit: &mut Commit,
-        replaying: bool,
     ) -> Result<()> {
+        let world = snapshot::decode(snapshot)?;
+        if !self.kernel_headroom(snapshot, &world, commit)? {
+            return Ok(());
+        }
         let Some(repo) = stored_repositories(snapshot)?.into_iter().find(|r| {
             r.owner.eq_ignore_ascii_case(&change.owner)
                 && r.name.eq_ignore_ascii_case(&change.repo)
@@ -725,21 +687,6 @@ impl Controller {
                 .parse()
                 .map_err(|_| Error::Invalid("invalid request node"))?,
         );
-        let world = snapshot::decode(snapshot)?;
-        if !replaying && input_errors::kernel_backlog(snapshot)
-            || !self.kernel_headroom(snapshot, &world, commit)?
-        {
-            if !replaying {
-                commit.rows.push(put(
-                    input_errors::PENDING_KERNEL,
-                    format!("github-issue:{}", change.delivery),
-                    json!(input_errors::PendingKernelInput::IssueChange(
-                        change.clone()
-                    )),
-                ));
-            }
-            return Ok(());
-        }
         let Some(n) = world
             .nodes
             .get(node.0 as usize)
@@ -1104,6 +1051,9 @@ impl Controller {
             return Ok(true);
         }
         let snapshot = self.store.load()?;
+        if self.retire_committed_waits(&snapshot)? {
+            return Ok(true);
+        }
         if self.reconcile_approvals(&snapshot)? {
             return Ok(true);
         }
@@ -1208,42 +1158,28 @@ impl Controller {
                 }
             }
             if !waiting_for_queue {
-                let mut world = snapshot::decode(&snapshot)?;
-                let mut commit =
-                    Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
-                match self.translate(&snapshot, &mut world, observation.clone(), &mut commit) {
-                    Ok(Some(event)) => self.apply(&snapshot, world, event, &mut commit)?,
-                    Ok(None) => {}
-                    Err(error) => {
-                        commit = Commit::new(
-                            format!("consume:{}", row.id),
-                            row.value.clone(),
-                            &snapshot,
-                        );
-                        let (target, title, node) =
-                            input_errors::observation_context(&snapshot, &observation)?;
-                        self.input_failed(
-                            &snapshot,
-                            &format!("observation:{}", crate::evidence_key(&observation)?),
-                            target,
-                            &title,
-                            node,
-                            observation_upstream(&snapshot, &observation)?
-                                .unwrap_or(executor::Upstream::GitHub),
-                            error,
-                            &mut commit,
-                        )?;
-                    }
-                }
-                if input_errors::deferred(&commit) {
-                    input_errors::held_attempt(&mut commit, &snapshot);
-                } else {
+                if let Err(error) = self.consume_kernel_input(&snapshot, row) {
+                    let mut commit =
+                        Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
+                    let (target, title, node) =
+                        input_errors::observation_context(&snapshot, &observation)?;
+                    self.input_failed(
+                        &snapshot,
+                        &format!("observation:{}", crate::evidence_key(&observation)?),
+                        target,
+                        &title,
+                        node,
+                        observation_upstream(&snapshot, &observation)?
+                            .unwrap_or(executor::Upstream::GitHub),
+                        error,
+                        &mut commit,
+                    )?;
                     commit.rows.push(RowChange::Delete {
                         table: "inbox".into(),
                         id: row.id.clone(),
                     });
+                    self.store.commit(&commit)?;
                 }
-                self.store.commit(&commit)?;
                 return Ok(true);
             }
         }
@@ -1683,8 +1619,22 @@ impl Controller {
         Ok(())
     }
 
-    fn cancel_absent(&mut self, effect: &Effect, delivery: &Delivery) -> Result<()> {
-        let snapshot = self.store.load()?;
+    fn cancel_absent(&mut self, effect: &Effect, _delivery: &Delivery) -> Result<()> {
+        self.submit_kernel_input(
+            format!("cancel:{}:{}", effect.key, effect.updated_revision.get()),
+            input_errors::PendingKernelInput::CancelAbsent {
+                key: effect.key.clone(),
+            },
+        )
+        .map(|_| ())
+    }
+
+    fn prepare_cancel_absent(
+        &mut self,
+        snapshot: &Snapshot,
+        effect: &Effect,
+        delivery: &Delivery,
+    ) -> Result<Commit> {
         let mut commit = Commit::new(
             format!("cancel:{}:{}", effect.key, snapshot.revision.get()),
             json!({"cancelled_absent": effect.key}),
@@ -1696,7 +1646,7 @@ impl Controller {
             to: EffectState::Cancelled,
         });
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
-            self.apply_or_defer(
+            self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
                 Event::Ack {
@@ -1711,13 +1661,32 @@ impl Controller {
             queue_retirement(&mut commit, delivery);
         }
         looks::resolve_effect_incidents(&snapshot, &mut commit, |_, key| Ok(key == delivery.key))?;
-        self.store.commit(&commit)?;
-        self.remove_hold(delivery);
-        Ok(())
+        Ok(commit)
     }
 
-    fn complete(&mut self, key: &str, mut completion: Completion) -> Result<()> {
+    fn complete(&mut self, key: &str, completion: Completion) -> Result<()> {
         let snapshot = self.store.load()?;
+        let effect = snapshot
+            .pending_effects
+            .iter()
+            .find(|e| e.key == key)
+            .ok_or(Error::Invalid("completion has no pending effect"))?;
+        self.submit_kernel_input(
+            format!("completion:{key}:{}", effect.updated_revision.get()),
+            input_errors::PendingKernelInput::Completion {
+                key: key.into(),
+                completion,
+            },
+        )
+        .map(|_| ())
+    }
+
+    fn prepare_completion(
+        &mut self,
+        snapshot: &Snapshot,
+        key: &str,
+        mut completion: Completion,
+    ) -> Result<Commit> {
         let effect = snapshot
             .pending_effects
             .iter()
@@ -1832,7 +1801,7 @@ impl Controller {
             } else {
                 completion.ack
             };
-            self.apply_or_defer(
+            self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
                 Event::Ack { node, seq, ack },
@@ -1931,9 +1900,7 @@ impl Controller {
             queue_retirement(&mut commit, &delivery);
         }
         evidence::retire_delivered(&snapshot, &mut commit, &delivery, completion.ack);
-        self.store.commit(&commit)?;
-        self.remove_hold(&delivery);
-        Ok(())
+        Ok(commit)
     }
 
     fn apply(
@@ -1946,7 +1913,6 @@ impl Controller {
         if !self.kernel_headroom(snapshot, &world, commit)? {
             return Ok(());
         }
-        let checkpoint = commit.clone();
         // A dequeue receipt can precede queue admission, where the kernel
         // intentionally ignores it. Only an accepted Resume releases that hold.
         if let Event::Command {
@@ -2012,9 +1978,12 @@ impl Controller {
             commit,
         )?;
         if !self.kernel_headroom(snapshot, &world, commit)? {
-            return self.defer_kernel_batch(snapshot, &world, checkpoint, commit);
+            return Ok(());
         }
         let dependency_roots = merge_dependencies::changed_roots(&world, event);
+        if !self.input_checkpoint(snapshot, commit)? {
+            return Ok(());
+        }
         let (mut world, mut outputs) = tl3_kernel::step(world, event);
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
@@ -2025,7 +1994,7 @@ impl Controller {
             commit,
         )?;
         if input_errors::deferred(commit) {
-            return self.defer_kernel_batch(snapshot, &world, checkpoint, commit);
+            return Ok(());
         }
         if let Some((node, reason)) = closing_cause
             && world.nodes.get(node.0 as usize).is_some_and(|n| {

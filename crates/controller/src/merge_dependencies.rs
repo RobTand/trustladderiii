@@ -252,6 +252,9 @@ impl Controller {
         if !self.kernel_headroom(snapshot, world, commit)? {
             return Ok(false);
         }
+        if !self.input_checkpoint(snapshot, commit)? {
+            return Ok(false);
+        }
         let (next, emitted) = tl3_kernel::step(world.clone(), event);
         *world = next;
         outputs.extend(emitted);
@@ -607,7 +610,6 @@ impl Controller {
                 "merge prerequisite fact is outside served repositories",
             ));
         }
-        let checkpoint = commit.clone();
         let before = world.clone();
         let fact = retain_fact(snapshot, commit, fact)?;
         let mut outputs = Vec::new();
@@ -636,7 +638,6 @@ impl Controller {
         }
         self.announce_dependency_endings(snapshot, world, Vec::new(), &mut outputs, commit)?;
         if crate::input_errors::deferred(commit) {
-            self.defer_kernel_batch(snapshot, world, checkpoint, commit)?;
             *world = before;
             return Ok(());
         }

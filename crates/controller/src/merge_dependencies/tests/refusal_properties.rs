@@ -26,10 +26,14 @@ fn business_bytes(c: &mut Controller) -> Vec<u8> {
     ).unwrap().into_iter().map(|r| r.get(0)).collect();
     let mut dump = BTreeMap::<String, Value>::new();
     for table in tables {
-        if table == "tl3_meta" || table == "tl3_events" {
+        if table == "tl3_meta" {
+            // The only additional audit receipt is the separate incident commit.
+            dump.insert(table, tx.query_one("SELECT jsonb_build_array(jsonb_build_object('singleton', singleton, 'revision', revision - (SELECT count(*) FROM tl3_events WHERE payload ? 'kernel_refusal'), 'epoch', epoch)) FROM tl3_meta", &[]).unwrap().get(0));
             continue;
         }
-        let filter = if table == "tl3_world" {
+        let filter = if table == "tl3_events" {
+            "WHERE NOT (payload ? 'kernel_refusal')"
+        } else if table == "tl3_world" {
             "WHERE NOT (table_name = 'incidents' AND value #>> '{signature,class}' = 'kernel_counter_headroom')"
         } else {
             ""
@@ -38,6 +42,11 @@ fn business_bytes(c: &mut Controller) -> Vec<u8> {
             "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM {table} t {filter}"
         );
         dump.insert(table, tx.query_one(&sql, &[]).unwrap().get(0));
+    }
+    let sequences: Vec<String> = tx.query("SELECT sequencename FROM pg_sequences WHERE schemaname='public' AND sequencename LIKE 'tl3_%' ORDER BY sequencename", &[])
+        .unwrap().into_iter().map(|r| r.get(0)).collect();
+    for sequence in sequences {
+        dump.insert(sequence.clone(), tx.query_one(&format!("SELECT jsonb_build_object('last_value',last_value,'is_called',is_called) FROM {sequence}"), &[]).unwrap().get(0));
     }
     serde_json::to_vec(&dump).unwrap()
 }
@@ -170,7 +179,7 @@ fn classified_refusal() {
     );
 }
 
-fn queued_intake_edit() {
+fn queued_intake_edits(priorities: &[u8]) {
     let mut db = Database::start();
     let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "atomic_intake_edit");
     intake(&mut c, &repository, 42);
@@ -190,17 +199,19 @@ fn queued_intake_edit() {
         labels: vec!["P2".into()],
     })
     .unwrap();
-    c.issue_changed(&crate::IssueChange {
-        delivery: "held-edit".into(),
-        owner: repository.owner.clone(),
-        repo: repository.name.clone(),
-        installation: repository.installation,
-        number: 2772,
-        title: "edited title".into(),
-        labels: vec!["P1".into()],
-        updated_at: "2026-11-05T09:01:00Z".parse().unwrap(),
-    })
-    .unwrap();
+    for (index, priority) in priorities.iter().enumerate() {
+        c.issue_changed(&crate::IssueChange {
+            delivery: format!("held-edit-{index}"),
+            owner: repository.owner.clone(),
+            repo: repository.name.clone(),
+            installation: repository.installation,
+            number: 2772,
+            title: format!("[P{priority}] edited title {index}"),
+            labels: vec![],
+            updated_at: chrono::DateTime::from_timestamp(1_800_000_000 + index as i64, 0).unwrap(),
+        })
+        .unwrap();
+    }
     let bootstrap = c.bootstrap.clone();
     drop(c);
     let mut c = Controller::open(
@@ -230,7 +241,7 @@ fn queued_intake_edit() {
     value["open"] = json!(false);
     clear.rows.push(put("incidents", id, value));
     c.store.commit(&clear).unwrap();
-    for _ in 0..4 {
+    for _ in 0..priorities.len() + 3 {
         if c.world().unwrap().nodes.len() == 2
             && !c
                 .snapshot()
@@ -245,9 +256,18 @@ fn queued_intake_edit() {
     }
     assert_eq!(
         c.world().unwrap().nodes[1].priority,
-        tl3_kernel::Priority::P1,
+        [
+            tl3_kernel::Priority::P0,
+            tl3_kernel::Priority::P1,
+            tl3_kernel::Priority::P2,
+            tl3_kernel::Priority::P3
+        ][*priorities.last().unwrap() as usize],
         "a complete edit must survive before its queued intake has a request row"
     );
+}
+
+fn queued_intake_edit() {
+    queued_intake_edits(&[2, 1]);
 }
 
 #[test]
@@ -277,6 +297,656 @@ fn refusal_is_a_noop_seeded() {
                 1 => classified_refusal(),
                 _ => queued_intake_edit(),
             }
+            Ok(())
+        })
+        .unwrap();
+}
+
+struct FixedClock;
+impl crate::clock::Clock for FixedClock {
+    fn now(&self) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000)
+    }
+}
+
+fn open_case(settings: &tl3_config::Store, repo: &Repo, bootstrap: &Bootstrap) -> Controller {
+    Controller::open_with_clock(
+        tl3_store::Store::open(settings).unwrap(),
+        crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+        bootstrap.clone(),
+        FixedClock,
+    )
+    .unwrap()
+}
+
+// Clone only disposable fixture databases, with their owning controller closed.
+// PostgreSQL copies the real tables, indexes, constraints and allocator state.
+fn copy_database(settings: &tl3_config::Store, name: &str) -> tl3_config::Store {
+    assert!(name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'));
+    assert!(
+        settings
+            .database
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    );
+    let mut admin = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .dbname("postgres")
+        .connect(postgres::NoTls)
+        .unwrap();
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {name} TEMPLATE {}",
+            settings.database
+        ))
+        .unwrap();
+    let mut copied = settings.clone();
+    copied.database = name.into();
+    copied
+}
+
+fn clear_injected_incident(c: &mut Controller) {
+    let snapshot = c.snapshot().unwrap();
+    let incidents: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|r| {
+            r.table == "incidents"
+                && r.value["open"] == true
+                && r.value["signature"]["class"] == crate::input_errors::COUNTER_HEADROOM
+        })
+        .collect();
+    assert_eq!(incidents.len(), 1);
+    let row = incidents[0];
+    let mut value = row.value.clone();
+    value["open"] = json!(false);
+    let mut clear = Commit::new(
+        "property-authorized-clear",
+        json!({"property_clear":true}),
+        &snapshot,
+    );
+    clear.rows.push(put("incidents", row.id.clone(), value));
+    c.store.commit(&clear).unwrap();
+}
+
+// Replay removes only the refusal/clearance audit records and maps their revision
+// offsets out of references. SQL wall-clock timestamps differ between the two
+// executions; arrival numbers are compared by their persisted relative order.
+// The refusal comparison itself retains all these fields byte for byte.
+fn replay_bytes(c: &mut Controller, initial_revision: i64) -> Vec<u8> {
+    fn revision(value: i64, excluded: &[i64]) -> i64 {
+        value - excluded.iter().filter(|v| **v <= value).count() as i64
+    }
+    fn canonical(value: &mut Value, ids: &BTreeMap<String, String>, excluded: &[i64]) {
+        match value {
+            Value::String(s) => {
+                if let Some(mapped) = ids.get(s) {
+                    *s = mapped.clone();
+                } else if let Some(rest) = s.strip_prefix("notice:")
+                    && let Some((number, suffix)) = rest.split_once(':')
+                    && let Ok(number) = number.parse::<i64>()
+                {
+                    *s = format!("notice:{}:{suffix}", revision(number, excluded));
+                } else if s.starts_with("cancel:")
+                    && let Some((stem, number)) = s.rsplit_once(':')
+                    && let Ok(number) = number.parse::<i64>()
+                {
+                    *s = format!("{stem}:{}", revision(number, excluded));
+                }
+            }
+            Value::Array(a) => {
+                for value in a {
+                    canonical(value, ids, excluded);
+                }
+            }
+            Value::Object(o) => {
+                for value in o.values_mut() {
+                    canonical(value, ids, excluded);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut reader = c.store.reader().unwrap();
+    let mut tx = reader.transaction().unwrap();
+    let excluded: Vec<i64> = tx.query("SELECT revision FROM tl3_events WHERE payload ? 'kernel_refusal' OR payload ? 'property_clear' ORDER BY revision", &[])
+        .unwrap().into_iter().map(|r| r.get(0)).collect();
+    let ids: BTreeMap<String, String> = tx.query("SELECT row_id FROM tl3_world WHERE table_name = 'incidents' AND NOT (value #>> '{signature,class}' = 'kernel_counter_headroom')", &[])
+        .unwrap().into_iter().filter_map(|row| {
+            let id: String = row.get(0);
+            let (number, suffix) = id.split_once('.')?;
+            let number = number.parse::<i64>().ok()?;
+            (number > initial_revision).then(|| (id.clone(), format!("{}.{suffix}", revision(number, &excluded))))
+        }).collect();
+    let arrivals: BTreeMap<i64, usize> = tx.query("SELECT arrival FROM tl3_world WHERE NOT (table_name = 'incidents' AND value #>> '{signature,class}' = 'kernel_counter_headroom') ORDER BY arrival", &[])
+        .unwrap().into_iter().enumerate().map(|(i,r)| (r.get(0), i)).collect();
+    let tables: Vec<String> = tx.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'tl3_%' ORDER BY tablename", &[])
+        .unwrap().into_iter().map(|r| r.get(0)).collect();
+    let mut dump = BTreeMap::<String, Vec<Value>>::new();
+    for table in tables {
+        let filter = match table.as_str() {
+            "tl3_world" => {
+                "WHERE NOT (table_name = 'incidents' AND value #>> '{signature,class}' = 'kernel_counter_headroom')"
+            }
+            "tl3_events" => "WHERE NOT (payload ? 'kernel_refusal' OR payload ? 'property_clear')",
+            _ => "",
+        };
+        let mut values: Vec<Value> = tx.query(&format!("SELECT to_jsonb(t) - ARRAY(SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND data_type LIKE 'timestamp%') FROM {table} t {filter}"), &[&table])
+            .unwrap().into_iter().map(|r| r.get(0)).collect();
+        for value in &mut values {
+            for column in ["revision", "created_revision", "updated_revision"] {
+                if let Some(number) = value[column].as_i64() {
+                    value[column] = json!(revision(number, &excluded));
+                }
+            }
+            if table == "tl3_world" {
+                value["version"] = json!(revision(value["version"].as_i64().unwrap(), &excluded));
+                value["arrival"] = json!(arrivals[&value["arrival"].as_i64().unwrap()]);
+            }
+            canonical(value, &ids, &excluded);
+        }
+        values.sort_by_cached_key(Value::to_string);
+        dump.insert(table, values);
+    }
+    serde_json::to_vec(&dump).unwrap()
+}
+
+fn observation_inventory(
+    c: &mut Controller,
+    repo: &Repo,
+    repository: &Repository,
+    payload: u16,
+) -> Vec<Observation> {
+    let node = NodeId(0);
+    let generation = c.world().unwrap().nodes[0].generation;
+    let sha = repo.head.clone();
+    let key = c
+        .snapshot()
+        .unwrap()
+        .pending_effects
+        .last()
+        .unwrap()
+        .key
+        .clone();
+    let run = crate::adapters::prismabuild::CheckRun {
+        repository: repo.root.path().into(),
+        base_sha: tl3_worktrees::CommitId::new(&sha).unwrap(),
+        reviewed_sha: None,
+        reproducing_unavailable: None,
+        plan: vec![],
+        selected_failures: vec![],
+    };
+    let issue = serde_json::from_value(json!({"number":2772,"title":"replacement","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z"})).unwrap();
+    vec![
+        Observation::Prerequisite(ExternalFact {
+            repository: repository.clone(),
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+            status: DependencyStatus::Delivered,
+        }),
+        Observation::ScratchSaved {
+            node,
+            reference: "saved".into(),
+        },
+        Observation::ScratchPruned {
+            reference: "saved".into(),
+        },
+        Observation::TraceLogsCapped { evicted: 1 },
+        Observation::Progress {
+            key: key.clone(),
+            checkpoint: format!("checkpoint-{payload}"),
+        },
+        Observation::Quota {
+            key: key.clone(),
+            reset_ms: 1_800_000_001_000,
+            model: None,
+        },
+        Observation::Classified {
+            key: "absent-job".into(),
+            reply: Some(json!({"kind":"pause"})),
+        },
+        Observation::Postmortem {
+            key: "absent-job".into(),
+            reply: None,
+            failure: Some("launch_failed".into()),
+            judge_failure: None,
+        },
+        Observation::LinkedRequest {
+            repository: repository.clone(),
+            issue,
+            original: node,
+        },
+        Observation::Queue(crate::adapters::mergify::QueueFact {
+            repository: repository.clone(),
+            number: 7714,
+            evidence: crate::adapters::mergify::Evidence::Merged {
+                head: sha.clone(),
+                checks_passed: true,
+            },
+        }),
+        comment(repository, 42, c.bootstrap.rob, &format!("pause {payload}")),
+        Observation::WorkerFailed {
+            node,
+            generation,
+            failure_class: "permanent_failure".into(),
+            failure_message: format!("failure-{payload}"),
+        },
+        Observation::WorkerReply {
+            node,
+            generation,
+            role: "ingest".into(),
+            model: None,
+            reply: json!({"kind":"brief","brief":"Implement","goals":[{"description":"Implement","verification":"test"}],"memory_ids":[],"files":[],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true},"merge_prerequisites":[]}),
+        },
+        Observation::Kernel(Event::Fact {
+            node,
+            fact: Fact::Priority(tl3_kernel::Priority::P1),
+        }),
+        Observation::Steering {
+            node,
+            command: Command::Pause,
+        },
+        Observation::CiFailed {
+            node,
+            infra: false,
+            checks: vec![],
+        },
+        Observation::WorktreePrepared {
+            node,
+            repository: repo.root.path().into(),
+            base_sha: sha.clone(),
+            sha: sha.clone(),
+        },
+        Observation::CheckPlan {
+            node,
+            sha: sha.clone(),
+            run,
+        },
+        Observation::Checks {
+            node,
+            generation,
+            action_key: "check".into(),
+            base_sha: sha.clone(),
+            sha: sha.clone(),
+            changed_paths: vec![format!("src/file_{payload}.rs")],
+            failed_tests: vec![],
+            report: false,
+            pass: false,
+            results: vec![],
+        },
+        Observation::Plan {
+            node,
+            generation,
+            paths: vec![format!("src/file_{payload}.rs")],
+            fits: true,
+        },
+        Observation::Made {
+            node,
+            generation,
+            sha: sha.clone(),
+        },
+        Observation::Reviewed {
+            node,
+            generation,
+            sha: sha.clone(),
+        },
+        Observation::RebaseConflict {
+            node,
+            generation,
+            head: sha.clone(),
+            target: sha.clone(),
+            files: vec![format!("src/file_{payload}.rs")],
+        },
+        Observation::Rebased {
+            node,
+            generation,
+            sha: sha.clone(),
+        },
+        Observation::Merged {
+            node,
+            sha,
+            checks_passed: true,
+        },
+        Observation::PullRequest { node, number: 7714 },
+    ]
+}
+
+fn queue_case(c: &mut Controller, table: &str, value: Value) {
+    let snapshot = c.snapshot().unwrap();
+    let mut queued = Commit::new("property-input", value.clone(), &snapshot);
+    queued.rows.push(put(table, "property-input".into(), value));
+    c.store.commit(&queued).unwrap();
+}
+
+/// State-table "Counter headroom": the rollback property runs the real store,
+/// translation and every fan-out step, with a restart before the retained retry.
+fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
+    let name = format!("property_{case}_{run}");
+    let (repo, mut c, repository, settings) = fixture_with_settings(db, &name);
+    c.clock = Box::new(FixedClock);
+    let root = intake(&mut c, &repository, 42);
+    if case == 0 {
+        let other = intake(&mut c, &repository, 2772);
+        ingest(&mut c, root, &[2761]);
+        ingest(&mut c, other, &[2761]);
+    }
+    if case == 9 {
+        let first = intake(&mut c, &repository, 2761);
+        let second = intake(&mut c, &repository, 2772);
+        ingest(&mut c, first, &[42]);
+        ingest(&mut c, second, &[42]);
+        event(
+            &mut c,
+            Event::Command {
+                node: root,
+                id: 1,
+                command: Command::Stop,
+            },
+        );
+        confirm(&mut c, root);
+        let mut world = c.world().unwrap();
+        world.nodes[0].had_pr = true;
+        world.nodes[0].credit.ready = true;
+        world.nodes[0].credit.start = 4;
+        persist_world(&mut c, &world, "property-merge-ready");
+    }
+    if case == 31 {
+        event(
+            &mut c,
+            Event::Command {
+                node: root,
+                id: 1,
+                command: Command::Stop,
+            },
+        );
+        confirm(&mut c, root);
+        let issue: tl3_github::Issue = serde_json::from_value(json!({"number":42,"title":"replacement","body":"new scope","state":"open","updated_at":"2026-11-03T23:00:00Z"})).unwrap();
+        let task = crate::steering::Task::Restart {
+            comment_key: "restart".into(),
+            text: "restart".into(),
+            issue: Some(issue),
+        };
+        let snapshot = c.snapshot().unwrap();
+        let mut pending = Commit::new("property-replacement", json!(null), &snapshot);
+        pending
+            .rows
+            .push(put("replacement_pending", "0".into(), json!(task)));
+        pending
+            .rows
+            .push(put("replacement", "0".into(), json!(task)));
+        c.store.commit(&pending).unwrap();
+    }
+    if case == 32 {
+        crate::adapters::github::set_fake_issue(&repo.root.path().join("fakes"), &serde_json::from_value(json!({"number":42,"title":"[P1] fresh priority","body":null,"state":"open","updated_at":"2026-11-05T23:00:00Z"})).unwrap());
+    }
+    let mut binding = Commit::new("property-pr", json!(null), &c.snapshot().unwrap());
+    binding
+        .rows
+        .push(put("pull_requests", "0".into(), json!({"number":7714})));
+    c.store.commit(&binding).unwrap();
+    let mut observations = observation_inventory(&mut c, &repo, &repository, payload);
+    let table;
+    let value;
+    if case < observations.len() {
+        // Inventory drift fails when the accepted enum gains a variant.
+        let names: BTreeSet<String> = observations
+            .iter()
+            .map(|o| json!(o).as_object().unwrap().keys().next().unwrap().clone())
+            .collect();
+        let source = include_str!("../../executor.rs")
+            .split_once("pub enum Observation {")
+            .unwrap()
+            .1
+            .split_once("\n}\n")
+            .unwrap()
+            .0;
+        let declared: BTreeSet<String> = source
+            .lines()
+            .filter(|l| l.starts_with("    ") && !l.starts_with("        "))
+            .map(str::trim)
+            .filter(|l| l.chars().next().is_some_and(char::is_uppercase))
+            .map(|l| {
+                l.split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(names, declared);
+        if case == 6 {
+            c.observe(
+                "classify",
+                comment(&repository, 42, c.bootstrap.rob, "pause"),
+            )
+            .unwrap();
+            c.drive_once().unwrap();
+            let snapshot = c.snapshot().unwrap();
+            assert!(c.schedule_comment(&snapshot).unwrap());
+            let key = c
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|r| r.table == "comment_jobs")
+                .unwrap()
+                .id
+                .clone();
+            observations[case] = Observation::Classified {
+                key,
+                reply: Some(json!({"kind":"pause"})),
+            };
+        }
+        let observation = observations.swap_remove(case);
+        c.observe("property-input", observation).unwrap();
+        let snapshot = c.snapshot().unwrap();
+        let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "inbox" && r.id == "external:property-input")
+        else {
+            // Trace-log cap and receipt deduplication finish at admission; they
+            // cannot reach a kernel step or a headroom refusal.
+            assert_eq!(case, 3);
+            return;
+        };
+        table = row.table.clone();
+        value = row.value.clone();
+    } else {
+        use crate::input_errors::PendingKernelInput as Input;
+        let input = match case - observations.len() {
+            0 => Input::Intake {
+                issue: LabelledIssue {
+                    delivery: "property-new".into(),
+                    owner: repository.owner.clone(),
+                    repo: repository.name.clone(),
+                    installation: repository.installation,
+                    number: 2772,
+                    title: format!("[P1] Request {payload}"),
+                    actor: c.bootstrap.rob,
+                    label: "tl3".into(),
+                    labels: vec![],
+                },
+                proposed: None,
+            },
+            1 => Input::IssueChange(crate::IssueChange {
+                delivery: "property-edit".into(),
+                owner: repository.owner.clone(),
+                repo: repository.name.clone(),
+                installation: repository.installation,
+                number: 42,
+                title: format!("[P1] Edit {payload}"),
+                labels: vec![],
+                updated_at: "2026-11-05T09:01:00Z".parse().unwrap(),
+            }),
+            2 => Input::Event(Event::Fact {
+                node: root,
+                fact: Fact::Priority(tl3_kernel::Priority::P1),
+            }),
+            3 | 4 => {
+                let snapshot = c.snapshot().unwrap();
+                let effect = snapshot.pending_effects.last().unwrap();
+                if case - observations.len() == 3 {
+                    let mut sent = Commit::new("property-sent", json!(null), &snapshot);
+                    sent.transitions.push(tl3_store::EffectTransition {
+                        key: effect.key.clone(),
+                        from: effect.state,
+                        to: tl3_store::EffectState::Sent,
+                    });
+                    c.store.commit(&sent).unwrap();
+                    Input::Completion {
+                        key: effect.key.clone(),
+                        completion: crate::executor::Completion::confirmed(vec![
+                            Observation::PullRequest {
+                                node: root,
+                                number: 7714,
+                            },
+                        ]),
+                    }
+                } else {
+                    Input::CancelAbsent {
+                        key: effect.key.clone(),
+                    }
+                }
+            }
+            5 => Input::Replacement { original: root },
+            6 => Input::PriorityReread {
+                id: "0".into(),
+                row: crate::Reconcile {
+                    repository: repository.clone(),
+                    number: 42,
+                    updated_at: "2026-11-05T09:01:00Z".parse().unwrap(),
+                    generation: 0,
+                    attempts: 0,
+                    next_due_ms: 0,
+                },
+                now: 1_800_000_000_000,
+            },
+            _ => unreachable!(),
+        };
+        table = crate::input_errors::PENDING_KERNEL.into();
+        value = json!(input);
+        queue_case(&mut c, &table, value.clone());
+    }
+    let original = c.snapshot().unwrap();
+    let row = original
+        .rows
+        .iter()
+        .find(|r| r.table == table && r.value == value)
+        .unwrap()
+        .clone();
+    let initial_revision = original.revision.get();
+    let bootstrap = c.bootstrap.clone();
+    drop(c);
+    let baseline_settings = copy_database(&settings, &format!("{name}_baseline"));
+    let mut baseline = open_case(&baseline_settings, &repo, &bootstrap);
+    baseline.refusal_injection.borrow_mut().visited = 0;
+    assert!(
+        baseline.consume_kernel_input(&original, &row).unwrap(),
+        "case {case} must have a successful baseline"
+    );
+    let checkpoints = baseline.refusal_injection.borrow().visited;
+    assert!(checkpoints > 0);
+    if case == 0 || case == 9 {
+        assert!(
+            checkpoints >= 3,
+            "fan-out fixture must execute every waiter step"
+        );
+    }
+    let expected = replay_bytes(&mut baseline, initial_revision);
+    drop(baseline);
+    for checkpoint in 0..checkpoints {
+        let trial_settings = copy_database(&settings, &format!("{name}_at_{checkpoint}"));
+        let mut trial = open_case(&trial_settings, &repo, &bootstrap);
+        let before = business_bytes(&mut trial);
+        *trial.refusal_injection.borrow_mut() = crate::input_errors::RefusalInjection {
+            at: Some(checkpoint),
+            visited: 0,
+        };
+        assert!(
+            !trial.consume_kernel_input(&original, &row).unwrap(),
+            "case {case}, checkpoint {checkpoint}"
+        );
+        assert_eq!(
+            String::from_utf8(business_bytes(&mut trial)).unwrap(),
+            String::from_utf8(before).unwrap(),
+            "refusal mutated case {case}, checkpoint {checkpoint}"
+        );
+        clear_injected_incident(&mut trial);
+        drop(trial);
+        let mut trial = open_case(&trial_settings, &repo, &bootstrap);
+        assert!(
+            trial.drive_once().unwrap(),
+            "retained input must wake after clearance"
+        );
+        assert_eq!(
+            String::from_utf8(replay_bytes(&mut trial, initial_revision)).unwrap(),
+            String::from_utf8(expected.clone()).unwrap(),
+            "replay diverged for case {case}, checkpoint {checkpoint}"
+        );
+    }
+}
+
+macro_rules! refusal_group {
+    ($name:ident, $start:expr, $end:expr) => {
+        #[test]
+        fn $name() {
+            let db = std::cell::RefCell::new(Database::start());
+            for case in $start..$end {
+                let run = std::cell::Cell::new(0);
+                let mut runner = TestRunner::new(Config {
+                    cases: 2,
+                    max_shrink_iters: 16,
+                    rng_seed: RngSeed::Fixed(771_400 + case as u64),
+                    source_file: Some(file!()),
+                    failure_persistence: Some(Box::new(
+                        proptest::test_runner::FileFailurePersistence::Direct(concat!(
+                            env!("CARGO_MANIFEST_DIR"),
+                            "/src/merge_dependencies/tests/refusal-regressions.txt"
+                        )),
+                    )),
+                    ..Config::default()
+                });
+                runner
+                    .run(&any::<u16>(), |payload| {
+                        run.set(run.get() + 1);
+                        check_input_case(&mut db.borrow_mut(), case, payload, run.get());
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+        }
+    };
+}
+refusal_group!(refusal_observations_0, 0, 4);
+refusal_group!(refusal_observations_1, 4, 8);
+refusal_group!(refusal_observations_2, 8, 12);
+refusal_group!(refusal_observations_3, 12, 16);
+refusal_group!(refusal_observations_4, 16, 20);
+refusal_group!(refusal_observations_5, 20, 24);
+refusal_group!(refusal_direct_inputs, 24, 33);
+
+/// State-table "Counter headroom" / Q39: a queued intake followed by complete
+/// edits retains the final priority through refusal, restart and ordered replay.
+#[test]
+fn halted_intake_edit_sequences() {
+    let mut runner = TestRunner::new(Config {
+        cases: 8,
+        rng_seed: RngSeed::Fixed(771_403),
+        source_file: Some(file!()),
+        failure_persistence: Some(Box::new(
+            proptest::test_runner::FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/merge_dependencies/tests/refusal-regressions.txt"
+            )),
+        )),
+        ..Config::default()
+    });
+    runner
+        .run(&proptest::collection::vec(0u8..4, 1..7), |priorities| {
+            queued_intake_edits(&priorities);
             Ok(())
         })
         .unwrap();

@@ -242,12 +242,13 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             allow_empty = True,
         ),
     )
-    if directory == "crates/controller":
+    if directory in ["crates/controller", "crates/kernel", "crates/store"]:
         native.filegroup(
             name = "library_sources",
-            srcs = native.glob(["src/**/*", "tools/**/*"]),
+            # Proof drivers and crate tooling are not linked into a Rust library.
+            srcs = native.glob(["src/**/*", "migrations/**"], exclude = ["src/proofs.rs"], allow_empty = True),
         )
-    library_sources = [":library_sources"] if directory == "crates/controller" else [":sources"]
+    library_sources = [":library_sources"] if directory in ["crates/controller", "crates/kernel", "crates/store"] else [":sources"]
     compile_data = _COMPILE_DATA.get(directory, [])
     script = []
     if build_script:
@@ -327,9 +328,17 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
 def _crate_test(kind, package, name, source, harness, options):
     binary = "%s/%s" % (package, name)
     sources = [":sources", source]
+    if native.package_name() in ["crates/kernel", "crates/store"]:
+        sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
+        if source == "tests/proof_map.rs":
+            sources = sources + ["src/proofs.rs"]
+        if native.package_name() == "crates/store":
+            sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
         sources = [source]
     compile_data = options["compile_data"]
+    if native.package_name() == "crates/store":
+        compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":
         sources = [":library_sources", source] + native.glob(
             (["tests/loom/**", "tests/fixtures/decisions/**", "tests/fixtures/narrowing/**", "tests/fixtures/worker-replies-d8e4f2a8.jsonl"] if kind == "lib" else

@@ -100,7 +100,7 @@ def verus_proofs():
             verus_test(
                 name = "verus_" + name,
                 src = "verus/progress.rs",
-                srcs = native.glob(["src/**/*.rs"]) + ["//crates/controller:src/kernel_boundary.rs"],
+                srcs = native.glob(["src/**/*.rs"], exclude = ["src/proofs.rs"]) + ["//crates/controller:src/kernel_boundary.rs"],
                 expected_obligations = count,
                 module = module,
                 tags = ["rust", "verus"],

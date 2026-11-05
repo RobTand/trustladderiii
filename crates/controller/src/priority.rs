@@ -80,7 +80,24 @@ impl crate::Controller {
         Ok(true)
     }
 
-    fn reread(&mut self, id: &str, mut row: crate::Reconcile, now: u64) -> crate::Result<()> {
+    fn reread(&mut self, id: &str, row: crate::Reconcile, now: u64) -> crate::Result<()> {
+        self.submit_kernel_input(
+            format!("priority-read:{id}:{}:{}", row.generation, row.attempts),
+            crate::input_errors::PendingKernelInput::PriorityReread {
+                id: id.into(),
+                row,
+                now,
+            },
+        )
+        .map(|_| ())
+    }
+
+    pub(crate) fn prepare_reread(
+        &mut self,
+        id: &str,
+        mut row: crate::Reconcile,
+        now: u64,
+    ) -> crate::Result<tl3_store::Commit> {
         use serde_json::json;
         let read = self
             .adapters
@@ -176,7 +193,7 @@ impl crate::Controller {
                 ));
             }
             if world.nodes[node.0 as usize].priority != *priority {
-                self.apply_or_defer(
+                self.apply(
                     &snapshot,
                     world,
                     tl3_kernel::Event::Fact {
@@ -187,8 +204,7 @@ impl crate::Controller {
                 )?;
             }
         }
-        self.store.commit(&commit)?;
-        Ok(())
+        Ok(commit)
     }
 }
 
