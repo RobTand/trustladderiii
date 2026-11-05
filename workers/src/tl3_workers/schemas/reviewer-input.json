@@ -9,54 +9,6 @@
       ],
       "type": "string"
     },
-    "CheckResult": {
-      "additionalProperties": false,
-      "properties": {
-        "custody": {
-          "$ref": "#/$defs/Custody"
-        },
-        "declared_symptom": {
-          "$ref": "#/$defs/DeclaredSymptom"
-        },
-        "forcing": {
-          "$ref": "#/$defs/Forcing"
-        },
-        "kind": {
-          "$ref": "#/$defs/CheckKind"
-        },
-        "name": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "proof": {
-          "$ref": "#/$defs/ProofReceipt"
-        },
-        "selection": {
-          "$ref": "#/$defs/Selection"
-        },
-        "symptom_evidence": {
-          "$ref": "#/$defs/SymptomEvidence"
-        },
-        "tests": {
-          "items": {
-            "$ref": "#/$defs/TestResult"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "verdict": {
-          "$ref": "#/$defs/Verdict"
-        }
-      },
-      "required": [
-        "name",
-        "kind",
-        "verdict",
-        "custody",
-        "tests"
-      ],
-      "type": "object"
-    },
     "CollectionSaturation": {
       "additionalProperties": false,
       "properties": {
@@ -1353,7 +1305,52 @@
     "checks": {
       "description": "The stored harness check report's results, unchanged. Their shape is generated from the Rust contract types (check-report.json).",
       "items": {
-        "$ref": "#/$defs/CheckResult"
+        "additionalProperties": false,
+        "properties": {
+          "custody": {
+            "$ref": "#/$defs/Custody"
+          },
+          "declared_symptom": {
+            "$ref": "#/$defs/DeclaredSymptom"
+          },
+          "forcing": {
+            "$ref": "#/$defs/Forcing"
+          },
+          "kind": {
+            "$ref": "#/$defs/CheckKind"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "proof": {
+            "$ref": "#/$defs/ProofReceipt"
+          },
+          "selection": {
+            "$ref": "#/$defs/Selection"
+          },
+          "symptom_evidence": {
+            "$ref": "#/$defs/SymptomEvidence"
+          },
+          "tests": {
+            "items": {
+              "$ref": "#/$defs/TestResult"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "verdict": {
+            "$ref": "#/$defs/Verdict"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "verdict",
+          "custody",
+          "tests"
+        ],
+        "type": "object"
       },
       "type": "array"
     },
