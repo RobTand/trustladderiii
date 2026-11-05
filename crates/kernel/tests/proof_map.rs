@@ -87,6 +87,8 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_upstream_stalled", "facts_upstream_stalled"),
     ("gate_grant_w2", "retirement_gate"),
     ("gate_grant_w3", "retirement_gate"),
+    ("gate_leaf_progress_w2", "progress_gate_leaf_sequence"),
+    ("gate_leaf_progress_w3", "progress_gate_leaf_sequence"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.
