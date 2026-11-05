@@ -46,7 +46,7 @@ verus_test = rule(
 def verus_proofs():
     """Proof inventory in existing crate packages; generated BUILD files stay Cargo-only."""
     if native.package_name() == "crates/harness-core":
-        for group, count in {"judge": 5, "phase": 5, "finish": 7}.items():
+        for group, count in {"judge": 10, "phase": 9, "finish": 8}.items():
             verus_test(
                 name = "verus_" + group,
                 src = "verus/" + group + ".rs",

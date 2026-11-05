@@ -520,7 +520,100 @@ fn phase_agrees(run: &crate::contracts::report::PhaseRun, outcome: Outcome) -> b
 
 /// #822: replay only represented facts. Shell overrides and symptom campaigns are separate.
 fn rejudged(report: &Report, job: &Job) -> bool {
-    true // #822 red: controller has not re-judged the report yet.
+    for (index, result) in report.results.iter().enumerate() {
+        let check = job.run.plan.get(index);
+        if result.declared_symptom.is_some() {
+            continue;
+        }
+        let mut infrastructure = false;
+        for test in result.tests.iter() {
+            if test.head_forced.is_some() && result.forcing.is_none() {
+                return false;
+            }
+            if let Some(phases) = &test.phases {
+                for (run, outcome) in [
+                    (phases.base(), Some(test.base)),
+                    (phases.head(), Some(test.head)),
+                    (phases.head_forced(), test.head_forced),
+                ] {
+                    if let Some(run) = run {
+                        let Some(outcome) = outcome else { return false };
+                        if !phase_agrees(run, outcome) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            let reason = if check.is_some_and(|check| check.proof.is_some()) {
+                if result
+                    .proof
+                    .as_ref()
+                    .and_then(|proof| proof.red_message_matches.as_ref())
+                    .is_some_and(|matches| matches.contains_key(test.test.as_str()))
+                {
+                    core_judge::Reason::Matched
+                } else {
+                    core_judge::Reason::Mismatch
+                }
+            } else {
+                core_judge::Reason::Undeclared
+            };
+            let input = core_judge::Input {
+                kind: result.kind.into(),
+                base: test.base.into(),
+                head: test.head.into(),
+                forced: test.head_forced.map(Into::into),
+                reason,
+            };
+            let decision = core_judge::judge(input);
+            infrastructure |= decision.infrastructure;
+            if decision.pre_existing != test.pre_existing {
+                return false;
+            }
+            if check.is_none() {
+                continue;
+            } // Always-tests and selected groups have extra shell rules.
+            if result.forcing.is_some() && test.head_forced.is_none() {
+                if test.passed {
+                    return false;
+                }
+                continue; // A refusal before execution has no forced-head observation.
+            }
+            let unknown_reason = matches!(test.base, Outcome::Assertion)
+                && check.is_some_and(|check| check.proof.is_some())
+                && result
+                    .proof
+                    .as_ref()
+                    .is_some_and(|proof| proof.red_message_matches.is_none());
+            let changed_test = matches!(result.kind, Kind::Regression | Kind::BehaviorPreserving)
+                && job
+                    .changed_paths
+                    .iter()
+                    .any(|path| path == test.test.as_str().split("::").next().unwrap_or(""));
+            if unknown_reason {
+                let possible = core_judge::judge(core_judge::Input {
+                    reason: core_judge::Reason::Matched,
+                    ..input
+                });
+                if test.passed && !possible.passed {
+                    return false;
+                }
+            } else if test.passed != decision.passed && !(changed_test && !test.passed) {
+                return false;
+            }
+        }
+        let verdict = if infrastructure {
+            Verdict::InfrastructureFailure
+        } else if result.tests.iter().all(|test| test.passed) {
+            Verdict::Pass
+        } else {
+            Verdict::Fail
+        };
+        if verdict != result.verdict {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]

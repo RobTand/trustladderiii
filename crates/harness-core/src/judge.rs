@@ -4,6 +4,7 @@
 use vstd::prelude::*;
 
 // SEAM(planner-contracts): replace with contracts type when shared.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Demonstrating,
@@ -12,6 +13,7 @@ pub enum Kind {
     BehaviorPreserving,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Passed,
@@ -25,6 +27,7 @@ pub enum Outcome {
 }
 
 /// #709/#713: capture validates the declaration and call-phase match together.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
     Undeclared,
@@ -33,6 +36,7 @@ pub enum Reason {
     DeclaredSymptom,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Input {
     pub kind: Kind,
@@ -42,6 +46,7 @@ pub struct Input {
     pub reason: Reason,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Decision {
     pub passed: bool,
@@ -84,7 +89,42 @@ pub struct Decision {
     ),
 ))]
 pub fn judge(input: Input) -> Decision {
-    todo!("#822: parity red stub")
+    let pre_existing = matches!(input.kind, Kind::Regression)
+        && matches!(input.base, Outcome::Assertion | Outcome::Error);
+    let infrastructure = matches!(input.base, Outcome::NoReport)
+        || matches!(input.head, Outcome::NoReport)
+        || matches!(input.forced, Some(Outcome::NoReport));
+    let candidate = match input.kind {
+        Kind::Demonstrating if input.forced.is_some() => {
+            matches!(input.base, Outcome::Assertion)
+                && matches!(input.head, Outcome::Passed)
+                && matches!(input.forced, Some(Outcome::Passed))
+        }
+        Kind::Demonstrating | Kind::Reproducing => {
+            matches!(input.base, Outcome::Assertion | Outcome::AddedName)
+                && matches!(input.head, Outcome::Passed)
+        }
+        Kind::Regression => {
+            let available = !matches!(
+                input.base,
+                Outcome::Skipped | Outcome::Missing | Outcome::Uncollected | Outcome::NoReport
+            );
+            available
+                && (matches!(input.head, Outcome::Passed)
+                    || pre_existing && matches!(input.head, Outcome::Assertion | Outcome::Error))
+        }
+        Kind::BehaviorPreserving => {
+            matches!(input.base, Outcome::Passed) && matches!(input.head, Outcome::Passed)
+        }
+    };
+    let reason_ok = !matches!(input.base, Outcome::Assertion)
+        || !matches!(input.kind, Kind::Demonstrating | Kind::Reproducing)
+        || matches!(input.reason, Reason::Matched | Reason::DeclaredSymptom);
+    Decision {
+        passed: candidate && reason_ok,
+        pre_existing,
+        infrastructure,
+    }
 }
 
 #[cfg(not(verus_keep_ghost))]

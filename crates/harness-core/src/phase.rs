@@ -3,6 +3,7 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     Setup,
@@ -11,6 +12,7 @@ pub enum Phase {
     WorkerCrash,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Passed,
@@ -18,6 +20,7 @@ pub enum Status {
     Skipped,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fact {
     pub phase: Phase,
@@ -25,6 +28,7 @@ pub struct Fact {
     pub assertion: bool,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fold {
     Passed,
@@ -49,7 +53,22 @@ pub enum Fold {
         && matches!(fact.status, Status::Passed)),
 ))]
 pub fn summary_step(folded: Fold, fact: Fact) -> Fold {
-    todo!("#822: parity red stub")
+    if matches!(folded, Fold::Error)
+        || matches!(fact.status, Status::Failed)
+            && (!matches!(fact.phase, Phase::Call) || !fact.assertion)
+    {
+        Fold::Error
+    } else if matches!(folded, Fold::Failed)
+        || matches!(fact.status, Status::Failed)
+            && matches!(fact.phase, Phase::Call)
+            && fact.assertion
+    {
+        Fold::Failed
+    } else if matches!(folded, Fold::Skipped) || matches!(fact.status, Status::Skipped) {
+        Fold::Skipped
+    } else {
+        Fold::Passed
+    }
 }
 
 /// #706: check mode skips before interpreting a call failure; external failures dominate.
@@ -69,5 +88,31 @@ pub fn summary_step(folded: Fold, fact: Fact) -> Fold {
     }}),
 ))]
 pub fn checking(setup: Status, call: Option<Fact>, teardown: Status) -> Option<Fold> {
-    todo!("#822: parity red stub")
+    if matches!(setup, Status::Failed) || matches!(teardown, Status::Failed) {
+        return Some(Fold::Error);
+    }
+    if matches!(setup, Status::Skipped)
+        || matches!(teardown, Status::Skipped)
+        || matches!(
+            call,
+            Some(Fact {
+                status: Status::Skipped,
+                ..
+            })
+        )
+    {
+        return Some(Fold::Skipped);
+    }
+    match call {
+        None => None,
+        Some(fact) => Some(if matches!(fact.status, Status::Failed) {
+            if fact.assertion {
+                Fold::Failed
+            } else {
+                Fold::Error
+            }
+        } else {
+            Fold::Passed
+        }),
+    }
 }
