@@ -766,11 +766,11 @@ fn mandatory_invalid_commit_ids_before_any_read() {
     let mut s = fixture();
     s.delivery.head_sha = Some("invalid".into());
     let r = compare(&s);
-    assert!(r.result.unwrap_err().contains("invalid commit id"));
+    assert!(r.result.unwrap_err().contains("invalid_commit"));
     assert!(r.trace.is_empty());
     let mut s = reviewed();
     s.session = Some(json!({"head_sha":"invalid"}));
     let r = compare(&s);
-    assert!(r.result.unwrap_err().contains("invalid commit id"));
+    assert!(r.result.unwrap_err().contains("invalid_commit"));
     assert!(r.trace.is_empty());
 }

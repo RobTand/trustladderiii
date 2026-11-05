@@ -101,12 +101,22 @@ pub mod selection {
                 forall|a: int, b: int| 0 <= a < b < out.len() ==> out[a] < out[b],
             decreases flags.len() - i,
         ] {
+            #[cfg(verus_keep_ghost)]
+            let previous = vstd::prelude::verus_exec_expr! { Ghost(out@) };
             if flags[i] { out.push(i); }
             #[cfg(verus_keep_ghost)]
             vstd::prelude::proof! {
                 assert forall|j: int| 0 <= j < i + 1 implies
                     out@.contains(j as usize) == flags[j] by {
                     if j < i {
+                        assert(previous@.contains(j as usize) == flags[j]);
+                        if flags[i as int] {
+                            assert(out@ == previous@.push(i));
+                            assert(j as usize != i);
+                            assert(out@.contains(j as usize) == previous@.contains(j as usize));
+                        } else {
+                            assert(out@ == previous@);
+                        }
                     } else {
                         assert(j == i);
                         if flags[i as int] {
