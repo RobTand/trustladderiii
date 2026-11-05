@@ -1317,12 +1317,16 @@ fn killed_worker(settings: &tl3_config::Store) {
         .unwrap();
     assert!(status.success());
     assert!(failed(&terminal(&mut supervisor, &delivery)));
-    // A lost terminal record proves absence only after both processes ended.
+    // Q7: once both processes ended, a lost terminal record is infrastructure
+    // failure evidence, without reading the uncommitted stdout as a reply.
     fs::remove_file(root_for(&config, &delivery.key).join("attempt-00000000/exit.json")).unwrap();
-    assert!(matches!(
-        supervisor.reconcile(&delivery).unwrap(),
-        Reconciliation::Absent
-    ));
+    let Reconciliation::Found(completion) = supervisor.reconcile(&delivery).unwrap() else {
+        panic!("lost terminal record must produce an infrastructure ending");
+    };
+    assert!(matches!(completion.observations.as_slice(),
+        [Observation::WorkerFailed { node, generation, failure_class, .. }]
+            if *node == delivery.node() && *generation == delivery.generation
+                && failure_class == "LostWorker"));
     fs::write(root.path().join("entered.release"), "go").unwrap();
     supervisor.execute(&delivery).unwrap();
     supervisor.execute(&delivery).unwrap();
@@ -1800,7 +1804,13 @@ fn killed_supervisor(settings: &tl3_config::Store) {
     source.poll_once(&mut store, &tx).unwrap();
     assert!(rx.try_recv().is_err());
     fs::write(root.path().join("entered.release"), "go").unwrap();
-    wait_for_signal(|| matches!(supervisor.reconcile(&run).unwrap(), Reconciliation::Absent));
+    wait_for_signal(|| {
+        matches!(supervisor.reconcile(&run).unwrap(),
+        Reconciliation::Found(completion) if matches!(completion.observations.as_slice(),
+            [Observation::WorkerFailed { node, generation, failure_class, .. }]
+                if *node == run.node() && *generation == run.generation
+                    && failure_class == "LostWorker"))
+    });
     assert!(!attempt.join("exit.json").exists());
     assert!(
         rx.try_recv().is_err(),
