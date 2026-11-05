@@ -30,7 +30,7 @@ pub fn transition(
 ) -> bool {
     match kind {
         Step::Character => diagonal && accepts,
-        Step::Star => same || left && !separator,
+        Step::Star => same || left,
         Step::NonemptyStar => (diagonal || left) && !separator,
         Step::Recursive => same || left,
         Step::Directories => same || older && separator,
