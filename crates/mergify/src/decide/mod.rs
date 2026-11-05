@@ -39,3 +39,7 @@ pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
 pub const MERGIFY_APP_ID: u64 = 10562;
 pub const MERGIFY_APP_SLUG: &str = "mergify";
 pub const QUEUE_LABEL: &str = "tl3-queue";
+
+pub mod completion;
+
+pub mod required;
