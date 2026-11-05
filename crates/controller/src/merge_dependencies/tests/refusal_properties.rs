@@ -1954,7 +1954,10 @@ fn deadlock_retains_input_and_replays_without_incident() {
         assert_eq!(business_bytes(&mut c), before);
         assert_eq!(c.held_effects, holds);
         assert_eq!(c.postmortem_since, 77);
-        assert_eq!(input_rows(&c.snapshot().unwrap()), [row.id.clone()]);
+        assert_eq!(
+            input_rows(&c.snapshot().unwrap()).as_slice(),
+            std::slice::from_ref(&row.id)
+        );
     }
     c.store.set_boundary_hook(|_, _, _| {});
     assert!(c.drive_once().unwrap());
