@@ -249,7 +249,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
     finally:
         stop.set()
     load_calls = pending.result()
-assert len(calls) == 4 and load_calls > 1, (calls, load_calls)
+assert sum(row['operation'] == 'generator-finish' for row in calls) == 4 and load_calls > 1, (calls, load_calls)
 print('PB_ARTIFACT_TRANSPORT ' + json.dumps({'load': 'one concurrent CLI canonical loop, 256 KiB per call', 'load_calls': load_calls, 'calls': calls}), file=sys.stderr)
 print(json.dumps({'done': 2}))
 "#;
