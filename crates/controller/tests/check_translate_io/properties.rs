@@ -494,7 +494,7 @@ fn mandatory_checks_bounds_unicode_duplicates_and_evidence() {
     let path = "é".repeat(4100);
     let changed = (0..103)
         .map(|i| format!("{path}{i}"))
-        .chain([path.clone(), path])
+        .chain([path.clone(), path.clone()])
         .collect::<Vec<_>>();
     let failed = (0..22)
         .map(|_| findings::FailedTest {
