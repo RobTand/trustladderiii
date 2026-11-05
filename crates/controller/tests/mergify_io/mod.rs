@@ -656,6 +656,8 @@ mod properties {
                     "queue_command",
                     "recovery_decide",
                     "recovery_now_ms",
+                    "command_stage",
+                    "legacy_command",
                 ],
             ),
         ] {
@@ -1001,6 +1003,116 @@ impl QueueFact {
 }
 
 mod a1_r1;
+
+// Group B1: append-only recovery-protocol reachability.
+mod recovery_reachability {
+    use super::*;
+    use io::{Entry, Frame, Profile, ReadOverride, Schedule};
+    fn stable(profile: Profile) -> Schedule {
+        Schedule {
+            profile,
+            initial: 0,
+            frames: vec![],
+            appears_at: usize::MAX,
+            write_results: vec![],
+            overrides: vec![],
+            file_results: vec![],
+        }
+    }
+    fn over(s: &mut Schedule, op: &str, suffix: &str, nth: usize, word: u16) {
+        s.overrides.push(ReadOverride {
+            op: op.into(),
+            suffix: suffix.into(),
+            nth,
+            frame: Frame {
+                word,
+                elapsed_ms: 0,
+            },
+        });
+    }
+    /// #608: every spent head budget prevents another command or archive read.
+    #[test]
+    fn mandatory_budget_exhausted() {
+        for initial in [128, 136, 152, 160, 168] {
+            let mut s = stable(Profile::Command);
+            s.initial = initial;
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_no_op(&s, Entry::Command, "github.command");
+            io::require_no_op(&s, Entry::Command, "store.effects");
+        }
+    }
+    /// #608: effect-keyed Sending and Refused receipts are adopted, never resent.
+    #[test]
+    fn mandatory_legacy_adoption() {
+        for (initial, command) in [(66, "Sending"), (68, "Refused")] {
+            let mut s = stable(Profile::Command);
+            s.initial = initial;
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_recovery(&s, Entry::Command, command, None);
+            io::require_no_op(&s, Entry::Command, "github.command");
+        }
+    }
+    /// #608: both the per-head and legacy effect marker establish Sent.
+    #[test]
+    fn mandatory_sent_detection() {
+        for word in [1, 9] {
+            let mut s = stable(Profile::Command);
+            over(&mut s, "github.comments", "#100", 0, word);
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_recovery(&s, Entry::Command, "Sent", None);
+            io::require_no_op(&s, Entry::Command, "github.command");
+        }
+    }
+    /// #608/#2705: success, 403, other 4xx, rate limit, and unknown outcomes.
+    #[test]
+    fn mandatory_command_results() {
+        for (mode, command) in [
+            (0, "Sent"),
+            (1, "PermissionDenied"),
+            (2, "Rejected"),
+            (3, "Sending"),
+            (4, "Sending"),
+            (6, "Rejected"),
+        ] {
+            let mut s = stable(Profile::Command);
+            s.write_results = vec![mode];
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_ops(&s, Entry::Command, &["github.command"]);
+            io::require_recovery(&s, Entry::Command, command, None);
+            if mode == 1 {
+                io::require_ack(&s, Entry::Command, "Permanent");
+            }
+            if mode > 1 {
+                io::require_error(&s, Entry::Command);
+            }
+        }
+    }
+    /// #447/#608: an ineligible tick resets the existing timer before returning.
+    #[test]
+    fn mandatory_ineligible_tick() {
+        let mut s = stable(Profile::Waiting);
+        over(&mut s, "github.issue", "#100", 0, 1);
+        io::compare(&s, Entry::Waiting).unwrap();
+        io::require_recovery(&s, Entry::Waiting, "Ready", None);
+        io::require_no_op(&s, Entry::Waiting, "clock.now");
+        io::require_no_op(&s, Entry::Waiting, "github.command");
+    }
+    /// #608/#751: the Sending save is fenced before POST; held commands never fence.
+    #[test]
+    fn mandatory_fence_on_sending() {
+        let s = stable(Profile::Command);
+        io::compare(&s, Entry::Command).unwrap();
+        io::require_command_fence(&s);
+        let mut s = stable(Profile::Command);
+        over(&mut s, "github.events", "#100", 0, 1);
+        io::compare(&s, Entry::Command).unwrap();
+        io::require_no_op(&s, Entry::Command, "github.command");
+        io::require_no_op(&s, Entry::Command, "file.exists");
+    }
+}
+
+// Group B1 r1: real snapshot projection bodies, independently source-pinned.
+mod recovery_projections;
 
 // ctrl-core C1: isolated direct evaluators reuse the entire pinned head-check shell.
 mod required_c1 {
