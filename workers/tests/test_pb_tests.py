@@ -654,3 +654,19 @@ def test_run_tests_tool_never_returns_operator_stderr(submission, mode):
     observed, _ = invoke(submission, result, args)
     assert 'stderr_tail' not in json.dumps(observed)
     assert 'operator-only instruction' not in json.dumps(observed)
+
+
+def test_stderr_raw_boundary_keeps_section_context_before_redaction(tmp_path):
+    """#826: dropping an incomplete first line must not erase a retained credential section."""
+    from tl3_harness.supervision import Supervised, ExecutionOutcome, MAX_STDERR_BYTES
+    from tl3_workers.tracing import Redactor
+    secret = 'zE9!pR4#cV7$'
+    header = b'[passwords]\n'
+    process = Supervised([], None, ())
+    process.capture_stderr(b'x' * MAX_STDERR_BYTES)
+    process.capture_stderr(header + b'.' * (MAX_STDERR_BYTES - len(header)))
+    process.capture_stderr(('\nvalue = ' + secret + '\ncontainer shim refused').encode())
+    diagnostic = process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report').operator_json()
+    assert secret not in json.dumps(diagnostic), 'boundary omission erased a retained section label'
+    assert secret not in Redactor(None).text(json.dumps(diagnostic))
+    assert 'container shim refused' in diagnostic['stderr_tail']
