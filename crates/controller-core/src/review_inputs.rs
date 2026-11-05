@@ -113,7 +113,21 @@ pub mod selection {
                         if flags[i as int] {
                             assert(out@ == previous@.push(i));
                             assert(j as usize != i);
-                            assert(out@.contains(j as usize) == previous@.contains(j as usize));
+                            if previous@.contains(j as usize) {
+                                let k = choose|k: int| 0 <= k < previous@.len() && previous@[k] == j as usize;
+                                assert(out@[k] == j as usize);
+                                assert(out@.contains(j as usize));
+                            } else {
+                                assert forall|k: int| 0 <= k < out.len() implies out[k] != j as usize by {
+                                    if k < previous@.len() {
+                                        assert(previous@[k] != j as usize);
+                                    } else {
+                                        assert(k == previous@.len());
+                                        assert(out@[k] == i);
+                                    }
+                                };
+                                assert(!out@.contains(j as usize));
+                            }
                         } else {
                             assert(out@ == previous@);
                         }
