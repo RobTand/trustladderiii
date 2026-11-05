@@ -1,9 +1,14 @@
 //! Check runs as small enums. The adapter parses GitHub's strings into these
 //! at its boundary; every decision in this crate reads only the enums.
 
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
 use super::{MERGIFY_APP_ID, MERGIFY_APP_SLUG, QUEUE_CHECK, QUEUE_RULE_CHECK};
 
 /// A check run's or check suite's `status`.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Status {
@@ -54,6 +59,8 @@ impl Status {
 }
 
 /// A check run's `conclusion`. A missing conclusion is `Option::None`.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Conclusion {
@@ -115,12 +122,17 @@ impl Conclusion {
     }
 
     /// A conclusion that lets a merge or a required check pass.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+        ensures result == matches!(self, Self::Success | Self::Skipped | Self::Neutral),
+    ))]
     pub fn passing(self) -> bool {
         matches!(self, Self::Success | Self::Skipped | Self::Neutral)
     }
 }
 
 /// Whether a check run is on the head the caller reads.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Head {
@@ -129,6 +141,8 @@ pub enum Head {
 }
 
 /// The GitHub App that posted a check run.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum App {
@@ -155,12 +169,17 @@ impl App {
     }
 
     /// The slug is `mergify`, whatever the app ID.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+        ensures result == matches!(self, Self::Mergify | Self::MergifySlug),
+    ))]
     pub fn mergify_slug(self) -> bool {
         matches!(self, Self::Mergify | Self::MergifySlug)
     }
 }
 
 /// The check names Mergify's decisions single out.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Name {
@@ -181,6 +200,8 @@ impl Name {
 
 /// A UTC time as Unix seconds plus nanoseconds, ordered as chrono orders it.
 /// Leap seconds carry nanoseconds of 1e9 or more.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Time {
@@ -190,6 +211,8 @@ pub struct Time {
 
 /// One check run, parsed. Keys are interned by the adapter: equal keys mean
 /// equal strings or app IDs within one read.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct CheckView {
@@ -209,6 +232,9 @@ pub struct CheckView {
 }
 
 impl CheckView {
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+        ensures result == (self.status == Status::Completed),
+    ))]
     pub fn completed(&self) -> bool {
         self.status == Status::Completed
     }
@@ -217,6 +243,11 @@ impl CheckView {
 /// Whether `checks[i]` is a member that a `BTreeMap` keyed by group keeps,
 /// filled in order with `entry(key).or_insert(check)` and replaced only by a
 /// strictly larger ID: the first member with the largest ID in its group.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    requires callbacks(checks@, member, same),
+    ensures forall|by_app: bool| grouping(checks@, member, same, by_app) ==>
+        result == kept(checks@, i as int, by_app),
+))]
 pub fn newest_first(
     checks: &[CheckView],
     i: usize,
@@ -230,16 +261,72 @@ pub fn newest_first(
         return false;
     }
     let mut j = 0;
-    while j < checks.len() {
+    decide_while! { (j < checks.len()) [
+        invariant j <= checks@.len(), i < checks@.len(), *check == checks@[i as int],
+            callbacks(checks@, member, same),
+            member.ensures((check,), true),
+            forall|by_app: bool| grouping(checks@, member, same, by_app) ==>
+                kept_prefix(checks@, i as int, j as int, by_app),
+        decreases checks@.len() - j,
+    ] {
         let other = &checks[j];
-        if j != i
-            && member(other)
-            && same(other, check)
+        decide_proof! { assert(same.requires((other, check))); }
+        if j != i && member(other) && same(other, check)
             && (other.id > check.id || j < i && other.id == check.id)
         {
+            decide_proof! {
+                assert forall|by_app: bool| grouping(checks@, member, same, by_app)
+                    implies !kept(checks@, i as int, by_app) by {
+                    assert(member.ensures((other,), true));
+                    assert(same.ensures((other, check), true));
+                    assert(other.head == Head::Current);
+                    assert(other.name_key == check.name_key && (!by_app || other.app_key == check.app_key));
+                }
+            }
             return false;
         }
+        decide_proof! {
+            assert forall|by_app: bool| grouping(checks@, member, same, by_app)
+                implies kept_prefix(checks@, i as int, j as int + 1, by_app) by {
+                assert(kept_prefix(checks@, i as int, j as int, by_app));
+                assert(other.head != Head::Current
+                    || other.name_key != check.name_key
+                    || by_app && other.app_key != check.app_key
+                    || other.id < check.id || other.id == check.id && j >= i);
+            }
+        }
         j += 1;
-    }
+    } }
     true
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #743: callbacks are callable on every possible list member.
+pub open spec fn callbacks(c: Seq<CheckView>, member: impl Fn(&CheckView) -> bool,
+    same: impl Fn(&CheckView, &CheckView) -> bool) -> bool {
+    (forall|j: int| 0 <= j < c.len() ==> #[trigger] member.requires((&c[j],)))
+    && (forall|j: int, k: int| 0 <= j < c.len() && 0 <= k < c.len() ==>
+        #[trigger] same.requires((&c[j], &c[k])))
+}
+/// #743: callback postconditions identify the original two BTreeMap key choices.
+pub open spec fn grouping(c: Seq<CheckView>, member: impl Fn(&CheckView) -> bool,
+    same: impl Fn(&CheckView, &CheckView) -> bool, by_app: bool) -> bool {
+    (forall|j: int, r: bool| 0 <= j < c.len() && member.ensures((&c[j],), r) ==>
+        r == (c[j].head == Head::Current))
+    && (forall|j: int, k: int, r: bool| 0 <= j < c.len() && 0 <= k < c.len()
+        && same.ensures((&c[j], &c[k]), r) ==>
+        r == (c[j].name_key == c[k].name_key && (!by_app || c[j].app_key == c[k].app_key)))
+}
+/// #743: a candidate is the first maximum against the already scanned prefix.
+pub open spec fn kept_prefix(c: Seq<CheckView>, i: int, n: int, by_app: bool) -> bool {
+    0 <= i < c.len() && c[i].head == Head::Current
+        && forall|j: int| 0 <= j < n && c[j].head == Head::Current
+            && c[j].name_key == c[i].name_key && (!by_app || c[j].app_key == c[i].app_key) ==>
+            c[j].id < c[i].id || c[j].id == c[i].id && j >= i
+}
+/// #743: BTreeMap entry/or_insert retains the first maximum by app/name or name.
+pub open spec fn kept(c: Seq<CheckView>, i: int, by_app: bool) -> bool {
+    kept_prefix(c, i, c.len() as int, by_app)
+}
 }
