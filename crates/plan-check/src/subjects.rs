@@ -1,7 +1,9 @@
-pub fn subject_covers(_chosen: &str, _subject: &str) -> bool {
-    todo!("P2b2 subject coverage parity")
+mod decision;
+
+pub fn subject_covers(chosen: &str, subject: &str) -> bool {
+    decision::covers(chosen.as_bytes(), subject.as_bytes())
 }
 
-pub fn overlaps(_left: &str, _right: &str) -> bool {
-    todo!("P2b2 subject overlap parity")
+pub fn overlaps(left: &str, right: &str) -> bool {
+    subject_covers(left, right) || subject_covers(right, left)
 }
