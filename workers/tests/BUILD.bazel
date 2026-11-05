@@ -1186,6 +1186,50 @@ tl3_py_test(
     ],
 )
 
+py_library(
+    name = "planner_vectors",
+    srcs = ["planner_vectors.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_vectors",
+    srcs = ["test_planner_vectors.py"],
+    deps = [
+        ":conftest",
+        ":planner_vectors",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_binary(
+    name = "planner_vectors_record",
+    testonly = True,
+    srcs = ["planner_vectors_record.py"],
+    data = glob([
+        "*.py",
+        "*.json.gz",
+    ]) + [
+        "//harness:project_files",
+        "//workers:runtime_files",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":checker_stub",
+        ":planner_fixtures",
+        ":planner_vectors",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
 filegroup(
     name = "prompt_render_recordings",
     srcs = [
