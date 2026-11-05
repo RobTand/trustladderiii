@@ -146,7 +146,19 @@ fn every_event_and_phase_has_a_proof() {
         );
         proven.insert(retired.to_string());
     }
-    assert!(VERUS_GROUPS.contains("\"retirement\": (\"kernel::retirement\","));
+    for function in [
+        "merge_input_distance",
+        "node_frame",
+        "fact_preserves_node",
+        "fact_preserves_world",
+        "verify_selected_apply",
+        "infrastructure_frame",
+        "infrastructure_result",
+    ] {
+        assert!(VERUS_GROUPS.contains(&format!(
+            "\"retirement_{function}\": (\"kernel::retirement#{function}\", 1)"
+        )));
+    }
     assert!(VERUS_GROUPS.contains("\"retirement_witness\": (\"kernel::retirement_witness\","));
     let missing: Vec<_> = mapped.difference(&proven).collect();
     let unmapped: Vec<_> = proven.difference(&mapped).collect();
