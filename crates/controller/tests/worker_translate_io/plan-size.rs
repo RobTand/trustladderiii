@@ -1,41 +1,65 @@
 use super::*;
 pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
+    const {
+        assert!(MAX_REPORT_LINE_BYTES as u64 == tl3_harness_core::limits::MAX_REPORT_LINE_BYTES);
+        assert!(
+            super::results::MAX_RESULT_BYTES as u64 == tl3_harness_core::limits::MAX_RESULT_BYTES
+        );
+        assert!(
+            (65536
+                + crate::findings::MAX_FAILED_TESTS * crate::findings::MAX_MESSAGE_CHARS * 12
+                + 2) as u64
+                == tl3_harness_core::limits::INITIAL_RESULT_BYTES
+        );
+    }
+    use tl3_harness_core::limits::{
+        add_cost, check_cost, measured_bytes, plan_line_fits, result_fits, test_cost,
+    };
     let tests: BTreeSet<_> = plan.iter().flat_map(|check| &check.tests).collect();
     let collection = serde_json::to_vec(&serde_json::json!({"event":"collection", "tests":tests}))?;
-    // Python's event encoding adds three object spaces, list separators and a newline.
-    let collection_bytes = collection.len() + 4 + tests.len().saturating_sub(1);
-    let oversized_phase = tests.iter().try_fold(false, |oversized, test| {
+    // Preserve this caller's UTF-8 collection and compact ASCII result costs.
+    let collection_bytes = add_cost(
+        measured_bytes(collection.len() as u128),
+        add_cost(4, measured_bytes(tests.len().saturating_sub(1) as u128)),
+    );
+    let largest_phase = tests.iter().try_fold(0, |largest: u64, test| {
         serde_json::to_vec(test)
-            .map(|bytes| oversized || bytes.len() + 8192 > MAX_REPORT_LINE_BYTES)
+            .map(|bytes| largest.max(add_cost(measured_bytes(bytes.len() as u128), 8192)))
     })?;
-    if collection_bytes > MAX_REPORT_LINE_BYTES || oversized_phase {
+    if !plan_line_fits(collection_bytes, largest_phase) {
         return Err(Error::Invalid(
             "Check plan exceeds the 4194304-byte report limit; reduce the selected tests or parameter cases.",
         ));
     }
-    let mut result_bytes =
-        65536 + crate::findings::MAX_FAILED_TESTS * crate::findings::MAX_MESSAGE_CHARS * 12 + 2;
+    let mut result_bytes = tl3_harness_core::limits::INITIAL_RESULT_BYTES;
     for check in plan {
         let mut header = serde_json::json!({
             "name":check.name, "kind":check.kind, "custody":"in-process",
             "verdict":"infrastructure-failure", "tests":[],
         });
         if let Some(forcing) = &check.forcing {
-            // A forced check's result echoes its forcing, and each test gains head_forced (#393).
             header["forcing"] = serde_json::to_value(forcing)?;
         }
-        if matches!(check.kind, Kind::Demonstrating | Kind::Reproducing) {
-            result_bytes += 65536;
-            if let Some(proof) = &check.proof {
-                result_bytes += ascii_json_bytes(&serde_json::to_value(proof)?)?;
-            }
-        }
+        let proof_bytes = if matches!(check.kind, Kind::Demonstrating | Kind::Reproducing) {
+            Some(if let Some(proof) = &check.proof {
+                measured_bytes(ascii_json_bytes(&serde_json::to_value(proof)?)? as u128)
+            } else {
+                0
+            })
+        } else {
+            None
+        };
         if let Some(symptom) = &check.declared_symptom {
             header["declared_symptom"] = serde_json::to_value(symptom)?;
-            // Up to thirty reports, each with a bounded pytest traceback and identity.
-            result_bytes += 384 * 1024;
         }
-        result_bytes += ascii_json_bytes(&header)? + 1;
+        result_bytes = add_cost(
+            result_bytes,
+            check_cost(
+                measured_bytes(ascii_json_bytes(&header)? as u128),
+                proof_bytes,
+                check.declared_symptom.is_some(),
+            ),
+        );
         for test in &check.tests {
             let mut case = serde_json::json!({
                 "test":test, "base":"uncollected", "head":"uncollected",
@@ -44,13 +68,14 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
             if check.forcing.is_some() {
                 case["head_forced"] = "uncollected".into();
             }
-            result_bytes += ascii_json_bytes(&case)? + 1;
-            // Match the harness reservation: three bounded phase facts and the concrete node per side.
-            let sides = if check.forcing.is_some() { 3 } else { 2 };
-            result_bytes +=
-                sides * (3 * (200 * 12 + 100) + 100 + ascii_json_bytes(&serde_json::json!(test))?);
+            let case_bytes = measured_bytes(ascii_json_bytes(&case)? as u128);
+            let node_bytes = measured_bytes(ascii_json_bytes(&serde_json::json!(test))? as u128);
+            result_bytes = add_cost(
+                result_bytes,
+                test_cost(case_bytes, node_bytes, check.forcing.is_some()),
+            );
         }
-        if result_bytes > super::results::MAX_RESULT_BYTES {
+        if !result_fits(result_bytes) {
             return Err(Error::Invalid(
                 "Check plan exceeds the 8388608-byte result limit; reduce the selected tests or checks.",
             ));
@@ -58,6 +83,7 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
     }
     Ok(())
 }
+
 fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {
     Ok(serde_json::to_string(value)?
         .chars()
