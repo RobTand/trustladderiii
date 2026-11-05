@@ -446,11 +446,15 @@ pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Obse
 // The current arm resolves `adapters::workers::reproducing` to the current
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared
-// shim spans the changed leaf. Every other adapter module is shared, unchanged.
+// shim spans the changed leaf. P2b-1 also gives protocol its own current copy
+// for the typed planner arm; protocol.rs remains the frozen reference.
 mod adapters {
     pub use super::super::adapters::{prismabuild, results};
     pub mod workers {
-        pub use super::super::super::adapters::workers::{protocol, review};
+        pub use super::super::super::adapters::workers::review;
+        pub mod protocol {
+            include!("protocol-current.rs");
+        }
         pub mod reproducing {
             include!("reproducing-current.rs");
         }

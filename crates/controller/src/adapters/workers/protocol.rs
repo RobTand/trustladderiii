@@ -731,7 +731,7 @@ mod planner_reply {
     use serde_json::Value;
     use tl3_kernel::Reply;
 
-    // #832-K routes provenance endings first, then calls this ordinary planner arm.
+    // Ordinary planner mapping for #832-K's no-provenance route.
     // Its caller retains the original role-schema boundary.
     pub(super) fn map(reply: &Value) -> Result<Reply> {
         // Preserve Q54's error precedence: forecast evidence precedes violations and
@@ -741,7 +741,7 @@ mod planner_reply {
             .as_array()
             .ok_or(Error::Invalid("planner violations missing"))?;
         if !violations.is_empty() {
-            return Ok(Reply::PlanSplit); // Seeded mutant for the corpus differential red.
+            return Ok(Reply::PlanCantMeet);
         }
         let typed: PlannerReply = serde_json::from_value(reply.clone())
             .map_err(|_| Error::Invalid("worker reply breaks role schema"))?;

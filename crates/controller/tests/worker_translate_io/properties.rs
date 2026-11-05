@@ -58,8 +58,26 @@ fn production_and_reference_sources_are_pinned() {
         let changed = current.exists();
         if changed {
             let copy = std::fs::read_to_string(&current).unwrap();
-            let body = production.split("#[cfg(test)]").next().unwrap();
-            assert_eq!(copy.trim_end(), body.trim_end(), "current leaf drift: {name}");
+            if name == "protocol" {
+                // The protocol has test items between its production functions.
+                // Pin each compiled function and the whole typed mapper module.
+                fn function<'a>(source: &'a str, signature: &str) -> &'a str {
+                    let start = source.find(signature).unwrap();
+                    let end = source[start..].find("\n}").unwrap() + start + 2;
+                    &source[start..end]
+                }
+                for part in pin["parts"].as_array().unwrap() {
+                    let signature = part.as_str().unwrap().split(" {").next().unwrap();
+                    assert_eq!(function(&copy, signature), function(&production, signature),
+                        "current protocol function drift: {signature}");
+                }
+                let module = &production[production.find("mod planner_reply {").unwrap()..];
+                let expected = format!("{}}}\n", module.split("    #[cfg(test)]").next().unwrap());
+                assert_eq!(&copy[copy.find("mod planner_reply {").unwrap()..], expected);
+            } else {
+                let body = production.split("#[cfg(test)]").next().unwrap();
+                assert_eq!(copy.trim_end(), body.trim_end(), "current leaf drift: {name}");
+            }
         }
         for part in pin["parts"].as_array().unwrap() {
             let part = part.as_str().unwrap();
