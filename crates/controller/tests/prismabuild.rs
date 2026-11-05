@@ -1468,54 +1468,52 @@ fn record_path(root: &Path, key: &str, extension: &str) -> PathBuf {
         .join(format!("{encoded}.{extension}"))
 }
 
-fn tool_errors_wait_for_news() {
-    for spawn_failure in [false, true] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        let bell = Bell::new();
-        let (client, mut settings) = fixture_settings(root.path(), "done", &bell.url);
-        let program = root.path().join("result-python");
-        if spawn_failure {
-            settings.result_tool.program = program.clone();
-        } else {
-            fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
-        }
-        let mut adapter =
-            Adapter::new(client, settings, &mut crate::startup_ownership::ownership()).unwrap();
-        adapter.execute(&delivery).unwrap();
-        let key = adapter.action_key(&delivery).unwrap().unwrap();
-        let (sender, receiver) = mpsc::channel();
-        let running = adapter.source().spawn(sender.clone());
-        bell.request().reply(0, serde_json::json!([]));
-        let waiting = bell.request();
-        assert!(waiting.line.contains("/v1/wait"));
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_millis(1250)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        assert!(!record_path(root.path(), &delivery.key, "done").exists());
-        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
-        assert_eq!(
-            calls.lines().filter(|l| l.contains("--endings")).count(),
-            usize::from(!spawn_failure),
-            "no tool retry without news"
-        );
-        if spawn_failure {
-            drop(running);
-            drop(waiting);
-            std::os::unix::fs::symlink("/usr/bin/python3", program).unwrap();
-            let running = adapter.source().spawn(sender);
-            bell.request().reply(0, serde_json::json!([]));
-            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
-            drop(running);
-        } else {
-            fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
-            waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
-            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
-            drop(running);
-        }
-        assert!(record_path(root.path(), &delivery.key, "done").exists());
+fn tool_errors_wait_for_news(spawn_failure: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let bell = Bell::new();
+    let (client, mut settings) = fixture_settings(root.path(), "done", &bell.url);
+    let program = root.path().join("result-python");
+    if spawn_failure {
+        settings.result_tool.program = program.clone();
+    } else {
+        fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
     }
+    let mut adapter =
+        Adapter::new(client, settings, &mut crate::startup_ownership::ownership()).unwrap();
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender.clone());
+    bell.request().reply(0, serde_json::json!([]));
+    let waiting = bell.request();
+    assert!(waiting.line.contains("/v1/wait"));
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(!record_path(root.path(), &delivery.key, "done").exists());
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert_eq!(
+        calls.lines().filter(|l| l.contains("--endings")).count(),
+        usize::from(!spawn_failure),
+        "no tool retry without news"
+    );
+    if spawn_failure {
+        drop(running);
+        drop(waiting);
+        std::os::unix::fs::symlink("/usr/bin/python3", program).unwrap();
+        let running = adapter.source().spawn(sender);
+        bell.request().reply(0, serde_json::json!([]));
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
+        drop(running);
+    } else {
+        fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
+        waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
+        drop(running);
+    }
+    assert!(record_path(root.path(), &delivery.key, "done").exists());
 }
 
 fn assert_passing_input(input: tl3_controller::cli::Input) {
@@ -2595,13 +2593,35 @@ fn main() {
             oversized_plan_is_refused_before_submission as fn(),
         ),
         (
-            "repository_test_demand_is_sealed_with_default_and_identity_fallback",
-            repository_test_demand_is_sealed_with_default_and_identity_fallback as fn(),
+            "repository_demand_configured_case_insensitive_match",
+            || {
+                repository_test_demand_case("robtand", "TL3-SANDBOX", 1, true, 4, 12);
+            },
         ),
-        (
-            "repository_image_is_sealed_and_staged_with_global_fallback",
-            repository_image_is_sealed_and_staged_with_global_fallback as fn(),
-        ),
+        ("repository_demand_unconfigured_defaults", || {
+            repository_test_demand_case("RobTand", "tl3-sandbox", 1, false, 1, 2);
+        }),
+        ("repository_demand_other_repository_defaults", || {
+            repository_test_demand_case("RobTand", "other", 1, true, 1, 2);
+        }),
+        ("repository_demand_other_owner_defaults", || {
+            repository_test_demand_case("Other", "tl3-sandbox", 1, true, 1, 2);
+        }),
+        ("repository_demand_other_installation_defaults", || {
+            repository_test_demand_case("RobTand", "tl3-sandbox", 2, true, 1, 2);
+        }),
+        ("repository_image_case_insensitive_match", || {
+            repository_image_case("robtand", "TL3-SANDBOX", 1, "b");
+        }),
+        ("repository_image_other_repository", || {
+            repository_image_case("RobTand", "other", 1, "a");
+        }),
+        ("repository_image_other_owner", || {
+            repository_image_case("Other", "tl3-sandbox", 1, "a");
+        }),
+        ("repository_image_other_installation", || {
+            repository_image_case("RobTand", "tl3-sandbox", 2, "a");
+        }),
         (
             "moving_wait_bell_is_quiet",
             moving_wait_bell_is_quiet as fn(),
@@ -2683,7 +2703,12 @@ fn main() {
             source_thread_delivers_once_and_restarts_idle,
         ),
         ("invalid_evidence_once", invalid_evidence_is_reported_once),
-        ("tool_errors_wait_for_news", tool_errors_wait_for_news),
+        ("tool_errors_garbled_ending_wait_for_news", || {
+            tool_errors_wait_for_news(false);
+        }),
+        ("tool_errors_spawn_failure_wait_for_news", || {
+            tool_errors_wait_for_news(true);
+        }),
         (
             "bell_outage_does_not_retry_result_tools",
             bell_outage_does_not_retry_result_tools,
@@ -3132,50 +3157,61 @@ fn repository_test_demand_is_sealed_with_default_and_identity_fallback() {
         ("Other", "tl3-sandbox", 1, true, 1, 2),
         ("RobTand", "tl3-sandbox", 2, true, 1, 2),
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let mut delivery = run(root.path(), false);
-        delivery.repository = Repository {
-            owner: owner.into(),
-            name: name.into(),
-            installation,
-        };
-        let text = include_str!("../../config/example.toml");
-        let text = if configured {
-            text.replace(
-                "installation_id = 1",
-                "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }",
-            )
-        } else {
-            text.to_owned()
-        };
-        let config = tl3_config::Config::parse(&text).unwrap();
-        let mut adapter = fixture(root.path(), "pending").with_repositories(&config.github.repos);
-        adapter.execute(&delivery).unwrap();
-        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let seal = calls
-            .iter()
-            .find(|args| args.iter().any(|arg| arg == "--seal-only"))
-            .unwrap();
+        repository_test_demand_case(owner, name, installation, configured, cpus, mem_gb);
+    }
+}
+
+fn repository_test_demand_case(
+    owner: &str,
+    name: &str,
+    installation: u64,
+    configured: bool,
+    cpus: u32,
+    mem_gb: u32,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.repository = Repository {
+        owner: owner.into(),
+        name: name.into(),
+        installation,
+    };
+    let text = include_str!("../../config/example.toml");
+    let text = if configured {
+        text.replace(
+            "installation_id = 1",
+            "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }",
+        )
+    } else {
+        text.to_owned()
+    };
+    let config = tl3_config::Config::parse(&text).unwrap();
+    let mut adapter = fixture(root.path(), "pending").with_repositories(&config.github.repos);
+    adapter.execute(&delivery).unwrap();
+    let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let seal = calls
+        .iter()
+        .find(|args| args.iter().any(|arg| arg == "--seal-only"))
+        .unwrap();
+    assert!(
+        seal.windows(2)
+            .any(|pair| pair == ["--cpus", &cpus.to_string()]),
+        "expected {cpus} CPUs in {seal:?}"
+    );
+    assert!(
+        seal.windows(2)
+            .any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]),
+        "expected {mem_gb} GiB in {seal:?}"
+    );
+    for name in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"] {
         assert!(
             seal.windows(2)
-                .any(|pair| pair == ["--cpus", &cpus.to_string()]),
-            "expected {cpus} CPUs in {seal:?}"
+                .any(|pair| pair == ["--env", &format!("{name}={cpus}")])
         );
-        assert!(
-            seal.windows(2)
-                .any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]),
-            "expected {mem_gb} GiB in {seal:?}"
-        );
-        for name in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"] {
-            assert!(
-                seal.windows(2)
-                    .any(|pair| pair == ["--env", &format!("{name}={cpus}")])
-            );
-        }
     }
 }
 
@@ -3186,51 +3222,55 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
         ("Other", "tl3-sandbox", 1, "a"),
         ("RobTand", "tl3-sandbox", 2, "a"),
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let mut delivery = run(root.path(), false);
-        delivery.repository = Repository {
-            owner: owner.into(),
-            name: name.into(),
-            installation,
-        };
-        let config: tl3_config::Repository = serde_json::from_value(serde_json::json!({
-            "owner":"RobTand", "name":"tl3-sandbox", "installation_id":1,
-            "container_image":format!("sha256:{}", "b".repeat(64))
-        }))
-        .unwrap();
-        let mut adapter = fixture(root.path(), "pending").with_repositories(&[config]);
-        adapter.execute(&delivery).unwrap();
-        let key = adapter.action_key(&delivery).unwrap().unwrap();
-        let request: serde_json::Value = serde_json::from_slice(
-            &fs::read(root.path().join(format!("queue/{key}.request"))).unwrap(),
-        )
-        .unwrap();
-        let image = format!("sha256:{}", expected.repeat(64));
-        assert_eq!(request["image"], image, "staged harness image");
-        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let seal = calls
-            .iter()
-            .find(|args| args.iter().any(|arg| arg == "--seal-only"))
-            .unwrap();
-        assert!(
-            seal.windows(2).any(|pair| pair[0] == "--env"
-                && pair[1].starts_with("PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS=")),
-            "Checking must seal the registered disk scratch lifetime"
-        );
-        let index = seal
-            .iter()
-            .position(|arg| arg == "--container-image")
-            .unwrap();
-        assert_eq!(
-            seal[index + 1],
-            image,
-            "PB placement must use the staged image"
-        );
+        repository_image_case(owner, name, installation, expected);
     }
+}
+
+fn repository_image_case(owner: &str, name: &str, installation: u64, expected: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.repository = Repository {
+        owner: owner.into(),
+        name: name.into(),
+        installation,
+    };
+    let config: tl3_config::Repository = serde_json::from_value(serde_json::json!({
+        "owner":"RobTand", "name":"tl3-sandbox", "installation_id":1,
+        "container_image":format!("sha256:{}", "b".repeat(64))
+    }))
+    .unwrap();
+    let mut adapter = fixture(root.path(), "pending").with_repositories(&[config]);
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    let request: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.path().join(format!("queue/{key}.request"))).unwrap(),
+    )
+    .unwrap();
+    let image = format!("sha256:{}", expected.repeat(64));
+    assert_eq!(request["image"], image, "staged harness image");
+    let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let seal = calls
+        .iter()
+        .find(|args| args.iter().any(|arg| arg == "--seal-only"))
+        .unwrap();
+    assert!(
+        seal.windows(2).any(|pair| pair[0] == "--env"
+            && pair[1].starts_with("PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS=")),
+        "Checking must seal the registered disk scratch lifetime"
+    );
+    let index = seal
+        .iter()
+        .position(|arg| arg == "--container-image")
+        .unwrap();
+    assert_eq!(
+        seal[index + 1],
+        image,
+        "PB placement must use the staged image"
+    );
 }
 
 fn oversized_plan_is_refused_before_submission() {
