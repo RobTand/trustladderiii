@@ -636,7 +636,7 @@ mod database_tests {
             .collect()
     }
 
-    /// #799 / #785: Postgres ExecStartPost must succeed while tl3d owns the store.
+    /// #800 / #785: Postgres ExecStartPost must succeed while tl3d owns the store.
     #[test]
     fn database_preserves_running_owner_and_schema() {
         let mut postgres = database_support::Database::start();
@@ -690,7 +690,7 @@ mod database_tests {
         postgres.stop();
     }
 
-    /// #799: grants precede tl3d's first claimed migration on a fresh install.
+    /// #800: grants precede tl3d's first claimed migration on a fresh install.
     #[test]
     fn database_creates_without_migrating_and_console_reads_later_tables() {
         let mut postgres = database_support::Database::start();
@@ -718,6 +718,16 @@ mod database_tests {
         let mut owner =
             tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).unwrap();
         owner.migrate().unwrap();
+        assert!(
+            client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM tl3_schema_migrations WHERE version = 21)",
+                    &[]
+                )
+                .unwrap()
+                .get::<_, bool>(0),
+            "tl3d's claimed migration must include 0021"
+        );
         let login = tl3_config::Store {
             user: "tl3_console".into(),
             password_file: Some(password),
@@ -744,7 +754,7 @@ mod database_tests {
         postgres.stop();
     }
 
-    /// #799 / #785: database preparation leaves ownership for tl3d startup.
+    /// #800 / #785: database preparation leaves ownership for tl3d startup.
     #[test]
     fn database_preparation_allows_controller_start() {
         let mut postgres = database_support::Database::start();
