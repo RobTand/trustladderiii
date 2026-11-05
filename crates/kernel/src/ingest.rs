@@ -28,6 +28,7 @@ pub(super) fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option
 kernel_fn! {
 /// Ingest reply rows / #771: the unchanged one-node initialization before
 /// dependency credit reconciliation. All non-credit counters retain their frame.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn finish_ingest_node(m: &mut Node, size: u8, early_end: Option<EarlyEnd>) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures *final(m) == (Node {
@@ -42,6 +43,7 @@ pub(super) fn finish_ingest_node(m: &mut Node, size: u8, early_end: Option<Early
         ..*old(m)
     }),
 ] {
+    kernel_proof! { timing3_lemmas::ingest_deposit_bound(size); }
     if !m.credit.ready {
         m.credit.ready = true;
         m.credit.start = size as u64 + RESERVE;
