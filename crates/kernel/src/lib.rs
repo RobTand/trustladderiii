@@ -2063,3 +2063,35 @@ pub closed spec fn progress_gate_check_result(w: World, ok: bool) -> bool {
     progress_gate_contracts::checked(w, ok)
 }
 }
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply.rs"]
+mod progress_gate_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_merge.rs"]
+mod progress_gate_apply_merge;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_resume.rs"]
+mod progress_gate_apply_resume;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_witness.rs"]
+mod progress_gate_apply_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_merge_safe.rs"]
+mod progress_gate_apply_merge_safe;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_resume_safe.rs"]
+mod progress_gate_apply_resume_safe;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_resume_frame.rs"]
+mod progress_gate_apply_resume_frame;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: original gate checker domain, exposed by the public checker contract.
+pub closed spec fn gate_apply_checker_domain(w: World) -> bool { progress_gate_apply::domain(w) }
+/// #806: full production consistency, including gate, pool and ticket rules.
+pub closed spec fn gate_apply_checker_accepted(w: World) -> bool { progress_gate_apply::accepted(w) }
+}

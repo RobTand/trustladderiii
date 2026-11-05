@@ -1712,57 +1712,11 @@ fn check_gate_planning(width: u8) {
 // every settled gate world. Prove each application separately to keep the event
 // payload and actor concrete, as in the general per-event proofs.
 
-fn check_gate_merge_progress(width: u8) {
-    let mut world = gate_world_in_phase(width, Some(Phase::Queued));
-    kani::assume(!world.nodes[0].paused);
-    let before_measure = world.measure();
-    let head = world.nodes[0].head.unwrap_or(HeadId(0));
-    let mut out = Outbox::new();
-    apply(
-        &mut world,
-        Event::Fact {
-            node: NodeId(0),
-            fact: Fact::PrMerged {
-                head,
-                checks_passed: true,
-            },
-        },
-        &mut out,
-    );
-    require_consistent(&world);
-    assert!(world.measure() < before_measure);
-    kani::cover!(true, "a merge lowers the gate world's measure");
-}
-
-fn check_gate_resume_progress(width: u8) {
-    let mut world = gate_world(width);
-    kani::assume(world.nodes[0].paused);
-    let before_measure = world.measure();
-    let id = world.nodes[0].last_cmd + 1;
-    let mut out = Outbox::new();
-    apply(
-        &mut world,
-        Event::Command {
-            node: NodeId(0),
-            id,
-            command: Command::Resume,
-        },
-        &mut out,
-    );
-    require_consistent(&world);
-    assert!(world.measure() < before_measure);
-    kani::cover!(true, "resuming lowers the gate world's measure");
-}
-
 proof!(gate_grant_w2, check_gate_grant(2));
 proof!(gate_grant_w3, check_gate_grant(3));
 proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
 
-proof!(gate_merge_progress_w2, check_gate_merge_progress(2));
-proof!(gate_merge_progress_w3, check_gate_merge_progress(3));
-proof!(gate_resume_progress_w2, check_gate_resume_progress(2));
-proof!(gate_resume_progress_w3, check_gate_resume_progress(3));
 
 proof!(apply_rebase_progress_gate, {
     let mut node = Node::new(RepoId(0));

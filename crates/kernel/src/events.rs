@@ -65,6 +65,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 },
             _ => true,
         },
+        progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     match event {
@@ -134,6 +135,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
                 kernel_proof! {
+                    if command == Command::Resume {
+                        progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
+                    }
                     if progress_input(before_apply@, event) {
                         world_checked_definition(before_apply@);
                         assert(chosen_for_node(before_apply@, i as int, event));
@@ -146,6 +150,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         }
     }
     kernel_proof! {
+        if !progress_gate_apply::resume_selected(before_apply@, event) {
+            reveal(progress_gate_apply::resume_apply_post);
+        }
         assert forall|j: int| 0 <= j < w.nodes@.len() implies
             footprint::valid_footprint(*w, w.nodes@[j].footprint) by {
             if j < before_apply@.nodes@.len() {

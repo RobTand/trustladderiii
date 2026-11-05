@@ -102,8 +102,8 @@ CASES = {
                         'kernel_while! { (false) [',
                         '//crates/kernel:verus_witness'),
     'resume_stalled': ('crates/kernel/src/commands.rs',
-                       'Command::Resume => w.nodes[i].paused = false,',
-                       'Command::Resume => w.nodes[i].paused = true,',
+                       '            w.nodes[i].paused = false;',
+                       '            w.nodes[i].paused = true;',
                        '//crates/kernel:verus_commands'),
     'reply_stalled': ('crates/kernel/src/work_replies.rs',
                       'set_phase(m, Phase::Checking);',
@@ -176,6 +176,14 @@ CASES = {
                              'end_operation(&mut w.nodes[i]);\n    w.nodes[i].pool = true;',
                              '//crates/kernel:verus_reply_admission_on_reply'),
 
+    'gate_apply_merge': ('crates/kernel/src/facts.rs',
+                         'm.merged = Some(head);\n    m.pr_open = false;',
+                         'if m.phase != Phase::Queued { m.merged = Some(head); }\n    m.pr_open = false;',
+                         '//crates/kernel:verus_facts_merge_open'),
+    'gate_apply_resume': ('crates/kernel/src/commands.rs',
+                          '            w.nodes[i].paused = false;',
+                          '            w.nodes[i].paused = true;',
+                          '//crates/kernel:verus_commands'),
 }
 
 
