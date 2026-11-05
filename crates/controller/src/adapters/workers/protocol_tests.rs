@@ -81,6 +81,15 @@ fn assert_plan_check_stops(class: crate::contracts::plan_check::ObjectionClass) 
                 PlanRepair::Unavailable {
                     reason: RepairUnavailable::Disabled,
                 },
+                PlanRepair::Unavailable {
+                    reason: RepairUnavailable::InputAllowance,
+                },
+                PlanRepair::Unavailable {
+                    reason: RepairUnavailable::MessageLimit,
+                },
+                PlanRepair::Unavailable {
+                    reason: RepairUnavailable::FormatAllowanceConsumed,
+                },
             ] {
                 let mut provenance = plan_check_provenance(class);
                 provenance.repair = repair;

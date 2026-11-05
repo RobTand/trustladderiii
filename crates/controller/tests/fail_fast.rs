@@ -291,6 +291,124 @@ fn an_open_request_stops_for_tl3_review_after_fail_fast_is_turned_on() {
 }
 
 #[test]
+fn plan_check_endings_preserve_evidence_without_questions_or_children() {
+    use tl3_contracts::plan_check::*;
+    let mut database = support::Database::start();
+    for fail_fast in [false, true] {
+        for class in [ObjectionClass::Other, ObjectionClass::SizeExecutionFit] {
+            let settings = database.create(&format!("plan_check_{fail_fast}_{class:?}"));
+            let root = tempfile::tempdir().unwrap();
+            let fakes = root.path().join("fakes");
+            let posted: Posted = Arc::default();
+            let plans = Arc::new(Mutex::new(0));
+            let counted = plans.clone();
+            let provenance = PlanCheckProvenance {
+                objections: vec![PlanObjection {
+                    class,
+                    rule: "plan.named_obligation".into(),
+                    items: vec!["check-1".into()],
+                    diagnostic: "The original obligation remains unsatisfied.".into(),
+                }],
+                repair: PlanRepair::Attempted,
+            };
+            let metadata = provenance.clone();
+            let reply = json!({"kind":"cant_meet", "files":["value.py"],
+                "report":"Named plan-check objections remain.",
+                "violations":["The original obligation remains unsatisfied."],
+                "forecast":{"tokenizer":"o200k_base", "brief_tokens":1,
+                    "file_tokens":{"value.py":0}, "overhead_tokens":0, "tokens":1,
+                    "fit_tokens":100, "context_tokens":150, "fits":true}});
+            let original = reply.clone();
+            let mut registry = adapters::simulation(&fakes).unwrap();
+            registry.register(
+                Upstream::Workers,
+                support::workers::Workers::new(
+                    None,
+                    adapters::workers::Fake::new(&fakes),
+                    vec![],
+                    move |_, completion: &mut Completion| {
+                        for observation in &mut completion.observations {
+                            if let Observation::Plan {
+                                node, generation, ..
+                            } = observation
+                            {
+                                *counted.lock().unwrap() += 1;
+                                *observation = Observation::WorkerReply {
+                                    node: *node,
+                                    generation: *generation,
+                                    role: "planner".into(),
+                                    reply: original.clone(),
+                                    model: None,
+                                    plan_check: Some(metadata.clone()),
+                                };
+                            }
+                        }
+                    },
+                ),
+            );
+            registry.register(
+                Upstream::GitHub,
+                GitHub {
+                    fake: adapters::github::Fake::new(&fakes),
+                    posted: posted.clone(),
+                },
+            );
+            let mut c = Controller::open(
+                Store::open(&settings).unwrap(),
+                registry,
+                bootstrap(fail_fast),
+            )
+            .unwrap();
+            c.intake(labelled()).unwrap();
+            drain(&mut c);
+            let world = c.world().unwrap();
+            assert_eq!(world.nodes.len(), 1, "no child executes");
+            assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Stopped));
+            assert_eq!(world.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
+            assert_eq!(world.nodes[0].question, None);
+            assert_eq!(world.next_question, 0);
+            assert_eq!(world.nodes[0].credit.spent, 0);
+            assert_eq!(*plans.lock().unwrap(), 1);
+            assert!(!posted.lock().unwrap().iter().any(|delivery| matches!(
+                delivery.output,
+                Output::Notice {
+                    notice: Notice::Ask { .. },
+                    ..
+                }
+            )));
+            let stored = Store::open(&settings)
+                .unwrap()
+                .worker_document("0", "plans")
+                .unwrap()
+                .unwrap();
+            let mut expected = reply;
+            expected["plan_check"] = serde_json::to_value(provenance).unwrap();
+            assert_eq!(
+                stored, expected,
+                "retain the whole reply and typed provenance"
+            );
+            let summary = summary(&posted);
+            let input = adapters::github::writer_input(
+                &summary,
+                Some(Notice::Summary(Outcome::Stopped)),
+                "Fix the sandbox build",
+                "Fix the sandbox build",
+            )
+            .unwrap();
+            let findings = &input.facts["findings"];
+            let report = findings["report"].as_str().unwrap();
+            assert!(report.contains("plan.named_obligation [check-1]"));
+            assert!(report.contains("The original obligation remains unsatisfied."));
+            assert!(findings.get("decision").is_none());
+            if class == ObjectionClass::SizeExecutionFit {
+                assert!(report.contains("requires decomposition"));
+                assert!(report.contains("no child executes"));
+            }
+        }
+    }
+}
+
+#[test]
 fn plan_cant_meet_stops_with_the_planners_report_and_no_rerun() {
     let mut database = support::Database::start();
     let settings = database.create("fail_fast_plan");

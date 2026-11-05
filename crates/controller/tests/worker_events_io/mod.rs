@@ -177,10 +177,17 @@ fn pinned_reference_and_production_copies() {
     );
     let production = include_str!("../../src/adapters/workers/source.rs");
     for name in ["refresh", "progress", "external_wait", "parse_reply"] {
-        assert_eq!(
-            function(base, name),
-            function(include_str!("reference.rs"), name)
-        );
+        let reference = function(include_str!("reference.rs"), name);
+        // #832 adds an optional observation field. The frozen shell still supplies
+        // None, and every original statement must remain byte-identical.
+        let adapted = if name == "parse_reply" {
+            let field = "        plan_check: None,\n";
+            assert_eq!(reference.matches(field).count(), 1);
+            reference.replacen(field, "", 1)
+        } else {
+            reference.to_owned()
+        };
+        assert_eq!(function(base, name), adapted);
     }
     for name in [
         "refresh",

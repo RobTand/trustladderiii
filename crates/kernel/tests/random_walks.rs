@@ -83,7 +83,7 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
             } else {
                 n.generation
             };
-            let reply = match rng.below(18) {
+            let reply = match rng.below(20) {
                 0 => Reply::IngestDone {
                     size: rng.below(4) as u8,
                 },
@@ -119,6 +119,8 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
                 14 => Reply::RebaseClean { head },
                 15 => Reply::RebaseNeedsChanges,
                 16 => Reply::ReviewerOutOfRoom,
+                17 => Reply::PlanCheckRejected,
+                18 => Reply::PlanCheckNeedsSplit,
                 _ => Reply::RunFailed,
             };
             Event::Reply {
