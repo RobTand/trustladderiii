@@ -90,6 +90,7 @@ py_library(
         "tl3_workers/forcing_rehearsal.py",
         "tl3_workers/forecast.py",
         "tl3_workers/generated_scope.py",
+        "tl3_workers/ingest_retention.py",
         "tl3_workers/judges.py",
         "tl3_workers/memory.py",
         "tl3_workers/pb_generators.py",
