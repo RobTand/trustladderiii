@@ -540,29 +540,8 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             out.push(Effect::Complete(command_completion(recovery.command)));
         }
         QueueEvent::DispatchCommand(read) => {
-            let recovery = state.recovery.get_or_insert(Recovery {
-                eligible_since_ms: None,
-                command: Command::Ready,
-            });
-            if recovery.command != Command::Ready {
-                out.push(Effect::Complete(command_completion(recovery.command)));
-            } else if read.waiting && !read.eligible {
-                recovery.eligible_since_ms = None;
-                out.push(Effect::SaveRecovery);
-                out.push(Effect::Complete(Complete::Pending));
-            } else if read.head != Head::Current
-                || !read.open
-                || read.merged
-                || read.draft
-                || read.held
-                || read.paused
-            {
-                out.push(Effect::Complete(Complete::Pending));
-            } else {
-                recovery.command = Command::Sending;
-                out.push(Effect::SaveRecovery);
-                out.push(Effect::Write(Write::Command));
-            }
+            let step = super::recovery::dispatch(state.recovery, read);
+            apply_recovery(&mut state, &mut out, step);
         }
         QueueEvent::CommandDone(result) => {
             if let Some(recovery) = &mut state.recovery {
@@ -716,5 +695,16 @@ pub fn required_check(check: super::CheckView, runner_failure: bool) -> Required
         RequiredState::Tests
     } else {
         RequiredState::Unknown
+    }
+}
+
+// Keep the core's first effect before its second, including SaveRecovery before POST.
+fn apply_recovery(state: &mut EnqueueState, out: &mut Effects, step: super::recovery::Transition) {
+    state.recovery = step.recovery;
+    if let Some(effect) = step.first {
+        out.push(effect);
+    }
+    if let Some(effect) = step.second {
+        out.push(effect);
     }
 }

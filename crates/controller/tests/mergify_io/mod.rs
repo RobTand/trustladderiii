@@ -310,6 +310,31 @@ macro_rules! run_entry {
         }
     };
 }
+#[path = "recovery_schedule_reference.rs"]
+mod recovery_reference;
+
+// CC-M2: keep the cdacce8f99 command reference independent of the extracted core.
+#[allow(clippy::needless_question_mark)]
+mod command_reference {
+    use super::recovery_reference as lifecycle;
+    adapter!();
+    include!("current.rs");
+    mod ci_evidence {
+        use crate::mergify_io::io::mock_std as std;
+        include!("current-ci.rs");
+    }
+    mod waiting {
+        include!("reference-waiting-cdacce8f99.rs");
+    }
+    mod head_checks {
+        include!("current-head.rs");
+    }
+    pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
+        let mut a = Adapter::new();
+        run_entry!(a, entry, d, None)
+    }
+}
+
 // The mock store returns this module's Error directly; production converts StoreError.
 #[allow(clippy::needless_question_mark)]
 mod reference {
@@ -326,6 +351,9 @@ mod reference {
         include!("reference-head.rs");
     }
     pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
+        if matches!(entry, io::Entry::Waiting | io::Entry::Command) {
+            return super::command_reference::run(entry, d);
+        }
         let mut a = Adapter::new();
         run_entry!(a, entry, d, false)
     }
@@ -602,6 +630,60 @@ mod properties {
     #[test]
     fn rerun_schedules() {
         check(Entry::Rerun, Profile::Rerun)
+    }
+
+    /// #608/#760: both callers use the same protocol and every write crash cut.
+    #[test]
+    fn recovery_cdacce8f99_both_callers() {
+        let legacy = stable(Profile::Command);
+        io::compare(&legacy, Entry::Command).unwrap();
+        io::require_ops(
+            &legacy,
+            Entry::Command,
+            &["github.command", "file.rename", "file.fsync"],
+        );
+        let mut waiting = stable(Profile::Waiting);
+        waiting.initial = 48;
+        io::compare(&waiting, Entry::Waiting).unwrap();
+        io::require_ops(&waiting, Entry::Waiting, &["clock.now", "github.command"]);
+    }
+
+    /// #730: reference functions are verbatim cdacce8f99, not shared new decisions.
+    #[test]
+    fn recovery_cdacce8f99_reference_is_pinned() {
+        let waiting = include_str!("base-waiting-cdacce8f99.rs.txt");
+        let enqueue = include_str!("recovery_schedule_base_enqueue.rs.txt");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(waiting.as_bytes())),
+            "db1cebbfd8bcf1b4c002b1064a7ba983c19ddbc820899912958d5d83910366e9"
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(enqueue.as_bytes())),
+            "522ef8320a2210882c79bf978db461de8430307802b186a4fa48b4a5606a813a"
+        );
+        for name in [
+            "recovery_key",
+            "recovery_path",
+            "recovery",
+            "save_recovery",
+            "command_budget",
+            "reconcile_command",
+            "recover_waiting",
+            "queue_command",
+            "recovery_decide",
+            "recovery_now_ms",
+        ] {
+            assert_eq!(
+                function(waiting, name, ""),
+                function(include_str!("reference-waiting-cdacce8f99.rs"), name, "")
+            );
+        }
+        for name in ["command_completion", "reconcile_issue", "decide"] {
+            assert_eq!(
+                free_function(enqueue, name),
+                free_function(include_str!("recovery_schedule_reference.rs"), name)
+            );
+        }
     }
 
     fn function<'a>(source: &'a str, name: &str, after: &str) -> &'a str {

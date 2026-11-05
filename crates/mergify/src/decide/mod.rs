@@ -21,6 +21,7 @@ pub mod delivery_step;
 pub mod enqueue;
 pub mod facts;
 pub mod observe;
+pub mod recovery;
 pub mod translate;
 
 #[cfg(kani)]
