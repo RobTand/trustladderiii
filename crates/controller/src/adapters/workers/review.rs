@@ -222,7 +222,11 @@ pub(super) fn inputs(
         inputs["generation_evidence"] = receipt.clone();
     }
     super::protocol::validate_inputs("reviewer", &inputs)?;
-    Ok(inputs)
+    // Keep schema diagnostics at their existing boundary before the typed wire.
+    // A schema/type disagreement is an error, never a controller panic.
+    let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
+        serde_json::from_value(inputs)?;
+    Ok(serde_json::to_value(&typed)?)
 }
 
 pub(crate) fn criteria(

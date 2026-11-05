@@ -18,6 +18,7 @@ pub struct Schedule {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
+    pub error_variant: Option<String>,
     pub trace: Vec<Value>,
     pub result: std::result::Result<Vec<u8>, String>,
 }
@@ -129,6 +130,11 @@ pub fn run(s: &Schedule, current: bool) -> Run {
         };
         f(&s.delivery, &mut Store, &s.snapshot, s.session.as_ref())
     }));
+    let error_variant = match &result {
+        Ok(Err(e)) => Some(format!("{:?}", std::mem::discriminant(e))),
+        Err(_) => Some("panic".into()),
+        _ => None,
+    };
     let result = match result {
         Ok(Ok(v)) => Ok(serde_json::to_vec(&v).unwrap()),
         Ok(Err(e)) => Err(e.to_string()),
@@ -141,7 +147,7 @@ pub fn run(s: &Schedule, current: bool) -> Run {
         )),
     };
     let trace = ACTIVE.with(|r| r.borrow_mut().take().unwrap().trace);
-    Run { trace, result }
+    Run { trace, result, error_variant }
 }
 pub fn compare(s: &Schedule) -> Run {
     let old = run(s, false);
