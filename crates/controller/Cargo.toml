@@ -23,6 +23,7 @@ tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
 tl3-contracts = { path = "../contracts" }
+tl3-controller-core = { path = "../controller-core" }
 tl3-github = { path = "../github" }
 tl3-mergify = { path = "../mergify" }
 chrono = { version = "0.4", features = ["serde"] }
