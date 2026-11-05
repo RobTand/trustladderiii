@@ -497,7 +497,7 @@ fn check_incident_carries_stderr_without_test_feedback() {
                     "node":d.node(), "generation":d.generation, "action_key":KEY,
                     "diagnostic":{"outcome":"setup_failure", "phase":"container_start",
                         "termination_reason":"incomplete_report", "test_started":false,
-                        "stderr_tail":"container shim refused: pid limit reached ghp_abcdefghijklmnopqrstuvwxyz1234567890"}}}),
+                        "stderr_tail":format!("{}container shim refused: pid limit reached ghp_abcdefghijklmnopqrstuvwxyz1234567890", "old line\n".repeat(80))}}}),
                 );
                 assert!(
                     diagnostic.is_ok(),
