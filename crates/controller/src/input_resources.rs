@@ -126,6 +126,21 @@ pub(crate) fn of(error: &Error) -> Option<&Failure> {
     })
 }
 
+/// #815/#833: retain catch-up's safe endpoint/status diagnostic, never arbitrary adapter prose.
+pub(crate) fn catch_up_diagnostic(error: &Error) -> String {
+    let Error::Permanent { source, .. } = error else {
+        return String::new();
+    };
+    let source = source
+        .downcast_ref::<LookupError>()
+        .map(|error| &error.source)
+        .or_else(|| source.downcast_ref::<tl3_github::Error>());
+    match source {
+        Some(error @ tl3_github::Error::CatchUp { .. }) => format!(": {error}"),
+        _ => String::new(),
+    }
+}
+
 /// Q59: verify identity without changing the declaration's merge/closure semantics.
 pub(crate) fn validate(
     repo: &Repository,

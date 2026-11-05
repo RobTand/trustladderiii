@@ -117,7 +117,7 @@ pub enum Error {
         name: String,
         installation: u64,
     },
-    #[error("upstream permanently failed: {class}")]
+    #[error("upstream permanently failed: {class}{diagnostic}", diagnostic = input_resources::catch_up_diagnostic(self))]
     Permanent {
         class: &'static str,
         #[source]

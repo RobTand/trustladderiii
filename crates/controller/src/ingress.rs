@@ -785,7 +785,10 @@ impl CatchUp {
                                 .block_on(client.issue(&name, *number))
                                 .map_err(|error| {
                                     crate::input_resources::github(
-                                        error,
+                                        tl3_github::Error::CatchUp {
+                                            endpoint: format!("repos/{name}/issues/{number}"),
+                                            source: Box::new(error),
+                                        },
                                         crate::input_resources::Resource::prerequisite(
                                             repo,
                                             tl3_kernel::PrerequisiteKind::Issue,
