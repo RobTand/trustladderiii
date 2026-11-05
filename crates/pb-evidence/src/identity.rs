@@ -20,8 +20,12 @@ pub fn identity(base_sha: &Value, selectors: &Value, forcing: &Value, symptom: &
 pub fn bound(candidate: &Value) -> Result<String> {
     Ok(dumps(
         &serde_json::to_value(crate::identity_fields::bind(
-            get(candidate,"base_sha")?, get(candidate,"selectors")?, get(candidate,"forcing")?, &candidate["declared_symptom"]
-        )).expect("identity fields serialize"),
+            get(candidate, "base_sha")?,
+            get(candidate, "selectors")?,
+            get(candidate, "forcing")?,
+            &candidate["declared_symptom"],
+        ))
+        .expect("identity fields serialize"),
         true,
         true,
     ))

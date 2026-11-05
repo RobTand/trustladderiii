@@ -1,3 +1,4 @@
+# gazelle:exclude pb-evidence-reference
 load("@rules_python//python:defs.bzl", "py_binary")
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
@@ -1144,6 +1145,7 @@ py_binary(
     data = glob(["pb-evidence-vectors/*.json"]),  # keep
     visibility = ["//visibility:public"],
     deps = [
+        ":pb_evidence_reference",
         "//harness/src/tl3_harness",
         "//workers/src",
     ],
@@ -1184,4 +1186,11 @@ tl3_py_test(
         ":conftest",
         "@tl3_pip//pytest",
     ],
+)
+
+py_library(
+    name = "pb_evidence_reference",
+    srcs = ["pb_evidence_reference.py"],
+    data = glob(["pb-evidence-reference/*.py"]),  # keep: loaded verbatim by importlib
+    visibility = ["//visibility:public"],
 )

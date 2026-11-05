@@ -86,6 +86,7 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
+    "tl3-controller/pb_evidence": 13,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/worker_budget_orchestration": 21,
@@ -101,6 +102,7 @@ _CONTROLLER_TEST_DATA = [
     "//crates/store:sources",
 ]
 _CONTROLLER_TEST_COMPILE_DATA = {
+    "tests/pb_evidence.rs": ["//crates/pb-evidence:sources"],
     "tests/writer_blocker.rs": ["//workers/tests:fixtures"],
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
@@ -134,7 +136,7 @@ _CONTROLLER_BINARIES = {
 _CONTROLLER_RUNTIME = {
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
-    "test_test_pb_evidence": ["//workers/tests:checker_recordings", "//crates/pb-evidence:sources"],
+    "test_test_pb_evidence": ["//workers/tests:checker_recordings", "//workers/tests:pb_evidence_vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],

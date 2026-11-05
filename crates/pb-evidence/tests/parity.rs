@@ -27,7 +27,7 @@ proptest! {
     /// #821: strict request parsing preserves fields across the serde boundary.
     #[test]
     fn request_roundtrip(base in ".{0,100}", selectors in proptest::collection::vec(".{0,80}",0..12)) {
-        let request = Request::Identity { base_sha: json!(base), selectors: json!(selectors), forcing: json!({"environment":{},"patches":[]}),declared_symptom:Value::Null };
+        let request = Request::Identity { base_sha: json!(base), selectors: json!(selectors), forcing: serde_json::from_value(json!({"symptom":"fixture", "environment":{},"patches":[]})).unwrap(),declared_symptom:Value::Null };
         let encoded=serde_json::to_vec(&request).unwrap();
         let decoded: Request=serde_json::from_slice(&encoded).unwrap();
         prop_assert_eq!(evaluate(request).unwrap(),evaluate(decoded).unwrap());

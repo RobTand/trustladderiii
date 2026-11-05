@@ -33,7 +33,7 @@ def _error(value):
     else:
         raise ReplyCheckInfrastructureError('PB evidence validator returned invalid output')
     if value.get('cause') is not None:
-        error.__cause__ = _error(value['cause'])
+        object.__setattr__(error, '__cause__', _error(value['cause']))
     return error
 
 

@@ -69,17 +69,22 @@ pub fn digest(value: &Value) -> bool {
 pub fn start(ending: &PbEnding, key: &str, generator: bool) -> Result<LogReceipt> {
     let mut cause = "invalid_ending";
     let decide = || -> Result<LogReceipt> {
-        let accepted = ending.action_key.required("action_key")? == key
-            && matches!(
+        let key_matches = ending.action_key.required("action_key")? == key;
+        let status_matches = !key_matches
+            || matches!(
                 ending.status.required("status")?.as_str(),
                 Some("executed" | "cache_hit")
-            )
-            && equal(ending.exit_code.required("exit_code")?, &json!(0))
-            && if generator {
+            );
+        let exit_matches = !(key_matches && status_matches)
+            || equal(ending.exit_code.required("exit_code")?, &json!(0));
+        let succeeded = !(key_matches && status_matches && exit_matches)
+            || if generator {
                 ending.succeeded.required("succeeded")? == &Value::Bool(true)
             } else {
                 truth(ending.succeeded.required("succeeded")?)
             };
+        let accepted =
+            crate::decision::header(key_matches, status_matches, exit_matches, succeeded);
         if crate::decision::ending(accepted, true, true) != 0 {
             return Err(Refusal::value(if generator {
                 "Generator action did not succeed; inspect its PrismaBuild terminal record."
@@ -89,8 +94,9 @@ pub fn start(ending: &PbEnding, key: &str, generator: bool) -> Result<LogReceipt
         }
         cause = "unverified_receipt";
         let evidence = ending.result.required("result")?;
-        let verified = get(evidence, "verified")? == &Value::Bool(true)
-            && digest(get(evidence, "receipt_sha256")?);
+        let verified_flag = get(evidence, "verified")? == &Value::Bool(true);
+        let receipt_digest = !verified_flag || digest(get(evidence, "receipt_sha256")?);
+        let verified = crate::decision::receipt(verified_flag, receipt_digest);
         if crate::decision::ending(true, verified, true) != 0 {
             return Err(Refusal::value(if generator {
                 "Generator action has no verified PrismaBuild receipt."
@@ -150,34 +156,37 @@ fn lines(raw: &str) -> impl Iterator<Item = &str> {
 }
 fn summary_shape(value: &Value) -> bool {
     let outcomes = ["passed", "failed", "error", "skipped"];
-    value.is_object()
-        && matches!(
+    crate::decision::shape(
+        value.is_object(),
+        matches!(
             value["status"].as_str(),
             Some("completed" | "infrastructure_error" | "not_available")
-        )
-        && value["note"].is_string()
-        && value["totals"].as_object().is_some_and(|totals| {
+        ),
+        value["note"].is_string(),
+        value["totals"].as_object().is_some_and(|totals| {
             totals.len() == 4
                 && outcomes
                     .iter()
                     .all(|o| totals.get(*o).is_some_and(|n| integer(n).is_some()))
-        })
-        && value["tests"].as_array().is_some_and(|tests| {
+        }),
+        value["tests"].as_array().is_some_and(|tests| {
             tests.iter().all(|t| {
                 t.is_object()
                     && t["test"].is_string()
                     && t["outcome"].as_str().is_some_and(|o| outcomes.contains(&o))
             })
-        })
+        }),
+    )
 }
 
 pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Result<Value> {
     let log = start(ending, key, generator)?;
     let mut cause = "invalid_log_receipt";
     let mut decide = || -> Result<Value> {
-        if raw.len() as u64 != log.bytes
-            || *get(get(ending.result.required("result")?, "stdout")?, "sha256")? != sha(raw)
-        {
+        let length_matches = raw.len() as u64 == log.bytes;
+        let digest_matches = !length_matches
+            || *get(get(ending.result.required("result")?, "stdout")?, "sha256")? == sha(raw);
+        if !crate::decision::log(length_matches, digest_matches) {
             return Err(Refusal::value(if generator {
                 "Generator artifact digest mismatch."
             } else {
@@ -185,7 +194,7 @@ pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Resu
             }));
         }
         cause = "missing_unique_summary";
-        let text = std::str::from_utf8(raw).map_err(|e| Refusal::utf8(raw,e))?;
+        let text = std::str::from_utf8(raw).map_err(|e| Refusal::utf8(raw, e))?;
         let prefix = if generator {
             "TL3_GENERATOR_ARTIFACT "
         } else {
@@ -194,7 +203,7 @@ pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Resu
         let records: Vec<_> = lines(text)
             .filter_map(|line| line.strip_prefix(prefix))
             .collect();
-        if records.len() != 1 {
+        if !crate::decision::unique(records.len() as u64) {
             return Err(Refusal::value(if generator {
                 "Generator action returned no unique complete artifact."
             } else {
@@ -213,7 +222,13 @@ pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Resu
             return Ok(json!([result, receipt]));
         }
         if !result.is_object() {
-            return Err(Refusal::typed("AttributeError", format!("'{}' object has no attribute 'get'", crate::error::python_type(&result))));
+            return Err(Refusal::typed(
+                "AttributeError",
+                format!(
+                    "'{}' object has no attribute 'get'",
+                    crate::error::python_type(&result)
+                ),
+            ));
         }
         if !result["declared_symptom"].is_null() {
             let records: Vec<_> = lines(text)
@@ -233,11 +248,12 @@ pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Resu
                 if let Some(fields) = without.as_object_mut() {
                     fields.remove("records");
                 }
-                if !equal(get(record, "run")?, &json!(index + 1))
+                let sequence = equal(get(record, "run")?, &json!(index + 1));
+                let digest = !sequence
                     || *get(record, "sha256")?
-                        != sha(dumps(get(record, "records")?, false, true).as_bytes())
-                    || !equal(&summary, &without)
-                {
+                        == sha(dumps(get(record, "records")?, false, true).as_bytes());
+                let summary = !(sequence && digest) || equal(&summary, &without);
+                if !crate::decision::symptom(sequence, digest, summary) {
                     return Err(Refusal::value("symptom run receipt changed"));
                 }
             }

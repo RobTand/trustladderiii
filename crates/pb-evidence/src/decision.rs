@@ -4,13 +4,13 @@ use vstd::prelude::*;
 /// #821: the first failed checked acceptance condition owns the refusal.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out <= 3,
-    (out == 0) == (ending && receipt && log),
-    !ending ==> out == 1,
-    ending && !receipt ==> out == 2,
-    ending && receipt && !log ==> out == 3,
+    (out == 0) == (ending_ok && receipt && log),
+    !ending_ok ==> out == 1,
+    ending_ok && !receipt ==> out == 2,
+    ending_ok && receipt && !log ==> out == 3,
 ))]
-pub fn ending(ending: bool, receipt: bool, log: bool) -> u8 {
-    if !ending {
+pub fn ending(ending_ok: bool, receipt: bool, log: bool) -> u8 {
+    if !ending_ok {
         1
     } else if !receipt {
         2
@@ -57,4 +57,52 @@ pub fn consistency(
 ))]
 pub fn independent(same_attribute: bool, left_parent: bool, right_parent: bool) -> bool {
     !same_attribute && !left_parent && !right_parent
+}
+
+/// #821: all four checked outer-ending fields are necessary; Python scalar decoding is separate.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (key && status && exit && succeeded),
+))]
+pub fn header(key: bool, status: bool, exit: bool, succeeded: bool) -> bool {
+    key && status && exit && succeeded
+}
+
+/// #821: publication authenticity requires both strict verification and its receipt digest.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (verified && digest),
+))]
+pub fn receipt(verified: bool, digest: bool) -> bool {
+    verified && digest
+}
+
+/// #821: neither matching length nor matching digest alone authenticates log bytes.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (length && digest),
+))]
+pub fn log(length: bool, digest: bool) -> bool {
+    length && digest
+}
+
+/// #821: a summary needs every checked shape group, including exact nonnegative totals.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (object && status && note && totals && rows),
+))]
+pub fn shape(object: bool, status: bool, note: bool, totals: bool, rows: bool) -> bool {
+    object && status && note && totals && rows
+}
+
+/// #821: a complete log has one summary, never zero or multiple summaries.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (count == 1),
+))]
+pub fn unique(count: u64) -> bool {
+    count == 1
+}
+
+/// #821: every checked symptom receipt field is necessary.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (sequence && digest && summary),
+))]
+pub fn symptom(sequence: bool, digest: bool, summary: bool) -> bool {
+    sequence && digest && summary
 }

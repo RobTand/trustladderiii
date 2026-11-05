@@ -20,13 +20,11 @@ pub fn run(args: &[String]) -> tl3_controller::Result<()> {
             "PB evidence request is too large",
         ));
     }
-    let mut document: serde_json::Value = serde_json::from_slice(&raw)?;
-    document["operation"] = serde_json::json!(operation);
-    let request: tl3_pb_evidence::Request = serde_json::from_value(document)?;
-    let response = match tl3_pb_evidence::evaluate(request) {
-        Ok(value) => tl3_pb_evidence::Response::Return(value),
-        Err(error) => tl3_pb_evidence::Response::Raise(error),
-    };
+    let response = tl3_pb_evidence::wire::respond(
+        operation,
+        std::str::from_utf8(&raw)
+            .map_err(|_| tl3_controller::Error::Invalid("invalid PB evidence JSON"))?,
+    )?;
     let mut output = std::io::stdout().lock();
     serde_json::to_writer(&mut output, &response)?;
     output.write_all(b"\n")?;

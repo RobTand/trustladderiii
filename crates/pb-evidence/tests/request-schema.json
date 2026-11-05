@@ -1,0 +1,643 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Request",
+  "description": "Rust owns the transport contract. Python supplies facts, never a parallel model.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "ending": {
+          "$ref": "#/$defs/PbEnding"
+        },
+        "key": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "const": "summary-start"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "ending",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ending": {
+          "$ref": "#/$defs/PbEnding"
+        },
+        "key": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "const": "summary-finish"
+        },
+        "raw": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "ending",
+        "key",
+        "raw"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ending": {
+          "$ref": "#/$defs/PbEnding"
+        },
+        "key": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "const": "generator-start"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "ending",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ending": {
+          "$ref": "#/$defs/PbEnding"
+        },
+        "key": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "const": "generator-finish"
+        },
+        "raw": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "ending",
+        "key",
+        "raw"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ending": {
+          "$ref": "#/$defs/PbEnding"
+        },
+        "operation": {
+          "type": "string",
+          "const": "failure-read"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "ending"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ending": {
+          "$ref": "#/$defs/PbEnding"
+        },
+        "operation": {
+          "type": "string",
+          "const": "failure-receipt"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailedRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "ending"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "operation": {
+          "type": "string",
+          "const": "capability"
+        },
+        "raw": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "code",
+        "raw"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "detach": {
+          "type": "boolean"
+        },
+        "io_error": {
+          "type": "boolean",
+          "default": false
+        },
+        "operation": {
+          "type": "string",
+          "const": "machine-record"
+        },
+        "private": {
+          "type": "boolean"
+        },
+        "raw": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "private",
+        "code",
+        "raw",
+        "detach"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "expected": {
+          "$ref": "#/$defs/ExpectedRun"
+        },
+        "operation": {
+          "type": "string",
+          "const": "consistency"
+        },
+        "result": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "result",
+        "expected"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "is_list": {
+          "type": "boolean",
+          "default": true
+        },
+        "operation": {
+          "type": "string",
+          "const": "selectors"
+        },
+        "value": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "priority"
+        },
+        "value": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "settings"
+        },
+        "value": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "base_sha": true,
+        "declared_symptom": true,
+        "forcing": {
+          "$ref": "#/$defs/Forcing"
+        },
+        "operation": {
+          "type": "string",
+          "const": "identity"
+        },
+        "selectors": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "base_sha",
+        "selectors",
+        "forcing",
+        "declared_symptom"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "canonical"
+        },
+        "value": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ascii": {
+          "type": "boolean"
+        },
+        "compact": {
+          "type": "boolean"
+        },
+        "operation": {
+          "type": "string",
+          "const": "python-json"
+        },
+        "value": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "value",
+        "ascii",
+        "compact"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "candidate": true,
+        "operation": {
+          "type": "string",
+          "const": "bound-identity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "candidate"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "candidate": true,
+        "operation": {
+          "type": "string",
+          "const": "execution-identity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "candidate"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "unusable"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "result": true,
+        "selectors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "result",
+        "selectors",
+        "outcome"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "base_sha": true,
+        "checks": {
+          "type": "array",
+          "items": true
+        },
+        "failure": true,
+        "operation": {
+          "type": "string",
+          "const": "violations"
+        },
+        "receipts": {
+          "type": "array",
+          "items": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "failure",
+        "receipts",
+        "base_sha",
+        "checks"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "artifact": true,
+        "budget": true,
+        "command": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "implementation": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "const": "generator-identity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "artifact",
+        "command",
+        "image",
+        "implementation",
+        "budget"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "artifact": true,
+        "before": true,
+        "check_identity": {
+          "type": "boolean",
+          "default": false
+        },
+        "contract": {
+          "$ref": "#/$defs/GeneratorContract"
+        },
+        "operation": {
+          "type": "string",
+          "const": "generator-validate"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "artifact",
+        "before",
+        "contract"
+      ]
+    }
+  ],
+  "$defs": {
+    "ExpectedRun": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "boolean"
+        },
+        "base_sha": true,
+        "declared_symptom": true,
+        "forcing": true,
+        "proof": true,
+        "selected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tree": true
+      },
+      "required": [
+        "base",
+        "base_sha",
+        "tree",
+        "selected",
+        "proof",
+        "forcing",
+        "declared_symptom"
+      ]
+    },
+    "FailedRecord": {
+      "type": "object",
+      "properties": {
+        "action_key": true,
+        "published_unix": true,
+        "termination_reason": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "action_key",
+        "published_unix",
+        "termination_reason"
+      ]
+    },
+    "Forcing": {
+      "description": "A forced reproduction (#393): the declarative condition the harness applies, outside the test, to recreate a flake. Only on demonstrating checks.",
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}$"
+          }
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "delay_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 5
+              },
+              "raises": {
+                "type": "string",
+                "minLength": 1
+              },
+              "returns": {},
+              "target": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+              },
+              "value": {}
+            },
+            "additionalProperties": false,
+            "maxProperties": 2,
+            "minProperties": 2,
+            "required": [
+              "target"
+            ]
+          },
+          "maxItems": 8
+        },
+        "symptom": {
+          "type": "string",
+          "maxLength": 1000,
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "symptom",
+        "environment",
+        "patches"
+      ]
+    },
+    "GeneratorContract": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "budget": true,
+        "command": {
+          "type": "string"
+        },
+        "generated_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "image": {
+          "type": "string"
+        },
+        "implementation": {
+          "type": "string"
+        },
+        "protected_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "command",
+        "argv",
+        "generated_files",
+        "protected_paths",
+        "image",
+        "implementation",
+        "budget"
+      ]
+    },
+    "PbEnding": {
+      "description": "External PB fields preserve Python scalar distinctions until boundary decoding.",
+      "type": "object",
+      "properties": {
+        "action_key": {
+          "default": null
+        },
+        "attempt": {
+          "default": null
+        },
+        "diagnostics": {
+          "default": null
+        },
+        "exit_code": {
+          "default": null
+        },
+        "publication": {
+          "default": null
+        },
+        "reason": {
+          "default": null
+        },
+        "result": {
+          "default": null
+        },
+        "status": {
+          "default": null
+        },
+        "succeeded": {
+          "default": null
+        }
+      }
+    }
+  }
+}

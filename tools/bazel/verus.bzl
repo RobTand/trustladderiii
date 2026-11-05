@@ -189,9 +189,9 @@ def verus_proofs():
 
     if native.package_name() == "crates/pb-evidence":
         for group, module, count in [
-            ("ending", "", 4),
-            ("consistency", "", 4),
-            ("identity", "", 6),
+            ("ending", "", 12),
+            ("consistency", "", 10),
+            ("identity", "", 12),
         ]:
             verus_test(
                 name = "verus_" + group,

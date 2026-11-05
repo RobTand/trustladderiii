@@ -100,7 +100,6 @@ def execute(module, root, waits, mutation, crash_at):
     real_open = os.open
     real_fdopen = os.fdopen
     real_fchmod = os.fchmod
-    real_fsync = os.fsync
     real_replace = os.replace
     real_unlink = os.unlink
     descriptors = {}
@@ -190,7 +189,7 @@ def execute(module, root, waits, mutation, crash_at):
     def fsync(fd):
         if crashed:
             raise Crash()
-        real_fsync(fd)
+        # The recorded barrier models durability; both shells use this I/O interface.
         changed('fsync', descriptors.get(fd))
 
     def replace(src, dst, *args, **kwargs):
@@ -236,7 +235,7 @@ def execute(module, root, waits, mutation, crash_at):
 count = 0
 with tempfile.TemporaryDirectory() as temporary:
     parent = Path(temporary)
-    for waits in range(4):
+    for waits in range(5):
         for mutation in ('valid', 'identity', 'input', 'output', 'source-race'):
             before_root = parent / f'old-{count}'
             after_root = parent / f'new-{count}'

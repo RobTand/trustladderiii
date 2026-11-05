@@ -57,7 +57,7 @@ pub fn record(private: bool, code: i64, raw: &[u8], detach: bool, io_error: bool
         return Err(failure("unterminated", None));
     }
     let text = std::str::from_utf8(raw)
-        .map_err(|e| failure("invalid_json", Some(Refusal::utf8(raw,e))))?;
+        .map_err(|e| failure("invalid_json", Some(Refusal::utf8(raw, e))))?;
     let value = parse(text).map_err(|error| failure("invalid_json", Some(error)))?;
     if !value.is_object() {
         return Err(failure("not_object", None));

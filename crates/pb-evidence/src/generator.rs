@@ -200,8 +200,7 @@ pub fn validate(
                 "generator output exceeds the file size limit",
             ));
         }
-        std::str::from_utf8(&raw)
-            .map_err(|e| Refusal::utf8(&raw,e))?;
+        std::str::from_utf8(&raw).map_err(|e| Refusal::utf8(&raw, e))?;
         if raw.iter().any(|b| *b < 32 && !matches!(b, 9 | 10 | 13)) {
             return Err(Refusal::value("generator output must be text"));
         }

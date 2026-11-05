@@ -46,7 +46,10 @@ impl Refusal {
         }
     }
     pub fn typed(kind: &str, message: impl Into<String>) -> Self {
-        Self { kind: kind.into(), ..Self::value(message) }
+        Self {
+            kind: kind.into(),
+            ..Self::value(message)
+        }
     }
     pub fn key(name: &str) -> Self {
         Self {
@@ -72,15 +75,30 @@ impl Refusal {
     pub fn utf8(raw: &[u8], error: std::str::Utf8Error) -> Self {
         use base64::Engine;
         let start = error.valid_up_to();
-        let end = start + error.error_len().unwrap_or(raw.len()-start);
-        let reason = if error.error_len().is_none() { "unexpected end of data" }
-            else if raw[start] < 0xc2 || raw[start] > 0xf4 { "invalid start byte" }
-            else { "invalid continuation byte" };
-        let detail = if end == start + 1 { format!("byte 0x{:02x} in position {start}",raw[start]) }
-            else { format!("bytes in position {start}-{}",end-1) };
-        Self { kind: "UnicodeDecodeError".into(), message: format!("'utf-8' codec can't decode {detail}: {reason}"),
-            unicode: Some(UnicodeError {raw: base64::engine::general_purpose::STANDARD.encode(raw),start,end,reason: reason.into()}),
-            ..Self::value("") }
+        let end = start + error.error_len().unwrap_or(raw.len() - start);
+        let reason = if error.error_len().is_none() {
+            "unexpected end of data"
+        } else if raw[start] < 0xc2 || raw[start] > 0xf4 {
+            "invalid start byte"
+        } else {
+            "invalid continuation byte"
+        };
+        let detail = if end == start + 1 {
+            format!("byte 0x{:02x} in position {start}", raw[start])
+        } else {
+            format!("bytes in position {start}-{}", end - 1)
+        };
+        Self {
+            kind: "UnicodeDecodeError".into(),
+            message: format!("'utf-8' codec can't decode {detail}: {reason}"),
+            unicode: Some(UnicodeError {
+                raw: base64::engine::general_purpose::STANDARD.encode(raw),
+                start,
+                end,
+                reason: reason.into(),
+            }),
+            ..Self::value("")
+        }
     }
     pub fn json(reason: &str, document: &str, position: usize) -> Self {
         let position = position.min(document.len());
@@ -133,16 +151,34 @@ pub fn parse(raw: &str) -> Result<Value> {
 pub fn get<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
     match value {
         Value::Object(fields) => fields.get(key).ok_or_else(|| Refusal::key(key)),
-        Value::Array(_) => Err(Refusal::typed("TypeError", "list indices must be integers or slices, not str")),
-        Value::String(_) => Err(Refusal::typed("TypeError", "string indices must be integers, not 'str'")),
-        _ => Err(Refusal::typed("TypeError", format!("'{}' object is not subscriptable", python_type(value)))),
+        Value::Array(_) => Err(Refusal::typed(
+            "TypeError",
+            "list indices must be integers or slices, not str",
+        )),
+        Value::String(_) => Err(Refusal::typed(
+            "TypeError",
+            "string indices must be integers, not 'str'",
+        )),
+        _ => Err(Refusal::typed(
+            "TypeError",
+            format!("'{}' object is not subscriptable", python_type(value)),
+        )),
     }
 }
 
 pub fn python_type(value: &Value) -> &'static str {
     match value {
-        Value::Null => "NoneType", Value::Bool(_) => "bool", Value::String(_) => "str",
-        Value::Array(_) => "list", Value::Object(_) => "dict",
-        Value::Number(n) => if n.is_f64() { "float" } else { "int" },
+        Value::Null => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::String(_) => "str",
+        Value::Array(_) => "list",
+        Value::Object(_) => "dict",
+        Value::Number(n) => {
+            if n.is_f64() {
+                "float"
+            } else {
+                "int"
+            }
+        }
     }
 }

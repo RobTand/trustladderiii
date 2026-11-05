@@ -16,14 +16,12 @@ def load(name, path):
 
 
 root = Path(sys.argv[1])
-oracle = load('p3a_oracle', root / 'vector_oracle.py')
+repo = root.parent.parent.parent.parent
+sys.path.insert(0, str(repo / 'workers/tests'))
+import pb_evidence_vectors as oracle
+import pb_evidence_reference as reference
 new = oracle.pb_tests, oracle.pb_generators, oracle.rehearsal
-old_pb = load('p3a_old_pb', root / 'pb_tests_before.py')
-old_generator = load('p3a_old_generator', root / 'pb_generators_before.py')
-old_generator.TestSettings = old_pb.TestSettings
-old_generator._failure_receipt = old_pb._failure_receipt
-old_rehearsal = load('p3a_old_rehearsal', root / 'forcing_rehearsal_before.py')
-old = old_pb, old_generator, old_rehearsal
+old = reference.pb_tests, reference.pb_generators, reference.forcing_rehearsal
 
 
 def checker(command, document, **kwargs):
@@ -33,11 +31,11 @@ def checker(command, document, **kwargs):
 
 pb_evidence.run_check = checker
 count = 0
-for kind in oracle.KINDS:
-    if kind == 'evidence-ledger':
-        continue
-    cases = json.loads((root.parent.parent.parent / 'pb-evidence/tests' / (kind + '.json')).read_text())['cases']
-    for case in cases:
+for kind in (sys.argv[2],):
+    cases = json.loads((repo / 'workers/tests/pb-evidence-vectors' / (kind + '.json')).read_text())['cases']
+    for index, case in enumerate(cases):
+        if index % int(sys.argv[4]) != int(sys.argv[3]):
+            continue
         for label, modules in [('original', old), ('Rust worker', new)]:
             oracle.pb_tests, oracle.pb_generators, oracle.rehearsal = modules
             actual = oracle.observe(kind, case['input'])

@@ -8,6 +8,7 @@ pub mod identity;
 pub mod identity_fields;
 pub mod python_json;
 pub mod transport;
+pub mod wire;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ending::PbEnding;
@@ -75,7 +76,7 @@ pub enum Request {
     Identity {
         base_sha: Value,
         selectors: Value,
-        forcing: Value,
+        forcing: tl3_contracts::checks::Forcing,
         declared_symptom: Value,
     },
     Canonical {
@@ -178,7 +179,7 @@ pub fn evaluate(request: Request) -> Result<Value> {
         } => Ok(identity::identity(
             &base_sha,
             &selectors,
-            &forcing,
+            &serde_json::to_value(forcing).expect("forcing serializes"),
             &declared_symptom,
         )),
         Request::Canonical { value } => Ok(json!(python_json::dumps(&value, true, true))),

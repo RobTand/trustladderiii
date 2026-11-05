@@ -16,8 +16,11 @@ import re
 from pathlib import Path
 import tempfile
 import textwrap
+
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pb_evidence_reference as reference
 
 from tl3_harness import generator, test_tool
 from tl3_harness.model import Forcing
@@ -520,7 +523,10 @@ def evaluate(kind, data, root):
                 _checks=())([NODE], base=data['base'])
     if kind == 'machine-record-fallback':
         calls, fallbacks = [], []
+        checker_run = pb_tests.subprocess.run
         def run(args, **kwargs):
+            if args and args[0] == os.environ.get('TL3_BINARY'):
+                return checker_run(args, **kwargs)
             probe = '--machine-record-capability' in args
             calls.append('probe' if probe else 'private' if '--machine-record-fd' in args else 'stdout')
             if data.get('probe_io_error') and probe or data.get('action_io_error') and not probe:
@@ -624,12 +630,12 @@ def observe(kind, data):
 
 
 # Scope is the evidence decisions, not generator process lifecycle or staging.
-COVERED = (pb_tests._summary, pb_tests.TestSettings.__post_init__, pb_tests._selectors, pb_tests._priority,
-           pb_tests._json_command, pb_tests._stdout_json_command, pb_generators._artifact,
+COVERED = (reference.pb_tests._summary, reference.pb_tests.TestSettings.__post_init__, reference.pb_tests._selectors, reference.pb_tests._priority,
+           reference.pb_tests._json_command, reference.pb_tests._stdout_json_command, reference.pb_generators._artifact,
            generator.validate_artifact, generator.text, generator.changed, generator.path_parts,
            generator._check_interpreter, generator.budget, tools._selectors, Evidence.restore,
-           pb_tests._machine_record_supported, pb_tests._failure_receipt, Evidence.test_result,
-           test_tool.bounded, test_tool._summary_limit, rehearsal.unusable, rehearsal.ForcingRehearsals.violations)
+           reference.pb_tests._machine_record_supported, reference.pb_tests._failure_receipt, Evidence.test_result,
+           test_tool.bounded, test_tool._summary_limit, reference.forcing_rehearsal.unusable, reference.forcing_rehearsal.ForcingRehearsals.violations)
 
 REQUIRED_CASES = {
     'ending-summary': {'result-null', 'result-list', 'result-string', 'result-empty',
