@@ -90,18 +90,9 @@ def test_corrected_plan_declares_its_edit(tmp_path, planner_request, digests_pla
 
 
 @pytest.mark.parametrize('at_base', [True, False], ids=['missing-from-worktree', 'only-in-worktree'])
-def test_edit_declaration_uses_original_base(planner_request, digests_plan, at_base, monkeypatch, request,
-                                            checker_state_directory):
-    import checker_stub
+def test_edit_declaration_uses_original_base(planner_request, digests_plan, at_base):
     from worker_process import git
 
-    # Reuse the one-check, two-file plan's real Rust execution-budget response.
-    budget_case = ('tests/test_planner_frozen_tests.py::'
-                   'test_declared_edits_name_existing_tests_in_declared_files['
-                   'tests/test_digests.py-files0-edits_tests must name exact pytest node IDs.]')
-    monkeypatch.setitem(checker_stub.cases(), request.node.nodeid,
-                        copy.deepcopy(checker_stub.cases()[budget_case]))
-    checker_stub.prepare_replay(request.node.nodeid, checker_state_directory / 'checker-cursor')
     root = Path(planner_request['worktree'])
     source = (root / DIGESTS).read_text()
     if not at_base:
