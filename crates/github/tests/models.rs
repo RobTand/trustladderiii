@@ -1,6 +1,33 @@
 use serde_json::json;
 use tl3_github::*;
 
+/// #766: cleanup news must recover exactly one complete message marker.
+#[test]
+fn message_marker_keys_round_trip_and_reject_ambiguous_or_invalid_frames() {
+    for key in [
+        "effect:0:8",
+        "console-note:766",
+        "notice:766:original",
+        "message-λ",
+    ] {
+        assert_eq!(
+            GitHub::comment_effect_key(&format!("Done\n\n{}", GitHub::marker(key))),
+            Some(key.into())
+        );
+    }
+    for body in [
+        "",
+        "<!-- tl3:effect: -->",
+        "<!-- tl3:effect:xx -->",
+        "<!-- tl3:effect:ff -->",
+        "prefix <!-- tl3:effect:61 -->",
+        "<!-- tl3:effect:61 --> suffix",
+        "<!-- tl3:effect:61 -->\n<!-- tl3:effect:62 -->",
+    ] {
+        assert_eq!(GitHub::comment_effect_key(body), None, "{body}");
+    }
+}
+
 #[test]
 fn check_run_accepts_a_null_app() {
     let mut check: serde_json::Value =
