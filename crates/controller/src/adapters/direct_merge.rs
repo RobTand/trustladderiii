@@ -224,7 +224,7 @@ impl Adapter {
             let runs = self
                 .runtime
                 .block_on(github.check_runs(&repo, &pull.head.sha))?;
-            // The durable kernel approval is checked separately below. This is Q44's own-app check.
+            // #830 retains the own-app approval check; durable exact-head approval is checked below.
             let own: Vec<_> = runs
                 .iter()
                 .filter(|check| {
