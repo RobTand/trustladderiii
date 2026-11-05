@@ -880,3 +880,16 @@ fn mandatory_head_tree_changes_between_the_two_reply_reads() {
     assert_eq!(r.trace[6]["outcome"], json!({"ok":HEAD}));
     assert_eq!(r.trace[9]["outcome"], json!({"ok":REVIEWED}));
 }
+
+/// #819/H17: successful real producer fixtures retain sorted `json!` wire bytes.
+/// The recorded-leaf schedules above also deliberately pass malformed opaque receipt
+/// shapes through a stub validator, so this check uses its schema-valid fixture.
+#[test]
+fn reviewer_type_preserves_producer_value_bytes_but_direct_serialization_differs() {
+    let run = compare(&fixture());
+    let original = run.result.unwrap();
+    let value: Value = serde_json::from_slice(&original).unwrap();
+    let typed: tl3_contracts::roles::reviewer_input::ReviewerInput = serde_json::from_value(value).unwrap();
+    assert_eq!(serde_json::to_vec(&serde_json::to_value(&typed).unwrap()).unwrap(), original);
+    assert_ne!(serde_json::to_vec(&typed).unwrap(), original);
+}
