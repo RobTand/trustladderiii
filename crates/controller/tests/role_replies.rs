@@ -459,7 +459,7 @@ fn validator_for_generated(
     for file in contracts::replies::generated() {
         let schema: Value = serde_json::from_str(&file.text).unwrap();
         registry = registry
-            .add(schema["$id"].as_str().unwrap().to_owned(), schema)
+            .add(schema["$id"].as_str().unwrap(), schema.clone())
             .unwrap();
     }
     let file = contracts::replies::generated()

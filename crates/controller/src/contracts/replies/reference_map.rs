@@ -108,14 +108,13 @@ proptest! {
             let mut reply=event["reply"].clone();
             match amendment {
                 1=> {reply["unexpected"]=serde_json::json!(true);},
-                2=> { if let Some(files)=reply.get_mut("files").and_then(Value::as_array_mut) {
-                    if let Some(first)=files.first_mut() {
+                2=> { if let Some(files)=reply.get_mut("files").and_then(Value::as_array_mut)
+                    && let Some(first)=files.first_mut() {
                         if first.is_string() {*first=serde_json::json!("../bad.py");}
                         else {first["path"]=serde_json::json!("../bad.py");}
-                    }
                 }},
                 3=> {if reply["kind"]=="done" {reply["self_check"]=serde_json::json!([{"goal_id":"g","status":"not_met","why":"unfinished"}]);}},
-                4=> {if reply["forecast"].is_object() {reply["forecast"]["tokens"]=serde_json::json!(0);}},
+                4 if reply["forecast"].is_object()=> {reply["forecast"]["tokens"]=serde_json::json!(0);},
                 _=>{},
             }
             let before=map_reply(role,&reply);
