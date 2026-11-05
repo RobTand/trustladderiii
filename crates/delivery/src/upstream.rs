@@ -147,3 +147,18 @@ pub fn restart(before: Upstream) -> Upstream {
         ..before
     }
 }
+
+/// State-table :753: a request may never apply. This is the upstream's eventual
+/// nonapplication, not a timeout and not an executor's guess from an empty GET.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    requires before.outstanding > 0,
+    ensures out.outstanding == before.outstanding-1,
+        out.copies == before.copies, out.incorrect == before.incorrect,
+        out.repair_debt == before.repair_debt, out.found == before.found,
+))]
+pub fn never_lands(before: Upstream) -> Upstream {
+    Upstream {
+        outstanding: before.outstanding - 1,
+        ..before
+    }
+}
