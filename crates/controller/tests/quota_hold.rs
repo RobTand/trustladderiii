@@ -93,6 +93,7 @@ impl Fixture {
         let mut config =
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         config.store = settings.clone();
+        config.limits.agent_pool = 2;
         config.models.key_file = root.path().join("fixture-key");
         fs::write(&config.models.key_file, "fixture-only").unwrap();
         config.workers.python = "/usr/bin/python3".into();
