@@ -29,10 +29,10 @@ pub struct Upstream {
 /// State-table :738-753. Request issuance is separate from application and reply.
 /// Bound: counters fit u64; trace length and number of restarts are unbounded.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires before.outstanding < u64::MAX,
-    ensures out.outstanding == before.outstanding + 1,
-        out.copies == before.copies, out.incorrect == before.incorrect,
-        out.repair_debt == before.repair_debt, out.found == before.found,
+    requires (before.outstanding as int) < u64::MAX,
+    ensures out.outstanding == (before.outstanding as int) + 1,
+        out.copies == (before.copies as int), out.incorrect == (before.incorrect as int),
+        out.repair_debt == (before.repair_debt as int), out.found == before.found,
 ))]
 pub fn issue(before: Upstream) -> Upstream {
     Upstream {
@@ -46,15 +46,15 @@ pub fn issue(before: Upstream) -> Upstream {
 /// (prismabuild/src/submit.rs:310-319); supervisor start reuses its operation ID.
 /// Adapters' external implementations must satisfy this law for Once to hold.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires before.outstanding > 0, before.copies < u64::MAX,
-        before.incorrect <= before.copies,
-    ensures out.outstanding == before.outstanding - 1,
+    requires (before.outstanding as int) > 0, (before.copies as int) < u64::MAX,
+        (before.incorrect as int) <= (before.copies as int),
+    ensures out.outstanding == (before.outstanding as int) - 1,
         out.copies == if matches!(class, Class::Once | Class::Converges) { 1 }
-            else { before.copies + 1 },
-        out.incorrect == if class == Class::Approval && !correct {before.incorrect + 1}
+            else { (before.copies as int) + 1 },
+        out.incorrect == if class == Class::Approval && !correct {(before.incorrect as int) + 1}
             else if matches!(class, Class::Once | Class::Converges) {0}
-            else {before.incorrect},
-        out.repair_debt == before.repair_debt, out.found == before.found,
+            else {(before.incorrect as int)},
+        out.repair_debt == (before.repair_debt as int), out.found == before.found,
 ))]
 pub fn land(before: Upstream, class: Class, correct: bool) -> Upstream {
     let copies = match class {
@@ -83,11 +83,11 @@ pub fn lose_response(before: Upstream) -> Upstream {
 /// State-table reconciliation / Q27: list is a separate sample. Approval repairs
 /// each noncanonical visible copy; messages delete all listed copies but the first.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires before.incorrect <= before.copies,
-    ensures out.copies == before.copies, out.incorrect == before.incorrect,
-        out.outstanding == before.outstanding, out.found == (before.copies > 0),
-        out.repair_debt == if class == Class::Approval {before.incorrect}
-            else if class == Class::Deduplicated && before.copies > 0 {before.copies-1}
+    requires (before.incorrect as int) <= (before.copies as int),
+    ensures out.copies == (before.copies as int), out.incorrect == (before.incorrect as int),
+        out.outstanding == (before.outstanding as int), out.found == ((before.copies as int) > 0),
+        out.repair_debt == if class == Class::Approval {(before.incorrect as int)}
+            else if class == Class::Deduplicated && (before.copies as int) > 0 {(before.copies as int)-1}
             else {0},
 ))]
 pub fn read(before: Upstream, class: Class) -> Upstream {
@@ -107,13 +107,13 @@ pub fn read(before: Upstream, class: Class) -> Upstream {
 /// can occur after this write and before any local receipt. A restart rereads.
 /// HTTP failures with unknown application are represented by delaying this step.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires before.repair_debt > 0,
-        class == Class::Approval ==> before.incorrect >= before.repair_debt,
-        class == Class::Deduplicated ==> before.copies > before.repair_debt,
-    ensures out.outstanding == before.outstanding, out.found == before.found,
-        out.repair_debt == before.repair_debt-1,
-        out.copies == if class == Class::Deduplicated {before.copies-1} else {before.copies},
-        out.incorrect == if class == Class::Approval {before.incorrect-1} else {before.incorrect},
+    requires (before.repair_debt as int) > 0,
+        class == Class::Approval ==> (before.incorrect as int) >= (before.repair_debt as int),
+        class == Class::Deduplicated ==> (before.copies as int) > (before.repair_debt as int),
+    ensures out.outstanding == (before.outstanding as int), out.found == before.found,
+        out.repair_debt == (before.repair_debt as int)-1,
+        out.copies == if class == Class::Deduplicated {(before.copies as int)-1} else {(before.copies as int)},
+        out.incorrect == if class == Class::Approval {(before.incorrect as int)-1} else {(before.incorrect as int)},
 ))]
 pub fn repair_one(before: Upstream, class: Class) -> Upstream {
     let copies = if class == Class::Deduplicated {
@@ -137,8 +137,8 @@ pub fn repair_one(before: Upstream, class: Class) -> Upstream {
 /// State-table :753 / Q27: crash/restart drops the list cursor, not upstream
 /// writes or outstanding requests. A zombie can land before or after this step.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out.copies == before.copies, out.incorrect == before.incorrect,
-    out.outstanding == before.outstanding, out.repair_debt == 0, out.found == false,
+    out.copies == (before.copies as int), out.incorrect == (before.incorrect as int),
+    out.outstanding == (before.outstanding as int), out.repair_debt == 0, out.found == false,
 ))]
 pub fn restart(before: Upstream) -> Upstream {
     Upstream {
@@ -151,10 +151,10 @@ pub fn restart(before: Upstream) -> Upstream {
 /// State-table :753: a request may never apply. This is the upstream's eventual
 /// nonapplication, not a timeout and not an executor's guess from an empty GET.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires before.outstanding > 0,
-    ensures out.outstanding == before.outstanding-1,
-        out.copies == before.copies, out.incorrect == before.incorrect,
-        out.repair_debt == before.repair_debt, out.found == before.found,
+    requires (before.outstanding as int) > 0,
+    ensures out.outstanding == (before.outstanding as int)-1,
+        out.copies == (before.copies as int), out.incorrect == (before.incorrect as int),
+        out.repair_debt == (before.repair_debt as int), out.found == before.found,
 ))]
 pub fn never_lands(before: Upstream) -> Upstream {
     Upstream {

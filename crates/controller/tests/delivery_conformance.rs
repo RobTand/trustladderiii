@@ -239,12 +239,15 @@ fn real_store_refuses_epoch_advance_until_deliveries_drain() {
     }
 }
 
-/// State-table old-epoch cancellation is mirrored against the real Controller.
+/// Store lib.rs:1133-1140: a drained epoch carries Intended rows forward before dispatch.
 #[test]
-fn old_intended_epoch_cancels_without_http() {
+fn intended_is_carried_into_new_epoch_before_dispatch() {
     let mut database = database::Database::start();
     let settings = database.create("delivery_old");
-    let script = Arc::new(Mutex::new(Script::default()));
+    let script = Arc::new(Mutex::new(Script {
+        answers: VecDeque::from([Answer::Found]),
+        ..Script::default()
+    }));
     let mut controller = open(&settings, script.clone());
     let epoch = controller.snapshot().unwrap().epoch.get();
     seed(&settings, "old", epoch);
@@ -253,13 +256,18 @@ fn old_intended_epoch_cancels_without_http() {
     let mut advance = Commit::new("new-epoch", json!(null), &snapshot);
     advance.next_epoch = Some(tl3_store::Epoch::try_from(epoch + 1).unwrap());
     store.commit(&advance).unwrap();
-    let action = mirror::dispatch(State::Intended, true, false);
-    assert_eq!(action, Action::Cancel);
-    drive(
-        &mut controller,
-        &settings,
-        "old",
-        mirror::committed(State::Intended, action, Ack::Retryable),
+    assert_eq!(store.effect("old").unwrap().unwrap().epoch.get(), epoch + 1);
+    let action = mirror::dispatch(State::Intended, false, false);
+    assert_eq!(action, Action::Send);
+    drive(&mut controller, &settings, "old", State::Confirmed);
+    assert_eq!(
+        script
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|s| s.starts_with("execute:"))
+            .count(),
+        1
     );
-    assert!(script.lock().unwrap().calls.is_empty());
 }
