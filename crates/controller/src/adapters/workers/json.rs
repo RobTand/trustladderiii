@@ -70,7 +70,7 @@ impl<'de> DeserializeSeed<'de> for DocumentSeed {
                     *number = number
                         .as_f64()
                         .and_then(Number::from_f64)
-                        .ok_or_else(|| de::Error::custom("number out of range"))?;
+                        .ok_or_else(|| <D::Error as de::Error>::custom("number out of range"))?;
                 }
                 Ok(Document(value))
             }
