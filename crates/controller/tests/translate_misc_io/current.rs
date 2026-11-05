@@ -24,9 +24,11 @@ impl Shell<'_> {
                 issue,
                 comment,
             } => {
-                if comment.user.id == self.bootstrap.rob
-                    && self.bootstrap.repos.contains(&repository)
-                {
+                let author_matches = comment.user.id == self.bootstrap.rob;
+                if tl3_controller_core::translate_misc::admit_comment(
+                    author_matches,
+                    author_matches && self.bootstrap.repos.contains(&repository),
+                ) {
                     let id = format!(
                         "{}/{}/{}/{}",
                         repository.owner.to_ascii_lowercase(),
@@ -34,12 +36,15 @@ impl Shell<'_> {
                         repository.installation,
                         comment.id
                     );
-                    if !self.store.comment_retired(&id)?
-                        && !snapshot
-                            .rows
-                            .iter()
-                            .any(|row| row.table == "github_comments" && row.id == id)
-                    {
+                    let retired = self.store.comment_retired(&id)?;
+                    if tl3_controller_core::translate_misc::record_comment(
+                        retired,
+                        !retired
+                            && snapshot
+                                .rows
+                                .iter()
+                                .any(|row| row.table == "github_comments" && row.id == id),
+                    ) {
                         let value =
                             json!({"repository": repository, "issue": issue, "comment": comment});
                         commit

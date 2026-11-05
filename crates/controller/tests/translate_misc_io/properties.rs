@@ -188,3 +188,15 @@ fn recorded_schedules_and_crashes() {
         count.get()
     );
 }
+
+#[test]
+fn real_retirement_query_is_unchanged() {
+    let body = include_str!("store-read.rs");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(body)),
+        "21488e3bf7c181e0e662c85ec23af26c1c930ce5de23d68bababc997e806bf20"
+    );
+    assert!(include_str!("../../../store/src/lib.rs").contains(body));
+    assert!(include_str!("store.rs").contains(body.trim_end()));
+    assert!(body.contains("SELECT EXISTS (SELECT 1 FROM tl3_events WHERE event_key = $1)"));
+}

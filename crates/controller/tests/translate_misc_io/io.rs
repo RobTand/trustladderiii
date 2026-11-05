@@ -60,23 +60,9 @@ pub(super) struct Controller {
     pub bootstrap: Bootstrap,
     pub store: Store,
 }
-pub(super) struct Store;
-impl Store {
-    pub(super) fn comment_retired(&mut self, id: &str) -> Result<bool> {
-        let reply = with(|r| {
-            let v = r.tape.get(r.run.reads).copied().unwrap_or(0) % 4;
-            r.run.reads += 1;
-            v
-        });
-        call("store.comment_retired", json!({"id":id,"reply":reply}));
-        match reply {
-            0 => Ok(false),
-            1 => Ok(true),
-            2 => Err(Error::Store(tl3_store::Error::Invalid("query failed"))),
-            _ => Err(Error::Store(tl3_store::Error::Invalid("connection lost"))),
-        }
-    }
-}
+pub(super) use stored::Store;
+#[path = "store.rs"]
+mod stored;
 pub(super) struct Commit {
     pub rows: Rows,
 }
@@ -164,7 +150,7 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
                 pool: 1,
                 fail_fast: false,
             },
-            store: Store,
+            store: Store::new(),
         };
         let mut snapshot = Snapshot {
             revision: Revision::ZERO,
@@ -178,10 +164,7 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
             with(|r| r.run.staged.clear());
             let mut commit = Commit { rows: Rows };
             let result = if new {
-                // Red: the new implementation entry is deliberately absent. The complete
-                // current arm still compiles and its identity guard remains active.
-                let _ = (&mut controller, &snapshot, observation, &mut commit);
-                Ok::<Option<Event>, Error>(None)
+                current::translate(&mut controller, &snapshot, observation.clone(), &mut commit)
             } else {
                 reference::translate(&mut controller, &snapshot, observation.clone(), &mut commit)
             };
