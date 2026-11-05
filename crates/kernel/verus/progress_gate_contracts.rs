@@ -95,4 +95,33 @@ pub(super) proof fn end_reply_progress(before: Node, after: Node, reply: Reply)
 {
     reveal(distance);
 }
+
+/// Reply rows / #771 and #806: expose bounds only after the actual reply dispatch.
+pub(super) proof fn reply_bounds_result(before: World, after: World, i: int,
+    out_before: usize, out_after: usize)
+    requires reply_bounds(before, after, i, out_before, out_after),
+    ensures
+        (settle_shape(before.nodes@[i]) ==> settle_shape(after.nodes@[i]))
+        && after.nodes@[i].repo == before.nodes@[i].repo
+        && after.nodes@.len() == before.nodes@.len()
+        && (forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j])
+        && after.nodes@[i].generation as int <= before.nodes@[i].generation as int + 1
+        && after.nodes@[i].next_seq == before.nodes@[i].next_seq
+        && after.nodes@[i].last_cmd == before.nodes@[i].last_cmd
+        && after.nodes@[i].credit.start as int <= before.nodes@[i].credit.start as int + CREDIT_START_STEP_BUDGET
+        && after.nodes@[i].credit.earned == before.nodes@[i].credit.earned
+        && after.nodes@[i].credit.added == before.nodes@[i].credit.added
+        && after.nodes@[i].credit.spent as int <= before.nodes@[i].credit.spent as int + 1
+        && after.next_ticket == before.next_ticket
+        && after.next_question as int <= before.next_question as int + 1
+        && after.gates@ == before.gates@
+        && after.pool_capacity == before.pool_capacity
+        && after.fail_fast == before.fail_fast
+        && after.file_sets@ == before.file_sets@
+        && after.dependencies@ == before.dependencies@
+        && out_after as int <= out_before as int + 1,
+{
+    reveal(reply_bounds);
+}
 }

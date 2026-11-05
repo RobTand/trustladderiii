@@ -90,7 +90,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(reply_bounds);] {
+] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     let n = &w.nodes[i];
@@ -165,6 +165,8 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         _ => {
             reply_transition(w, i, reply, out);
             kernel_proof! {
+                progress_gate_contracts::reply_bounds_result(after_operation@, *w, i as int,
+                    before_outputs@.len, out.len);
                 progress_gate_contracts::table_order_frame(after_operation@, *w);
                 progress_gate_contracts::maker_reply_composed(before_reply@, after_operation@,
                     *w, i as int, generation, reply, before_outputs@, *out);
