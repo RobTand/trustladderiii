@@ -6,6 +6,7 @@ from the real Rust functions. Unexpected commands and extra calls fail closed.
 """
 from copy import deepcopy
 from functools import cache
+import fcntl
 import gzip
 import json
 import hashlib
@@ -56,7 +57,9 @@ def difference(expected, actual, path='$'):
 
 def replay(case, cursor, command, document):
     """A unit fake follows its script; Rust checks the original facts elsewhere."""
-    with _LOCK:
+    # Parent threads and separately launched checker processes share one cursor.
+    with _LOCK, cursor.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
         position = int(cursor.read_text()) if cursor.exists() else 0
         script = cases().get(case, [])
         if position >= len(script):
