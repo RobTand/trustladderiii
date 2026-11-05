@@ -1,4 +1,5 @@
 """Summary bounding must make progress or refuse, with a short hang backstop."""
+from copy import deepcopy
 import json
 from pathlib import Path
 import subprocess
@@ -105,3 +106,149 @@ def test_error_dominated_group_removes_failures_but_keeps_totals_and_proof(note)
     assert sum(test['outcome'] == 'error' for test in kept) < 267
     assert len(json.dumps(observed).encode()) <= limit
     assert 'Truncated' in observed['note']
+
+
+def envelope():
+    return {'status': 'completed',
+            'tests': [{'test': 'test_x.py::test_red', 'outcome': 'failed', 'message': 'RED'}],
+            'totals': {'passed': 0, 'failed': 1, 'error': 0, 'skipped': 0},
+            'proof': {'mode': 'head-observer'}, 'origin': 'test_run', 'note': ''}
+
+
+def test_action_cap_keeps_all_facts_when_the_full_document_fits():
+    result = envelope()
+    original = deepcopy(result)
+    observed = test_tool.action_summary(result, limit=4096)
+    assert observed == original
+    assert result == original
+
+
+def test_action_cap_drops_all_display_entries_together_and_keeps_red():
+    result = envelope()
+    result['tests'] += [{'test': f'test_x.py::test_display_{index}', 'outcome': outcome,
+                         'message': 'x' * 1000}
+                        for index, outcome in enumerate(('passed', 'error', 'passed', 'error'))]
+    result['totals'].update(passed=2, error=2)
+    observed = test_tool.action_summary(result, limit=1000)
+    assert observed['tests'] == result['tests'][:1]
+    assert observed['proof'] == result['proof']
+    assert observed['totals'] == result['totals']
+    assert observed['status'] == result['status']
+    assert observed['origin'] == result['origin']
+    assert len(json.dumps(observed).encode()) <= 1000
+
+
+def test_action_cap_returns_existing_diagnostic_when_the_core_cannot_fit():
+    result = envelope()
+    result['proof']['required'] = 'x' * 20_000
+    observed = test_tool.action_summary(result, limit=16_384)
+    assert observed == test_tool._summary_limit(result)
+    assert observed['origin'] == 'test_run'
+    assert observed['totals'] == result['totals']
+    assert len(json.dumps(observed).encode()) <= 16_384
+
+
+def test_summary_admission_retains_facts_until_the_action_chooses_a_level():
+    summary = test_tool.Summary(raw=True)
+    for index in range(30):
+        summary.add(f'test_x.py::test_{index}', 'error', 'x' * 1000)
+    summary.add('test_x.py::test_red', 'failed', 'RED')
+    assert len(summary.result['tests']) == 31
+    assert summary.result['totals']['error'] == 30
+    assert summary.result['totals']['failed'] == 1
+    assert summary.result['tests'][-1]['test'] == 'test_x.py::test_red'
+
+
+def test_declared_symptom_retains_legacy_unavailable_at_the_summary_boundary():
+    from tl3_harness.limits import validate_check_plan
+    from tl3_harness.model import Check, Kind
+    from tl3_harness.symptoms import classify
+
+    path = Path(test_tool.__file__).parents[2] / 'test-vectors/summary/declared-symptom-admission.json'
+    vector = json.loads(path.read_text())
+    declaration, entry, expected = vector['declaration'], vector['entry'], vector['expected']
+    node = declaration['node']
+    assert len(node) == expected['node_characters']
+    validate_check_plan((Check('RED', Kind.DEMONSTRATING, (node,), declared_symptom=declaration),))
+    summary = test_tool.Summary()
+    summary.add(entry['test'], entry['outcome'], entry['message'], failures=entry['failures'])
+    observed = test_tool.bounded(summary.result)
+    assert not observed['tests'], 'legacy action bounding must drop this entry before the judge'
+    assert classify(observed, declaration) == expected['classification']
+    raw = {**summary.result, 'tests': list(summary.outcomes.values()), 'note': ''}
+    assert len(json.dumps(raw).encode()) == expected['raw_json_bytes']
+    assert classify(raw, declaration) == expected['raw_classification']
+
+
+def test_action_cap_levels_match_committed_vectors():
+    path = Path(test_tool.__file__).parents[2] / 'test-vectors/summary/action-cap.json'
+    for vector in json.loads(path.read_text()):
+        observed = test_tool.action_summary(vector['input'], limit=vector['limit'])
+        assert observed == vector['expected'], vector['id']
+        assert len(json.dumps(observed).encode()) <= vector['limit']
+    assert test_tool.ACTION_SUMMARY_BYTES == 786_432
+
+
+def test_declared_symptom_run_current_keeps_legacy_bounding(monkeypatch, tmp_path):
+    from tl3_harness.symptoms import classify
+
+    path = Path(test_tool.__file__).parents[2] / 'test-vectors/summary/declared-symptom-admission.json'
+    vector = json.loads(path.read_text())
+    result = test_tool.Summary(raw=True)
+    entry = vector['entry']
+    result.add(entry['test'], entry['outcome'], entry['message'], failures=entry['failures'])
+    monkeypatch.setattr(test_tool, '_run_current', lambda *args, **kwargs: deepcopy(result.result))
+    observed = test_tool.run_current(tmp_path, None, (entry['test'],), declared_symptom=vector['declaration'])
+    assert classify(observed, vector['declaration']) == vector['expected']['classification']
+    assert test_tool.run_current(tmp_path, None, (entry['test'],)) == result.result
+
+
+def test_action_core_keeps_exact_identity_for_a_selection_above_the_action_cap():
+    from tl3_harness.selector_identity import selector_identity
+
+    result = envelope()
+    result['selectors'] = ['test_x.py::test_' + '😀' * 1900 + str(index) for index in range(64)]
+    assert len(json.dumps(result).encode()) > test_tool.ACTION_SUMMARY_BYTES
+    observed = test_tool.action_summary(result)
+    assert observed['status'] == 'completed'
+    assert observed['selectors'] == selector_identity(result['selectors'])
+    assert observed['tests'] == result['tests']
+    assert observed['proof'] == result['proof']
+    assert len(json.dumps(observed).encode()) <= test_tool.ACTION_SUMMARY_BYTES
+
+
+def test_repeat_keeps_legacy_twenty_failure_ids_without_byte_pressure(monkeypatch, tmp_path):
+    # #823 review: run display count is independent of the byte-bound divergences.
+    def observed(tree, container, tests, parallel, summary):
+        for index in range(21):
+            summary.add(f't.py::t{index:02}', 'failed')
+        return summary.result
+
+    monkeypatch.setattr(test_tool, 'run_current', observed)
+    result = test_tool.run(tmp_path, None, (), repeat=2)
+    assert len(json.dumps(result).encode()) < 14_336
+    assert result['totals']['failed'] == 21
+    assert result['runs'] == [
+        {'run':number, 'status':'completed', 'totals':result['totals'],
+         'failed':[f't.py::t{index:02}' for index in range(20)]}
+        for number in (1, 2)]
+
+
+def test_repeat_keeps_legacy_half_envelope_run_list_cap(monkeypatch, tmp_path):
+    # #823 review cap audit: the old run-list byte cap can fire while the complete
+    # result still fits 14 KiB. Its diagnostic note is observable too.
+    nodes = [f't.py::t{index:02}' + 'x' * 130 for index in range(21)]
+    def observed(tree, container, tests, parallel, summary):
+        for node in nodes:
+            summary.add(node, 'failed')
+        return summary.result
+    monkeypatch.setattr(test_tool, 'run_current', observed)
+    result = test_tool.run(tmp_path, None, (), repeat=3)
+    assert len(json.dumps(result).encode()) < 14_336
+    runs = [{'run':number, 'status':'completed', 'totals':result['totals'], 'failed':nodes[:20]}
+            for number in (1, 2, 3)]
+    for entry in reversed(runs):
+        while entry['failed'] and len(json.dumps(runs).encode()) > 8192:
+            entry['failed'].pop()
+    assert result['runs'] == runs
+    assert result['note'] == 'Truncated: test entries or failure messages were cut. Totals include all results.'

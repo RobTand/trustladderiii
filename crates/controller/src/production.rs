@@ -227,7 +227,19 @@ impl Materials {
                     "no GitHub client for the installation",
                 ))?;
         let name = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        Ok(crate::executor::runtime()?.block_on(client.issue(&name, delivery.issue))?)
+        crate::executor::runtime()?
+            .block_on(client.issue(&name, delivery.issue))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::prerequisite(
+                        &delivery.repository,
+                        tl3_kernel::PrerequisiteKind::Issue,
+                        delivery.issue,
+                    ),
+                    delivery.repository.installation,
+                )
+            })
     }
 
     pub(crate) fn load(&self, delivery: &crate::executor::Delivery) -> Result<serde_json::Value> {
@@ -240,14 +252,48 @@ impl Materials {
         let client = &self.clients[&delivery.repository.installation];
         let runtime = crate::executor::runtime()?;
         let name = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        let issue = runtime.block_on(client.issue(&name, delivery.issue))?;
-        let comments = runtime.block_on(client.comments(&name, delivery.issue))?;
+        let issue = runtime
+            .block_on(client.issue(&name, delivery.issue))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::prerequisite(
+                        &delivery.repository,
+                        tl3_kernel::PrerequisiteKind::Issue,
+                        delivery.issue,
+                    ),
+                    delivery.repository.installation,
+                )
+            })?;
+        let comments = runtime
+            .block_on(client.comments(&name, delivery.issue))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::GithubIssueComments {
+                        repository: name.clone(),
+                        number: delivery.issue,
+                    },
+                    delivery.repository.installation,
+                )
+            })?;
         let path = repository_path(&self.worktrees, &delivery.repository);
         let mut git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
         git.set_base_branch(base_branch)?;
         let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))?;
-        let token =
-            tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)?;
+        let token = tl3_worktrees::InstallationToken::new(
+            runtime
+                .block_on(client.installation_token())
+                .map_err(|error| {
+                    crate::input_resources::github(
+                        error,
+                        crate::input_resources::Resource::GithubInstallation {
+                            installation: delivery.repository.installation,
+                        },
+                        delivery.repository.installation,
+                    )
+                })?,
+        )?;
         let base = git.fetch_base(&remote, Some(&token))?;
         let repo = repository_materials(&path, base.as_str())?;
         let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":"unknown",

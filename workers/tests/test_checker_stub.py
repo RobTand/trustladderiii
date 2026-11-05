@@ -147,7 +147,7 @@ def test_cursor_is_not_published_if_fsync_fails(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="injected cursor sync failure"):
         checker_stub.replay(case, cursor, row["command"], row["document"])
     assert cursor.read_text() == "0"
-    assert list(tmp_path.iterdir()) == [cursor]
+    assert set(tmp_path.iterdir()) == {cursor, cursor.with_suffix(".lock")}
 
 
 def test_replay_latency(checker_state_directory, capsys):
@@ -205,6 +205,24 @@ print('CHECKER_TIMING ' + json.dumps([imported-started, finished-imported]), fil
         print("CHECKER_LATENCY_MS " + json.dumps({"samples": len(samples), "streams": 4, "timings": summary}, sort_keys=True))
 
 
+@pytest.mark.parametrize('kind', ['summary', 'identity'])
+@pytest.mark.parametrize('prepared', [False, True])
+def test_harness_replay_requires_full_document_equality(tmp_path, monkeypatch, kind, prepared):
+    command = ['check-harness', kind]
+    document = {'kind': kind, 'limit': 16_384, 'facts': {'message': 'original'}}
+    row = {'command': command, 'document': document, 'response': {'result': 'recorded'}}
+    monkeypatch.setattr(checker_stub, 'cases', lambda: {'local harness case': [row]})
+    if prepared:
+        checker_stub.prepare_replay('local harness case', tmp_path / 'cursor')
+    changed = {**document, 'facts': {'message': 'changed'}}
+    with pytest.raises(RuntimeError, match='document'):
+        checker_stub.replay('local harness case', tmp_path / 'cursor', command, changed)
+    with pytest.raises(RuntimeError, match='document'):
+        checker_stub.replay('local harness case', tmp_path / 'cursor', command, {**document, 'limit': 16_384.0})
+    assert not (tmp_path / 'cursor').exists()
+    assert checker_stub.replay('local harness case', tmp_path / 'cursor', command, document) == row['response']
+
+
 def test_unrecorded_calls_fail_closed_in_process_and_in_child(tmp_path):
     request = {"kind": "no_such_parity_vector"}
     with pytest.raises(RuntimeError, match="unrecorded Rust checker call"):
@@ -216,3 +234,48 @@ def test_unrecorded_calls_fail_closed_in_process_and_in_child(tmp_path):
     assert "unrecorded Rust checker call" in stderr
     with pytest.raises(ReplyCheckInfrastructureError, match="process failed"):
         reply_check.run_check(["check-budget"], request)
+
+
+def test_staged_replay_never_loads_the_global_corpus(tmp_path, monkeypatch):
+    command, document = ['check-harness', 'identity'], {'kind': 'identity', 'selectors': []}
+    row = {'command': command, 'document': document, 'response': {'result': True}}
+    monkeypatch.setattr(checker_stub, 'cases', lambda: pytest.fail('global corpus read'))
+    assert checker_stub.replay('staged', tmp_path / 'cursor', command, document,
+                               script=[row]) == row['response']
+
+
+def test_concurrent_checker_processes_consume_each_step_once(tmp_path, monkeypatch):
+    # #823: child workers share the cursor, beyond the parent's threading lock.
+    import multiprocessing
+    import time
+
+    context = multiprocessing.get_context('fork')
+    truncated = context.Event()
+    cursor = tmp_path / 'concurrent-cursor'
+    command, document = ['check-harness', 'identity'], {'kind': 'identity', 'selectors': []}
+    row = {'command': command, 'document': document, 'response': {'result': True}}
+    monkeypatch.setattr(checker_stub, 'cases', lambda: {'concurrent': [row, row]})
+    original = os.replace
+
+    def delayed_replace(source, destination):
+        if destination == cursor:
+            truncated.set()
+            time.sleep(0.2)
+        return original(source, destination)
+
+    monkeypatch.setattr(os, 'replace', delayed_replace)
+    processes = [context.Process(target=checker_stub.replay,
+                                args=('concurrent', cursor, command, document)) for _ in range(2)]
+    try:
+        processes[0].start()
+        assert truncated.wait(5), 'first checker never reached its cursor write'
+        processes[1].start()
+        for process in processes:
+            process.join(5)
+        assert [process.exitcode for process in processes] == [0, 0]
+        assert cursor.read_text() == '2'
+    finally:
+        for process in processes:
+            if process.pid is not None and process.is_alive():
+                process.terminate()
+                process.join(5)
