@@ -671,7 +671,9 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            progress_gate_leaf_steps::advance_details(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket)),
+    ] proof [reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -697,7 +699,9 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            progress_gate_leaf_steps::advance_details(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket)),
+    ] proof [reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -818,7 +822,9 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            progress_gate_leaf_steps::advance_details(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket)),
+    ] proof [reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
@@ -837,9 +843,15 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            progress_gate_leaf_steps::advance_details(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket)),
+    ] {
         let n = *node;
         if n.question.is_some() {
+            kernel_proof! {
+                progress_gate_leaf_steps::stutter_rank(n, *_next_ticket);
+                progress_gate_leaf_steps::inactive_details(n, *node, *_next_ticket, *_next_ticket);
+            }
             return false; // waiting for Rob
         }
         kernel_proof! { assert(n.phase is Stopping); }
@@ -856,9 +868,21 @@ kernel_fn! {
                 m.pool = false;
             }
             m.pos += 1;
+            kernel_proof! {
+                progress_gate_leaf_steps::skipped_rank(n, *node, kind, *_next_ticket);
+                if progress_gate_leaf_steps::teardown_shape(n) {
+                    progress_gate_leaf_steps::skipped_details(n, *node, kind, *_next_ticket);
+                } else { progress_gate_leaf_steps::inactive_details(n, *node, *_next_ticket, *_next_ticket); }
+            }
             return true;
         }
         emit_node(node, context.node, kind, out);
+        kernel_proof! {
+            progress_gate_leaf_steps::emitted_rank(n, *node, kind, *_next_ticket);
+            if progress_gate_leaf_steps::teardown_shape(n) {
+                progress_gate_leaf_steps::emitted_details(n, *node, kind, *_next_ticket);
+            } else { progress_gate_leaf_steps::inactive_details(n, *node, *_next_ticket, *_next_ticket); }
+        }
         true
     }
 }
@@ -893,7 +917,10 @@ kernel_fn! {
                     && *final(out) == *old(out)
                     && result == retirement_gate::slot_changed(*old(node), context.slot)
             },
+            progress_gate_leaf_steps::advance_details(*old(node), *final(node),
+            *old(next_ticket), *final(next_ticket)),
     ] {
+        kernel_proof! { reveal(progress_gate_leaf_steps::advance_details); }
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
             return advance_blocked(node, next_ticket, context, out);

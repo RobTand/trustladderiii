@@ -2025,3 +2025,26 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf.rs"]
+mod progress_gate_leaf;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_steps.rs"]
+mod progress_gate_leaf_steps;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_state.rs"]
+mod progress_gate_leaf_state;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_teardown.rs"]
+mod progress_gate_leaf_teardown;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_sequence.rs"]
+mod progress_gate_leaf_sequence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_witness.rs"]
+mod progress_gate_leaf_witness;

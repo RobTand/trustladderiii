@@ -35,7 +35,10 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance);] {
+        ack == Ack::Confirmed && progress_gate_leaf_steps::cleanup_ack_input(old(w).nodes@[i as int], seq)
+            ==> final(w).nodes@[i as int] == progress_gate_leaf_steps::cleanup_ack(old(w).nodes@[i as int])
+                && final(w).next_question == old(w).next_question,
+] proof [reveal(distance); reveal(progress_gate_leaf_steps::cleanup_ack);] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
         return;
@@ -78,7 +81,10 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).question == old(m).question,
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
         final(m).last_cmd == old(m).last_cmd,
+        progress_gate_leaf_steps::confirm_input(*old(m), kind)
+            ==> *final(m) == progress_gate_leaf_steps::cleanup_confirmed(*old(m), kind),
 ] proof [reveal(distance);] {
+    kernel_snapshot! { before_cleanup = *m }
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -92,6 +98,12 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         _ => {}
     }
     confirmed_agenda(m, kind);
+    kernel_proof! {
+        if progress_gate_leaf_steps::confirm_input(before_cleanup@, kind) {
+            reveal(progress_gate_leaf_steps::cleanup_confirmed);
+            assert(*m == progress_gate_leaf_steps::cleanup_confirmed(before_cleanup@, kind));
+        }
+    }
 }
 }
 
@@ -121,6 +133,8 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).fx_failures == old(m).fx_failures,
         final(m).fx_incidents == old(m).fx_incidents,
         final(m).last_cmd == old(m).last_cmd,
+        progress_gate_leaf_steps::confirm_input(*old(m), kind)
+            ==> *final(m) == (Node { pos: (old(m).pos + 1) as u8, ..*old(m) }),
 ] proof [reveal(distance);] {
     if !kind.starts_operation() {
         if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {

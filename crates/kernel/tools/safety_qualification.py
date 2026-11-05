@@ -183,6 +183,18 @@ CASES = {
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
                     '//crates/kernel:verus_controller_boundary'),
+    'leaf_bypass_overlap': ('crates/kernel/src/scheduler.rs',
+                            '        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }',
+                            '        if false { return false; }',
+                            '//crates/kernel:verus_scheduler_first_in_line'),
+    'leaf_grant_ticket': ('crates/kernel/src/allocation.rs',
+                          '        m.phase = phase;\n        m.pos = 0;\n        m.ticket = None;',
+                          '        m.phase = phase;\n        m.pos = 0;\n        let _ = m.ticket;',
+                          '//crates/kernel:verus_allocation_set_phase'),
+    'leaf_slot_release': ('crates/kernel/src/ranks.rs',
+                          '        m.holds = false;\n        m.pos += 1;',
+                          '        m.holds = true;\n        m.pos += 1;',
+                          '//crates/kernel:verus_ranks'),
 }
 
 

@@ -32,6 +32,10 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
             ==> scheduling_safe(*final(w))
                 && (forall|j: int| 0 <= j < final(w).nodes@.len() ==> settle_shape(final(w).nodes@[j])),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        old(w).nodes@[i as int].phase == Phase::Queued && !old(w).nodes@[i as int].waiting_incident
+            ==> !result,
+        progress_gate_leaf_steps::advance_details(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).next_ticket, final(w).next_ticket),
         (old(w).nodes@[i as int].phase == Phase::Ready(Resume::Making) && old(w).nodes@[i as int].pos == 0
             && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()) ==> {
             final(w).nodes@[i as int] == retirement_gate::slot_node(old(w).nodes@[i as int], old(w).next_ticket,
@@ -304,7 +308,7 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
             continue;
         }
         kernel_proof! { assert(!oldest_waiter(*w, i as int)); }
-        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
+        if false { return false; }
         if theirs >= first_runnable || !slot_free(w, index) { continue; }
         if !older_overlap(w, index, theirs) { first_runnable = theirs; }
     } }
