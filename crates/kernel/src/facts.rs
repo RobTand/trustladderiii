@@ -287,7 +287,6 @@ pub(super) fn pr_dequeued(w: &mut World, i: usize, out: &mut Outbox) -> (result:
 
 kernel_fn! {
 /// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
-#[allow(clippy::collapsible_if)]
 pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
@@ -300,6 +299,23 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).0,
         final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] {
+    if infra { ci_infrastructure_fact(w, i, out); }
+    else { ci_tests(w, i, out); }
+}
+}
+
+kernel_fn! {
+/// State-table fact rows / #806: the original CI guard/cancellation and test ladder.
+pub(super) fn ci_tests(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra: false }, old(w).fail_fast, old(w).next_question).0,
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra: false }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
 ] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);reveal(retirement_retry::fact_result); ] {
     let m = &mut w.nodes[i];
     let before_enqueue =
@@ -308,15 +324,50 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         return;
     }
     if before_enqueue {
-        if let Some(effect) = m.effect.as_mut() {
-            effect.cancelling = true;
-        }
+        cancel_enqueue(m);
     }
-    if !infra {
-        failed_round(w, i, ReviewStop::CiFailed, out);
+    failed_round(w, i, ReviewStop::CiFailed, out);
+}
+}
+
+kernel_fn! {
+/// State-table fact rows / #806: the original CI guard/cancellation and infrastructure ladder.
+pub(super) fn ci_infrastructure_fact(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra: true }),
+        final(w).next_question == old(w).next_question,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra: true }, old(w).fail_fast, old(w).next_question).0,
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra: true }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);reveal(retirement_retry::fact_result); ] {
+    let m = &mut w.nodes[i];
+    let before_infrastructure_enqueue =
+        m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
+    if m.phase != Phase::Queued && !before_infrastructure_enqueue {
         return;
     }
+    if before_infrastructure_enqueue {
+        cancel_enqueue(m);
+    }
     ci_infrastructure(w, i, out);
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: the original enqueue cancellation, before either CI retry ladder.
+pub(super) fn cancel_enqueue(m: &mut Node) -> (result: ()) [
+    ensures *final(m) == (Node { effect: match old(m).effect {
+        Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+    }, ..*old(m) }),
+] {
+    if let Some(effect) = m.effect.as_mut() {
+        effect.cancelling = true;
+    }
 }
 }
 
