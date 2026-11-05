@@ -2,5 +2,9 @@
   "crate:tl3-controller-core": {
     "reason": "ctrl-core #730: new decision-only crate tl3-controller-core (no adapter dependencies) linked by tl3-controller",
     "sources": 4
+  },
+  "crate:tl3-delivery": {
+    "reason": "controller-core #730: dependency-free effect-delivery decisions and protocol mirror linked by tl3-controller",
+    "sources": 10
   }
 }
