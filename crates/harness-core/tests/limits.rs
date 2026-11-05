@@ -8,6 +8,18 @@ const LINE_ERROR: &str = "Check plan exceeds the 4194304-byte report limit; redu
 const RESULT_ERROR: &str =
     "Check plan exceeds the 8388608-byte result limit; reduce the selected tests or checks.";
 
+fn input_path(relative: &str) -> std::path::PathBuf {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(relative);
+    if path.is_file() {
+        return path;
+    }
+    Path::new(&std::env::var("TEST_SRCDIR").unwrap())
+        .join(std::env::var("TEST_WORKSPACE").unwrap())
+        .join(relative)
+}
+
 fn points(value: &Value) -> Vec<u32> {
     if let Some(text) = value.as_str() {
         text.chars().map(u32::from).collect()
@@ -86,13 +98,7 @@ fn regression(count: usize) -> bool {
 
 #[test]
 fn fifteen_plan_rows_and_explicit_coverage_partition() {
-    let mut root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/test-vectors/core/limits.json");
-    if !root.is_file() {
-        root = Path::new(&std::env::var("TEST_SRCDIR").unwrap())
-            .join(std::env::var("TEST_WORKSPACE").unwrap())
-            .join("harness/test-vectors/core/limits.json");
-    }
+    let root = input_path("harness/test-vectors/core/limits.json");
     let corpus: Value = serde_json::from_slice(&std::fs::read(root).unwrap()).unwrap();
     let (mut plans, mut options, mut forcing) = (0, 0, 0);
     for row in corpus["cases"].as_array().unwrap() {
@@ -209,7 +215,13 @@ fn strict_limits_and_fixed_width_overflow() {
 
 #[test]
 fn delay_receipt_boundary_fixtures() {
-    let fixture: Value = serde_json::from_str(include_str!("fixtures/limits/delay.json")).unwrap();
+    let fixture: Value = serde_json::from_str(
+        &std::fs::read_to_string(input_path(
+            "crates/harness-core/tests/fixtures/limits/delay.json",
+        ))
+        .unwrap(),
+    )
+    .unwrap();
     for row in fixture.as_array().unwrap() {
         let accepted = serde_json::from_str::<Value>(row["json"].as_str().unwrap())
             .ok()

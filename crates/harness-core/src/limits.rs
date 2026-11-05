@@ -202,7 +202,7 @@ pub mod accumulation {
             let rust = check_cost(100, Some(0), false);
             assert(normal == 15341 && forced == 22961 && repeated == 30682);
             assert(python == 65641 && rust == 65637);
-            accounted_result_fits(305538, 65536, seq![15341u64], seq![1200u64]);
+            proof { accounted_result_fits(305538, 65536, seq![15341u64], seq![1200u64]); }
         }
     }
 }
