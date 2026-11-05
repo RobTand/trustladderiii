@@ -201,6 +201,10 @@ pub struct CommitRow {
         (None, _) => result.is_none(),
     },
 ))]
+#[allow(
+    clippy::question_mark,
+    reason = "Keep explicit Option control flow in the Verus loop proof."
+)]
 pub fn previous_commit(rows: &[CommitRow], head: Option<i64>) -> Option<usize> {
     let target = match head {
         Some(head) => head,
