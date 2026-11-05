@@ -62,7 +62,9 @@ def test_request156_gets_one_tool_free_consistency_correction(planner_request, r
     assert 'Tools are unavailable' in history[-1].text
     assert json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))['ingest'] == planner_request['inputs']['ingest']
     result = events[-1]['reply']
-    assert result['kind'] == fixed['kind'] and result['violations'] == []
+    assert result['kind'] == fixed['kind']
+    assert bool(result['violations']) == (correction == 'cant_meet')
+    assert ('plan_check' in events[-1]) == (correction == 'cant_meet')
     assert result['files'] == fixed['files']
     assert measurements == [set(request156['files']), set(fixed['files'])]
     assert result['evidence_contract'] == planner_request['inputs']['ingest']['evidence_contract']
@@ -81,14 +83,11 @@ def test_request156_second_mismatch_stops_with_both_named_diagnostics(planner_re
     second['checks'][0]['node_ids'] = [CONTROL]
     model = planner_model(monkeypatch, request156, second, LEAF)
     events = []
-    with pytest.raises(InvalidReply) as raised:
-        runtime.run(planner_request, events.append)
+    runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    assert CONTROL in str(raised.value.errors[0])
-    assert LATE in str(raised.value.errors[1])
-    diagnostics = failure_tags(raised.value)['failure_message']
+    diagnostics = '\n'.join(events[-1]['reply']['violations'])
     assert CONTROL in diagnostics and LATE in diagnostics
-    assert not any(event['event'] == 'reply' for event in events)
+    assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
 
 
 @pytest.mark.parametrize('first', [{'kind': 'not-a-plan'}, {**LEAF, 'forecast': {'fits': True}}])
@@ -97,9 +96,10 @@ def test_request156_shares_the_single_format_correction(planner_request, request
     from tl3_workers.turns import InvalidReply
 
     model = planner_model(monkeypatch, first, request156, LEAF)
-    with pytest.raises(InvalidReply) as raised:
-        runtime.run(planner_request, lambda _: None)
-    assert CONTROL in str(raised.value.errors[1])
+    events = []
+    runtime.run(planner_request, events.append)
+    assert CONTROL in '\n'.join(events[-1]['reply']['violations'])
+    assert events[-1]['plan_check']
     assert len(model.calls) == 2
 
 
@@ -151,7 +151,7 @@ def test_request156_substantive_stops_do_not_get_consistency_correction(planner_
     model = planner_model(monkeypatch, request156, LEAF)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
+    assert len(model.calls) == (1 if obstacle == 'cant_meet' else 2)
     result = events[-1]['reply']
     if obstacle in {'cant_meet', 'unsupported'}:
         assert result['kind'] == 'cant_meet'
@@ -190,22 +190,21 @@ def test_request162_forced_check_gets_the_same_single_correction(planner_request
     model = planner_model(monkeypatch, request162, fixed, LEAF)
     events = []
     if resolution == 'still_invented':
-        with pytest.raises(InvalidReply) as raised:
-            runtime.run(planner_request, events.append)
-        assert all(node in str(raised.value.errors[1]) for node in INVENTED)
-        assert not any(event['event'] == 'reply' for event in events)
+        runtime.run(planner_request, events.append)
+        assert all(node in '\n'.join(events[-1]['reply']['violations']) for node in INVENTED)
+        assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
     else:
         runtime.run(planner_request, events.append)
         result = events[-1]['reply']
         assert result['kind'] == fixed['kind']
         if resolution == 'base_nodes':
-            assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
+            assert any('matching forcing rehearsal receipt' in v for v in result['violations'])
             assert result['checks'][0]['node_ids'] == [CREATED]
             assert result['checks'][0]['goal_ids'] == [0, 1]
             assert result['checks'][1] == request162['checks'][1]
             assert result['checks'][0]['forcing'] == request162['checks'][0]['forcing']
         else:
-            assert result['violations'] == []
+            assert result['violations'] and events[-1]['plan_check']
             assert result['report'] == fixed['report']
     assert len(model.calls) == 2
     history, offered = model.calls[1]
@@ -244,7 +243,7 @@ def test_request162_substantive_stops_bypass_correction(planner_request, request
     model = planner_model(monkeypatch, request162, LEAF)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
+    assert len(model.calls) == (1 if obstacle == 'cant_meet' else 2)
     assert all(any(node in v for v in events[-1]['reply']['violations']) for node in INVENTED)
 
 
@@ -279,10 +278,9 @@ def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request,
     model = planner_model(monkeypatch, request165, fixed, LEAF)
     events = []
     if resolution == 'still_invented':
-        with pytest.raises(InvalidReply) as raised:
-            runtime.run(planner_request, events.append)
-        assert all(node in str(raised.value.errors[1]) for node in PROPOSED_EXPORTS)
-        assert not any(event['event'] == 'reply' for event in events)
+        runtime.run(planner_request, events.append)
+        assert all(node in '\n'.join(events[-1]['reply']['violations']) for node in PROPOSED_EXPORTS)
+        assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
     else:
         runtime.run(planner_request, events.append)
         result = events[-1]['reply']
@@ -291,12 +289,12 @@ def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request,
         else:
             assert result['kind'] == fixed['kind']
             if resolution == 'base_node':
-                assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
+                assert any('matching forcing rehearsal receipt' in v for v in result['violations'])
                 assert result['checks'] == [{**request165['checks'][0], 'node_ids': [FINISHED]}]
                 assert result['edits_tests'] == [FINISHED]
                 assert result['checks'][0]['forcing']['environment'] == {}
             else:
-                assert result['violations'] == []
+                assert result['violations'] and events[-1]['plan_check']
                 assert result['report'] == fixed['report']
             assert result['evidence_errors'] == []
     assert len(model.calls) == 2
@@ -359,7 +357,8 @@ def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch
     violations = events[-1]['reply']['violations']
     assert violations, 'a coherent correction must not authorize a wider draft'
     if expansion == 'file':
-        assert any('Correction expands the draft footprint: tests/test_existing.py' in v for v in violations)
+        assert any('/files' in v for v in violations)
+        assert events[-1]['plan_check']
 
 
 @pytest.mark.parametrize('forcing_change', ['new', 'same', 'target', 'value', 'environment'])
@@ -386,10 +385,11 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
     assert not model.calls[1][1]
     result = events[-1]['reply']
     if forcing_change == 'same':
-        assert result['violations'] and all('matching forcing rehearsal receipt' in v for v in result['violations'])
+        assert any('matching forcing rehearsal receipt' in v for v in result['violations'])
         assert result['checks'] == fixed['checks']
     else:
-        assert 'Correction adds a forcing absent from the draft.' in result['violations']
+        assert any('/checks' in v for v in result['violations'])
+        assert events[-1]['plan_check']
 
 
 @pytest.mark.parametrize('fix_consistency', [True, False])
@@ -410,10 +410,9 @@ def test_missing_exploration_and_consistency_share_one_format_repair(
         assert events[-1]['reply']['kind'] == 'leaf'
         assert events[-1]['reply']['violations'] == []
     else:
-        with pytest.raises(InvalidReply) as error:
-            runtime.run(planner_request, events.append)
-        assert CONTROL in str(error.value.errors[1])
-        assert not any(event['event'] == 'reply' for event in events)
+        runtime.run(planner_request, events.append)
+        assert CONTROL in '\n'.join(events[-1]['reply']['violations'])
+        assert events[-1]['plan_check']['repair']['reason'] == 'format_allowance_consumed'
     assert [offered for _, offered in model.calls] == [True, False]
     assert 'required' in model.calls[1][0][-1].text
     assert 'estimated_exploration_turns' in model.calls[1][0][-1].text
@@ -468,7 +467,8 @@ def test_pb2710_one_tool_free_coverage_correction(planner_request, coverage_case
     assert fixture['violation'] in history[-1].text
     assert fixture['repair_instruction'] in history[-1].text
     assert sum(event['event'] == 'reply' for event in events) == 1
-    assert events[-1]['reply']['violations'] == []
+    assert bool(events[-1]['reply']['violations']) == (resolution == 'cant_meet')
+    assert ('plan_check' in events[-1]) == (resolution == 'cant_meet')
     assert events[-1]['reply']['kind'] == fixed['kind']
     if resolution == 'citation':
         assert events[-1]['reply']['checks'] == fixed['checks']
@@ -483,7 +483,8 @@ def test_pb2710_format_and_coverage_share_one_repair(planner_request, coverage_c
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
     assert 'goal 3:' in '\n'.join(events[-1]['reply']['violations'])
-    assert 'Planner coverage correction attempts: 1.' in events[-1]['reply']['violations']
+    assert 'Planner coverage correction attempts: 0.' in events[-1]['reply']['violations']
+    assert events[-1]['plan_check']['repair']['reason'] == 'format_allowance_consumed'
 
 
 @pytest.mark.parametrize('second_goal', [3, 2])
@@ -572,7 +573,9 @@ def test_pb2710_substantive_and_proof_refusals_stay_terminal(planner_request, co
     elif obstacle == 'proof':
         from tl3_workers.roles.planner import check_reply
         draft['checks'][0]['proof']['red_message'] = ''
-        check_reply(planner_request['inputs'], draft)
+        from tl3_workers.roles.planner import PlanConsistencyError
+        with pytest.raises(PlanConsistencyError):
+            check_reply(planner_request['inputs'], draft)
         assert fixture['violation'] in draft['violations']
         assert any('proof' in violation.lower() for violation in draft['violations'])
         return
@@ -581,7 +584,7 @@ def test_pb2710_substantive_and_proof_refusals_stay_terminal(planner_request, co
     model = planner_model(monkeypatch, draft, fixed)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
+    assert len(model.calls) == (1 if obstacle == 'disabled' else 2)
     assert fixture['violation'] in events[-1]['reply']['violations']
 
 
@@ -613,7 +616,9 @@ def test_pb2710_coverage_composes_with_existing_defects(planner_request, coverag
     events = []
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 2, events[-1]['reply']['violations']
-    assert events[-1]['reply']['violations'] == []
+    assert bool(events[-1]['reply']['violations']) == (omission in {'proof', 'selector'})
+    if omission in {'proof', 'selector'}:
+        assert events[-1]['plan_check']
 
 
 @pytest.mark.parametrize('too_many_ids', [False, True])
@@ -701,7 +706,7 @@ def test_pb2710_second_substantive_refusal_records_one_attempt(planner_request, 
     violations = events[-1]['reply']['violations']
     assert fixture['violation'] in violations
     assert [v for v in violations if v.startswith('Planner coverage correction attempts:')] == [
-        'Planner coverage correction attempts: 1.']
+        f'Planner coverage correction attempts: {int(first == "coverage")}.']
 
 
 def test_pb2710_ids_fit_even_when_clipping_markers_do_not():
@@ -744,11 +749,14 @@ def test_pb2710_global_coverage_without_rehearsal_stays_terminal(
         model = planner_model(monkeypatch, draft, fixed)
         events = []
         runtime.run(planner_request, events.append)
-        assert len(model.calls) == 1, 'Q55 refusal must prevent the coverage correction turn'
+        assert len(model.calls) == 2
+        assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
         violations = events[-1]['reply']['violations']
     else:
-        check_reply(planner_request['inputs'], draft)
+        from tl3_workers.roles.planner import PlanConsistencyError
+        with pytest.raises(PlanConsistencyError):
+            check_reply(planner_request['inputs'], draft)
         violations = draft['violations']
     assert fixture['violation'].split('goal 3:')[1] in '\n'.join(violations)
     assert any('Q55 check lacks a matching forcing rehearsal receipt' in item for item in violations)
-    assert 'Planner coverage correction attempts: 0.' in violations
+    assert f'Planner coverage correction attempts: {int(execution == "runtime") }.' in violations

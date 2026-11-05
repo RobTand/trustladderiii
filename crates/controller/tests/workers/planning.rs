@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(settings, root.path(), mode);
-    if !matches!(mode, "normal" | "plan-invalid") {
+    if !matches!(mode, "normal" | "plan-invalid" | "plan-size") {
         config.workers.command[0] = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/worker_transport.py")
             .to_str()
@@ -165,6 +165,20 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             .map(|i| i.value.as_str())
             .collect();
         assert!(declared.contains(&"greeting.py") && declared.contains(&"tests/test_greeting.py"));
+    } else if matches!(mode, "plan-invalid" | "plan-size") {
+        assert_eq!(world.nodes.len(), 1, "no child executes");
+        assert_eq!(n.phase, Phase::Closed(Outcome::Stopped));
+        assert_eq!(n.review_stop, Some(tl3_kernel::ReviewStop::PlanCantMeet));
+        assert!(n.question.is_none());
+        assert_eq!(world.next_question, 0);
+        assert_eq!(n.credit.spent, 0);
+        assert_eq!(requests.len(), 1, "no new generation after the shared repair");
+        assert_eq!(plan["plan_check"]["repair"]["status"], "attempted");
+        let expected = if mode == "plan-size" { "leaf.execution_fit" } else { "path.protected" };
+        assert!(plan["plan_check"]["objections"].as_array().unwrap().iter()
+            .any(|item| item["rule"] == expected));
+        assert!(plan["violations"].as_array().unwrap().iter()
+            .any(|item| item.as_str().is_some_and(|text| text.starts_with("Plan-check evidence:"))));
     } else if mode == "plan-split" {
         let question = n.question.unwrap();
         assert_eq!(question.kind, tl3_kernel::QKind::NeedsSplitting);

@@ -77,7 +77,8 @@ def test_whole_file_gets_exact_tool_free_correction(planner_request, file_plan, 
     assert 'Tools are unavailable' in history[-1].text
     assert not any(node in history[-1].text for node in NODES)
     result = events[-1]['reply']
-    assert result['violations'] == []
+    assert events[-1]['reply']['violations']
+    assert any(item['rule'] == 'guard.fields_changed' for item in events[-1]['plan_check']['objections'])
     assert result['checks'] == corrected(file_plan)['checks']
     assert result['files'] == file_plan['files']
     assert result['estimated_tool_turns'] == 46
@@ -115,15 +116,12 @@ def test_file_correction_cannot_change_obligations(planner_request, file_plan, m
 
 def test_file_correction_exhaustion_records_selector(planner_request, file_plan, monkeypatch):
     from tl3_workers import runtime
-    from tl3_workers.tracing import failure_tags
-    from tl3_workers.turns import InvalidReply
     model = model_for(monkeypatch, file_plan, file_plan)
     events = []
-    with pytest.raises(InvalidReply) as raised:
-        runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2 and not any(event['event'] == 'reply' for event in events)
-    message = failure_tags(raised.value)['failure_message']
-    assert FILE in message and 'repaired reply' in message
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert FILE in '\n'.join(events[-1]['reply']['violations'])
+    assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
 
 
 @pytest.mark.parametrize('obstacle', ['budget', 'protected', 'must_split', 'disabled'])
@@ -141,7 +139,7 @@ def test_file_syntax_does_not_repair_substantive_refusals(planner_request, file_
     model = model_for(monkeypatch, file_plan, corrected(file_plan))
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
+    assert len(model.calls) == (1 if obstacle == 'disabled' else 2)
     assert events[-1]['reply']['violations']
 
 
@@ -157,5 +155,6 @@ def test_nonexact_selectors_use_planner_chosen_base_nodes(planner_request, file_
     events = []
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    assert events[-1]['reply']['violations'] == []
+    assert events[-1]['reply']['violations']
+    assert any(item['rule'] == 'guard.fields_changed' for item in events[-1]['plan_check']['objections'])
     assert events[-1]['reply']['checks'] == fixed['checks']

@@ -1,4 +1,6 @@
 """Trusted, bounded plan-time evidence for Q55 forcings."""
+
+from tl3_harness.model import named
 from copy import deepcopy
 import ast
 import json
@@ -68,17 +70,17 @@ def execution_identity(candidate):
 
 def unusable(result, selectors, outcome):
     if result.get('status') != 'completed' or not result.get('receipts'):
-        return (f"missing completed, verified receipt: status={result.get('status', 'unknown')}; "
-                f"{result.get('message', 'no diagnostic')}")
+        return named('rehearsal.incomplete_receipt', (f"missing completed, verified receipt: status={result.get('status', 'unknown')}; "
+                f"{result.get('message', 'no diagnostic')}"), dict(status=result.get("status")))
     if len(result['tests']) != sum(result['totals'].values()):
-        return 'incomplete node results'
+        return named('rehearsal.incomplete_results', 'incomplete node results', dict(count=len(result['tests']), totals=result['totals']))
     for selector in selectors:
         nodes = [item for item in result['tests'] if selects(selector, item['test'])]
         if not nodes:
-            return f'missing node result for {selector}'
+            return named('rehearsal.missing_node', f'missing node result for {selector}', dict(node=selector))
         for node in nodes:
             if node['outcome'] != outcome:
-                return f"{node['test']} ended {node['outcome']}; expected {outcome}"
+                return named('rehearsal.wrong_outcome', f"{node['test']} ended {node['outcome']}; expected {outcome}", dict(node=node['test'], actual=node['outcome'], expected=outcome))
     return None
 
 
@@ -185,7 +187,7 @@ class ForcingRehearsals:
         try:
             parsed = Forcing.parse(forcing)
             if not isinstance(tests, list) or not tests or len(tests) > 256:
-                raise HarnessInputError('A rehearsal needs 1 to 256 exact base test selectors')
+                raise HarnessInputError(named('rehearsal.selector_count', 'A rehearsal needs 1 to 256 exact base test selectors', dict(count=len(tests), minimum=1, maximum=256)))
             selected = Check('rehearsal', Kind.DEMONSTRATING, tuple(tests),
                              declared_symptom=declared_symptom).tests
         except HarnessInputError as error:
@@ -215,7 +217,7 @@ class ForcingRehearsals:
         else:
             result = {**wanted, 'pending_checking': True}
             if self.attempts >= MAX_REHEARSALS:
-                result.update(status='exhausted', message=(
+                result.update(status='exhausted', rule='rehearsal.exhausted', message=(
                     f'Forcing rehearsal budget exhausted ({MAX_REHEARSALS} rehearsals, '
                     f'{self.actions} admitted actions, at most 16). Return cant_meet with this evidence.'))
                 self.failure = deepcopy(result)
@@ -225,8 +227,8 @@ class ForcingRehearsals:
             self.active = {'result': result, 'stage': 'unforced', 'inflight': None}
             self.persist()
 
-        def refuse(reason, *, terminal=False):
-            result.update(status='refused', message='Forcing rehearsal refused: ' + reason)
+        def refuse(reason, *, terminal=False, rule=None):
+            result.update(status='refused', rule=rule or getattr(reason, 'rule', 'rehearsal.missing_receipt'), message='Forcing rehearsal refused: ' + reason)
             self.candidates.append(deepcopy(result))
             self.active = None
             if terminal:
@@ -239,7 +241,7 @@ class ForcingRehearsals:
                 preflight_owner(target, self.source)
         except ForcingError as error:
             result['refusal'] = error.refusal
-            return refuse(str(error))
+            return refuse(str(error), rule='rehearsal.owner')
 
         for stage, expected in (('unforced', 'passed'), ('forced', 'failed')):
             if stage not in result:
@@ -276,9 +278,9 @@ class ForcingRehearsals:
                     for target in sorted(delayed):
                         count = item.get('target_hits', {}).get(target)
                         if type(count) is not int or count < 0:
-                            return refuse(f"missing invocation count for {target} on {item['test']}")
+                            return refuse(named('rehearsal.hit_missing', f"missing invocation count for {target} on {item['test']}", dict(target=target, node=item['test'])))
                         if count == 0:
-                            return refuse(f"zero-hit delayed target {target} on {item['test']}")
+                            return refuse(named('rehearsal.hit_zero', f"zero-hit delayed target {target} on {item['test']}", dict(target=target, node=item['test'])))
             if declared_symptom is not None:
                 runs = observed.get('symptom_runs', [])
                 allowed = ('passed',) if stage == 'unforced' else ('passed', 'symptom')
@@ -287,12 +289,12 @@ class ForcingRehearsals:
                          and all(run['outcome'] in allowed for run in runs)
                          and (stage == 'unforced' or any(run['outcome'] == 'symptom' for run in runs)))
                 count = sum(run['outcome'] == 'symptom' for run in runs)
-                problem = None if valid else f'declared symptom observed {count} of {declared_symptom["repeat"]} runs; zero is not RED; unrelated failures never count'
+                problem = None if valid else named('rehearsal.symptom', f'declared symptom observed {count} of {declared_symptom["repeat"]} runs; zero is not RED; unrelated failures never count', dict(count=count, symptom=declared_symptom))
             else:
                 problem = unusable(observed, selected, expected)
             if problem:
                 prefix = 'unforced base: ' if stage == 'unforced' else 'forced base must fail by assertion: '
-                return refuse(prefix + problem, terminal=declared_symptom is not None or observed['status'] != 'completed')
+                return refuse(named(problem.rule, prefix + problem, problem.items), terminal=declared_symptom is not None or observed['status'] != 'completed')
         result['status'] = 'validated'
         self.receipts.append(deepcopy(result))
         self.candidates.append(deepcopy(result))
@@ -302,15 +304,15 @@ class ForcingRehearsals:
 
     def violations(self, base_sha, checks):
         if self.failure:
-            return [self.failure['message']]
+            return [named(self.failure.get('rule', 'rehearsal.missing_receipt'), self.failure['message'], {'receipt': self.failure})]
         errors = []
         for check in checks:
             if 'forcing' not in check:
                 continue
             wanted = identity(base_sha, check['node_ids'], Forcing.parse(check['forcing']), check.get('declared_symptom'))
             if not any(bound_identity(receipt) == bound_identity(wanted) for receipt in self.receipts):
-                errors.append('Q55 check lacks a matching forcing rehearsal receipt for the exact base, '
-                              'selectors and forcing: ' + ', '.join(check['node_ids']))
+                errors.append(named('rehearsal.missing_receipt', 'Q55 check lacks a matching forcing rehearsal receipt for the exact base, '
+                              'selectors and forcing: ' + ', '.join(check['node_ids']), {'base': base_sha, 'nodes': check['node_ids'], 'forcing': check['forcing']}))
         return errors
 
 

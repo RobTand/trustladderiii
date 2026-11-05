@@ -110,7 +110,7 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
     result = run_reply_in_process(tmp_path, planner_request, proposal)
     assert_rule_report(result)
-    assert result.events[-1]["reply"]["violations"] == [
+    assert result.events[-1]["reply"]["violations"][:1] == [
         "Checks must name exact pytest node IDs. Replace `../test.py::test_escape` "
         "with the exact test definitions this check needs."]
 
@@ -174,7 +174,7 @@ def test_read_only_tools_through_protocol(tmp_path, planner_request):
 
 
 def test_model_cannot_forge_rule_evidence(tmp_path, planner_request):
-    assert_rejected(run_reply_in_process(tmp_path, planner_request, {**LEAF, "violations": []}))
+    assert_rule_report(run_reply_in_process(tmp_path, planner_request, {**LEAF, 'violations': []}), 'only code may supply planning evidence')
 
 
 def test_split_requires_evidence_and_smaller_children(tmp_path, planner_request):
@@ -302,3 +302,35 @@ def test_t832_malformed_semantic_correction_retains_original_objections(planner_
     assert len(model.calls) == 2
     assert event['plan_check']['repair'] == {'status': 'attempted'}
     assert any(item['rule'] == 'leaf.not_independent' for item in event['plan_check']['objections'])
+
+
+@pytest.mark.parametrize('target', [2047, 2048, 2049])
+@pytest.mark.parametrize('unicode', [False, True])
+def test_named_repair_message_preserves_all_identity_bytes(target, unicode):
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import message
+
+    def objection(path):
+        return named('leaf.token_fit', '', {'path': path})
+    fixed = len(message([objection('')]).encode())
+    prefix = 'é界' if unicode else ''
+    identity = prefix + 'x' * (target - fixed - len(prefix.encode()))
+    result = message([objection(identity)])
+    if target == 2049:
+        assert result is None
+    else:
+        assert len(result.encode()) == target
+        assert identity in result
+
+
+def test_named_repair_message_clips_only_optional_descriptions():
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import message
+
+    objection = named('goal.coverage', 'full safe diagnostic', {
+        'goals': [7, 9], 'descriptions': {7: 'é' * 3000, 9: '界' * 3000}})
+    result = message([objection])
+    assert len(result.encode()) <= 2048
+    assert 'goal 7:' in result and 'goal 9:' in result
+    assert abs(result.count('é') * 2 - result.count('界') * 3) <= 2
+    assert ' [...]' in result

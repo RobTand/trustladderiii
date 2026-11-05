@@ -74,18 +74,20 @@ class Recorder:
             self.cases.append(case)
 
     def check(self, original):
-        def recorded(inputs, reply, *, rehearsals=None):
+        def recorded(inputs, reply, *, rehearsals=None, plan_errors=None):
             if self.active:
-                return original(inputs, reply, rehearsals=rehearsals)
+                return original(inputs, reply, rehearsals=rehearsals, plan_errors=plan_errors)
             case = self.case('check_reply')
-            case.update(inputs=deepcopy(inputs), reply=deepcopy(reply), has_rehearsals=rehearsals is not None)
+            case.update(inputs=deepcopy(inputs), reply=deepcopy(reply), has_rehearsals=rehearsals is not None, has_plan_errors=plan_errors is not None)
             tape = Tape()
             def invoke():
                 with facts(tape):
                     ledger = RehearsalFacts(tape, rehearsals) if rehearsals is not None else None
-                    return original(inputs, reply, rehearsals=ledger)
+                    return original(inputs, reply, rehearsals=ledger, plan_errors=plan_errors)
             def after(result):
                 result['reply'] = deepcopy(reply)
+                if plan_errors is not None:
+                    result['plan_errors'] = [exception(error) for error in plan_errors]
                 case['facts'] = tape.rows
             return self.observe(case, invoke, after)
         return recorded
@@ -100,6 +102,22 @@ class Recorder:
             def invoke():
                 with facts(tape):
                     return original(mismatch, reply)
+            def after(result):
+                result['reply'] = deepcopy(reply)
+                case['facts'] = tape.rows
+            return self.observe(case, invoke, after)
+        return recorded
+
+    def semantic_correction(self, original):
+        def recorded(contract, reply):
+            if self.active:
+                return original(contract, reply)
+            case = self.case('repair_contract')
+            case.update(reply=deepcopy(reply), mismatch=exception(contract.legacy))
+            tape = Tape()
+            def invoke():
+                with facts(tape):
+                    return original(contract, reply)
             def after(result):
                 result['reply'] = deepcopy(reply)
                 case['facts'] = tape.rows
@@ -160,6 +178,8 @@ class Recorder:
             for name in ('constrain', 'constrain_local'):
                 stack.enter_context(patch.object(planner.PlanConsistencyError, name,
                     self.correction(name, getattr(planner.PlanConsistencyError, name))))
+            from tl3_workers.roles.planner import Correction
+            stack.enter_context(patch.object(Correction, 'check', self.semantic_correction(Correction.check)))
             import worker_process
             import planner_fixtures
             worker_start = worker_process.start_worker
