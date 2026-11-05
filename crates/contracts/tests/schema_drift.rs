@@ -42,6 +42,10 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/planner-reply.json",
         include_str!("../../../workers/src/tl3_workers/schemas/planner-reply.json"),
     ),
+    (
+        "workers/src/tl3_workers/schemas/reviewer-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
+    ),
 ];
 
 #[test]
