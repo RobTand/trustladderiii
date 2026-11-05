@@ -461,6 +461,19 @@ fn quota_status_names_the_durable_hold_and_retry() {
         .set_model_quota_policy(&f.config.models, Duration::from_secs(5 * 86_400))
         .unwrap();
     let key = f.held(false);
+    let ending = f.store.latest_worker_ending(&key).unwrap().unwrap();
+    assert_eq!(ending.facts.model, "alternate-model");
+    assert_eq!(ending.family.as_deref(), Some("alternate"));
+    let id = serde_json::to_string(&(&key, ending.attempt)).unwrap();
+    assert!(
+        !f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "model_attempts" && row.id == id),
+        "terminal attempt identity must be retained with the immutable ending, not the world snapshot"
+    );
     let (_, hold) = f.hold().unwrap();
     assert_eq!(hold["quota_ms"], RESET);
     let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -611,6 +624,24 @@ fn restart_between_success_and_redispatch_keeps_the_wake() {
     let mut f = Fixture::new();
     let key = f.held(true);
     f.success();
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|row| row.table != "model_quotas"),
+        "the global quota record cleared before redispatch"
+    );
+    let mut reader = Reader::open(&f.settings).unwrap();
+    let view = status::load(&mut reader).unwrap();
+    let wait = &view.requests[0].waiting_on;
+    assert!(
+        wait.contains("model quota (audit, alternate-model)"),
+        "the allowance quota must stay visible after the global record clears: {wait}"
+    );
+    assert!(status::render_text(&view).contains(wait));
+    assert!(status::render_html(&view).contains(wait));
     assert_eq!(f.attempt(&key), 0, "success persisted before redispatch");
     let mut f = f.restart();
     f.controller.look_due().unwrap();
@@ -1149,65 +1180,73 @@ fn ordinary_probe_failure_releases_the_other_held_key_across_restart() {
     assert_eq!(f.attempt(&waiter), 1);
 }
 
-/// Q53 / #817(c): a real stop releases an owner's lease; a stopped waiter never dispatches.
+/// Q53 / #817(c): a stopped probe owner releases its waiter across restart.
 #[test]
-fn stopping_either_held_destination_does_not_strand_the_other() {
-    for stop_owner in [true, false] {
-        let (mut f, key0, key1) = two_probe_holds();
-        let owner_node = if f.attempt(&key0) == 1 { 0 } else { 1 };
-        let stopped = if stop_owner {
-            owner_node
-        } else {
-            1 - owner_node
-        };
-        let other = 1 - stopped;
-        let stopped_key = if stopped == 0 { &key0 } else { &key1 };
-        let other_key = if other == 0 { &key0 } else { &key1 };
-        let stopped_attempt = f.attempt(stopped_key);
-        f.controller
-            .observe(
-                "stop-held-destination",
-                Observation::Steering {
-                    node: tl3_kernel::NodeId(stopped),
-                    command: tl3_kernel::Command::Stop,
-                },
-            )
+fn stopping_the_probe_owner_does_not_strand_the_waiter() {
+    stopping_held_destination(true);
+}
+
+/// Q53 / #817(c): a stopped waiter never dispatches or strands its probe owner.
+#[test]
+fn stopping_the_probe_waiter_does_not_strand_the_owner() {
+    stopping_held_destination(false);
+}
+
+fn stopping_held_destination(stop_owner: bool) {
+    let (mut f, key0, key1) = two_probe_holds();
+    let owner_node = if f.attempt(&key0) == 1 { 0 } else { 1 };
+    let stopped = if stop_owner {
+        owner_node
+    } else {
+        1 - owner_node
+    };
+    let other = 1 - stopped;
+    let stopped_key = if stopped == 0 { &key0 } else { &key1 };
+    let other_key = if other == 0 { &key0 } else { &key1 };
+    let stopped_attempt = f.attempt(stopped_key);
+    f.controller
+        .observe(
+            "stop-held-destination",
+            Observation::Steering {
+                node: tl3_kernel::NodeId(stopped),
+                command: tl3_kernel::Command::Stop,
+            },
+        )
+        .unwrap();
+    f.drain();
+    if stop_owner {
+        let snapshot = f.controller.snapshot().unwrap();
+        let wait = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "allowances" && row.id == *other_key)
             .unwrap();
-        f.drain();
-        if stop_owner {
-            let snapshot = f.controller.snapshot().unwrap();
-            let wait = snapshot
-                .rows
-                .iter()
-                .find(|row| row.table == "allowances" && row.id == *other_key)
-                .unwrap();
-            assert!(
-                wait.value["due_ms"].is_u64(),
-                "stopping the probe owner must arm the other held key"
-            );
-        }
-        let mut f = f.restart();
-        fs::write(f.root.path().join("restored"), "yes").unwrap();
-        fs::write(f.root.path().join("probe-release"), "yes").unwrap();
-        f.clock.0.set(f.clock.0.get() + 3_600_000);
-        f.controller.look_due().unwrap();
-        f.until(|f| {
-            f.attempt(other_key) == 1
-                && f.controller.world().unwrap().nodes[other as usize].phase != Phase::Auditing
-        });
-        f.clock.0.set(RESET);
-        f.controller.look_due().unwrap();
-        assert_eq!(
-            f.attempt(stopped_key),
-            stopped_attempt,
-            "stopped destination must never redispatch"
-        );
-        assert_eq!(
-            f.attempt(other_key),
-            1,
-            "the other destination eventually dispatches exactly once"
+        assert!(
+            wait.value["due_ms"].is_u64(),
+            "stopping the probe owner must arm the other held key"
         );
     }
+    let mut f = f.restart();
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-release"), "yes").unwrap();
+    f.clock.0.set(f.clock.0.get() + 3_600_000);
+    f.controller.look_due().unwrap();
+    f.until(|f| {
+        f.attempt(other_key) == 1
+            && f.controller.world().unwrap().nodes[other as usize].phase != Phase::Auditing
+    });
+    f.clock.0.set(RESET);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(stopped_key),
+        stopped_attempt,
+        "stopped destination must never redispatch"
+    );
+    assert_eq!(
+        f.attempt(other_key),
+        1,
+        "the other destination eventually dispatches exactly once"
+    );
 }
 
 /// Q53 / #828: a successful shared probe must eventually dispatch both original held keys once.
@@ -1240,26 +1279,6 @@ fn successful_probe_wakes_both_held_keys_exactly_once() {
     f.controller.look_due().unwrap();
     assert_eq!(f.attempt(&key0), 1);
     assert_eq!(f.attempt(&key1), 1);
-}
-
-/// Q53 / #828: attempt metadata must not grow in every controller snapshot after ending.
-#[test]
-fn completed_attempt_identity_retires_from_world_rows() {
-    let mut f = Fixture::new();
-    let key = f.held(false);
-    let ending = f.store.latest_worker_ending(&key).unwrap().unwrap();
-    assert_eq!(ending.facts.model, "alternate-model");
-    assert_eq!(ending.family.as_deref(), Some("alternate"));
-    let id = serde_json::to_string(&(&key, ending.attempt)).unwrap();
-    assert!(
-        !f.controller
-            .snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|row| row.table == "model_attempts" && row.id == id),
-        "terminal attempt identity must be retained with the immutable ending, not the world snapshot"
-    );
 }
 
 /// Q53 / #828 upgrade: unknown legacy order/family cannot be replaced by reply identity.
