@@ -1,5 +1,5 @@
-use vstd::prelude::*;
 use crate::worker_events::*;
+use vstd::prelude::*;
 verus! {
 /// State-table cdacce8f :277,787; Q53/#759. Witness explicit valid charge and
 /// forbidden non-postmortem/wrong-model charges, plus the legacy implicit case.
@@ -13,27 +13,33 @@ fn model_witnesses() {
     let out_4 = quota_model(true, ModelField::Missing);
     assert(out_4 == QuotaModel::Implicit);
 }
-/// State-table cdacce8f :277,787,800; Q43/Q53, #759/#682/#691/#696.
-/// Every sequence outcome has a concrete reachable input; no stream-length bound.
+/// Q53, state-table d8f58cc3 :277,787 quota/model handling; #759 grade model.
+/// Q43/:800 progress. Positional finality is the existing terminal-quota rule
+/// in source.rs parse_reply. Other precedence is preserved existing behaviour
+/// (no rule). Every outcome is reachable, without a stream-length bound.
 fn sequence_witnesses() {
     let quota = WorkerEvent::Quota { model: QuotaModel::Grade, reset_ms: Some(1) };
-    let out_5 = reply_step(quota, false, true);
+    let out_5 = reply_step(quota, false, 3, 3);
     assert(out_5 == ReplyDecision::Quota);
-    let out_6 = reply_step(quota, false, false);
+    let out_6 = reply_step(quota, false, 1, 3);
     assert(out_6 == ReplyDecision::AfterQuota);
-    let out_7 = reply_step(quota, true, true);
+    let repeated = reply_step(quota, false, 1, 2);
+    assert(repeated == ReplyDecision::AfterQuota);
+    let wide = reply_step(quota, false, usize::MAX, usize::MAX);
+    assert(wide == ReplyDecision::Quota);
+    let out_7 = reply_step(quota, true, 3, 3);
     assert(out_7 == ReplyDecision::AfterReply);
-    let out_8 = reply_step(WorkerEvent::Invalid, false, true);
+    let out_8 = reply_step(WorkerEvent::Invalid, false, 3, 3);
     assert(out_8 == ReplyDecision::InvalidEvent);
-    let out_9 = reply_step(WorkerEvent::Reply, false, true);
+    let out_9 = reply_step(WorkerEvent::Reply, false, 3, 3);
     assert(out_9 == ReplyDecision::Reply);
-    let out_10 = reply_step(WorkerEvent::Progress { unit: ProgressUnit::ToolResult }, false, true);
+    let out_10 = reply_step(WorkerEvent::Progress { unit: ProgressUnit::ToolResult }, false, 3, 3);
     assert(out_10 == ReplyDecision::Progress);
-    let out_11 = reply_step(WorkerEvent::Quota { model: QuotaModel::Forbidden, reset_ms: Some(1) }, false, true);
+    let out_11 = reply_step(WorkerEvent::Quota { model: QuotaModel::Forbidden, reset_ms: Some(1) }, false, 3, 3);
     assert(out_11 == ReplyDecision::InvalidQuotaModel);
-    let out_12 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: None }, false, true);
+    let out_12 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: None }, false, 3, 3);
     assert(out_12 == ReplyDecision::InvalidQuotaReset);
-    let out_13 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: Some(0) }, false, true);
+    let out_13 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: Some(0) }, false, 3, 3);
     assert(out_13 == ReplyDecision::InvalidQuotaReset);
 }
 /// State-table cdacce8f :147,800; Q43, #682/#691/#696. Full-width gate witnesses.
