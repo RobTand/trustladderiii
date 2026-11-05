@@ -310,9 +310,12 @@ def _run(request, emit):
                     'remaining_candidates': 8 - ledger.attempts}}
             history = [initial_message(request, model_inputs)]
             draft_error = None
+            planner_checks = 0
 
             def checked(text):
-                nonlocal draft_error
+                nonlocal draft_error, planner_checks
+                if role.name == 'planner':
+                    planner_checks += 1
                 if ledger is not None:
                     ledger.raise_infrastructure()
                 if ledger is not None and ledger.failure:
@@ -330,6 +333,11 @@ def _run(request, emit):
                     if ledger is not None and any(item['status'] == 'refused' for item in ledger.candidates):
                         return refused_final()
                     raise
+                if planner_checks > 1:
+                    result['violations'] = [
+                        'Planner coverage correction attempts: 1.'
+                        if item == 'Planner coverage correction attempts: 0.' else item
+                        for item in result['violations']]
                 if draft_error is not None:
                     draft_error.constrain(result)
                 return result

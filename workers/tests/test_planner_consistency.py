@@ -685,3 +685,20 @@ def test_pb2710_no_allowance_records_zero_coverage_attempts(planner_request, cov
     assert fixture['violation'] in events[-1]['reply']['violations']
     assert 'Planner coverage correction attempts: 0.' in events[-1]['reply']['violations']
     assert any('input allowance has no room' in v for v in events[-1]['reply']['violations'])
+
+
+@pytest.mark.parametrize('first', ['coverage', 'format'])
+def test_pb2710_second_substantive_refusal_records_one_attempt(planner_request, coverage_case, monkeypatch, first):
+    from tl3_workers import runtime
+
+    fixture, draft, fixed = coverage_case
+    second = copy.deepcopy(draft)
+    second['estimated_tool_turns'] = 1000
+    model = planner_model(monkeypatch, draft if first == 'coverage' else {'kind': 'invalid'}, second, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    violations = events[-1]['reply']['violations']
+    assert fixture['violation'] in violations
+    assert [v for v in violations if v.startswith('Planner coverage correction attempts:')] == [
+        'Planner coverage correction attempts: 1.']
