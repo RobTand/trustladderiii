@@ -37,60 +37,34 @@ fn reopen(repo: &Repo, c: Controller, settings: &tl3_config::Store) -> Controlle
     panic!("startup prerequisite reads did not drain");
 }
 
-/// #839 / Q59: the two live chain shapes retain their terminal upstream cause.
+/// #839 / Q27, Rob 2026-11-05: each closed prerequisite releases its own successor.
 #[test]
-fn live_closed_roots_are_visible_through_nine_and_four_waiter_chains() {
+fn live_closed_roots_release_nine_and_four_waiter_chains_in_order() {
     let mut db = Database::start();
     let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_chains");
-    let mut waiters = Vec::new();
     for (root, count) in [(2763, 9), (2773, 4), (2779, 1), (2781, 1)] {
         set_issue(&repo, root, "open", None);
-        let root_node = intake(&mut c, &repository, root);
+        let mut waiters = Vec::new();
         for number in root + 1..=root + count {
             set_issue(&repo, number, "open", None);
             let node = intake(&mut c, &repository, number);
             ingest(&mut c, node, &[number - 1]);
-            waiters.push((node, root, number));
+            waiters.push(node);
         }
-        reply(
-            &mut c,
-            root_node,
-            Reply::IngestEarlyEnd(EarlyEnd::NotActionable),
-        );
-        reply(&mut c, root_node, Reply::AuditAgrees);
-        confirm(&mut c, root_node);
-        set_issue(&repo, root, "closed", Some("not_planned"));
-        external(&mut c, &repository, root, DependencyStatus::Abandoned);
+        for (index, &node) in waiters.iter().enumerate() {
+            let predecessor = root + index as u64;
+            set_issue(&repo, predecessor, "closed", Some("not_planned"));
+            external(&mut c, &repository, predecessor, DependencyStatus::Abandoned);
+            assert_eq!(c.world().unwrap().nodes[node.0 as usize].phase,
+                Phase::Planning { must_split: false });
+            for &later in &waiters[index + 1..] {
+                assert_eq!(c.world().unwrap().nodes[later.0 as usize].phase, Phase::Unplanned);
+            }
+            assert_eq!(c.prerequisite_evidence(node).unwrap()[0].state,
+                PrerequisiteState::ClosedUnmerged { reason: ClosedPrerequisiteReason::NotPlanned });
+        }
     }
-    let model = status(&settings);
-    for (node, root, number) in waiters {
-        assert_eq!(
-            c.world().unwrap().nodes[node.0 as usize].phase,
-            Phase::Unplanned
-        );
-        let card = model
-            .requests
-            .iter()
-            .find(|r| r.issue.contains(&format!("#{number}:")))
-            .unwrap();
-        assert!(
-            card.waiting_on.contains(&format!(
-                "#{root} to merge: closed without merge (not planned)"
-            )),
-            "{}",
-            card.waiting_on
-        );
-        assert!(
-            c.prerequisite_evidence(node)
-                .unwrap()
-                .iter()
-                .any(|e| e.target.number == root
-                    && e.state
-                        == PrerequisiteState::ClosedUnmerged {
-                            reason: ClosedPrerequisiteReason::NotPlanned
-                        })
-        );
-    }
+    assert!(!crate::status::render_text(&status(&settings)).contains("waiting for"));
 }
 
 /// #839 / Q49: a stopped request is open, restartable, and remains pending.
@@ -155,13 +129,13 @@ fn restart_reads_already_closed_prerequisite_and_retains_it() {
     let mut c = reopen(&repo, c, &settings);
     assert_eq!(
         c.world().unwrap().dependencies()[0].status,
-        DependencyStatus::Abandoned
+        DependencyStatus::Delivered
     );
     set_issue(&repo, 2761, "open", None);
     let mut c = reopen(&repo, c, &settings);
     assert_eq!(
         c.world().unwrap().dependencies()[0].status,
-        DependencyStatus::Abandoned
+        DependencyStatus::Delivered
     );
 }
 
@@ -184,14 +158,14 @@ fn caught_up_closure_has_identical_text_and_html_status() {
     .unwrap();
     assert!(c.drive_once().unwrap());
     let model = status(&settings);
-    let expected = "waiting for #2761 to merge: closed without merge (not planned)";
-    assert!(crate::status::render_text(&model).contains(expected));
-    assert!(crate::status::render_html(&model).contains(expected));
+    assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase, Phase::Planning { must_split: false });
+    assert!(!crate::status::render_text(&model).contains("waiting for #2761"));
+    assert!(!crate::status::render_html(&model).contains("waiting for #2761"));
 }
 
 /// #839 / Q27: closed PR evidence does not invent an abandonment transition.
 #[test]
-fn closed_pr_is_typed_and_displayed_without_changing_the_kernel_wait() {
+fn closed_pr_delivers_and_retains_its_reason() {
     let mut db = Database::start();
     let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_pr");
     crate::adapters::github::set_fake_issue(
@@ -214,31 +188,11 @@ fn closed_pr_is_typed_and_displayed_without_changing_the_kernel_wait() {
     )
     .unwrap();
     assert!(c.drive_once().unwrap());
-    assert_eq!(
-        c.world().unwrap().dependencies()[0].status,
-        DependencyStatus::Pending
-    );
-    assert_eq!(
-        c.world().unwrap().nodes[waiter.0 as usize].phase,
-        Phase::Unplanned
-    );
-    assert_eq!(
-        c.prerequisite_evidence(waiter).unwrap()[0].state,
-        PrerequisiteState::ClosedUnmerged {
-            reason: ClosedPrerequisiteReason::PullRequestClosed
-        }
-    );
-    assert_eq!(
-        status(&settings).requests[0].waiting_on,
-        "waiting for #2761 to merge: closed without merge"
-    );
-    assert!(
-        !c.snapshot()
-            .unwrap()
-            .pending_effects
-            .iter()
-            .any(|effect| effect.payload.to_string().contains("DependencyAbandoned"))
-    );
+    assert_eq!(c.world().unwrap().dependencies()[0].status, DependencyStatus::Delivered);
+    assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase, Phase::Planning { must_split: false });
+    assert_eq!(c.prerequisite_evidence(waiter).unwrap()[0].state,
+        PrerequisiteState::ClosedUnmerged { reason: ClosedPrerequisiteReason::PullRequestClosed });
+    assert!(!status(&settings).requests[0].waiting_on.contains("waiting for"));
     c.observe(
         "t839-pr-merged-later",
         Observation::Prerequisite(ExternalFact {
