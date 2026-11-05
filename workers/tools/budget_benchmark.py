@@ -38,7 +38,8 @@ def main():
     os.environ["TL3_BINARY"] = runfiles.Create().Rlocation("_main/crates/controller/tl3")
     os.environ["LANGSMITH_TRACING"] = "false"
     rows, visits = [], []
-    state = {"turn": -1, "record": False}
+    state = {"turn": -1, "record": False, "middleware": False}
+    boundaries = []
     original, wrap = budget_check.check, exploration.ExplorationMiddleware.wrap_model_call
 
     def measured(kind, **facts):
@@ -46,12 +47,24 @@ def main():
         result = original(kind, **facts)
         elapsed = (time.perf_counter_ns() - start) / 1_000_000
         if state["record"]:
-            rows.append({"kind": kind, "ms": elapsed, "turn": state["turn"]})
+            rows.append({"kind": kind, "ms": elapsed, "turn": state["turn"],
+                         "middleware": state["middleware"]})
         return result
 
     def model_turn(self, *args, **kwargs):
         state["turn"] += 1
-        return wrap(self, *args, **kwargs)
+        begin = len(rows)
+        state["middleware"] = True
+        try:
+            return wrap(self, *args, **kwargs)
+        finally:
+            state["middleware"] = False
+            if state["record"]:
+                calls = rows[begin:]
+                assert len(calls) <= 19, calls
+                assert sum(row["kind"] == "retained" for row in calls) <= 1
+                boundaries.append({"turn": state["turn"], "calls": len(calls),
+                                   "kinds": dict(Counter(row["kind"] for row in calls))})
 
     def visit(case, repeat):
         state["turn"] = -1
@@ -65,7 +78,7 @@ def main():
                                 "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
                                cwd=root, env=environment, check=True, capture_output=True)
             git("init", "--quiet", "--template=")
-            (root / "sample.txt").write_text("bounded evidence\n")
+            (root / "sample.txt").write_text("bounded evidence\n" * (2000 if case == "compaction_many" else 1))
             git("add", ".")
             git("commit", "--quiet", "-m", "Base")
             inputs = {"brief": "Inspect the declared evidence.", "attempt": 1, "round": 0,
@@ -78,9 +91,14 @@ def main():
             reply = {"kind": "cant_meet", "report": "Measurement stops after reading the evidence."}
             responses = []
             if case != "final_only":
-                tokens = 110000 if case == "compaction" else 1000
-                responses.append(AIMessage(content="", tool_calls=[
-                    {"name": "read", "args": {"path": "sample.txt"}, "id": "read", "type": "tool_call"}],
+                tokens = 110000 if case.startswith("compaction") else 1000
+                calls = [{"name": "read", "args": {"path": "sample.txt"}, "id": str(i), "type": "tool_call"}
+                         for i in range(16 if case == "compaction_many" else 1)]
+                if case == "compaction_arguments":
+                    calls = [{"name": "write", "args": {"path": "sample.txt", "content": "long argument é\n" * 6000},
+                              "id": "write", "type": "tool_call"}]
+                responses.append(AIMessage(content="visible message é\n" * 3000 if case.startswith("compaction") else "",
+                    tool_calls=calls,
                     usage_metadata={"input_tokens": tokens, "output_tokens": 10, "total_tokens": tokens + 10}))
             responses.extend([AIMessage(content=json.dumps(reply)), AIMessage(content=json.dumps(
                 {"slowed_by": [], "missing": [], "checks": [], "noise": []}))])
@@ -104,7 +122,7 @@ def main():
         for module in (exploration, forecast, session, maker):
             stack.enter_context(patch.object(module, "budget_check", measured))
         stack.enter_context(patch.object(exploration.ExplorationMiddleware, "wrap_model_call", model_turn))
-        for case in ("final_only", "read_then_final", "compaction"):
+        for case in ("final_only", "read_then_final", "compaction", "compaction_arguments", "compaction_many"):
             state["record"] = False
             visit(case, -1)
             state["record"] = True
@@ -114,6 +132,9 @@ def main():
     report = {"platform": platform.platform(), "units": "milliseconds_per_check_budget_call",
               "scope": "real maker visits; scripted provider; warmed schema and release-id caches",
               "samples": len(values), "p50": statistics.median(values), "p95": percentile(values, .95),
+              "middleware_call_bound": 19,
+              "retention_call_bound": 1,
+              "boundaries": boundaries,
               "by_kind": {kind: {"calls": sum(r["kind"] == kind for r in rows),
                                   "p50": statistics.median(r["ms"] for r in rows if r["kind"] == kind),
                                   "p95": percentile([r["ms"] for r in rows if r["kind"] == kind], .95)}

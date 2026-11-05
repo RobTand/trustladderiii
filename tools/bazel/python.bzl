@@ -51,6 +51,8 @@ _MEASURED_SECONDS = {
     "harness/tests:test_test_tool": 38,
     "workers/tests:test_large_files": 35,
     "workers/tests:test_maker": 48,
+    # #780 recovery and compaction: 69.67 s unsharded (eeaf53dd).
+    "workers/tests:test_maker_compaction": 70,
     "workers/tests:test_maker_forecast": 37,
     "workers/tests:test_maker_recovery": 46,
     "workers/tests:test_pb_machine_records": 37,

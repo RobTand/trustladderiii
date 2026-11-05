@@ -84,9 +84,10 @@ def run(mode, schedules):
             if mode == "diagnostics":
                 from tl3_workers.forecast import execution_forecast
                 from tl3_workers.roles.planner import execution_budget_details
-                expected = old["forecast"].execution_forecast(["a", "b"], n % 10, exploration=n % 20)
-                actual = execution_forecast(["a", "b"], n % 10, exploration=n % 20)
-                assert execution_budget_details(actual).encode() == execution_budget_details(expected).encode()
+                for config in [{}, {"generator": ["generate"], "generated_files": ["b"]}]:
+                    expected = old["forecast"].execution_forecast(["a", "b"], n % 10, exploration=n % 20, config=config)
+                    actual = execution_forecast(["a", "b"], n % 10, exploration=n % 20, config=config)
+                    assert execution_budget_details(actual).encode() == execution_budget_details(expected).encode()
             elif mode == "forecast":
                 files = {"a": n, "b": n // 7}
                 config = {"overhead_tokens": {"making": 4000}, "fit_tokens": 10000, "context_tokens": 15000}
@@ -139,7 +140,9 @@ def run(mode, schedules):
                 from langchain_core.messages import SystemMessage
                 transcript = [SystemMessage(content="system"), HumanMessage(content="inputs")]
                 for i in range(1 + n % 24):
-                    transcript.extend([AIMessage(content="long café\\n" * 1500,
+                    transcript.extend([AIMessage(content=[{"type": "text", "text": "long café\\n\t\x00😀" * 1500}]
+                        if n % 3 else "long café\\n" * 1500,
+                        additional_kwargs={"tool_calls": [{"raw": "provider arguments" * 500}]} if n % 4 == 3 else {},
                         tool_calls=[{"name": "read", "id": str(i), "args": {
                             "z": "long argument\\t" * (1500 if n % 2 else 1), "a": "é"}}]),
                         ToolMessage(content="long tool message\\n" * 2000, tool_call_id=str(i)),
@@ -159,4 +162,17 @@ def run(mode, schedules):
     print(mode, "parity schedules", len(schedules))
 
 
-run(sys.argv[1], json.load(sys.stdin))
+if "--server" in sys.argv:
+    import contextlib
+    import io
+    import traceback
+    for line in sys.stdin:
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                run(sys.argv[1], [json.loads(line)])
+            response = {"ok": True}
+        except Exception:
+            response = {"ok": False, "error": traceback.format_exc()}
+        print(json.dumps(response), flush=True)
+else:
+    run(sys.argv[1], json.load(sys.stdin))

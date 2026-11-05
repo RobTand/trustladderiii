@@ -1,4 +1,5 @@
 //! One budget implementation for the controller and synchronous worker loop.
+mod compaction;
 pub mod decision;
 use decision::Price;
 use schemars::JsonSchema;
@@ -201,28 +202,10 @@ pub enum Request {
         state: Value,
         maker: bool,
     },
-    Excerpt {
-        text: String,
-        allowance: u64,
+    Retained {
+        messages: Vec<compaction::Message>,
+        limit: u64,
     },
-    RetainGroup {
-        size: u64,
-        overhead: u64,
-        available: i64,
-        has_kept: bool,
-    },
-    ClipAllowance {
-        available: i64,
-        overhead: u64,
-        fields: u64,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Group {
-    pub size: u64,
-    pub overhead: u64,
 }
 
 fn threshold(context: u64, size: u64) -> bool {
@@ -244,7 +227,7 @@ fn cold(weights: [f64; 3], cached: bool) -> Result<Price> {
     let uncached = uncached?;
     let creation = creation?;
     values[2]?;
-    Ok(if cached && weights[1] > weights[0] {
+    Ok(if cached && creation.greater(uncached) {
         creation
     } else {
         uncached
@@ -285,17 +268,23 @@ pub fn decide(request: Request) -> Result<Value> {
             let handwritten = files
                 .checked_sub(generated)
                 .ok_or("generated outputs exceed declared files")?;
-            let mut components = BTreeMap::from([
-                ("exploration_operations", exploration.unwrap_or(0)),
-                ("file_operations", number(handwritten.checked_mul(9))?),
-                ("check_operations", number(checks.checked_mul(4))?),
-                ("scope_operations", 2),
-                ("generation_operations", u64::from(generator)),
-            ]);
-            if generated != 0 {
-                components.insert("generated_inspection_operations", generated);
-            }
-            let estimated = sum(components.values().copied())?.max(declared);
+            let components = ExecutionComponents {
+                exploration_operations: exploration.unwrap_or(0),
+                file_operations: number(handwritten.checked_mul(9))?,
+                check_operations: number(checks.checked_mul(4))?,
+                scope_operations: 2,
+                generation_operations: u64::from(generator),
+                generated_inspection_operations: (generated != 0).then_some(generated),
+            };
+            let estimated = sum([
+                components.exploration_operations,
+                components.file_operations,
+                components.check_operations,
+                components.scope_operations,
+                components.generation_operations,
+                generated,
+            ])?
+            .max(declared);
             json!({"allowed_tool_turns":tool_turns,"finalization_turns":finalization_turns.min(tool_turns),
                 "usable_tool_turns":tool_turns,"estimated_tool_turns":estimated,"components":components,
                 "exploration_declared":exploration.is_some(),"fits":exploration.is_some() && estimated <= tool_turns})
@@ -648,60 +637,20 @@ pub fn decide(request: Request) -> Result<Value> {
         } else {
             "allowed"
         }),
-        Restore { state, maker } => {
-            validate_restore(&state)?;
-            let mut state = state;
-            if maker && state["exhaustion"] == "tool_turns" {
-                state["exhaustion"] = json!("backstop");
+        Restore { mut state, maker } => match validate_restore(&state) {
+            Err(message) => serde_json::to_value(RestoreVerdict::Invalid {
+                message: message.into(),
+            })
+            .unwrap(),
+            Ok(()) => {
+                if maker && state["exhaustion"] == "tool_turns" {
+                    state["exhaustion"] = json!("backstop");
+                }
+                serde_json::to_value(RestoreVerdict::Valid { state }).unwrap()
             }
-            state
-        }
-        Excerpt { text, allowance } => {
-            let mut used = 0;
-            let end = text
-                .char_indices()
-                .find_map(|(index, c)| {
-                    let cost = match c {
-                        '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
-                        '\0'..='\u{1f}' => 6,
-                        _ => c.len_utf8() as u64,
-                    };
-                    if cost > allowance.saturating_sub(used) {
-                        Some(index)
-                    } else {
-                        used += cost;
-                        None
-                    }
-                })
-                .unwrap_or(text.len());
-            json!(&text[..end])
-        }
-        RetainGroup {
-            size,
-            overhead,
-            available,
-            has_kept,
-        } => json!(
-            if i128::from(overhead) > i128::from(available) && has_kept {
-                "stop"
-            } else if i128::from(size) > i128::from(available) {
-                "clip"
-            } else {
-                "keep"
-            }
-        ),
-        ClipAllowance {
-            available,
-            overhead,
-            fields,
-        } => {
-            if fields == 0 {
-                return Err("empty compaction group");
-            }
-            json!(
-                ((i128::from(available) - i128::from(overhead)).max(0) as u128)
-                    / u128::from(fields)
-            )
+        },
+        Retained { messages, limit } => {
+            serde_json::to_value(compaction::retain(&messages, limit)?).unwrap()
         }
     })
 }
@@ -718,6 +667,9 @@ fn truthy(v: &Value) -> bool {
 }
 
 fn validate_restore(state: &Value) -> Result<()> {
+    if !state.is_object() {
+        return Err("invalid allowance state");
+    }
     for name in ["spent", "turns", "last_input", "compaction_offset"] {
         if state[name].as_u64().is_none() {
             return Err("invalid allowance state");
@@ -793,8 +745,20 @@ pub fn check() -> crate::Result<()> {
         .map_err(|_| crate::Error::Invalid("invalid check-budget JSON"))?;
     let request: Request = serde_json::from_value(request)
         .map_err(|_| crate::Error::Invalid("invalid check-budget facts"))?;
+    let execution = matches!(&request, Request::Execution { .. });
     let result = decide(request).map_err(crate::Error::Invalid)?;
-    serde_json::to_writer(std::io::stdout().lock(), &json!({"result":result}))?;
+    // Value's map is sorted. Preserve the original component presentation order
+    // when crossing the worker boundary, where planner diagnostics use .items().
+    #[derive(Serialize)]
+    struct Response<T> {
+        result: T,
+    }
+    if execution {
+        let result: ExecutionEvidence = serde_json::from_value(result)?;
+        serde_json::to_writer(std::io::stdout().lock(), &Response { result })?;
+    } else {
+        serde_json::to_writer(std::io::stdout().lock(), &Response { result })?;
+    }
     std::io::stdout().write_all(b"\n")?;
     Ok(())
 }
@@ -818,7 +782,7 @@ pub struct ExecutionEvidence {
     pub finalization_turns: u64,
     pub usable_tool_turns: u64,
     pub estimated_tool_turns: u64,
-    pub components: BTreeMap<String, u64>,
+    pub components: ExecutionComponents,
     pub exploration_declared: bool,
     pub fits: bool,
 }
@@ -871,13 +835,27 @@ pub struct Dropped {
     pub spent: u64,
     pub fits: bool,
 }
+/// #780: declaration order is model-facing through planner diagnostics.
 #[derive(Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GroupAction {
-    Stop,
-    Clip,
-    Keep,
+#[serde(deny_unknown_fields)]
+pub struct ExecutionComponents {
+    pub exploration_operations: u64,
+    pub file_operations: u64,
+    pub check_operations: u64,
+    pub scope_operations: u64,
+    pub generation_operations: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_inspection_operations: Option<u64>,
 }
+
+/// #780 recovery: a validator verdict is distinct from transport failure.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RestoreVerdict {
+    Valid { state: Value },
+    Invalid { message: String },
+}
+
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolAction {
@@ -945,8 +923,7 @@ pub fn wire_schema() -> Value {
     let mut responses = BTreeMap::new();
     macro_rules! schema {($ty:ty; $($name:literal),+) => {$(responses.insert($name,schemars::schema_for!($ty));)+};}
     schema!(bool; "cutoff","compaction","compact_now","context_full","reply","finalizing","progress");
-    schema!(u64; "charge","predict","reserve","context","estimate","clip_allowance");
-    schema!(String; "excerpt");
+    schema!(u64; "charge","predict","reserve","context","estimate");
     schema!(CutoffObservation; "cutoff_sample");
     schema!(ForecastEvidence; "forecast");
     schema!(ExecutionEvidence; "execution");
@@ -954,10 +931,10 @@ pub fn wire_schema() -> Value {
     schema!(History; "history");
     schema!(Account; "account");
     schema!(Dropped; "dropped");
-    schema!(GroupAction; "retain_group");
+    schema!(compaction::Retained; "retained");
     schema!(ToolAction; "tool_allowed");
     schema!(Option<Dimension>; "exhaustion");
-    schema!(BTreeMap<String,Value>; "restore");
+    schema!(RestoreVerdict; "restore");
     json!({"$schema":"https://json-schema.org/draft/2020-12/schema",
            "request":schemars::schema_for!(Request),"responses":responses})
 }

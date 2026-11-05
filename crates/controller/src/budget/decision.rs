@@ -121,8 +121,20 @@ pub struct Price {
     pub exponent: i16,
 }
 impl Price {
-    pub fn greater(self, _other: Self) -> bool {
-        false
+    /// #780: compare nonnegative decoded prices without floating-point decisions.
+    pub fn greater(self, other: Self) -> bool {
+        fn key(price: Price) -> (i32, u64) {
+            if price.significand == 0 {
+                (i32::MIN, 0)
+            } else {
+                let leading = price.significand.leading_zeros();
+                (
+                    i32::from(price.exponent) + (64 - leading) as i32,
+                    price.significand << leading,
+                )
+            }
+        }
+        key(self) > key(other)
     }
 
     pub fn integer(value: u64) -> Option<Self> {

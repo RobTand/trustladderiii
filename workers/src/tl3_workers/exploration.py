@@ -75,72 +75,49 @@ def input_estimate(request):
     return budget_check("estimate", bytes=size, messages=len(messages))
 
 
-def _excerpt(text, allowance):
-    """Clip once by the escaped UTF-8 size the JSON request actually sends."""
-    return budget_check("excerpt", text=text, allowance=allowance)
-
-
-def _clip_group(group, available, arguments=False):
-    def resize(message, allowance):
-        changes = {"content": _excerpt(message.text, allowance)}
-        if isinstance(message, AIMessage) and arguments:
-            changes["tool_calls"] = [
-                {**call, "args": {"tl3_clipped_arguments": _excerpt(
-                    json.dumps(call["args"], ensure_ascii=False), allowance)}}
-                for call in message.tool_calls]
-            # Some providers also preserve the unparsed call in additional_kwargs.
-            changes["additional_kwargs"] = {key: value for key, value in message.additional_kwargs.items()
-                                            if key != "tool_calls"}
-        return message.model_copy(update=changes)
-
-    overhead = sum(len(json.dumps(resize(m, 0).model_dump(), ensure_ascii=False).encode()) for m in group)
-    fields = len(group) + (sum(len(m.tool_calls) for m in group if isinstance(m, AIMessage))
-                           if arguments else 0)
-    each = budget_check("clip_allowance", available=available, overhead=overhead, fields=fields)
-    return [resize(m, each) for m in group]
-
-
 def retained(messages, limit):
-    """Keep complete recent call/result groups, with a bounded evidence payload."""
-    first = next(i for i, message in enumerate(messages) if isinstance(message, HumanMessage))
-    prefix = messages[:first + 1]
-    groups = []
-    for index, message in enumerate(messages[first + 1:], first + 1):
-        if isinstance(message, HumanMessage):
-            continue
+    """Apply Rust's retention and clipping instructions to LangChain objects."""
+    def size(message):
+        return len(json.dumps(message.model_dump(), ensure_ascii=False).encode())
+
+    facts = []
+    for message in messages:
+        # These are immutable LangChain serialization facts, with no external
+        # reads or clocks. Python preserves providers' argument serialization.
+        empty = message.model_copy(update={"content": ""})
+        arguments = []
+        clipped = empty
         if isinstance(message, AIMessage):
-            groups.append([(index, message)])
-        elif groups:
-            groups[-1].append((index, message))
-    kept, used, clipped = {}, 0, False
-    for group in reversed(groups):
-        indexes, group = zip(*group)
-        available = limit - used
-        overhead = sum(len(json.dumps(m.model_copy(update={"content": ""}).model_dump(),
-                                      ensure_ascii=False).encode()) for m in group)
-        # Preserve the original sampling order: size is not sampled for a
-        # stopped group. Both decisions use the same already-recorded overhead.
-        action = budget_check("retain_group", size=0, overhead=overhead,
-                              available=available, has_kept=bool(kept))
-        if action == "stop":
-            break
-        size = sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in group)
-        action = budget_check("retain_group", size=size, overhead=overhead,
-                              available=available, has_kept=bool(kept))
-        if action == "clip":
-            clipped = True
-            # The newest edit must survive even when its arguments fill the window.
-            group = _clip_group(group, available, arguments=overhead > available)
-            size = sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in group)
-        kept.update(zip(indexes, group))
-        used += size
-    if clipped or len(kept) < sum(len(group) for group in groups):
-        prefix = prefix + [HumanMessage(content="Earlier exploration text was removed or clipped to bound context. "
-                                       "Use the retained evidence.")]
-    # Resumed session inputs and no-change feedback are instructions, not stale evidence.
-    return prefix + [kept.get(index, message)
-                     for index, message in enumerate(messages[first + 1:], first + 1)
-                     if index in kept or isinstance(message, HumanMessage)]
+            arguments = [json.dumps(call["args"], ensure_ascii=False) for call in message.tool_calls]
+            clipped = empty.model_copy(update={
+                "tool_calls": [{**call, "args": {"tl3_clipped_arguments": ""}}
+                               for call in message.tool_calls],
+                "additional_kwargs": {key: value for key, value in message.additional_kwargs.items()
+                                      if key != "tool_calls"}})
+        facts.append({"kind": "human" if isinstance(message, HumanMessage) else
+                      "ai" if isinstance(message, AIMessage) else "other",
+                      "size": size(message), "overhead": size(empty),
+                      "arguments_overhead": size(clipped), "text": message.text,
+                      "arguments": arguments})
+    decision = budget_check("retained", messages=facts, limit=limit)
+    result = list(messages[:decision["prefix_end"]])
+    if decision["notice"]:
+        result.append(HumanMessage(content="Earlier exploration text was removed or clipped to bound context. "
+                                   "Use the retained evidence."))
+    for instruction in decision["messages"]:
+        message = messages[instruction["index"]]
+        clip = instruction["clip"]
+        if clip is not None:
+            changes = {"content": clip["content"]}
+            if clip["arguments"] is not None:
+                changes["tool_calls"] = [
+                    {**call, "args": {"tl3_clipped_arguments": argument}}
+                    for call, argument in zip(message.tool_calls, clip["arguments"], strict=True)]
+                changes["additional_kwargs"] = {key: value for key, value in message.additional_kwargs.items()
+                                                if key != "tool_calls"}
+            message = message.model_copy(update=changes)
+        result.append(message)
+    return result
 
 
 class ExplorationMiddleware(AgentMiddleware):
@@ -368,7 +345,10 @@ class ExplorationMiddleware(AgentMiddleware):
 
     def restore(self, state):
         prefix = messages_from_dict(state["compaction_prefix"])
-        state = budget_check("restore", state=state, maker=self.role == "maker")
+        verdict = budget_check("restore", state=state, maker=self.role == "maker")
+        if verdict["kind"] == "invalid":
+            raise InvalidAllowanceState(verdict["message"])
+        state = verdict["state"]
         self.spent, self.turns, self.last_input, self.compaction_offset = (
             state[name] for name in ("spent", "turns", "last_input", "compaction_offset"))
         self.cache_active, self.compacted, self.compacted_below = (

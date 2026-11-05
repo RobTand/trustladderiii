@@ -2,6 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "request": {
     "$defs": {
+      "Kind": {
+        "enum": [
+          "human",
+          "ai",
+          "other"
+        ],
+        "type": "string"
+      },
       "Message": {
         "oneOf": [
           {
@@ -55,6 +63,47 @@
             "type": "object"
           }
         ]
+      },
+      "Message2": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "arguments_overhead": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/$defs/Kind"
+          },
+          "overhead": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "size",
+          "overhead",
+          "arguments_overhead",
+          "text",
+          "arguments"
+        ],
+        "type": "object"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1048,87 +1097,26 @@
       {
         "additionalProperties": false,
         "properties": {
-          "allowance": {
+          "kind": {
+            "const": "retained",
+            "type": "string"
+          },
+          "limit": {
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
-          "kind": {
-            "const": "excerpt",
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
+          "messages": {
+            "items": {
+              "$ref": "#/$defs/Message2"
+            },
+            "type": "array"
           }
         },
         "required": [
           "kind",
-          "text",
-          "allowance"
-        ],
-        "type": "object"
-      },
-      {
-        "additionalProperties": false,
-        "properties": {
-          "available": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "has_kept": {
-            "type": "boolean"
-          },
-          "kind": {
-            "const": "retain_group",
-            "type": "string"
-          },
-          "overhead": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "size": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "kind",
-          "size",
-          "overhead",
-          "available",
-          "has_kept"
-        ],
-        "type": "object"
-      },
-      {
-        "additionalProperties": false,
-        "properties": {
-          "available": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "fields": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "kind": {
-            "const": "clip_allowance",
-            "type": "string"
-          },
-          "overhead": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "kind",
-          "available",
-          "overhead",
-          "fields"
+          "messages",
+          "limit"
         ],
         "type": "object"
       }
@@ -1175,13 +1163,6 @@
       "type": "object"
     },
     "charge": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "format": "uint64",
-      "minimum": 0,
-      "title": "uint64",
-      "type": "integer"
-    },
-    "clip_allowance": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "format": "uint64",
       "minimum": 0,
@@ -1291,12 +1272,56 @@
       "title": "uint64",
       "type": "integer"
     },
-    "excerpt": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "title": "string",
-      "type": "string"
-    },
     "execution": {
+      "$defs": {
+        "ExecutionComponents": {
+          "additionalProperties": false,
+          "properties": {
+            "check_operations": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "exploration_operations": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "file_operations": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "generated_inspection_operations": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "generation_operations": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scope_operations": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "exploration_operations",
+            "file_operations",
+            "check_operations",
+            "scope_operations",
+            "generation_operations"
+          ],
+          "title": "780: declaration order is model-facing through planner diagnostics.",
+          "type": "object"
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
@@ -1306,12 +1331,7 @@
           "type": "integer"
         },
         "components": {
-          "additionalProperties": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "type": "object"
+          "$ref": "#/$defs/ExecutionComponents"
         },
         "estimated_tool_turns": {
           "format": "uint64",
@@ -1584,19 +1604,115 @@
     },
     "restore": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": true,
-      "title": "Map_of_AnyValue",
-      "type": "object"
-    },
-    "retain_group": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "enum": [
-        "stop",
-        "clip",
-        "keep"
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "valid",
+              "type": "string"
+            },
+            "state": true
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "invalid",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        }
       ],
-      "title": "GroupAction",
-      "type": "string"
+      "title": "780 recovery: a validator verdict is distinct from transport failure."
+    },
+    "retained": {
+      "$defs": {
+        "Clip": {
+          "additionalProperties": false,
+          "properties": {
+            "arguments": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        },
+        "Instruction": {
+          "additionalProperties": false,
+          "properties": {
+            "clip": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Clip"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "index": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "index"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/Instruction"
+          },
+          "type": "array"
+        },
+        "notice": {
+          "type": "boolean"
+        },
+        "prefix_end": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prefix_end",
+        "notice",
+        "messages"
+      ],
+      "title": "Retained",
+      "type": "object"
     },
     "tool_allowed": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
