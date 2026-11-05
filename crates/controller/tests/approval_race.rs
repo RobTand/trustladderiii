@@ -1946,17 +1946,49 @@ fn approval_adapter(case: &Case, epoch: i64) -> adapters::github::Adapter {
     .unwrap()
 }
 
-/// #766, state-table effect epochs: repair must refuse a superseded owner before PATCH.
+/// #766, state-table effect epochs: stale owners cannot repair or retire approval records.
 #[test]
 fn stale_owner_cannot_repair_approval_copies() {
     let case = Case::new("repair_epoch_fence");
     let delivery = case.delivery();
+    let directory = case.root.path().join("github");
+    std::fs::create_dir_all(&directory).unwrap();
+    let attempt = |key: &str| {
+        let external_id = format!("{key}:{}", delivery.head_sha.as_ref().unwrap());
+        let encoded: String = external_id.bytes().map(|b| format!("{b:02x}")).collect();
+        directory.join(format!("{encoded}.approval"))
+    };
+    // Both a pending attempt and a terminal legacy attempt must survive stale cleanup.
+    std::fs::write(attempt(&delivery.key), b"\"Uncertain\"").unwrap();
+    std::fs::write(attempt("retired-legacy-approval"), b"\"Observed\"").unwrap();
     let mut stale = approval_adapter(&case, 0);
     let mut current = approval_adapter(&case, 1);
+    // The old owner already opened its legacy directory scan before migration completed.
+    let marker = directory.join("approval-attempts.migrated");
+    std::fs::write(&marker, b"completed by the current owner").unwrap();
+    let local_records = || {
+        std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "approval") || *path == marker)
+            .map(|path| {
+                (
+                    path.file_name().unwrap().to_owned(),
+                    std::fs::read(path).unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let before = local_records();
     // Persist the new owner's fence without creating any check evidence.
     current.reconcile(&delivery).unwrap();
     case.corrupt_copies(2);
     let result = stale.repair_approval(&delivery);
+    let retirement = stale.retire_delivery(&delivery);
+    let after_delivery = local_records();
+    let mut store = Store::open(&case.settings).unwrap();
+    let migration = stale.retire(&mut store);
+    let after_migration = local_records();
     assert_eq!(
         case.api.0.lock().unwrap().patches,
         0,
@@ -1966,8 +1998,30 @@ fn stale_owner_cannot_repair_approval_copies() {
         result.is_err(),
         "repair must report the ownership fence refusal"
     );
+    assert_eq!(
+        after_delivery, before,
+        "stale delivery retirement changed approval records"
+    );
+    assert_eq!(
+        after_migration, before,
+        "stale legacy retirement changed approval records or migration marker"
+    );
+    assert!(
+        retirement.is_err(),
+        "delivery retirement must refuse stale ownership"
+    );
+    assert!(
+        migration.is_err(),
+        "legacy retirement must refuse stale ownership"
+    );
     current.repair_approval(&delivery).unwrap();
     case.assert_converged(2);
+    current.retire_delivery(&delivery).unwrap();
+    current.retire(&mut store).unwrap();
+    assert_eq!(
+        local_records(),
+        BTreeMap::from([(marker.file_name().unwrap().to_owned(), b"1".to_vec())])
+    );
 }
 
 /// #766/Q27: deployed-main approval rows must keep closed heads in actual gap catch-up.
