@@ -448,6 +448,7 @@ impl Controller {
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
         controller.reconcile_worker_waits()?;
+        controller.migrate_model_quota_deadlines()?;
         Ok(controller)
     }
 
