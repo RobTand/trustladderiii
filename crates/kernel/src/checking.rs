@@ -5,10 +5,12 @@ impl World {
     kernel_fn! {
     /// #771: true from the actual settle probe excludes every sufficient
     /// internal move used by the gate and pool obstruction argument.
+    /// #806: zero remaining internal height also proves the real probe succeeds.
     pub fn is_settled(&self) -> (result: bool) [
         requires settle_ready(*self),
         ensures result ==> settled_world(*self),
-    ] proof [reveal(settled_world);] {
+            progress_phase::zero_internal_height(*self) ==> result,
+    ] proof [reveal(settled_world); progress_phase::zero_internal_height_definition(*self);] {
         let mut w = snapshot_world(self);
         let mut out = Outbox::new();
         kernel_proof! { reveal(empty_outbox); }
@@ -18,6 +20,8 @@ impl World {
                 w.nodes@ == self.nodes@, w.gates@ == self.gates@,
                 w.pool_capacity == self.pool_capacity, w.dependencies@ == self.dependencies@,
                 w.next_ticket == self.next_ticket,
+                progress_phase::zero_internal_height(*self) ==>
+                    potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) == 0,
                 forall|j: int| 0 <= j < i ==> !movable(*self, j),
             decreases w.nodes.len() - i,
         ] {
@@ -54,8 +58,14 @@ impl World {
         requires world_headroom(*self), storage_ordered(*self),
         ensures result.is_ok() ==> world_checked(*self),
             retirement_domain(*self) ==> result.is_ok() == retirement_accepted(*self),
+            progress_gate_check_result(*self, result.is_ok()),
+            gate_apply_checker_domain(*self) ==> result.is_ok() == gate_apply_checker_accepted(*self),
+            unplanned_check_domain(*self)
+                ==> result.is_ok() == retirement_accepted(*self),
     ] proof [reveal(world_headroom); reveal(world_checked); reveal(storage_ordered);
-        reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);] {
+        reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked);
+        reveal(unplanned_check_domain); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+        reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5);] {
         self.check_dependencies()?;
         if self.gates.is_empty() || self.pool_capacity == 0 {
             return Err(Broken::Config);
@@ -66,7 +76,8 @@ impl World {
                 forall|j: int| 0 <= j < gate_index ==> self.gates@[j].w > 0,
             decreases self.gates.len() - gate_index,
         ] {
-            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+            kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
             if self.gates[gate_index].w == 0 { return Err(Broken::Config); }
             gate_index += 1;
         } }
@@ -77,7 +88,8 @@ impl World {
                 forall|j: int| 0 <= j < i ==> retirement::node_rules(*self, self.nodes@[j]),
             decreases self.nodes.len() - i,
         ] {
-            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+            kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
             self.check_node(&self.nodes[i])?;
             i += 1;
         } }
@@ -85,29 +97,40 @@ impl World {
         let mut i = 0;
         kernel_while! { (i < self.nodes.len()) [
             invariant i <= self.nodes.len(), footprint::ordered_table(*self),
+                progress_gate::domain(*self) ==> forall|a: int, b: int| 0 <= a < b < i
+                    && self.nodes@[a].holds && self.nodes@[b].holds && self.nodes@[a].repo == self.nodes@[b].repo
+                    ==> footprint::disjoint(*self, self.nodes@[a].footprint, self.nodes@[b].footprint),
+                forall|a: int, b: int| 0 <= a < b < i ==> progress_gate_apply::pair(*self, a, b),
                 forall|j: int| 0 <= j < self.nodes@.len() ==> retirement::node_rules(*self, self.nodes@[j]),
-                retirement::domain(*self) && i >= 2 ==>
+                (retirement::domain(*self) || progress_unplanned_witness::check_domain(*self)) && i >= 2 ==>
                     (self.nodes@[0].holds && self.nodes@[1].holds && self.nodes@[0].repo == self.nodes@[1].repo
                         ==> footprint::disjoint(*self, self.nodes@[0].footprint, self.nodes@[1].footprint)),
                 forall|j: int| 0 <= j < self.nodes@.len() ==> node_checked(*self, self.nodes@[j]),
             decreases self.nodes.len() - i,
         ] {
-            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+            kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
             let n = self.nodes[i];
             if n.holds {
                 let mut j = 0;
                 kernel_while! { (j < i) [
                     invariant j <= i < self.nodes.len(), n == self.nodes@[i as int], n.holds,
-                        retirement::domain(*self) && i == 1 && j >= 1 && n.holds
+                        progress_gate::domain(*self) ==> forall|k: int| 0 <= k < j
+                            && self.nodes@[k].holds && self.nodes@[k].repo == n.repo
+                            ==> footprint::disjoint(*self, self.nodes@[k].footprint, n.footprint),
+                        forall|k: int| 0 <= k < j ==> progress_gate_apply::pair(*self, k, i as int),
+                        (retirement::domain(*self) || progress_unplanned_witness::check_domain(*self)) && i == 1 && j >= 1 && n.holds
                             && self.nodes@[0].holds && self.nodes@[0].repo == n.repo
                             ==> footprint::disjoint(*self, self.nodes@[0].footprint, n.footprint),
                         footprint::ordered_table(*self),
                         forall|k: int| 0 <= k < self.nodes@.len() ==> node_checked(*self, self.nodes@[k]),
                     decreases i - j,
                 ] {
-                    kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+                    kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                        reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
                     let other = self.nodes[j];
                     kernel_proof! {
+                        assert(progress_gate_apply::accepted(*self) ==> progress_gate_apply::pair(*self, j as int, i as int));
                         assert(node_checked(*self, n));
                         assert(node_checked(*self, other));
                     }
@@ -115,6 +138,11 @@ impl World {
                         && other.repo == n.repo
                         && !self.footprints_disjoint(other.footprint, n.footprint)
                     {
+                        kernel_proof! {
+                            if progress_gate::domain(*self) && progress_gate::accepted(*self) {
+                                assert(progress_gate::pair(*self, j as int, i as int));
+                            }
+                        }
                         return Err(Broken::Gate);
                     }
                     j += 1;
@@ -125,19 +153,25 @@ impl World {
         let mut r = 0usize;
         kernel_while! { (r < self.gates.len()) [
             invariant r <= self.gates.len(),
-                retirement::domain(*self) ==> forall|k: int| 0 <= k < r
+                progress_gate::domain(*self) && r > 0 ==> progress_gate::holders(*self, 4) <= self.gates@[0].w,
+                forall|k: int| 0 <= k < r ==> progress_gate_apply::holders(*self, RepoId(k as u64), self.nodes@.len()) <= self.gates@[k].w,
+                (retirement::domain(*self) || progress_unplanned_witness::check_domain(*self)) ==> forall|k: int| 0 <= k < r
                     ==> retirement::holders(*self, RepoId(k as u64), 2) <= self.gates@[k].w,
             decreases self.gates.len() - r,
         ] {
-            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+            kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
             let mut count = 0usize;
             let mut index = 0usize;
             kernel_while! { (index < self.nodes.len()) [
                 invariant index <= self.nodes.len(), count <= index,
-                    retirement::domain(*self) ==> count == retirement::holders(*self, RepoId(r as u64), index as nat),
+                    progress_gate::domain(*self) && r == 0 ==> count == progress_gate::holders(*self, index as nat),
+                    count == progress_gate_apply::holders(*self, RepoId(r as u64), index as nat),
+                    (retirement::domain(*self) || progress_unplanned_witness::check_domain(*self)) ==> count == retirement::holders(*self, RepoId(r as u64), index as nat),
                 decreases self.nodes.len() - index,
             ] {
-                kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+                kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                    reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal(potential_prefix); reveal_with_fuel(potential_prefix, 5); }
                 let n = &self.nodes[index];
                 if n.holds && n.repo == RepoId(r as u64) { count += 1; }
                 index += 1;
@@ -149,16 +183,19 @@ impl World {
         let mut index = 0usize;
         kernel_while! { (index < self.nodes.len()) [
             invariant index <= self.nodes.len(), runs as int <= open_prefix(self.nodes@, index as nat),
-                retirement::domain(*self) ==> runs as int ==
+                progress_gate::domain(*self) ==> runs == progress_gate::runs(*self, index as nat),
+                runs == pool_users(self.nodes@, index as nat),
+                (retirement::domain(*self) || progress_unplanned_witness::check_domain(*self)) ==> runs as int ==
                     (if index > 0 && self.nodes@[0].pool { 1int } else { 0int })
                     + (if index > 1 && self.nodes@[1].pool { 1int } else { 0int }),
                 open_prefix(self.nodes@, self.nodes@.len()) <= u32::MAX as int,
                 forall|j: int| 0 <= j < self.nodes@.len() ==> node_checked(*self, self.nodes@[j]),
             decreases self.nodes.len() - index,
         ] {
-            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+            kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
             kernel_proof! {
-                reveal(open_prefix);
+                reveal(open_prefix); reveal(potential_prefix);
                 open_prefix_monotone(self.nodes@, index as nat + 1, self.nodes@.len());
             }
             if self.nodes[index].pool { runs += 1; }
@@ -168,22 +205,38 @@ impl World {
         let mut a = 0usize;
         kernel_while! { (a < self.nodes.len()) [
             invariant a <= self.nodes.len(),
-                retirement::domain(*self) && a > 0 ==>
+                progress_gate::domain(*self) ==> forall|x: int, y: int| 0 <= x < a && x < y < 4
+                    && self.nodes@[x].ticket.is_some() ==> self.nodes@[x].ticket != self.nodes@[y].ticket,
+                forall|j: int, k: int| 0 <= j < a && 0 <= k < self.nodes@.len() && j != k
+                    ==> (self.nodes@[j].ticket.is_some() ==> self.nodes@[j].ticket != self.nodes@[k].ticket),
+                (retirement::domain(*self) || progress_unplanned_witness::check_domain(*self)) && a > 0 ==>
                     (self.nodes@[0].ticket.is_some() ==> self.nodes@[0].ticket != self.nodes@[1].ticket),
             decreases self.nodes.len() - a,
         ] {
-            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+            kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
             let x = &self.nodes[a];
             let mut b = 0usize;
             kernel_while! { (b < self.nodes.len()) [
                 invariant a < self.nodes.len(), b <= self.nodes.len(), *x == self.nodes@[a as int],
-                    retirement::domain(*self) && a == 0 && b > 1 ==>
+                    progress_gate::domain(*self) ==> forall|k: int| a < k < b
+                        && x.ticket.is_some() ==> x.ticket != self.nodes@[k].ticket,
+                    forall|k: int| 0 <= k < b && a != k
+                        ==> (x.ticket.is_some() ==> x.ticket != self.nodes@[k].ticket),
+                    (retirement::domain(*self) || progress_unplanned_witness::check_domain(*self)) && a == 0 && b > 1 ==>
                         (self.nodes@[0].ticket.is_some() ==> self.nodes@[0].ticket != self.nodes@[1].ticket),
                 decreases self.nodes.len() - b,
             ] {
-                kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
+                kernel_proof! { reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);
+                    reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5); }
                 let y = &self.nodes[b];
                 if a != b && x.ticket.is_some() && x.ticket == y.ticket {
+                    kernel_proof! {
+                        if progress_gate::domain(*self) && progress_gate::accepted(*self) {
+                            if a < b { assert(progress_gate::pair(*self, a as int, b as int)); }
+                            else { assert(progress_gate::pair(*self, b as int, a as int)); }
+                        }
+                    }
                     return Err(Broken::Ticket);
                 }
                 b += 1;
