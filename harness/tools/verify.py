@@ -22,7 +22,7 @@ def save(repo, message):
 
 
 def suite_command(source, container, tests=('tests',)):
-    return ["docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
+    return ["docker", "run", "--init", "--rm", "--pull=never", "--network=none", "--read-only",
              "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65534:65534",
              "--pids-limit=128", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
              "--mount", f"type=bind,src={source},dst=/source,readonly",
