@@ -479,52 +479,46 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
     Some(report)
 }
 
-impl From<Kind> for core_judge::Kind {
-    fn from(kind: Kind) -> Self {
-        match kind {
-            Kind::Demonstrating => Self::Demonstrating,
-            Kind::Reproducing => Self::Reproducing,
-            Kind::Regression => Self::Regression,
-            Kind::BehaviorPreserving => Self::BehaviorPreserving,
-        }
+fn judge_kind(kind: Kind) -> core_judge::Kind {
+    match kind {
+        Kind::Demonstrating => core_judge::Kind::Demonstrating,
+        Kind::Reproducing => core_judge::Kind::Reproducing,
+        Kind::Regression => core_judge::Kind::Regression,
+        Kind::BehaviorPreserving => core_judge::Kind::BehaviorPreserving,
     }
 }
 
-impl From<Outcome> for core_judge::Outcome {
-    fn from(outcome: Outcome) -> Self {
-        match outcome {
-            Outcome::Passed => Self::Passed,
-            Outcome::Assertion => Self::Assertion,
-            Outcome::AddedName => Self::AddedName,
-            Outcome::Error => Self::Error,
-            Outcome::Skipped => Self::Skipped,
-            Outcome::Missing => Self::Missing,
-            Outcome::Uncollected => Self::Uncollected,
-            Outcome::NoReport => Self::NoReport,
-        }
+fn judge_outcome(outcome: Outcome) -> core_judge::Outcome {
+    match outcome {
+        Outcome::Passed => core_judge::Outcome::Passed,
+        Outcome::Assertion => core_judge::Outcome::Assertion,
+        Outcome::AddedName => core_judge::Outcome::AddedName,
+        Outcome::Error => core_judge::Outcome::Error,
+        Outcome::Skipped => core_judge::Outcome::Skipped,
+        Outcome::Missing => core_judge::Outcome::Missing,
+        Outcome::Uncollected => core_judge::Outcome::Uncollected,
+        Outcome::NoReport => core_judge::Outcome::NoReport,
     }
 }
 
-impl From<PhaseOutcome> for core_phase::Status {
-    fn from(outcome: PhaseOutcome) -> Self {
-        match outcome {
-            PhaseOutcome::Passed => Self::Passed,
-            PhaseOutcome::Failed => Self::Failed,
-            PhaseOutcome::Skipped => Self::Skipped,
-        }
+fn phase_status(outcome: PhaseOutcome) -> core_phase::Status {
+    match outcome {
+        PhaseOutcome::Passed => core_phase::Status::Passed,
+        PhaseOutcome::Failed => core_phase::Status::Failed,
+        PhaseOutcome::Skipped => core_phase::Status::Skipped,
     }
 }
 
 fn phase_agrees(run: &crate::contracts::report::PhaseRun, outcome: Outcome) -> bool {
     use core_phase::{Fact, Fold, Phase, checking};
     let folded = checking(
-        run.setup.outcome.into(),
+        phase_status(run.setup.outcome),
         run.call.as_ref().map(|call| Fact {
             phase: Phase::Call,
-            status: call.outcome.into(),
+            status: phase_status(call.outcome),
             assertion: call.assertion,
         }),
-        run.teardown.outcome.into(),
+        phase_status(run.teardown.outcome),
     );
     match (folded, outcome) {
         (Some(Fold::Passed), Outcome::Passed)
@@ -598,10 +592,10 @@ fn rejudged(report: &Report, job: &Job) -> bool {
                 core_judge::Reason::Undeclared
             };
             let input = core_judge::Input {
-                kind: result.kind.into(),
-                base: test.base.into(),
-                head: test.head.into(),
-                forced: test.head_forced.map(Into::into),
+                kind: judge_kind(result.kind),
+                base: judge_outcome(test.base),
+                head: judge_outcome(test.head),
+                forced: test.head_forced.map(judge_outcome),
                 reason,
             };
             let decision = core_judge::judge(input);
