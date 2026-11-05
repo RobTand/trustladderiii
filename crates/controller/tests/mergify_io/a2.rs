@@ -198,3 +198,149 @@ fn mandatory_a2_shell_execute_branches() {
         println!("A2 execute {profile:?}: {r}");
     }
 }
+
+/// Preserved existing behaviour (no rule): completed and stale heals skip reruns; pending same-head resumes without an edit.
+#[test]
+fn mandatory_a2_shell_pending_heal() {
+    for (same_head, reran) in [(true, false), (true, true), (false, false), (false, true)] {
+        let r = compare(
+            &schedule(Profile::Plain),
+            Entry::Read,
+            A2Config {
+                saved_heal: Some((same_head, reran)),
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(r["result"]["edited"], false, "{r:#}");
+        assert_eq!(count(&r, "github.patch_body"), 0);
+        assert_eq!(count(&r, "github.issue"), 0);
+        assert_eq!(
+            count(&r, "github.runs"),
+            usize::from(same_head && !reran),
+            "{r:#}"
+        );
+    }
+}
+/// Preserved existing behaviour (no rule): boundary grouping and conclusion parsing are compared with the pinned real helper.
+#[test]
+fn mandatory_a2_rerun_boundary_shapes() {
+    use tl3_github::WorkflowRun;
+    let run = |id, path: &str, head: &str, event: &str, status: &str, conclusion: Option<&str>| {
+        WorkflowRun {
+            id,
+            check_suite_id: 1,
+            head_sha: head.into(),
+            run_attempt: 1,
+            status: status.into(),
+            conclusion: conclusion.map(str::to_owned),
+            event: event.into(),
+            path: path.into(),
+        }
+    };
+    for conclusion in [
+        None,
+        Some("success"),
+        Some("failure"),
+        Some("cancelled"),
+        Some("timed_out"),
+        Some("startup_failure"),
+        Some("skipped"),
+        Some("neutral"),
+    ] {
+        let runs = vec![
+            run(
+                1,
+                "a/gate.yml",
+                "head",
+                "pull_request",
+                "completed",
+                Some("failure"),
+            ),
+            run(
+                3,
+                "a/gate.yml",
+                "head",
+                "pull_request",
+                "completed",
+                conclusion,
+            ),
+            run(
+                3,
+                "a/gate.yml",
+                "head",
+                "pull_request",
+                "completed",
+                Some("failure"),
+            ),
+            run(
+                9,
+                "a/gate.yml",
+                "other",
+                "pull_request",
+                "completed",
+                Some("failure"),
+            ),
+            run(
+                2,
+                "b/gate.yml",
+                "head",
+                "pull_request",
+                "completed",
+                Some("failure"),
+            ),
+            run(
+                4,
+                "c/gate.yml",
+                "head",
+                "push",
+                "completed",
+                Some("failure"),
+            ),
+            run(
+                4,
+                "d/unlisted.yml",
+                "head",
+                "pull_request",
+                "completed",
+                Some("failure"),
+            ),
+            run(
+                4,
+                "e/gate.yml",
+                "head",
+                "pull_request",
+                "in_progress",
+                Some("failure"),
+            ),
+        ];
+        let expected = if matches!(
+            conclusion,
+            Some("failure" | "cancelled" | "timed_out" | "startup_failure")
+        ) {
+            vec![3, 2]
+        } else {
+            vec![2]
+        };
+        for workflows in [vec![], vec!["gate.yml".into()]] {
+            let old = a2_reference::a2_reruns(&runs, "head", &workflows);
+            assert_eq!(old, a2_current::a2_reruns(&runs, "head", &workflows));
+            assert_eq!(
+                old,
+                if workflows.is_empty() {
+                    vec![]
+                } else {
+                    expected.clone()
+                }
+            );
+        }
+    }
+    for phase in [
+        None,
+        Some(tl3_kernel::Phase::Publishing),
+        Some(tl3_kernel::Phase::Queued),
+        Some(tl3_kernel::Phase::Checking),
+    ] {
+        assert_eq!(a2_reference::a2_phase(phase), a2_current::a2_phase(phase));
+    }
+}

@@ -94,9 +94,9 @@ pub fn needs_phase(gaps_empty: bool, pending: bool) -> bool {
 }
 
 /// Preserved existing behaviour (no rule): only Publishing/Queued permit a heal.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == !matches!(phase, Phase::Other),))]
-pub fn phase(phase: Phase) -> bool {
-    !matches!(phase, Phase::Other)
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == !matches!(current, Phase::Other),))]
+pub fn phase(current: Phase) -> bool {
+    !matches!(current, Phase::Other)
 }
 
 /// Preserved existing behaviour (no rule): no gaps skip issue reads; saved request text skips the upstream issue read.

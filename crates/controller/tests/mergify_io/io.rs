@@ -1484,3 +1484,19 @@ pub(super) fn a2_compare(s: &Schedule, execute: impl Fn(bool, &Delivery) -> Valu
         "comparisons":1+2*new.writes,
     })
 }
+
+// A2 initial durable state is installed before any shell operation, on both sides.
+pub(super) fn a2_seed_heal(same_head: bool, reran: bool) {
+    let key = "body-heal:owner/sandbox#100";
+    let path = format!(
+        "root/{}.body-heal",
+        key.bytes().map(|b| format!("{b:02x}")).collect::<String>()
+    );
+    with(|r| {
+        r.files.insert(
+            path,
+            serde_json::to_vec(&json!({"head":if same_head {"head"} else {"old"},"reran":reran}))
+                .unwrap(),
+        );
+    });
+}

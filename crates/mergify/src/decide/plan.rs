@@ -108,9 +108,9 @@ pub fn attempt<A>(saved: Option<A>) -> Attempt<A> {
 }
 
 /// Preserved existing behaviour (no rule): the new attempt starts Ready exactly when the queue label was present, independently of Prepare.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures match out { Some(value) => queue_label && equal(value, ready), None => !queue_label },))]
-pub fn ready<R>(queue_label: bool, ready: R) -> Option<R> {
-    if queue_label { Some(ready) } else { None }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures match out { Some(value) => queue_label && equal(value, ready_value), None => !queue_label },))]
+pub fn ready<R>(queue_label: bool, ready_value: R) -> Option<R> {
+    if queue_label { Some(ready_value) } else { None }
 }
 
 /// Preserved existing behaviour (no rule): a new attempt records the maximum observed event id, or zero for no events.

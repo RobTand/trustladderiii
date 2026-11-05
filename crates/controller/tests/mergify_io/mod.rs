@@ -1750,10 +1750,12 @@ struct A2Config {
     foreign: bool,
     empty_reruns: bool,
     inactive: bool,
+    saved_heal: Option<(bool, bool)>,
 }
 macro_rules! a2_entry {
     ($waiting:expr) => {
         pub(super) fn a2_run(entry: io::Entry, d: &Delivery, config: A2Config, heal: bool) -> Value {
+            if let Some((same_head, reran)) = config.saved_heal { io::a2_seed_heal(same_head, reran); }
             let mut a = Adapter::new();
             a.epoch = config.epoch;
             if config.no_policy { a.policies.clear(); }
@@ -1788,6 +1790,16 @@ mod a2_reference {
         include!("reference-head.rs");
     }
     a2_entry!(false);
+    pub(super) fn a2_reruns(
+        runs: &[tl3_github::WorkflowRun],
+        head: &str,
+        workflows: &[String],
+    ) -> Vec<u64> {
+        body_edit_reruns(runs, head, workflows)
+    }
+    pub(super) fn a2_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+        heal_phase(phase)
+    }
 }
 #[allow(clippy::needless_question_mark)]
 mod a2_current {
@@ -1804,6 +1816,16 @@ mod a2_current {
         include!("current-head.rs");
     }
     a2_entry!(None);
+    pub(super) fn a2_reruns(
+        runs: &[tl3_github::WorkflowRun],
+        head: &str,
+        workflows: &[String],
+    ) -> Vec<u64> {
+        body_edit_reruns(runs, head, workflows)
+    }
+    pub(super) fn a2_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+        heal_phase(phase)
+    }
 }
 #[test]
 fn a2_boundary_helpers_are_production_source() {
