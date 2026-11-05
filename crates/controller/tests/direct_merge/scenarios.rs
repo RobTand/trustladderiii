@@ -396,7 +396,7 @@ fn missing_exact_head_approval_waits_without_put() {
     let settings = database.create("direct_no_approval");
     let fixture = DirectFixture::new();
     fixture.check(None);
-    let (controller, delivery) = fixture.start(&settings);
+    let (mut controller, delivery) = fixture.start(&settings);
     fixture.check(Some("success"));
     fixture.api.state.lock().unwrap().head_checks.retain(|check| check["name"] != "TL3 approval");
     let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,

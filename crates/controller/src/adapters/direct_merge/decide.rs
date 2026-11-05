@@ -90,6 +90,7 @@ pub struct Plan {
     !f.merged && !f.recorded_merge &&
         (f.observed.upper != f.approved.upper || f.observed.lower != f.approved.lower)
         ==> out.outcome == Outcome::Moved && out.third == Step::None,
+    (!f.checking || !f.approval) ==> out.third == Step::None,
     (f.merged || f.recorded_merge) ==> out.outcome == Outcome::Merged && out.third == Step::None,
     !f.merged && !f.recorded_merge && f.open && !f.held && !f.conflict && f.approval && f.checking
         && f.checks == Checks::Passed
