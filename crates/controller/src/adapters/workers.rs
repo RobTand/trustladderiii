@@ -635,6 +635,8 @@ impl Supervisor {
                 .unwrap_or(json!([]));
         }
         protocol::validate_inputs(role, &inputs)?;
+        #[cfg(test)]
+        input_contract_tests::assert_typed_input(role, &inputs);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

@@ -7,6 +7,31 @@ fn typed_round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(value: &s
     assert_eq!(serde_json::to_value(parsed).unwrap(), *value);
 }
 
+/// #819: exercise each real producer through the shared contract and sorted Value path.
+pub(super) fn assert_typed_input(role: &str, value: &serde_json::Value) {
+    fn check<T: serde::de::DeserializeOwned + serde::Serialize>(value: &serde_json::Value) {
+        let typed: T = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&serde_json::to_value(&typed).unwrap()).unwrap(),
+            serde_json::to_vec(value).unwrap()
+        );
+        assert_ne!(
+            serde_json::to_vec(&typed).unwrap(),
+            serde_json::to_vec(value).unwrap()
+        );
+    }
+    use tl3_contracts::roles::*;
+    match role {
+        "ingest" => check::<ingest_input::IngestInput>(value),
+        "audit" => check::<audit_input::AuditInput>(value),
+        "planner" => check::<planner_input::PlannerInput>(value),
+        "maker" => check::<maker_input::MakerInput>(value),
+        "writer" => check::<writer_input::WriterInput>(value),
+        "classifier" => check::<classifier_input::ClassifierInput>(value),
+        _ => {}
+    }
+}
+
 fn materials(
     f: &Repo,
     config: &tl3_config::Config,
@@ -410,8 +435,9 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         "Preserve evidence",
                     )
                     .unwrap();
-                    protocol::validate_inputs("writer", &serde_json::to_value(input).unwrap())
+                    protocol::validate_inputs("writer", &serde_json::to_value(&input).unwrap())
                         .unwrap();
+                    assert_typed_input("writer", &serde_json::to_value(&input).unwrap());
                     coverage.insert("writer");
                 }
                 _ => {}

@@ -234,3 +234,38 @@ impl<const MIN: u64> SchemaOrder for super::bounded::Natural<MIN> {
         TypeOrder::of::<Self>(&[("", &["type", "minimum"])])
     }
 }
+
+impl<const MIN: u64, const MAX: u64> SchemaOrder for super::bounded::Integer<MIN, MAX> {
+    fn order() -> TypeOrder<'static> {
+        TypeOrder::of::<Self>(&[("", &["type", "minimum", "maximum"])])
+    }
+}
+impl<const P: u8, const MIN: usize, const MAX: usize> SchemaOrder
+    for super::bounded::ReplyText<P, MIN, MAX>
+{
+    fn order() -> TypeOrder<'static> {
+        use super::bounded::UNBOUNDED;
+        let objects: &'static [ObjectOrder<'static>] = match (MIN > 0, MAX != UNBOUNDED, P == 1) {
+            (false, false, false) => &[("", &["type", "pattern"])],
+            (true, false, false) => &[("", &["type", "minLength", "pattern"])],
+            (false, true, false) => &[("", &["type", "maxLength", "pattern"])],
+            (true, true, false) => &[("", &["type", "minLength", "maxLength", "pattern"])],
+            (false, false, true) => &[("", &["type", "pattern", "not"])],
+            (true, false, true) => &[("", &["type", "minLength", "pattern", "not"])],
+            (false, true, true) => &[("", &["type", "maxLength", "pattern", "not"])],
+            (true, true, true) => &[("", &["type", "minLength", "maxLength", "pattern", "not"])],
+        };
+        TypeOrder::of::<Self>(objects)
+    }
+}
+
+/// Flattened unconstrained maps allow additional properties by default. Omit only
+/// the redundant `true` annotation, preserving all closed or constrained maps.
+pub fn omit_open_additional_properties(schema: &mut schemars::Schema) {
+    if schema.get("additionalProperties") == Some(&Value::Bool(true)) {
+        schema
+            .as_object_mut()
+            .unwrap()
+            .remove("additionalProperties");
+    }
+}
