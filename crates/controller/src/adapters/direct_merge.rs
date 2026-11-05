@@ -654,6 +654,10 @@ impl Executor for Adapter {
         };
         Ok(Reconciliation::Found(Box::new(completion)))
     }
+    fn retire_delivery(&mut self, d: &Delivery) -> Result<()> {
+        self.wakes.wake(&d.key);
+        Ok(())
+    }
     fn probe(&mut self, d: &Delivery) -> Result<bool> {
         self.runtime.block_on(
             self.client(d)?

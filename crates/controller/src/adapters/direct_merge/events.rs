@@ -114,19 +114,20 @@ impl GitHubTranslator for Translator {
     fn translate(&mut self, delivery: &GitHubDelivery, snapshot: &Snapshot) -> Result<Vec<Input>> {
         // Legacy protection statuses have no typed Event variant. The authenticated
         // payload is still durably replayed by ingress, so decode just its wake key.
-        if let GitHubDelivery::Webhook(webhook) = delivery {
-            if webhook.event_name == "status" {
-                #[derive(Deserialize)]
-                struct Installation {
-                    id: u64,
-                }
-                #[derive(Deserialize)]
-                struct Status {
-                    repository: tl3_github::Repository,
-                    installation: Installation,
-                    sha: String,
-                }
-                let status: Status = serde_json::from_value(webhook.payload.clone())?;
+        if let GitHubDelivery::Webhook(webhook) = delivery
+            && webhook.event_name == "status"
+        {
+            #[derive(Deserialize)]
+            struct Installation {
+                id: u64,
+            }
+            #[derive(Deserialize)]
+            struct Status {
+                repository: tl3_github::Repository,
+                installation: Installation,
+                sha: String,
+            }
+            if let Ok(status) = serde_json::from_value::<Status>(webhook.payload.clone()) {
                 let repo = Repository {
                     owner: status.repository.owner.login,
                     name: status.repository.name,
