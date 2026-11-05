@@ -1,0 +1,12 @@
+            Observation::Progress { key, checkpoint } => {
+                self.progress_allowance(snapshot, &key, checkpoint, commit)?;
+                return Ok(None);
+            }
+            Observation::Quota {
+                key,
+                reset_ms,
+                model,
+            } => {
+                self.quota_allowance(snapshot, &key, reset_ms, model.as_deref(), commit)?;
+                return Ok(None);
+            }
