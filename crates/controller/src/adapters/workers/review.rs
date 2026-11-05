@@ -223,9 +223,10 @@ pub(super) fn inputs(
     }
     super::protocol::validate_inputs("reviewer", &inputs)?;
     // Keep schema diagnostics at their existing boundary before the typed wire.
+    // A schema/type disagreement is an error, never a controller panic.
     let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
-        serde_json::from_value(inputs).expect("validated reviewer inputs match their wire type");
-    Ok(serde_json::to_value(&typed).expect("reviewer inputs serialize to JSON"))
+        serde_json::from_value(inputs)?;
+    Ok(serde_json::to_value(&typed)?)
 }
 
 pub(crate) fn criteria(
