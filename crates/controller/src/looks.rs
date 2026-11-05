@@ -43,6 +43,8 @@ pub(crate) struct AllowanceState {
     last_quota_attempt: Option<i64>,
     #[serde(default)]
     quota_probe_at_ms: Option<u64>,
+    #[serde(default)]
+    quota_probe_model: Option<QuotaModel>,
     /// #759: since this step's first model ending with no model turn served
     /// since. A progress checkpoint clears it.
     #[serde(default)]
@@ -87,6 +89,7 @@ impl AllowanceState {
             last_quota_finished_ms: None,
             last_quota_attempt: None,
             quota_probe_at_ms: None,
+            quota_probe_model: None,
             unserved_since_ms: None,
             ladder_out_noticed: false,
             stopping: false,
@@ -736,7 +739,11 @@ impl Controller {
                 now,
             )?;
             state.quota_retry_ms = Some(resume);
-            let retry = self.quota_retry(state, resume, now)?;
+            let Some(retry) = self.quota_retry(state, resume, now)? else {
+                state.due_ms = None;
+                self.save_allowance(state)?;
+                return Ok(());
+            };
             state.quota_retry_ms = Some(retry);
             if retry > now {
                 // #759: every model this step may use is out. Say so once
@@ -791,6 +798,7 @@ impl Controller {
             state.quota_ms = None;
             state.quota_retry_ms = None;
             state.quota_probe_at_ms = None;
+            state.quota_probe_model = None;
             self.remove_hold(&state.delivery);
             self.save_allowance(state)?;
             return Ok(());
@@ -1580,6 +1588,7 @@ impl Controller {
             state.quota_ms = Some(reset_ms);
             state.quota_retry_ms = None;
             state.quota_probe_at_ms = None;
+            state.quota_probe_model = None;
             state.unserved_since_ms.get_or_insert(self.now_ms());
             // The look asks the adapter whether another model can take the step now.
             state.due_ms = Some(self.now_ms());

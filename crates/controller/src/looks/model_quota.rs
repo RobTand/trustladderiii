@@ -232,7 +232,9 @@ impl Controller {
                     .filter(|row| row.table == "allowances" && row.id != key)
                 {
                     let mut state: AllowanceState = crate::decode_stored(held.value.clone())?;
-                    if state.quota_ms.is_some() {
+                    if state.quota_ms.is_some()
+                        && state.quota_probe_model.as_ref() == Some(&probe.identity)
+                    {
                         state.due_ms = Some(state.due_ms.unwrap_or(u64::MAX).min(probe.next_ms));
                         commit
                             .rows
@@ -249,19 +251,19 @@ impl Controller {
         state: &mut AllowanceState,
         resume: u64,
         now: u64,
-    ) -> Result<u64> {
+    ) -> Result<Option<u64>> {
         // A bounded probe remains bounded as the hint approaches. Its original
         // decision is durable; restarting or reaching H cannot drop the lease.
         if state.quota_probe_at_ms.is_none() && resume.saturating_sub(now) <= self.quota_horizon_ms
         {
-            return Ok(resume);
+            return Ok(Some(resume));
         }
         let Some(identity) = self
             .adapters
             .adapter(&state.delivery)?
             .quota_probe_model(&state.delivery)?
         else {
-            return Ok(resume);
+            return Ok(Some(resume));
         };
         let snapshot = self.store.load()?;
         // Success cleared this model, so ordinary work can resume immediately.
@@ -271,8 +273,9 @@ impl Controller {
             .any(|row| row.table == "model_quotas" && row.id == identity.model)
             && resume <= now
         {
-            return Ok(now);
+            return Ok(Some(now));
         }
+        state.quota_probe_model = Some(identity.clone());
         let id = identity.key();
         let mut probe = snapshot
             .rows
@@ -290,9 +293,9 @@ impl Controller {
             if owner.key == state.delivery.key {
                 // Recovery reuses the dispatch reservation. The adapter compares
                 // the held attempt number before creating a replacement.
-                now
+                Some(now)
             } else {
-                probe.next_ms.max(state.quota_ms.unwrap_or(u64::MAX))
+                None
             }
         } else if now >= probe.next_ms {
             let after_attempt = self
@@ -306,9 +309,9 @@ impl Controller {
                 after_attempt,
             });
             probe.next_ms = now.saturating_add(HOUR_MS);
-            now
+            Some(now)
         } else {
-            probe.next_ms.min(resume)
+            Some(probe.next_ms.min(resume))
         };
         let mut commit = Commit::new(
             format!(
@@ -320,8 +323,8 @@ impl Controller {
             &snapshot,
         );
         // The lease and held deadline precede the adapter's filesystem dispatch.
-        state.quota_retry_ms = Some(retry);
-        state.due_ms = Some(retry);
+        state.quota_retry_ms = retry.or(state.quota_ms);
+        state.due_ms = retry;
         commit
             .rows
             .push(put("model_quota_probes", id, json!(probe)));

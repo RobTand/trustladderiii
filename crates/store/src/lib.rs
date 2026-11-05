@@ -302,7 +302,8 @@ pub struct Ingress {
 }
 
 fn recorded_worker_ending(row: Row) -> Result<RecordedWorkerEnding> {
-    let facts: WorkerRunFacts = serde_json::from_value(row.get(2))?;
+    let facts: WorkerRunFacts = serde_json::from_value(row.get(2))
+        .map_err(|_| Error::Invalid("invalid stored worker ending"))?;
     facts.validate()?;
     Ok(RecordedWorkerEnding {
         key: row.get(0),
