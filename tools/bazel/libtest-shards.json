@@ -1,4 +1,20 @@
 {
+ "tl3-controller/direct_merge": {
+  "fixture::already_merged_405_reconciles_without_failure": 1.983,
+  "fixture::already_merged_is_a_noop": 2.736,
+  "fixture::failed_protection_check_uses_the_existing_ci_failure_path": 1.939,
+  "fixture::lost_reply_reconciles_and_never_merges_again": 2.312,
+  "fixture::merge_permission_refusal_becomes_an_incident": 2.061,
+  "fixture::missing_exact_head_approval_waits_without_put": 2.454,
+  "fixture::moved_head_refuses_and_returns_to_checking": 2.299,
+  "fixture::pending_check_waits_for_webhook_without_polling": 2.403,
+  "fixture::queue_repository_keeps_mergify": 2.451,
+  "fixture::racing_pinned_puts_have_one_success_and_both_converge": 1.994,
+  "fixture::repository_delivery_is_reconciled_in_stored_world": 0.881,
+  "fixture::restart_at_every_direct_write_converges": 34.544,
+  "fixture::reviewed_checked_direct_head_does_not_enqueue_with_mergify": 2.068,
+  "fixture::status_webhook_wakes_direct_protection_wait": 2.292
+ },
  "tl3-controller/tl3_controller": {
   "adapters::github::publication_notice_tests::t604_machine_footer_retains_recorded_recurrence_even_when_writer_omits_it": 3.196,
   "adapters::github::question_findings_tests::a_faithful_rewrite_of_the_2662_decision_passes_the_checker": 0.025,
