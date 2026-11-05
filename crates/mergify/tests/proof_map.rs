@@ -206,6 +206,7 @@ struct Group {
     root: String,
     selector: String,
     count: usize,
+    extra_specs: Vec<String>,
 }
 
 fn groups(source: &str) -> Vec<Group> {
@@ -221,28 +222,65 @@ fn groups(source: &str) -> Vec<Group> {
         .join("\n");
     let ts = tokens(&table);
     let mut result = Vec::new();
-    for entry in ts.chunks(10) {
+    let mut i = 0;
+    while i < ts.len() {
+        let Token::Text(name) = &ts[i] else {
+            panic!("unnamed enqueue group");
+        };
+        assert_eq!(ts.get(i + 1), Some(&Token::Punct(':')));
+        let end = closing(&ts, i + 2);
         let [
-            Token::Text(name),
-            Token::Punct(':'),
-            Token::Punct('('),
             Token::Text(root),
             Token::Punct(','),
             Token::Text(selector),
             Token::Punct(','),
             Token::Name(count),
-            Token::Punct(')'),
-            Token::Punct(','),
-        ] = entry
+            rest @ ..,
+        ] = &ts[i + 3..end]
         else {
-            panic!("malformed enqueue group: {entry:?}");
+            panic!("malformed enqueue group {name}");
         };
+        let mut extra_specs = Vec::new();
+        if !rest.is_empty() && rest != [Token::Punct(',')] {
+            assert_eq!(&rest[..2], &[Token::Punct(','), Token::Punct('{')]);
+            assert_eq!(
+                rest.get(2),
+                Some(&Token::Text("extra_specs".into())),
+                "unknown enqueue metadata"
+            );
+            assert_eq!(rest.get(3), Some(&Token::Punct(':')));
+            let close = closing(rest, 4);
+            assert_eq!(rest[4], Token::Punct('['));
+            for pair in rest[5..close].chunks(2) {
+                let Token::Text(path) = &pair[0] else {
+                    panic!("nonliteral extra spec");
+                };
+                if pair.len() == 2 {
+                    assert_eq!(pair[1], Token::Punct(','));
+                }
+                extra_specs.push(path.clone());
+            }
+            let tail = &rest[close + 1..];
+            assert!(
+                matches!(
+                    tail,
+                    [Token::Punct('}')]
+                        | [Token::Punct(','), Token::Punct('}')]
+                        | [Token::Punct('}'), Token::Punct(',')]
+                        | [Token::Punct(','), Token::Punct('}'), Token::Punct(',')]
+                ),
+                "malformed extra specs"
+            );
+        }
         result.push(Group {
             name: name.clone(),
             root: root.clone(),
             selector: selector.clone(),
             count: count.parse().expect("nonliteral obligation count"),
+            extra_specs,
         });
+        assert_eq!(ts.get(end + 1), Some(&Token::Punct(',')));
+        i = end + 2;
     }
     assert!(!result.is_empty());
     result
@@ -327,6 +365,23 @@ fn inventory(root: &Path, groups: &[Group]) -> Result<(usize, usize), String> {
             continue;
         };
         covered_files.insert(file.clone());
+        let mut declared = BTreeSet::new();
+        let base_inputs = [
+            format!("proofs/enqueue_{}.rs", group.root),
+            "proofs/enqueue_helpers.rs".into(),
+            format!("proofs/enqueue_{}_spec.rs", group.root),
+            format!("proofs/enqueue_{}_witness.rs", group.root),
+        ];
+        for input in base_inputs.iter().chain(&group.extra_specs) {
+            match root.join(input).canonicalize() {
+                Ok(path) if path.is_file() => {
+                    if !declared.insert(path) {
+                        errors.push(format!("{}: duplicate proof input {input}", group.name));
+                    }
+                }
+                _ => errors.push(format!("{}: missing proof input {input}", group.name)),
+            }
+        }
         let mut modules = imports(&std::fs::read_to_string(&file).unwrap(), &file);
         modules.insert("root".into(), file.clone());
         let (module, function) = group
@@ -339,6 +394,13 @@ fn inventory(root: &Path, groups: &[Group]) -> Result<(usize, usize), String> {
                 continue;
             };
             covered_files.insert(file.clone());
+            if !declared.contains(file) {
+                errors.push(format!(
+                    "{}: undeclared proof input {}",
+                    group.name,
+                    file.display()
+                ));
+            }
             for item in items.iter().filter(|item| item.obligations > 0) {
                 // Body identity includes resolved contract modules. Five different
                 // decide postconditions are distinct; the shared helper contracts
@@ -473,5 +535,46 @@ fn source_inventory_detects_new_functions_and_generated_clones() {
             ("predicate", 0),
             ("reach", 1)
         ]
+    );
+}
+
+#[test]
+fn extra_specs_are_optional_existing_and_unique() {
+    let table = r#"        enqueue_groups = {
+            "standalone": ("standalone", "enqueue#dequeue_pending", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs", "proofs/enqueue_exact_helper_spec.rs"]}),
+        }"#;
+    assert_eq!(
+        groups(table)[0].extra_specs,
+        vec![
+            "proofs/enqueue_refused_sticky_spec.rs",
+            "proofs/enqueue_exact_helper_spec.rs"
+        ]
+    );
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut groups = groups(GROUPS);
+    assert!(groups.iter().all(|g| g.extra_specs.is_empty()));
+    groups[0]
+        .extra_specs
+        .push("proofs/enqueue_write_ahead_label_spec.rs".into());
+    assert!(inventory(root, &groups).is_ok());
+    groups[0]
+        .extra_specs
+        .push("proofs/enqueue_write_ahead_label_spec.rs".into());
+    assert!(
+        inventory(root, &groups)
+            .unwrap_err()
+            .contains("duplicate proof input")
+    );
+    groups[0].extra_specs = vec!["proofs/enqueue_refused_sticky_spec.rs".into()];
+    assert!(
+        inventory(root, &groups)
+            .unwrap_err()
+            .contains("duplicate proof input")
+    );
+    groups[0].extra_specs = vec!["proofs/enqueue_missing_spec.rs".into()];
+    assert!(
+        inventory(root, &groups)
+            .unwrap_err()
+            .contains("missing proof input")
     );
 }

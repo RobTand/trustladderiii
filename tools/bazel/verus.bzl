@@ -168,7 +168,9 @@ def verus_proofs():
             "clone_queue_event": ("refused_sticky", "enqueue#QueueEvent::clone", 1),
             "clone_effect": ("refused_sticky", "enqueue#Effect::clone", 1),
         }
-        for name, (root, module, count) in enqueue_groups.items():
+        for name, entry in enqueue_groups.items():
+            root, module, count = entry[:3]
+            extra_specs = entry[3].get("extra_specs", []) if len(entry) == 4 else []
             verus_test(
                 name = "verus_enqueue_" + name,
                 src = "proofs/enqueue_" + root + ".rs",
@@ -178,12 +180,11 @@ def verus_proofs():
                     "src/decide/observe.rs",
                     "src/decide/verification.rs",
                 ],
-                # Standalone-function roots may reuse an existing decide contract.
-                # New families add inputs without editing another group's block.
-                specs = ["proofs/enqueue_helpers.rs"] + native.glob([
-                    "proofs/enqueue_*_spec.rs",
-                    "proofs/enqueue_*_witness.rs",
-                ]),
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_" + root + "_spec.rs",
+                    "proofs/enqueue_" + root + "_witness.rs",
+                ] + extra_specs,
                 module = module,
                 expected_obligations = count,
                 tags = ["rust", "verus"],
