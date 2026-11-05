@@ -31,7 +31,6 @@ pub struct Generated {
 /// Every file this module generates.
 pub fn generated() -> Vec<Generated> {
     let mut files = vec![
-        prerequisites::planner_schema(),
         Generated {
             path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
             text: render(&check_report_schema()),
