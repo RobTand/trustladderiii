@@ -21,6 +21,7 @@ pub(super) struct Schedule {
     pub incidents: u8,
     pub counted: Option<u64>,
     pub incident: bool,
+    pub kernel_incident: bool,
     pub needs_rob: bool,
     pub refused: bool,
     pub maintenance: bool,
