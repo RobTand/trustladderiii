@@ -403,3 +403,100 @@ fn merged_pr_delivers_without_closure_record() {
             .is_empty()
     );
 }
+
+/// #839 / Q27, 2026-11-05: closure is provisional until planning starts.
+#[test]
+fn reopened_root_before_planning_waits_then_closed_again_releases() {
+    let mut db = Database::start();
+    let (_repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_reopen");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761, 2772]);
+    external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Delivered
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+    external(&mut c, &repository, 2761, DependencyStatus::Pending);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    external(&mut c, &repository, 2772, DependencyStatus::Abandoned);
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].waiting_prerequisite,
+        Some(2761)
+    );
+    external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Planning { must_split: false }
+    );
+}
+
+/// #839: controller open must read an upstream root again even after closure.
+#[test]
+fn open_reads_current_reopened_root_instead_of_replaying_closed_fact() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_open_current");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761, 2772]);
+    external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
+    set_issue(&repo, 2761, "open", None);
+    let mut c = reopen(&repo, c, &settings);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.prerequisite_evidence(waiter).unwrap()[0].state,
+        PrerequisiteState::Open
+    );
+    set_issue(&repo, 2761, "closed", Some("not_planned"));
+    let mut c = reopen(&repo, c, &settings);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Delivered
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+}
+
+/// #839: catch-up observations replace an old closure with current open state.
+#[test]
+fn catch_up_reads_reopened_root_before_planning() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_catch_current");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761, 2772]);
+    external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
+    set_issue(&repo, 2761, "open", None);
+    c.observe(
+        "t839-reopen-catch-up",
+        Observation::PrerequisiteRead {
+            node: waiter,
+            repository,
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+        },
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+}
