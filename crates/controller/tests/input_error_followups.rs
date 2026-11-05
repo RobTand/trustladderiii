@@ -175,7 +175,7 @@ fn seed_node_counter(c: &mut Controller, settings: &tl3_config::Store, field: &s
         .value
         .clone();
     node[field] = json!(value);
-    let mut commit = Commit::new(format!("seed-{field}"), json!(null), &snapshot);
+    let mut commit = Commit::new(format!("seed-{field}-{value}"), json!(null), &snapshot);
     commit.rows.push(RowChange::Put {
         table: "nodes".into(),
         id: "0".into(),

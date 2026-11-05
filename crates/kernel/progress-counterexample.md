@@ -1,6 +1,8 @@
 # Progress scope and counter exhaustion
 
-Ticket #771 uses the lead's enforced-scope decision. No state-table rule changes.
+Ticket #771 uses the lead's enforced-scope decision. Kernel transitions are
+unchanged. The controller's new durable halt at counter exhaustion awaits Rob's
+Q27 approval before merge.
 The safety contract on the real `step` takes the production checker's invariant,
 normalized file storage, and `World::headroom_ok()`. It states the complete
 per-step counter budgets and nondecreasing command IDs. Verus also checks each
@@ -22,7 +24,8 @@ the solver limit. Separating key lookup from guards, hiding whole-world
 predicates, lifting the exact dependency update separately, and explicitly
 instantiating its strict summand proved supporting lemmas but did not discharge
 those compositions. The safety scope requested in the lead's checkpoint does not assert the global
-outside-witness theorem.
+outside-witness theorem. [The follow-up issue draft](progress-followup.md) records
+the obligations, measured attempts, and proposed next step.
 
 The controller now allocates command IDs through `Node::next_command_id`, using
 `checked_add`. Exhaustion raises `command ids exhausted for request N` without
@@ -204,8 +207,10 @@ some progress event, with no per-request fairness claim.
 
 ## Proof migration status
 
-No Kani harness is replaced or weakened. The safety proof does not replace any progress harness. The mapping below separates the delivered foundation from the
-remaining progress obligations.
+No Kani harness is replaced or weakened. The safety proof does not replace a
+progress harness. Widening credit requires type-only changes in `proofs.rs`: the
+numeric credit bound remains `1 << 30`, and all assertions and covers remain.
+The mapping below separates delivered safety from remaining progress obligations.
 
 | Safety foundation | Executable connection | Progress still required |
 | --- | --- | --- |
