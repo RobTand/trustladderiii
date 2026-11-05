@@ -181,6 +181,14 @@ pub(super) struct Commit {
 }
 pub(super) struct Rows;
 impl Rows {
+    pub fn len(&self) -> usize {
+        with(|r| r.run.rows.len())
+    }
+
+    pub fn truncate(&mut self, length: usize) {
+        with(|r| r.run.rows.truncate(length));
+    }
+
     pub fn push(&mut self, row: RowChange) {
         let value = serde_json::to_value(row).unwrap();
         call("row.push", value.clone());
