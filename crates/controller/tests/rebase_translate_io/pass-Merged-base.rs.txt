@@ -1,0 +1,11 @@
+            Observation::Merged {
+                node,
+                sha,
+                checks_passed,
+            } => Event::Fact {
+                node,
+                fact: Fact::PrMerged {
+                    head: self.head(node, &sha)?,
+                    checks_passed,
+                },
+            },
