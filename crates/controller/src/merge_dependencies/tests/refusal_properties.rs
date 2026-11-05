@@ -1198,7 +1198,7 @@ fn slow_input_http_does_not_block_other_writers() {
     let generation = c.world().unwrap().nodes[0].generation;
     c.observe("http-input", Observation::WorkerReply {
         node, generation, role: "ingest".into(), model: None,
-        reply: json!({"kind":"brief","brief":"Implement","goals":[{"description":"Implement","verification":"test"}],"memory_ids":[],"files":["src/blocked.rs"],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true},"merge_prerequisites":[{"kind":"issue","number":9999,"source_quote":"Wait for #9999"}]}),
+        reply: json!({"kind":"brief","brief":"Implement","goals":[{"description":"Implement","verification":"test"}],"memory_ids":[],"files":["src/blocked.rs"],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"src/blocked.rs":1},"overhead_tokens":0,"tokens":2,"fit_tokens":100,"context_tokens":150,"fits":true},"merge_prerequisites":[{"kind":"issue","number":9999,"source_quote":"Wait for #9999"}]}),
     }).unwrap();
     let bootstrap = c.bootstrap.clone();
     let epoch = c.snapshot().unwrap().epoch.get();
