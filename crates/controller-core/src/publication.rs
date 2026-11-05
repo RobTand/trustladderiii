@@ -1,4 +1,6 @@
 //! Publication decisions. The adapter retains every fence, read and write.
+//! All contracts quantify over the full typed input domain. These functions
+//! have no loops or recursion, so verification needs no unwind or sequence bound.
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 

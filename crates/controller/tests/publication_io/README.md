@@ -17,7 +17,7 @@ obligation validators are production helpers, checked against their sources.
 Branch formatting uses a fixed valid topic branch, and source-checked validators
 still run. No clock is sampled by these entry points.
 
-Four entries cover reconcile, publish, execute_delivery and repair_approval_copies.
+Four entries cover reconcile, publish, execute_delivery and fenced repair_approval.
 The fixed seed is `0x0769_0730_2026`, with persisted regressions. Each entry and
 scenario runs 64 schedules, drawing stable tapes, a changed read after a stable
 prefix, and independent responses. Every attempted file or upstream write has a

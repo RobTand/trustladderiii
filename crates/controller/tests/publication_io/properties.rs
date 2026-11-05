@@ -338,6 +338,10 @@ fn references_are_frozen_bodies() {
 }
 #[test]
 fn shared_helpers_are_production() {
+    assert!(
+        include_str!("../../src/adapters/record.rs").starts_with(include_str!("records.rs")),
+        "atomic record writer drift"
+    );
     for (source, copy, names, indent) in [
         (
             include_str!("../../src/adapters/github.rs"),
