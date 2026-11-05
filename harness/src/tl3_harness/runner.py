@@ -16,6 +16,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from traceback import walk_tb
 import types
 
 import pytest
@@ -640,6 +641,15 @@ def pytest_configure(config):
                                                declared_symptom=data['declared_symptom'], worker=True))
 
 
+def worker_teardown_exhausted(error):
+    """Stopping xdist workers needs a new thread. Code under test that exhausts
+    the container's pid limit makes that fail after every result (#799)."""
+    return (str(error) == "can't start new thread"
+            and any(frame.f_code.co_name == "teardown_nodes"
+                    and Path(frame.f_code.co_filename).match("xdist/workermanage.py")
+                    for frame, _ in walk_tb(error.__traceback__)))
+
+
 def main():
     tests = json.load(sys.stdin) if sys.argv[1] == "-" else json.loads(sys.argv[1])
     forcing = {}
@@ -688,10 +698,8 @@ def main():
         try:
             return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
                                     "--", *(tests or ["."])], plugins=[reporter]))
-        except Exception:
-            # Stopping xdist workers needs a new thread. Code under test that exhausts
-            # the container's pid limit makes that fail after every result (#799).
-            if reporter.finished is None:
+        except RuntimeError as error:
+            if reporter.finished is None or not worker_teardown_exhausted(error):
                 raise
             return reporter.finished
     if summary:
