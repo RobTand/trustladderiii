@@ -16,6 +16,9 @@
 //! The module does no I/O and uses no `std` item. It has no `unsafe`, no
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
 
+#[macro_use]
+mod verification;
+
 pub mod check;
 pub mod delivery_step;
 pub mod enqueue;
@@ -42,4 +45,8 @@ pub const QUEUE_LABEL: &str = "tl3-queue";
 
 pub mod completion;
 
+pub mod recovery;
 pub mod required;
+
+#[cfg(test)]
+mod observe_witness;

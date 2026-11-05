@@ -220,6 +220,7 @@ def main():
             assert any(message in log for message in (
                 'postcondition not satisfied', 'precondition not satisfied',
                 'arithmetic overflow', 'invariant not satisfied', 'assertion failed',
+                'Call to non-static function fails to satisfy `callee.requires(args)`',
             )), 'mutant must fail a real proof obligation'
             assert re.search(r'verification results:: [0-9]+ verified, [1-9][0-9]* errors', log)
         else:
