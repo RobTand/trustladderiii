@@ -102,14 +102,16 @@ fn tokens(source: &str) -> Vec<Token> {
 struct Function {
     module: String,
     path: String,
-    name: String,
     verifiable: bool,
+    definition_only: bool,
 }
 
 fn functions(source: &str, module: &str) -> Vec<Function> {
     fn walk(ts: &[Token], module: &str, owner: &str, verifiable: bool, result: &mut Vec<Function>) {
         let mut i = 0;
         let mut annotated = false;
+        let mut verified_item = false;
+        let mut clone_derived = false;
         while i < ts.len() {
             if ts[i] == Token::Punct('#') && ts.get(i + 1) == Some(&Token::Punct('[')) {
                 let mut end = i + 2;
@@ -123,16 +125,39 @@ fn functions(source: &str, module: &str) -> Vec<Function> {
                         depth -= 1;
                     }
                     annotated |= token.name() == Some("verus_spec");
+                    verified_item |= token.name() == Some("verus_verify");
+                    clone_derived |= token.name() == Some("Clone");
                     end += 1;
                 }
                 i = end;
                 continue;
             }
+            if verified_item && matches!(ts[i].name(), Some("struct" | "enum" | "const")) {
+                let name = ts
+                    .get(i + 1)
+                    .and_then(Token::name)
+                    .expect("unnamed verified item");
+                if ts[i].name() == Some("const") || clone_derived {
+                    let path = if ts[i].name() == Some("const") {
+                        format!("{owner}::{name}")
+                    } else {
+                        format!("{owner}::{name}::clone")
+                    };
+                    result.push(Function {
+                        module: module.into(),
+                        path,
+                        verifiable: true,
+                        definition_only: false,
+                    });
+                }
+            }
             if matches!(
                 ts[i].name(),
-                Some("struct" | "enum" | "static" | "type" | "trait" | "mod")
+                Some("struct" | "enum" | "const" | "static" | "type" | "trait" | "mod")
             ) {
                 annotated = false;
+                verified_item = false;
+                clone_derived = false;
             }
             if ts[i].name() == Some("macro_rules") {
                 let macro_name = ts.get(i + 2).and_then(Token::name).expect("unnamed macro");
@@ -173,12 +198,18 @@ fn functions(source: &str, module: &str) -> Vec<Function> {
                 result.push(Function {
                     module: module.into(),
                     path: format!("{owner}::{name}"),
-                    name: name.into(),
                     verifiable: verifiable || annotated,
+                    definition_only: ts.get(i.wrapping_sub(1)).and_then(Token::name) == Some("spec")
+                        && !ts[i + 2..]
+                            .iter()
+                            .take_while(|token| **token != Token::Punct('{'))
+                            .any(|token| token.name() == Some("decreases")),
                 });
             }
             if ts[i].name() == Some("fn") {
                 annotated = false;
+                verified_item = false;
+                clone_derived = false;
             }
             if ts[i].name() == Some("impl") || ts[i].name() == Some("mod") {
                 let end = (i + 1..ts.len())
@@ -299,11 +330,24 @@ fn check(
                 let (module, name) = selector
                     .split_once('#')
                     .map_or((selector.as_str(), None), |(m, f)| (m, Some(f)));
-                module == function.module && name.is_none_or(|name| name == function.name)
+                module == function.module
+                    && name.is_none_or(|name| {
+                        let relative = function
+                            .path
+                            .strip_prefix(&format!("{}::", function.module))
+                            .unwrap();
+                        name == relative
+                            || name
+                                .strip_prefix('*')
+                                .is_some_and(|suffix| relative.ends_with(suffix))
+                    })
             })
             .map(|(group, _)| group)
             .collect();
-        if unverified.contains_key(&function.path) {
+        if let Some(reason) = unverified.get(&function.path) {
+            if reason.starts_with("Logical definition;") && !function.definition_only {
+                errors.push(format!("{}: definition-only reason requires a nonrecursive spec function", function.path));
+            }
             used.insert(function.path.clone());
         } else if !function.verifiable {
             errors.push(format!(
@@ -364,7 +408,11 @@ fn every_kernel_function_has_exactly_one_selector_or_a_reason() {
     collect(&root.join("verus"), "kernel", &mut fs);
     let groups: Vec<_> = selectors(super::VERUS_GROUPS)
         .into_iter()
-        .filter(|(_, selector)| selector == "kernel" || selector.starts_with("kernel::"))
+        .filter(|(_, selector)| {
+            selector == "kernel"
+                || selector.starts_with("kernel#")
+                || selector.starts_with("kernel::")
+        })
         .collect();
     let unverified = exemptions(super::VERUS_GROUPS);
     if let Err(error) = check(&fs, &groups, &unverified) {
@@ -427,4 +475,24 @@ fn lexical_noise_does_not_hide_a_function_or_invent_one() {
         fs.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
         ["kernel::facts::Node::real", "kernel::facts::nested::helper"]
     );
+}
+
+#[test]
+fn root_selectors_cover_constants_clones_and_qualified_methods_once() {
+    let fs = functions(
+        "#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)] const LIMIT: u64 = 1;          #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)] #[derive(Clone)] struct Kind {}          impl Kind { kernel_fn! { fn rank() {} } } kernel_fn! { fn rank() {} }",
+        "kernel",
+    );
+    let groups = vec![
+        ("constant".into(), "kernel#LIMIT".into()),
+        ("clones".into(), "kernel#*::clone".into()),
+        ("method".into(), "kernel#Kind::rank".into()),
+        ("free".into(), "kernel#rank".into()),
+    ];
+    assert_eq!(fs.len(), 4);
+    assert!(check(&fs, &groups, &BTreeMap::new()).is_ok());
+    assert!(check(&fs, &groups[1..], &BTreeMap::new()).is_err());
+    let mut duplicate = groups.clone();
+    duplicate.push(("duplicate".into(), "kernel#*::rank".into()));
+    assert!(check(&fs, &duplicate, &BTreeMap::new()).is_err());
 }
