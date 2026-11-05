@@ -757,11 +757,130 @@ def test_t842_loader_exceptions_do_not_apply_to_unrelated_support(source):
 @pytest.mark.parametrize('case', json.loads(
     (Path(__file__).parent / 'fixtures/subject_observer/review_842.json').read_text()),
     ids=lambda case: case['finding'])
-def test_t842_review_counterexamples_refuse_before_execution(repository, case):
+def test_t842_review_counterexamples_refuse_before_execution(repository, tmp_path, case):
     # #842 review / #645: assembly must refuse even when a forged proof would pass.
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, {**case, 'case': case['finding']})
     check = Check(case['finding'], Kind.DEMONSTRATING, tuple(case['tests']),
                   proof=model.Proof.parse(case['proof']))
     results, _, _ = round_result(repository, case['before'], case['after'], check)
     assert results[0].verdict == Verdict.FAIL, results
     assert 'Proof assembly refused' in results[0].tests[0].message, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
+
+
+# Python's symbol table, rather than Name(Store), defines these bindings.
+T842_BINDING_FORMS = [
+    '{name} = None',
+    '({name}, (other, *rest)) = (None, (1, 2))',
+    '*{name}, other = (1, 2)',
+    '{name}: object = None',
+    '{name}: object',
+    '{name} += 1',
+    '({name} := None)',
+    'for {name} in (): pass',
+    'async def task():\n    async for {name} in stream: pass',
+    'with context() as {name}: pass',
+    'async def task():\n    async with context() as {name}: pass',
+    'try: pass\nexcept Exception as {name}: pass',
+    'import other as {name}',
+    'from other import value as {name}',
+    'def {name}(): pass',
+    'async def {name}(): pass',
+    'class {name}: pass',
+    'match None:\n    case {name}: pass',
+    'match []:\n    case [*{name}]: pass',
+    'match {{}}:\n    case {{**{name}}}: pass',
+    '[None for {name} in ()]',
+    '(None for {name} in ())',
+    'def task({name}): pass',
+    'task = lambda {name}: None',
+    'def task():\n    global {name}',
+    'def outer():\n    {name} = None\n    def inner():\n        nonlocal {name}',
+    'del {name}',
+]
+
+
+@pytest.mark.parametrize('name', ['__file__', 'Path', 'sys', 'mock', 'unittest'])
+@pytest.mark.parametrize('form', T842_BINDING_FORMS)
+def test_t842_loader_inputs_cannot_be_bound_by_any_python_form(tmp_path, t842_cases, name, form):
+    case = t842_cases[1]
+    path = 'tests/test_pb_duplicate_arms.py'
+    if name == 'unittest':
+        case['after'][path] = case['after'][path].replace('from unittest import mock', 'import unittest.mock').replace(
+            'mock.patch.object', 'unittest.mock.patch.object')
+    case['after'][path] += '\n' + form.format(name=name) + '\n'
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('form', [
+    '{name} = None',
+    '({name}, (other, *rest)) = (None, (1, 2))',
+    '*{name}, other = (1, 2)',
+    '{name}: object = None',
+    '{name} += 1',
+    '({name} := None)',
+    'for {name} in (): pass',
+    'with context() as {name}: pass',
+    'try: pass\nexcept Exception as {name}: pass',
+    'import other as {name}',
+    'from other import value as {name}',
+    'def {name}(): pass',
+    'class {name}: pass',
+    'match None:\n    case {name}: pass',
+    'match []:\n    case [*{name}]: pass',
+    'match {{}}:\n    case {{**{name}}}: pass',
+    'del {name}',
+])
+def test_t842_support_binding_forms_cannot_rebind_subjects(tmp_path, form):
+    from textwrap import indent
+
+    before = 'def helper(): return 0\n'
+    source = before.replace('return 0', 'return 1') + '\ndef TOKEN():\n    global helper\n' + indent(
+        form.format(name='helper'), '    ') + '\n\ndef test_observer():\n    assert helper() == 1, "bug"\n'
+    case = {'case': 'subject writes', 'before': {'tests/test_subject.py': before},
+            'after': {'tests/test_subject.py': source}, 'tests': ['tests/test_subject.py::test_observer'],
+            'proof': {'subjects': ['tests/test_subject.py::helper'],
+                      'observer_support': ['tests/test_subject.py::TOKEN'], 'red_message': 'bug'}}
+    with pytest.raises(model.ProofRefusal, match='rebind'):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('binding', [
+    '_DATA = {"expected": 0}\nalias = _DATA\nalias.update(expected=1)',
+    '_DATA = {"expected": 0}\nchange(_DATA)',
+    '_DATA = ({"expected": 0},)',
+    '_DATA = 0\nmatch 1:\n    case _DATA: pass',
+    '_DATA = 0\n(_DATA := 1)',
+    '_DATA = 0\ndef change():\n    global _DATA\n    _DATA = 1',
+    '_DATA = 0\ndel _DATA',
+])
+@pytest.mark.parametrize('explicit', [False, True], ids=['inferred', 'declared'])
+def test_t842_partial_literal_support_refuses_omitted_context(tmp_path, binding, explicit):
+    path = 'tests/test_subject.py'
+    before = 'def helper(): return 0\n'
+    case = {'case': 'literal siblings', 'before': {path: before},
+            'after': {path: before.replace('return 0', 'return 1') + binding +
+                      '\ndef test_observer():\n    assert helper() == _DATA, "bug"\n'},
+            'tests': [path + '::test_observer'],
+            'proof': {'subjects': [path + '::helper'],
+                      'observer_support': [path + '::_DATA'] if explicit else [], 'red_message': 'bug'}}
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('extra', [
+    'import operator\nTOKEN = operator.attrgetter("modules")',
+    'from operator import attrgetter as lookup\nTOKEN = lookup("modules")',
+    'from operator import methodcaller as invoke\nTOKEN = invoke("__getattribute__", "modules")',
+    'import operator\nTOKEN = operator.methodcaller("__getattribute__", "modules")',
+    'from unittest import mock as fake\nmock = fake',
+    'with mock.patch("unittest.mock.patch.object", callback): pass',
+    'mock.patch.object = callback',
+])
+def test_t842_indirect_namespace_and_mock_siblings_are_refused(tmp_path, t842_cases, extra):
+    case = t842_cases[1]
+    case['after']['tests/test_pb_duplicate_arms.py'] += '\n' + extra + '\n'
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
