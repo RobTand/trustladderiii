@@ -2,26 +2,27 @@
 mod translate;
 use vstd::prelude::*;
 use translate::*;
+use translate::admit as queue_admit;
 
 verus! {
 /// Closed row: only an unrecorded late merge is admitted. Unbounded finite state.
 fn translate_closed(kind: Kind, merged: bool, enqueue_pending: bool) {
     let node = NodeView { phase: Phase::Closed, merged, enqueue_pending };
-    let accepted = admit(kind,node);
+    let accepted = queue_admit(kind,node);
     assert(accepted == (matches!(kind, Kind::Merged { .. }) && !merged));
     let witness = NodeView { phase: Phase::Closed, merged:false, enqueue_pending:false };
-    let late = admit(Kind::Merged { checks_passed:true },witness);
-    let conflict = admit(Kind::Conflict,witness);
-    let duplicate = admit(Kind::Merged { checks_passed:true },NodeView { phase:Phase::Closed,merged:true,enqueue_pending:false });
+    let late = queue_admit(Kind::Merged { checks_passed:true },witness);
+    let conflict = queue_admit(Kind::Conflict,witness);
+    let duplicate = queue_admit(Kind::Merged { checks_passed:true },NodeView { phase:Phase::Closed,merged:true,enqueue_pending:false });
     assert(late && !conflict && !duplicate);
 }
 /// Q47 Publishing/Queued: a head-CI fact waits for a live enqueue. Unbounded.
 fn head_ci_consume(node: NodeView, infra: bool) {
-    let accepted = admit(Kind::CiFailed { head_check:true,infra },node);
+    let accepted = queue_admit(Kind::CiFailed { head_check:true,infra },node);
     assert(accepted == (node.phase == Phase::Queued || (node.phase == Phase::Publishing && node.enqueue_pending)));
-    let queued = admit(Kind::CiFailed { head_check:true,infra:false },NodeView { phase:Phase::Queued,merged:false,enqueue_pending:false });
-    let enqueue = admit(Kind::CiFailed { head_check:true,infra:false },NodeView { phase:Phase::Publishing,merged:false,enqueue_pending:true });
-    let idle = admit(Kind::CiFailed { head_check:true,infra:false },NodeView { phase:Phase::Publishing,merged:false,enqueue_pending:false });
+    let queued = queue_admit(Kind::CiFailed { head_check:true,infra:false },NodeView { phase:Phase::Queued,merged:false,enqueue_pending:false });
+    let enqueue = queue_admit(Kind::CiFailed { head_check:true,infra:false },NodeView { phase:Phase::Publishing,merged:false,enqueue_pending:true });
+    let idle = queue_admit(Kind::CiFailed { head_check:true,infra:false },NodeView { phase:Phase::Publishing,merged:false,enqueue_pending:false });
     assert(queued && enqueue && !idle);
 }
 /// Q52/#447/#373: every setup row stays outside the kernel. Unbounded.

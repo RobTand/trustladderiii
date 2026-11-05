@@ -225,14 +225,14 @@ fn write(op: &str, args: Value, change: impl FnOnce(&mut BTreeMap<String, Vec<u8
     });
     record(op, args);
     if stop {
-        std::panic::panic_any(Crash);
+        std::panic::resume_unwind(Box::new(Crash));
     }
     let stop = with(|r| {
         change(&mut r.outcome.persisted);
         r.cut == Some((r.outcome.writes, true))
     });
     if stop {
-        std::panic::panic_any(Crash);
+        std::panic::resume_unwind(Box::new(Crash));
     }
 }
 struct Store;
@@ -278,7 +278,7 @@ impl Store {
     fn intern_commit(&mut self, node: &str, head: &str) -> Result<u64> {
         let word = read("store.intern.lookup", json!([node, head]))?;
         let id = u64::from(word) + 1;
-        if word % 2 == 0 {
+        if word.is_multiple_of(2) {
             write("store.intern.insert", json!([node, head, id]), |_| {});
             write("store.intern.commit", json!([node, head, id]), |state| {
                 state.insert(
@@ -483,7 +483,7 @@ fn observation(kind: u8, salt: u8) -> Observation {
         },
         4 => E::Merged {
             head: head(),
-            checks_passed: salt % 2 == 0,
+            checks_passed: salt.is_multiple_of(2),
         },
         5 => E::CiFailed {
             check: 7,
