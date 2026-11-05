@@ -151,6 +151,15 @@ CASES = {
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
                     '//crates/kernel:verus_controller_boundary'),
+    'timing3_ingest_deposit': ('crates/kernel/src/ingest.rs',
+                               'm.credit.start = size as u64 + RESERVE;',
+                               'm.credit.start = size as u64;',
+                               '//crates/kernel:verus_ingest_finish_ingest_node'),
+    'timing3_pause_release': ('crates/kernel/src/lib.rs',
+                             'm.holds = false;\n                kernel_snapshot! { released = *m }',
+                             'm.holds = true;\n                kernel_snapshot! { released = *m }',
+                             '//crates/kernel:verus_kernel_pause_node'),
+
 }
 
 

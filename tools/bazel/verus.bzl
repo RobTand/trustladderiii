@@ -609,6 +609,8 @@ def verus_proofs():
             "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
+            "timing3_ingest_frame": ("kernel::timing3_lemmas#ingest_frame", 1),
+            "timing3_pause_frame": ("kernel::timing3_lemmas#pause_frame", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
