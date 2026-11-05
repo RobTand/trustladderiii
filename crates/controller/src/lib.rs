@@ -21,6 +21,7 @@ pub mod clock;
 pub mod console;
 pub mod contracts;
 mod decisions;
+mod dispatch_liveness;
 pub mod evidence;
 pub mod executor;
 mod github_messages;
@@ -95,6 +96,8 @@ pub enum Error {
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     WorkerInputs(#[from] worker_inputs::Failure),
+    #[error("worker reply has no matching durable dispatch")]
+    WorkerDispatchMissing,
     #[error("{0}")]
     Invalid(&'static str),
     #[error("merge prerequisite update is missing its issue or pull request number")]
@@ -443,6 +446,7 @@ impl Controller {
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
+        controller.reconcile_worker_waits()?;
         Ok(controller)
     }
 
@@ -1062,6 +1066,9 @@ impl Controller {
             return Ok(true);
         }
         let snapshot = self.store.load()?;
+        if self.reconcile_worker_waits_in(&snapshot)? {
+            return Ok(true);
+        }
         if self.retire_committed_waits(&snapshot)? {
             return Ok(true);
         }

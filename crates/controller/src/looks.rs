@@ -1862,6 +1862,7 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::CounterExhausted(_) => crate::input_errors::COUNTER_HEADROOM,
         crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
+        crate::Error::WorkerDispatchMissing => crate::dispatch_liveness::MISSING,
         crate::Error::PrerequisiteNumber => "prerequisite_number",
         crate::Error::ChecksPending => CHECKS_PENDING,
         crate::Error::ApprovalAmbiguous => crate::approval_delivery::AMBIGUOUS,
@@ -1978,6 +1979,9 @@ pub(crate) fn incident_summary(
             "sent a merge prerequisite update missing its issue or pull request number"
         }
         "setup" => "could not complete its setup",
+        "worker_dispatch_missing" => {
+            "has no tracked worker run. Comment restart on the request's issue to start it again"
+        }
         "environment_blocked" => "reported that TL3's environment blocked the work",
         "git_remote" => "could not reach the Git remote",
         "harness" => "rejected TL3's own check input inside the PrismaBuild action",

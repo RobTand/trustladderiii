@@ -704,7 +704,10 @@ impl Controller {
             cause: Some(
                 if matches!(
                     class,
-                    "redaction_infra" | "worker_input_schema" | "kernel_counter_headroom"
+                    "redaction_infra"
+                        | "worker_input_schema"
+                        | "kernel_counter_headroom"
+                        | "worker_dispatch_missing"
                 ) || class == crate::postmortems::PAUSED
                 {
                     crate::looks::Cause::Tl3

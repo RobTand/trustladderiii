@@ -186,36 +186,57 @@ fn startup_reattaches_every_worker_phase_without_duplicate_launches() {
     .into_iter()
     .enumerate()
     {
-        let settings = db.create(&format!("phase_{index}"));
-        let root = tempfile::tempdir().unwrap();
-        let runs = Rc::new(RefCell::new(Runs::default()));
-        let mut controller = open(&settings, root.path(), role, &runs);
-        intake(&mut controller, 1);
-        let before = controller.world().unwrap();
-        let key = runs.borrow().starts[0].clone();
-        lose_watch(&settings, &key);
-        close(controller, &settings);
-        let mut controller = open(&settings, root.path(), role, &runs);
-        drain(&mut controller);
-        let snapshot = controller.snapshot().unwrap();
-        assert!(
-            snapshot
+        for advanced_epoch in [false, true] {
+            let settings = db.create(&format!("phase_{index}_{advanced_epoch}"));
+            let root = tempfile::tempdir().unwrap();
+            let runs = Rc::new(RefCell::new(Runs::default()));
+            let mut controller = open(&settings, root.path(), role, &runs);
+            intake(&mut controller, 1);
+            let before = controller.world().unwrap();
+            let key = runs.borrow().starts[0].clone();
+            lose_watch(&settings, &key);
+            if advanced_epoch {
+                let mut store = Store::open(&settings).unwrap();
+                let snapshot = store.load().unwrap();
+                let mut commit = Commit::new("ownership-advance", serde_json::json!({}), &snapshot);
+                commit.next_epoch = Some(tl3_store::Epoch::try_from(1).unwrap());
+                store.commit(&commit).unwrap();
+            }
+            close(controller, &settings);
+            let mut controller = open(&settings, root.path(), role, &runs);
+            drain(&mut controller);
+            let snapshot = controller.snapshot().unwrap();
+            assert!(
+                snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "watches" && r.id == key),
+                "{role:?} has no durable result watch after restart"
+            );
+            assert!(
+                snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "allowances" && r.id == key)
+            );
+            assert_eq!(controller.world().unwrap(), before);
+            assert!(
+                !snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "incidents" && r.value["open"] == true)
+            );
+            let watch = snapshot
                 .rows
                 .iter()
-                .any(|r| r.table == "watches" && r.id == key),
-            "{role:?} has no durable result watch after restart"
-        );
-        assert!(
-            snapshot
-                .rows
-                .iter()
-                .any(|r| r.table == "allowances" && r.id == key)
-        );
-        assert_eq!(controller.world().unwrap(), before);
-        assert_eq!(runs.borrow().starts.len(), 1);
-        let revision = snapshot.revision;
-        drain(&mut controller);
-        assert_eq!(controller.snapshot().unwrap().revision, revision);
+                .find(|r| r.table == "watches" && r.id == key)
+                .unwrap();
+            assert_eq!(watch.value["epoch"], serde_json::json!(0));
+            assert_eq!(runs.borrow().starts.len(), 1);
+            let revision = snapshot.revision;
+            drain(&mut controller);
+            assert_eq!(controller.snapshot().unwrap().revision, revision);
+        }
     }
 }
 
