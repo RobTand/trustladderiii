@@ -4,6 +4,7 @@ use super::*;
 kernel_fn! {
 /// #771: compose the actual event handlers' per-apply counter bounds.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
     requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
@@ -74,6 +75,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
+    kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
     match event {
         Event::NewAdoption {
             repo,
@@ -103,8 +105,6 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 on_reply(w, i, generation, reply, out);
                 kernel_proof! {
                     if progress_input(before_apply@, event) {
-                        world_checked_definition(before_apply@);
-                        assert(chosen_for_node(before_apply@, i as int, event));
                         assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         progress::lift_node_progress(before_apply@, *w, i as int);
                         dependencies::indexability_frame(before_apply@, *w);
@@ -117,8 +117,6 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 on_ack(w, i, seq, ack, out);
                 kernel_proof! {
                     if progress_input(before_apply@, event) {
-                        world_checked_definition(before_apply@);
-                        assert(chosen_for_node(before_apply@, i as int, event));
                         assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         progress::lift_node_progress(before_apply@, *w, i as int);
                         dependencies::indexability_frame(before_apply@, *w);
@@ -128,12 +126,6 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         }
         Event::Fact { node, fact } => {
             if let Some(i) = w.index(node) {
-                kernel_proof! {
-                    if progress_input(before_apply@, event) {
-                        reveal(fact_progress_input);
-                        assert(chosen_for_node(before_apply@, i as int, event));
-                    }
-                }
                 on_fact(w, i, fact, out);
             }
         }
@@ -145,8 +137,6 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                         progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
                     }
                     if progress_input(before_apply@, event) {
-                        world_checked_definition(before_apply@);
-                        assert(chosen_for_node(before_apply@, i as int, event));
                         assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         progress::lift_node_progress(before_apply@, *w, i as int);
                         dependencies::indexability_frame(before_apply@, *w);
@@ -173,16 +163,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         if !progress_gate_apply::resume_selected(before_apply@, event) {
             reveal(progress_gate_apply::resume_apply_post);
         }
-        assert forall|j: int| 0 <= j < w.nodes@.len() implies
-            footprint::valid_footprint(*w, w.nodes@[j].footprint) by {
-            if j < before_apply@.nodes@.len() {
-                if w.nodes@[j].footprint == before_apply@.nodes@[j].footprint {
-                    footprint::valid_under_table_growth(before_apply@, *w, w.nodes@[j].footprint);
-                }
-            } else {
-                footprint::inline_is_valid(*w, 0);
-            }
-        }
+        events_lemmas::footprints_after(before_apply@, *w);
     }
 }
 }

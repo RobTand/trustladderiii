@@ -326,6 +326,27 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/controller-core":
+        # S-once phase 1: real receipt admission and non-vacuous dispatch.
+        for name, module, count in [
+            ("guard", "translate#begin", 1),
+            ("guard_witnesses", "sonce_guard_witnesses", 2),
+        ]:
+            verus_test(
+                name = "verus_sonce_" + name,
+                src = "verus/sonce_guard.rs",
+                srcs = ["src/translate.rs"],
+                specs = ["verus/sonce_guard_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+    if native.package_name() == "crates/controller-core":
         # Group G2b: only WorkerReply/WorkerFailed translation decisions.
         translate_worker_groups = {
             "role": ("translate_worker#valid_role", 1),
@@ -351,6 +372,22 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    # #836 RED matching: independent of the other wave-B proof inventories.
+    if native.package_name() == "crates/harness-core":
+        verus_test(
+            name = "verus_red_match",
+            src = "verus/red_match.rs",
+            srcs = ["src/red_match.rs"],
+            specs = native.glob(["verus/red_match*.rs"]),
+            expected_obligations = 24,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
 
     if native.package_name() == "crates/kernel":
         # Every body called by step is checked in one of these groups. Module
@@ -550,7 +587,10 @@ def verus_proofs():
             "ingest_finish_ingest": ("kernel::ingest#finish_ingest", 1),
             "ingest_finish_ingest_node": ("kernel::ingest#finish_ingest_node", 1),
             "ingest_reply_ingest": ("kernel::ingest#reply_ingest", 1),
-            "work_replies": ("kernel::work_replies", 4),
+            "work_replies": ("kernel::work_replies#reply_work", 1),
+            "work_replies_plan": ("kernel::work_replies#reply_plan", 1),
+            "work_replies_rebase": ("kernel::work_replies#reply_rebase", 1),
+            "work_replies_recheck_head": ("kernel::work_replies#update_recheck_head", 1),
             "retries": ("kernel::retries", 7),
             "acknowledgements_confirmed": ("kernel::acknowledgements#confirmed", 1),
             "acknowledgements_confirmed_agenda": ("kernel::acknowledgements#confirmed_agenda", 1),
@@ -572,7 +612,11 @@ def verus_proofs():
             "command_helpers_allowed": ("kernel::command_helpers#allowed", 1),
             "command_helpers_mark_handled": ("kernel::command_helpers#mark_handled", 1),
             "continuations": ("kernel::continuations", 1),
-            "checking": ("kernel::checking", 15),
+            "checking": ("kernel::checking#*World::check", 10),
+            "checking_check_node": ("kernel::checking#World::check_node", 1),
+            "checking_check_ready": ("kernel::checking#World::check_ready", 1),
+            "checking_consistent": ("kernel::checking#World::consistent", 1),
+            "checking_is_settled": ("kernel::checking#World::is_settled", 2),
             "dependencies_check_dependencies": ("kernel::dependencies#World::check_dependencies", 5),
             "dependencies_dependencies_delivered": ("kernel::dependencies#World::dependencies_delivered", 2),
             "dependencies_dependency_fact": ("kernel::dependencies#World::dependency_fact", 1),
@@ -675,6 +719,26 @@ def verus_proofs():
             "progress_unplanned_admission": ("kernel::progress_unplanned_admission", 1),
             "progress_unplanned_waiting": ("kernel::progress_unplanned_waiting", 1),
             "progress_unplanned_witness": ("kernel::progress_unplanned_witness", 3),
+            "allocation_stopping_active_distance": ("kernel::allocation_stopping_lemmas#active_distance_lower", 1),
+            "allocation_stopping_distance": ("kernel::allocation_stopping_lemmas#stopping_distance", 1),
+            "allocation_stopping_progress": ("kernel::allocation_stopping_lemmas#stopping_progress", 1),
+            "allocation_stopping_frame": ("kernel::allocation_stopping_lemmas#stopping_frame", 1),
+            "allocation_incident_frame": ("kernel::allocation_incident_lemmas#incident_frame", 1),
+            "facts_transition_frame": ("kernel::facts_transition_lemmas#frame_consequences", 1),
+            "allocation_incident_resumed_result": ("kernel::allocation_incident_lemmas#resumed_result", 1),
+            "allocation_incident_waiting_result": ("kernel::allocation_incident_lemmas#waiting_result", 1),
+            "facts_ci_failed_retry_frame": ("kernel::facts_ci_failed_lemmas#retry_frame", 1),
+            "facts_ci_failed_cancellation_input": ("kernel::facts_ci_failed_lemmas#cancellation_input", 1),
+            "kernel_cont_rank_ready": ("kernel#cont_rank_ready", 1),
+            "events_input": ("kernel::events_lemmas#selected_input", 1),
+            "events_footprints": ("kernel::events_lemmas#footprints_after", 1),
+            "cleanup_teardown_progress": ("kernel::cleanup_lemmas#teardown_progress", 1),
+            "cleanup_resource_distance": ("kernel::cleanup_lemmas#resource_distance", 1),
+            "timing3_ingest_deposit_bound": ("kernel::timing3_lemmas#ingest_deposit_bound", 1),
+            "timing3_pause_resume": ("kernel::timing3_lemmas#pause_resume", 1),
+            "facts_merge_late_result": ("kernel::facts_merge_lemmas#late_result", 1),
+            "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
+            "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
@@ -751,6 +815,55 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
+    if native.package_name() == "crates/controller-core":
+        # H17: real reviewer-input decisions; no wire mirror in the core.
+        review_inputs_groups = {
+            "bounds": ("review_inputs::bounds", 2),
+            "history": ("review_inputs::history", 2),
+            "selection": ("review_inputs::selection", 5),
+            "witnesses": ("review_inputs_witnesses", 3),
+        }
+        for name, (module, count) in review_inputs_groups.items():
+            verus_test(
+                name = "verus_review_inputs_" + name,
+                src = "verus/review_inputs.rs",
+                srcs = ["src/review_inputs.rs"],
+                specs = ["verus/review_inputs_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+    if native.package_name() == "crates/controller-core":
+        # H18: real retain/curate decisions, split by decision family.
+        memory_retain_groups = {
+            "qualification": ("memory_retain::qualification", 3),
+            "identity": ("memory_retain::identity", 1),
+            "bounds": ("memory_retain::bounds", 2),
+            "classification": ("memory_retain::classification", 1),
+            "completion": ("memory_retain::completion", 3),
+            "witnesses": ("memory_retain_witnesses", 7),
+        }
+        for name, (module, count) in memory_retain_groups.items():
+            verus_test(
+                name = "verus_memory_retain_" + name,
+                src = "verus/memory_retain.rs",
+                srcs = ["src/memory_retain.rs"],
+                specs = ["verus/memory_retain_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     # #819: selected-release prompt identity and cache-control policy.
     if native.package_name() == "crates/controller":
         verus_test(
@@ -777,6 +890,38 @@ def verus_proofs():
                 srcs = ["src/translate_tail.rs"],
                 specs = ["verus/translate_tail_witnesses.rs"],
                 module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+    # G2c: miscellaneous translate residue, over the real production predicates.
+    if native.package_name() == "crates/controller-core":
+        verus_test(
+            name = "verus_translate_misc",
+            src = "verus/translate_misc.rs",
+            srcs = ["src/translate_misc.rs"],
+            expected_obligations = 4,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+
+    # #820 pure planner rules. No controller or worker-runtime dependency.
+    if native.package_name() == "crates/plan-check":
+        for group, count in [("paths", 12), ("subjects", 4)]:
+            verus_test(
+                name = "verus_" + group,
+                src = "proofs/" + group + ".rs",
+                srcs = ["src/" + group + "/decision.rs"],
                 expected_obligations = count,
                 tags = ["rust", "verus"],
                 size = "small",
