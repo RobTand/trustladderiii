@@ -257,6 +257,20 @@ print(json.dumps({'done': 2}))
     assert_eq!(drive(script, &[root.display().to_string()]), 2);
 }
 
+/// #821: PB's number support must preserve the other CLI decoders' scalar facts.
+#[test]
+fn arbitrary_pb_integers_preserve_budget_and_reply_json_boundaries() {
+    let script = r#"
+import json
+from tl3_workers.reply_check import run_check
+result = run_check(['check-budget'], {'kind': 'predict', 'context': 100, 'last_input': 80,
+                    'cache_active': False, 'compact_now': False, 'weights': [1.0, 1.25, 0.1]})
+assert isinstance(result['result'], int), result
+print(json.dumps({'done': 1}))
+"#;
+    assert_eq!(drive(script, &[]), 1);
+}
+
 // Review r1: CPython supplies the expected results, including chained exception text.
 fn review_parity(script: &str) {
     let setup = r#"
