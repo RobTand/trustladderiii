@@ -952,3 +952,20 @@ mod recovery_reachability {
         io::require_no_op(&s, Entry::Command, "file.exists");
     }
 }
+
+mod recovery_boundary_source {
+    #[test]
+    fn current_recovery_parsers_are_production_source() {
+        let production = include_str!("../../src/adapters/mergify/waiting_requeue.rs");
+        let current = include_str!("current-waiting.rs");
+        for name in ["command_stage", "legacy_command"] {
+            let signature = format!("\nfn {name}(");
+            let extract = |source: &str| {
+                let start = source.find(&signature).unwrap();
+                let end = start + source[start + 1..].find("\n}\n").unwrap() + 4;
+                source[start..end].to_owned()
+            };
+            assert_eq!(extract(production), extract(current), "{name}");
+        }
+    }
+}

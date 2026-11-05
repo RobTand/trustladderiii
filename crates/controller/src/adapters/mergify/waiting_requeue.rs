@@ -5,6 +5,7 @@ use std::time::UNIX_EPOCH;
 
 pub(crate) const PROGRESS_PREFIX: &str = "mergify:awaiting Mergify re-queue";
 use lifecycle::Command;
+use tl3_mergify::decide::recovery::{budget, command, eligibility, schedule};
 
 #[derive(Serialize, Deserialize)]
 struct Recovery {
@@ -43,19 +44,17 @@ impl Adapter {
         let Some(attempt) = self.baseline(delivery)? else {
             return Ok(());
         };
-        let command = match attempt.requeue {
-            Some(Requeue::Sending) => Command::Sending,
-            Some(Requeue::Refused) => Command::Refused,
-            _ => return Ok(()),
+        let Some(command) = legacy_command(attempt.requeue) else {
+            return Ok(());
         };
         // Closed nodes have already lost their PR binding. Their head receipt
         // survives retirement independently of these effect-keyed files.
-        if delivery.pull_request.is_none() || delivery.head_sha.is_none() {
+        if !budget::legacy_binding(delivery.pull_request.is_some(), delivery.head_sha.is_some()) {
             return Ok(());
         }
         if self
             .recovery(delivery)?
-            .is_some_and(|recovery| !matches!(recovery.command, Command::Ready))
+            .is_some_and(|recovery| !budget::inspect_history(command_stage(recovery.command)))
         {
             return Ok(());
         }
@@ -101,21 +100,37 @@ impl Adapter {
             return Ok(false);
         };
         let (number, head) = enqueue(delivery)?;
-        if !heal_phase(Some(node.phase))
-            || node.paused
-            || node.waiting_incident
-            || !node.pr_open
-            || node.head != node.approved
-            || node.checked != node.approved
-            || approved_head(snapshot, node.approved)? != head
-            || crate::request(snapshot, delivery.node())?.repo != delivery.repository
-            || !snapshot.rows.iter().any(|row| {
-                row.table == "pull_requests"
-                    && row.id == delivery.node().0.to_string()
-                    && row.value["number"] == number
-            })
-        {
-            return Ok(false);
+        let mut repaired = eligibility::Repaired {
+            phase: heal_phase(Some(node.phase)),
+            paused: node.paused,
+            incident: node.waiting_incident,
+            open: node.pr_open,
+            head_approved: node.head == node.approved,
+            checked_approved: node.checked == node.approved,
+            approved_head: None,
+            repository: None,
+            pull_request: None,
+        };
+        loop {
+            match eligibility::repaired_head(repaired) {
+                eligibility::RepairStep::Stop => return Ok(false),
+                eligibility::RepairStep::ApprovedHead => {
+                    repaired.approved_head = Some(approved_head(snapshot, node.approved)? == head);
+                }
+                eligibility::RepairStep::Repository => {
+                    repaired.repository = Some(
+                        crate::request(snapshot, delivery.node())?.repo == delivery.repository,
+                    );
+                }
+                eligibility::RepairStep::PullRequest => {
+                    repaired.pull_request = Some(snapshot.rows.iter().any(|row| {
+                        row.table == "pull_requests"
+                            && row.id == delivery.node().0.to_string()
+                            && row.value["number"] == number
+                    }));
+                }
+                eligibility::RepairStep::History => break,
+            }
         }
         for row in snapshot
             .rows
@@ -123,12 +138,23 @@ impl Adapter {
             .filter(|row| row.table == "queue_facts")
         {
             let fact: QueueFact = crate::decode_stored(row.value.clone())?;
-            if fact.repository == delivery.repository
-                && fact.number == number
-                && matches!(fact.evidence,
-                    Evidence::CiFailed { head: ref prior, head_check: false, .. }
-                    | Evidence::Conflict { head: ref prior, .. } if prior != head)
-            {
+            let (failure, other_head) = match &fact.evidence {
+                Evidence::CiFailed {
+                    head: prior,
+                    head_check: false,
+                    ..
+                } => (eligibility::PriorFailure::QueueCi, prior != head),
+                Evidence::Conflict { head: prior, .. } => {
+                    (eligibility::PriorFailure::Conflict, prior != head)
+                }
+                _ => (eligibility::PriorFailure::Other, false),
+            };
+            if eligibility::prior_failure(
+                fact.repository == delivery.repository,
+                fact.number == number,
+                failure,
+                other_head,
+            ) {
                 return Ok(true);
             }
         }
@@ -142,36 +168,59 @@ impl Adapter {
     ) -> Result<bool> {
         let (number, head) = enqueue(delivery)?;
         let pull = &state.pull_request;
-        if pull.head.sha != head
-            || pull.state != "open"
-            || pull.merged_at.is_some()
-            || pull.draft
-            || pull.mergeable != Some(true)
-            || !self.repaired_head(delivery, snapshot)?
-            || state.state != QueueState::Waiting
-            || !checks_settled(state)
-            || !state
+        let mut read = eligibility::Eligibility {
+            current_head: pull.head.sha == head,
+            open: pull.state == "open",
+            merged: pull.merged_at.is_some(),
+            draft: pull.draft,
+            mergeable: pull.mergeable == Some(true),
+            repaired: None,
+            waiting: state.state == QueueState::Waiting,
+            settled: checks_settled(state),
+            eligible_check: state
                 .check
                 .as_ref()
-                .is_some_and(tl3_mergify::eligible_waiting)
-        {
-            return Ok(false);
+                .is_some_and(tl3_mergify::eligible_waiting),
+            queue_label: None,
+            held: None,
+            checks_ready: None,
+            reruns_pending: None,
+        };
+        loop {
+            match eligibility::recovery_eligible(read) {
+                eligibility::EligibilityStep::Stop => return Ok(false),
+                eligibility::EligibilityStep::Eligible => return Ok(true),
+                eligibility::EligibilityStep::Repaired => {
+                    read.repaired = Some(self.repaired_head(delivery, snapshot)?);
+                }
+                eligibility::EligibilityStep::Issue => {
+                    let github = &self.clients[&delivery.repository.installation];
+                    let repo = full_name(&delivery.repository);
+                    let issue = self.runtime.block_on(github.issue(&repo, number))?;
+                    read.queue_label =
+                        Some(issue.labels.iter().any(|label| label.name == QUEUE_LABEL));
+                }
+                eligibility::EligibilityStep::Events => {
+                    let github = &self.clients[&delivery.repository.installation];
+                    let repo = full_name(&delivery.repository);
+                    let events = self.runtime.block_on(github.issue_events(&repo, number))?;
+                    read.held = Some(self.human_hold_in_events(delivery, snapshot, &events)?);
+                }
+                eligibility::EligibilityStep::Checks => {
+                    let github = &self.clients[&delivery.repository.installation];
+                    let repo = full_name(&delivery.repository);
+                    let checks = self
+                        .runtime
+                        .block_on(head_checks::read(github, &repo, pull))?;
+                    read.checks_ready = Some(checks.ready && checks.unavailable.is_empty());
+                }
+                eligibility::EligibilityStep::Reruns => {
+                    read.reruns_pending = Some(self.reruns_pending(delivery)?);
+                }
+            }
         }
-        let github = &self.clients[&delivery.repository.installation];
-        let repo = full_name(&delivery.repository);
-        let issue = self.runtime.block_on(github.issue(&repo, number))?;
-        if !issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
-            return Ok(false);
-        }
-        let events = self.runtime.block_on(github.issue_events(&repo, number))?;
-        if self.human_hold_in_events(delivery, snapshot, &events)? {
-            return Ok(false);
-        }
-        let checks = self
-            .runtime
-            .block_on(head_checks::read(github, &repo, pull))?;
-        Ok(checks.ready && checks.unavailable.is_empty() && !self.reruns_pending(delivery)?)
     }
+
     pub(super) fn unresolved_human_hold(
         &self,
         delivery: &Delivery,
@@ -203,12 +252,11 @@ impl Adapter {
         events: &[tl3_github::IssueActivity],
     ) -> Result<bool> {
         for fact in person_facts(&delivery.repository, enqueue(delivery)?.0, events, false) {
-            if let Some(snapshot) = snapshot {
-                if fact.unresolved_hold(snapshot)? {
-                    return Ok(true);
-                }
-            } else {
-                // Without a snapshot there is no proof of an explicit resume.
+            if eligibility::event_hold(
+                snapshot
+                    .map(|snapshot| fact.unresolved_hold(snapshot))
+                    .transpose()?,
+            ) {
                 return Ok(true);
             }
         }
@@ -222,7 +270,7 @@ impl Adapter {
             command: Command::Ready,
             command_key: self.recovery_key(delivery)?,
         });
-        if !matches!(recovery.command, Command::Ready) {
+        if !budget::inspect_history(command_stage(recovery.command)) {
             return Ok(recovery);
         }
         let (number, head) = enqueue(delivery)?;
@@ -230,17 +278,20 @@ impl Adapter {
         if let Some(store) = &self.store {
             for effect in tl3_store::Store::open(store)?.effects()? {
                 let prior: Delivery = crate::decode_stored(effect.payload)?;
-                if prior.repository == delivery.repository
-                    && prior.pull_request == Some(number)
-                    && prior.head_sha.as_deref() == Some(head)
-                    && matches!(
+                if budget::archive_candidate(
+                    budget::Binding {
+                        repository: prior.repository == delivery.repository,
+                        pull_request: prior.pull_request == Some(number),
+                        head: prior.head_sha.as_deref() == Some(head),
+                    },
+                    matches!(
                         prior.output,
                         Out::Effect {
                             kind: EffectKind::Enqueue,
                             ..
                         }
-                    )
-                {
+                    ),
+                ) {
                     candidates.push(prior);
                 }
             }
@@ -249,14 +300,19 @@ impl Adapter {
         let comments = self
             .runtime
             .block_on(github.comments(&full_name(&delivery.repository), number))?;
-        let mut keys = vec![self.recovery_key(delivery)?];
-        keys.extend(candidates.iter().map(|prior| prior.key.clone()));
-        for key in keys {
+        let head_key = self.recovery_key(delivery)?;
+        for position in 0..=candidates.len() {
+            let key = match budget::effect_key_index(position) {
+                None => head_key.clone(),
+                Some(index) => candidates[index].key.clone(),
+            };
             let marker = GitHub::marker(&key);
             if comments.iter().any(|comment| {
-                comment.user.login == format!("{}[bot]", github.app_slug())
-                    && comment.body.lines().next() == Some("@mergifyio queue")
-                    && comment.body.lines().any(|line| line == marker)
+                budget::sent(
+                    comment.user.login == format!("{}[bot]", github.app_slug()),
+                    comment.body.lines().next() == Some("@mergifyio queue"),
+                    comment.body.lines().any(|line| line == marker),
+                )
             }) {
                 recovery.command = Command::Sent;
                 recovery.command_key = key;
@@ -266,11 +322,10 @@ impl Adapter {
         }
         for prior in candidates {
             if let Some(attempt) = self.baseline(&prior)? {
-                recovery.command = match attempt.requeue {
-                    Some(Requeue::Sending) => Command::Sending,
-                    Some(Requeue::Refused) => Command::Refused,
-                    _ => continue,
+                let Some(command) = legacy_command(attempt.requeue) else {
+                    continue;
                 };
+                recovery.command = command;
                 recovery.command_key = prior.key;
                 self.save_recovery(delivery, &recovery)?;
                 break;
@@ -336,11 +391,14 @@ impl Adapter {
             ))
             .map_err(adapter_error)?
             .is_some();
-        let found = !refusal
-            && self
-                .runtime
+        let comment = if refusal {
+            false
+        } else {
+            self.runtime
                 .block_on(github.reconcile_comments(&repo, number, &recovery.command_key))?
-                .is_some();
+                .is_some()
+        };
+        let found = command::receipt_found(refusal, comment);
         let effects = self.recovery_decide(
             delivery,
             recovery,
@@ -374,7 +432,13 @@ impl Adapter {
         snapshot: Option<&Snapshot>,
     ) -> Result<Reconciliation> {
         let saved = self.recovery(delivery)?;
-        if saved.is_none() && !self.repaired_head(delivery, snapshot)? {
+        let gate = match schedule::recovery_gate(saved.is_some(), None) {
+            schedule::RecoveryGate::Repaired => {
+                schedule::recovery_gate(false, Some(self.repaired_head(delivery, snapshot)?))
+            }
+            gate => gate,
+        };
+        if gate == schedule::RecoveryGate::Pending {
             return Ok(Reconciliation::Pending);
         }
         if let Some(mut recovery) = saved
@@ -384,7 +448,10 @@ impl Adapter {
         }
         let (state, _) = self.read(delivery, snapshot)?;
         if !self.recovery_eligible(delivery, &state, snapshot)? {
-            if let Some(mut recovery) = self.recovery(delivery)? {
+            let saved = self.recovery(delivery)?;
+            if schedule::ineligible_tick(saved.is_some())
+                && let Some(mut recovery) = saved
+            {
                 self.recovery_decide(
                     delivery,
                     &mut recovery,
@@ -400,7 +467,7 @@ impl Adapter {
         // Poll the saved timer without rereading the delivery archive. Dispatch
         // adopts historical commands again before consuming the head budget.
         let mut recovery = match self.recovery(delivery)? {
-            Some(recovery) if recovery.eligible_since_ms.is_some() => recovery,
+            Some(recovery) if schedule::saved_timer(recovery.eligible_since_ms) => recovery,
             _ => self.command_budget(delivery)?,
         };
         if let Some(result) = self.reconcile_command(delivery, &mut recovery)? {
@@ -437,12 +504,19 @@ impl Adapter {
         }
         let snapshot = self.snapshot()?;
         let (fresh, _) = self.read(delivery, snapshot.as_ref())?;
-        let eligible = !waiting || self.recovery_eligible(delivery, &fresh, snapshot.as_ref())?;
+        let gate = match schedule::dispatch_gate(waiting, None) {
+            schedule::DispatchGate::Eligibility => schedule::dispatch_gate(
+                waiting,
+                Some(self.recovery_eligible(delivery, &fresh, snapshot.as_ref())?),
+            ),
+            gate => gate,
+        };
+        let eligible = gate == schedule::DispatchGate::Holds;
         let (number, head) = enqueue(delivery)?;
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
         // Preserve the eligibility short circuit before the issue-events read.
-        let (held, paused) = if eligible {
+        let (held, paused) = if gate == schedule::DispatchGate::Holds {
             let events = self.runtime.block_on(github.issue_events(&repo, number))?;
             (
                 self.human_hold_in_events(delivery, snapshot.as_ref(), &events)?,
@@ -485,7 +559,7 @@ impl Adapter {
         for effect in effects {
             match effect {
                 lifecycle::Effect::SaveRecovery => {
-                    if recovery.command == Command::Sending {
+                    if schedule::fence(command_stage(recovery.command)) {
                         self.fence(delivery)?;
                     }
                     self.save_recovery(delivery, &recovery)?;
@@ -503,23 +577,31 @@ impl Adapter {
                         head,
                         &recovery.command_key,
                     ));
-                    let outcome = match &result {
-                        Ok(()) => lifecycle::CommandResult::Accepted,
-                        Err(tl3_mergify::Error::GitHub(tl3_github::Error::Http {
-                            status: 403,
-                        })) => lifecycle::CommandResult::PermissionDenied,
-                        Err(tl3_mergify::Error::GitHub(
-                            tl3_github::Error::RateLimited { .. }
-                            | tl3_github::Error::Http { status: 400..=499 },
-                        )) => lifecycle::CommandResult::Rejected,
-                        Err(_) => lifecycle::CommandResult::Unknown,
+                    let reply = match &result {
+                        Ok(()) => command::Reply::Accepted,
+                        Err(tl3_mergify::Error::GitHub(tl3_github::Error::Http { status })) => {
+                            command::Reply::Http(*status)
+                        }
+                        Err(tl3_mergify::Error::GitHub(tl3_github::Error::RateLimited {
+                            ..
+                        })) => command::Reply::RateLimited,
+                        Err(_) => command::Reply::Other,
+                    };
+                    let classified = command::command_result(reply);
+                    let outcome = match classified {
+                        command::Outcome::Accepted => lifecycle::CommandResult::Accepted,
+                        command::Outcome::PermissionDenied => {
+                            lifecycle::CommandResult::PermissionDenied
+                        }
+                        command::Outcome::Rejected => lifecycle::CommandResult::Rejected,
+                        command::Outcome::Unknown => lifecycle::CommandResult::Unknown,
                     };
                     self.recovery_decide(
                         delivery,
                         &mut recovery,
                         lifecycle::QueueEvent::CommandDone(outcome),
                     )?;
-                    if outcome == lifecycle::CommandResult::PermissionDenied {
+                    if command::permission_refusal(classified) {
                         return Ok(refused("queue_command_permission"));
                     }
                     if let Err(error) = result {
@@ -560,4 +642,22 @@ impl Adapter {
 }
 fn refused(class: &'static str) -> Reconciliation {
     Reconciliation::Found(Box::new(Completion::permanent(class)))
+}
+
+fn command_stage(command: Command) -> budget::Stage {
+    match command {
+        Command::Ready => budget::Stage::Ready,
+        Command::Sending => budget::Stage::Sending,
+        Command::Sent | Command::Refused | Command::PermissionDenied | Command::Rejected => {
+            budget::Stage::Spent
+        }
+    }
+}
+fn legacy_command(requeue: Option<Requeue>) -> Option<Command> {
+    let legacy = match requeue {
+        Some(Requeue::Sending) => budget::Legacy::Sending,
+        Some(Requeue::Refused) => budget::Legacy::Refused,
+        Some(Requeue::Ready) | None => budget::Legacy::Unused,
+    };
+    budget::legacy_command(legacy, Command::Sending, Command::Refused)
 }
