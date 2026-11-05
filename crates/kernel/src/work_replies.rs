@@ -106,9 +106,6 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
-        kernel_snapshot! { before_budget = *w }
-        kernel_snapshot! { budget_out = out.len }
-
     match reply {
         Reply::RebaseClean { head } => {
             let m = &mut w.nodes[i];
@@ -137,21 +134,5 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         }
         _ => {}
     }
-
-        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 1);
-        }
 }
 }

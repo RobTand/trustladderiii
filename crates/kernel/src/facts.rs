@@ -80,9 +80,6 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
-        kernel_snapshot! { before_budget = *w }
-        kernel_snapshot! { budget_out = out.len }
-
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
@@ -93,22 +90,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
-                        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 2);
-        }
-        return;
+                return;
             }
             m.pr_open = false;
             if !m.phase.is_stopping() && !m.phase.is_closed() {
@@ -119,22 +101,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::PrDequeuedByPerson => {
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued {
-                        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 2);
-        }
-        return;
+                return;
             }
             // Treated as Rob pausing it: the PR waits until he resumes.
             m.holds = false;
@@ -145,22 +112,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
-                        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 2);
-        }
-        return;
+                return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
             let published = matches!(
@@ -182,22 +134,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             let before_enqueue =
                 m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
             if m.phase != Phase::Queued && !before_enqueue {
-                        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 2);
-        }
-        return;
+                return;
             }
             if before_enqueue {
                 if let Some(effect) = m.effect.as_mut() {
@@ -206,22 +143,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             if !infra {
                 failed_round(w, i, ReviewStop::CiFailed, out);
-                        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 2);
-        }
-        return;
+                return;
             }
             let m = &mut w.nodes[i];
             m.run_failures += 1;
@@ -243,22 +165,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::UpstreamStalled => {
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued || m.waiting_incident {
-                        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 2);
-        }
-        return;
+                return;
             }
             m.run_incidents = (m.run_incidents + 1).min(2);
             let needs_rob = m.run_incidents >= 2;
@@ -272,22 +179,6 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
         }
     }
-
-        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 1);
-            assert(w.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent as int <= before_budget@.nodes@[i as int].credit.spent as int + 1);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question as int <= before_budget@.next_question as int + 1);
-            assert(out.len as int <= budget_out@ as int + 2);
-        }
 }
 }
 

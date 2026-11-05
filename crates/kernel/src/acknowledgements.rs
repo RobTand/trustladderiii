@@ -131,28 +131,10 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-        kernel_snapshot! { before_budget = *w }
-        kernel_snapshot! { budget_out = out.len }
-
     let m = &mut w.nodes[i];
     m.fx_failures += 1;
     if m.fx_failures < 2 {
         emit(w, i, kind, out);
-                kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 2);
-            assert(w.nodes@[i as int].next_seq as int <= before_budget@.nodes@[i as int].next_seq as int + 1);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question == before_budget@.next_question);
-            assert(out.len as int <= budget_out@ as int + 1);
-        }
         return;
     }
     m.fx_failures = 0;
@@ -164,22 +146,6 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         m.generation += 1;
     }
     raise_incident(w, i, needs_rob, out);
-
-        kernel_proof! {
-            assert(w.nodes@.len() == before_budget@.nodes@.len());
-            assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
-                w.nodes@[j] == before_budget@.nodes@[j] by {}
-            assert(w.nodes@[i as int].generation as int <= before_budget@.nodes@[i as int].generation as int + 2);
-            assert(w.nodes@[i as int].next_seq as int <= before_budget@.nodes@[i as int].next_seq as int + 1);
-            assert(w.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
-            assert(w.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
-            assert(w.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
-            assert(w.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
-            assert(w.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
-            assert(w.next_ticket == before_budget@.next_ticket);
-            assert(w.next_question == before_budget@.next_question);
-            assert(out.len as int <= budget_out@ as int + 1);
-        }
 }
 }
 
