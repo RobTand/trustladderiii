@@ -77,7 +77,7 @@ fn mandatory_d2_quota_resume() {
         }
     }
 }
-/// State-table.md:796-814 / Q7: every look kind, pending read and 404 recovery is reachable.
+/// Extraction fidelity: every look kind, pending read and repeated-404 recovery is reachable.
 #[test]
 fn mandatory_d2_each_look_and_not_found() {
     for look in 0..12 {
@@ -141,7 +141,7 @@ fn mandatory_d2_alive_allowance_and_effect_read() {
         }
     }
 }
-/// Q43, state-table.md:800,808: only the owner ends a wait; no extra polling or timer.
+/// Q43, state-table.md:800: only the outside job record ends a declared wait.
 #[test]
 fn mandatory_d2_declared_waits() {
     for ended in [false, true] {

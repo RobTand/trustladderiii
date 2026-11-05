@@ -26,8 +26,7 @@ after the mutation. Store row changes are staged together and become durable
 at the transaction commit boundary.
 
 The shared shell shims cover unrelated boundaries, not alternate decision
-implementations. Scenarios keep requests active with no worker-input context or
-queue setup evidence. The request projection is fixed;
+implementations. Scenarios keep requests active with no worker-input context. The request projection is fixed;
 publication diagnostic presence varies; worker-input prose is absent. Kernel
 observe/complete calls, notice retry, hold changes and ladder notes are recorded.
 The retained real-controller looks scenarios cover those boundaries separately.
@@ -66,6 +65,12 @@ ladder-out notice boundaries, external wait owner records and errors, progress
 retirement, and quota replay by model. Four completion shapes cover empty,
 progress token only, observations only, and both. Complete, ladder note, watch,
 and observe effects are persisted and included in every crash comparison.
-D2 runs 128 additional schedules with seed `0x00d2_0760_2026`, plus six mandatory
+D2 runs 128 additional schedules with seed `0x00d2_0760_2026`, plus seven mandatory
 branch tests. The repeated-look witness checks the notice is emitted once and
 its allowance flag persists. D1's mandatory tests and 128 schedules remain.
+
+Settled completion witnesses include setup and ordinary queue evidence. The
+unchanged QueueFact boundary records independent recorded/not-recorded responses,
+including errors. Two reads verify that ordinary facts are deduplicated while an
+unrecorded setup gap is observed again. This supersedes the original no-queue-
+evidence restriction.
