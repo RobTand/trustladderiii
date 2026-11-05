@@ -361,3 +361,18 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
+    if native.package_name() == "crates/controller-core":
+        # E1: production publication decisions and concrete branch witnesses.
+        verus_test(
+            name = "verus_publication",
+            src = "verus/publication.rs",
+            srcs = ["src/publication.rs"],
+            expected_obligations = 38,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
