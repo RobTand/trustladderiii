@@ -14,7 +14,7 @@ pub enum Action {
 pub mod qualification {
     #[cfg(verus_keep_ghost)]
     use vstd::prelude::*;
-    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:202.
+    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:198.
     /// #422 describes retaining useful run evidence, not this exact conjunction.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (exit_zero && !reported_failure && has_reply),
@@ -23,14 +23,14 @@ pub mod qualification {
         exit_zero && !reported_failure && has_reply
     }
     /// #422: conventions/corrections are retained. The successful ingest/planner
-    /// restriction preserves f5b0ba2f memory.rs:226 (no explicit rule).
+    /// restriction preserves f5b0ba2f memory.rs:222 (no explicit rule).
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (succeeded && pinned_base_role),
 ))]
     pub fn review_eligible(succeeded: bool, pinned_base_role: bool) -> bool {
         succeeded && pinned_base_role
     }
-    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:255-259.
+    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:253-258.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (maker && length == 40 && hexadecimal),
 ))]
@@ -43,7 +43,7 @@ pub use qualification::{head_eligible, review_eligible, run_succeeded};
 pub mod bounds {
     #[cfg(verus_keep_ghost)]
     use vstd::prelude::*;
-    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:266-274.
+    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:263-274.
     /// Postgres remains authoritative after the shell's JSONB size estimate.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (bytes <= 32768),
@@ -51,7 +51,7 @@ pub mod bounds {
     pub fn record_fits(bytes: usize) -> bool {
         bytes <= 32768
     }
-    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:274.
+    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:271.
     /// This is the authoritative Postgres JSONB size, sampled in the shell.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
         out == (bytes <= 32768),
@@ -83,7 +83,7 @@ pub mod completion {
     ) -> bool {
         success && asynchronous && same_operation && same_bank && one_item
     }
-    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:331-346.
+    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:329-342.
     /// Only a validated acknowledgement permits deleting a retain row. A lost
     /// response, timeout, malformed acknowledgement or 5xx leaves it retryable.
     /// #776 supplies hold/retry context; #403 is about postmortems, not this rule.
@@ -110,7 +110,7 @@ pub mod completion {
             }
         }
     }
-    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:286,350,357.
+    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:286,347,354.
     /// Capacity replay and delivery acknowledgement require actual progress.
     /// #776: an empty healthy wake must not supply fake delivery evidence.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures

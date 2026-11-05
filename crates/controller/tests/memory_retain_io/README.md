@@ -28,7 +28,9 @@ explicit remote contract; the pure proof does not claim to prove server code.
 
 Three entries run 96 generated schedules each, plus a 92-case generated HTTP
 outcome matrix that forces every outcome before a generated response suffix, with fixed seed 0x18_0776_2026,
-plus the committed replay seed. Failures and minimized seeds persist in the
+plus the committed replay seed from the identity-check mutant.
+`ack-identity-minimized.json` replays its minimal one-row/wrong-operation response
+and asserts exact persisted rows and absence of delivery acknowledgement. Failures and minimized seeds persist in the
 writable TEST_UNDECLARED_OUTPUTS_DIR, never the read-only source tree. Mandatory
 cases cover every changed decision, nonempty flags/conventions, absent and
 present evidence, each HTTP outcome, mixed per-call outcomes, lineage holds,

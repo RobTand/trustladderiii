@@ -1,7 +1,7 @@
 use crate::memory_retain::*;
 use vstd::prelude::*;
 verus! {
-/// Preserved f5b0ba2f memory.rs:202,226,255-259; #422 is retention context.
+/// Preserved f5b0ba2f memory.rs:198,222,253-258; #422 is retention context.
 /// Finite witnesses supplement total contracts with no excluded inputs.
 pub fn qualification() {
     let a = run_succeeded(true,false,true); assert(a);
@@ -29,7 +29,7 @@ pub fn identity(high: u64, low: u64) {
     assert(((0u64 & 0x3fffffffffffffffu64) | 0x8000000000000000u64) == 0x8000000000000000u64) by(bit_vector);
     assert(zero.1 == 0x8000000000000000u64);
 }
-/// Preserved f5b0ba2f memory.rs:266-274,319-324. Exact byte boundary and
+/// Preserved f5b0ba2f memory.rs:263-274,319-324. Exact byte boundary and
 /// acknowledgement batch size. Store pages remain LIMIT 64, outbox cap 10000.
 pub fn bounds() {
     let empty = record_fits(0); assert(empty);

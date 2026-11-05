@@ -562,3 +562,22 @@ fn generated_http_outcome_matrix() {
         comparisons.get()
     );
 }
+
+#[test]
+fn minimized_ack_identity_regression() {
+    let schedule: Schedule =
+        serde_json::from_str(include_str!("ack-identity-minimized.json")).unwrap();
+    let r = run(&schedule, Entry::Flush);
+    assert_eq!(
+        r.result,
+        "Err(Invalid(\"invalid Hindsight retain acknowledgement\"))"
+    );
+    assert_eq!(calls(&r, "store.forget_memory"), 0);
+    assert_eq!(calls(&r, "store.memory_delivery_ack"), 0);
+    assert_eq!(
+        r.rows["out:0"],
+        json!({"sequence":1,"id":"op-0","item":{"content":"record op-0"},"parked":null})
+    );
+    assert_eq!(r.remote.len(), 1);
+    assert_eq!(r.effects.iter().filter(|e| e.0 == "remote.POST").count(), 1);
+}
