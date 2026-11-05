@@ -122,6 +122,13 @@ impl Delivery {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
     Prerequisite(crate::merge_dependencies::ExternalFact),
+    /// One bounded prerequisite read queued by controller open (#839).
+    PrerequisiteRead {
+        node: NodeId,
+        repository: crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    },
     ScratchSaved {
         node: NodeId,
         reference: String,

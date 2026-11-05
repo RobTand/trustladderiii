@@ -449,6 +449,7 @@ impl Controller {
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
         controller.reconcile_worker_waits()?;
+        controller.recover_prerequisites()?;
         Ok(controller)
     }
 
@@ -2845,6 +2846,31 @@ impl Controller {
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
+            Observation::PrerequisiteRead {
+                repository,
+                kind,
+                number,
+                ..
+            } => {
+                if self.bootstrap.repos.contains(&repository) {
+                    let status = self
+                        .adapters
+                        .get(executor::Upstream::GitHub)?
+                        .prerequisite(&repository, kind, number)?;
+                    self.external_dependency_fact(
+                        snapshot,
+                        world,
+                        merge_dependencies::ExternalFact {
+                            repository,
+                            kind,
+                            number,
+                            status,
+                        },
+                        commit,
+                    )?;
+                }
+                return Ok(None);
+            }
             Observation::Prerequisite(fact) => {
                 self.external_dependency_fact(snapshot, world, fact, commit)?;
                 return Ok(None);
@@ -4193,6 +4219,7 @@ fn observation_upstream(
             ..
         }) => None,
         Observation::GitHubComment { .. }
+        | Observation::PrerequisiteRead { .. }
         | Observation::Prerequisite(_)
         | Observation::LinkedRequest { .. }
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),

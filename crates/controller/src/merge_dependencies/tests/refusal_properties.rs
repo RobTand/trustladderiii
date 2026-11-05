@@ -533,7 +533,9 @@ input_inventory! {
 impl InputCase {
     fn observation(value: &Observation) -> Self {
         match value {
-            Observation::Prerequisite(..) => Self::Prerequisite,
+            Observation::Prerequisite(..) | Observation::PrerequisiteRead { .. } => {
+                Self::Prerequisite
+            }
             Observation::ScratchSaved { .. } => Self::ScratchSaved,
             Observation::ScratchPruned { .. } => Self::ScratchPruned,
             Observation::TraceLogsCapped { .. } => Self::TraceLogsCapped,

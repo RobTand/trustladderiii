@@ -16,6 +16,132 @@ pub struct ExternalFact {
     pub status: DependencyStatus,
 }
 
+/// Q59 / #839: controller evidence preserves the reason a prerequisite blocks.
+/// A closed PR remains Pending in the kernel until Q27 selects an action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrerequisiteState {
+    Open,
+    Delivered,
+    ClosedUnmerged { reason: ClosedPrerequisiteReason },
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClosedPrerequisiteReason {
+    NotPlanned,
+    PullRequestClosed,
+}
+
+/// Direct and transitive facts for a dependent's look. No upstream read occurs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrerequisiteEvidence {
+    pub dependent: NodeId,
+    pub target: DependencyTarget,
+    pub state: PrerequisiteState,
+}
+
+impl PrerequisiteEvidence {
+    pub fn waiting_text(&self) -> String {
+        let number = self.target.number;
+        match self.state {
+            PrerequisiteState::Open => format!("waiting for #{number} to merge"),
+            PrerequisiteState::Delivered => format!("#{number}: delivered"),
+            PrerequisiteState::Stopped => format!("waiting for #{number}: stopped"),
+            PrerequisiteState::ClosedUnmerged { reason } => {
+                let reason = match reason {
+                    ClosedPrerequisiteReason::NotPlanned => " (not planned)",
+                    ClosedPrerequisiteReason::PullRequestClosed => "",
+                };
+                format!("waiting for #{number} to merge: closed without merge{reason}")
+            }
+        }
+    }
+}
+
+/// #839: Abandoned on an external PR records closure, without introducing a
+/// kernel abandonment rule for PRs. Issues retain their existing Q59 meaning.
+fn kernel_status(kind: PrerequisiteKind, status: DependencyStatus) -> DependencyStatus {
+    match (kind, status) {
+        (PrerequisiteKind::PullRequest, DependencyStatus::Abandoned) => DependencyStatus::Pending,
+        _ => status,
+    }
+}
+
+pub fn pr_status(pr: &tl3_github::PullRequest) -> DependencyStatus {
+    if pr.merged_at.is_some() {
+        DependencyStatus::Delivered
+    } else if pr.state == "closed" {
+        DependencyStatus::Abandoned
+    } else {
+        DependencyStatus::Pending
+    }
+}
+
+/// #839 / Q49 / Q59: a snapshot supplies typed look evidence, including a
+/// terminal cause further up a chain. The visited set also bounds rejected cycles.
+pub fn prerequisite_evidence(
+    snapshot: &Snapshot,
+    world: &World,
+    node: NodeId,
+) -> Result<Vec<PrerequisiteEvidence>> {
+    let commit = Commit::new("prerequisite-projection", json!(null), snapshot);
+    let requests = bindings(snapshot, &commit)?;
+    let mut evidence = Vec::new();
+    let mut pending = vec![node];
+    let mut seen = BTreeSet::new();
+    while let Some(dependent) = pending.pop() {
+        if !seen.insert(dependent) {
+            continue;
+        }
+        let Some(request) = requests.get(&dependent) else {
+            continue;
+        };
+        for dependency in world.dependencies().iter().filter(|d| d.node == dependent) {
+            let status = retained_fact(
+                snapshot,
+                &commit,
+                &request.repo,
+                dependency.target.kind,
+                dependency.target.number,
+            )?
+            .map_or(dependency.status, |fact| fact.status);
+            let state = match status {
+                DependencyStatus::Delivered => PrerequisiteState::Delivered,
+                DependencyStatus::Abandoned => PrerequisiteState::ClosedUnmerged {
+                    reason: match dependency.target.kind {
+                        PrerequisiteKind::Issue => ClosedPrerequisiteReason::NotPlanned,
+                        PrerequisiteKind::PullRequest => {
+                            ClosedPrerequisiteReason::PullRequestClosed
+                        }
+                    },
+                },
+                DependencyStatus::Pending => match dependency
+                    .target
+                    .request
+                    .and_then(|id| world.nodes.get(id.0 as usize))
+                {
+                    Some(root) if matches!(root.phase, Phase::Closed(Outcome::Stopped)) => {
+                        PrerequisiteState::Stopped
+                    }
+                    _ => PrerequisiteState::Open,
+                },
+            };
+            evidence.push(PrerequisiteEvidence {
+                dependent,
+                target: dependency.target,
+                state,
+            });
+            if !dependency.rejected
+                && state == PrerequisiteState::Open
+                && let Some(root) = dependency.target.request
+            {
+                pending.push(root);
+            }
+        }
+    }
+    Ok(evidence)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Declaration {
     target: DependencyTarget,
@@ -229,6 +355,8 @@ fn retain_fact(
 ) -> Result<ExternalFact> {
     if let Some(previous) =
         retained_fact(snapshot, commit, &fact.repository, fact.kind, fact.number)?
+        && !(previous.kind == PrerequisiteKind::PullRequest
+            && previous.status == DependencyStatus::Abandoned)
     {
         return Ok(previous);
     }
@@ -241,6 +369,70 @@ fn retain_fact(
 }
 
 impl Controller {
+    /// #839: expose the same durable prerequisite facts to looks and status.
+    pub fn prerequisite_evidence(&mut self, node: NodeId) -> Result<Vec<PrerequisiteEvidence>> {
+        let snapshot = self.store.load()?;
+        let world = crate::snapshot::decode(&snapshot)?;
+        prerequisite_evidence(&snapshot, &world, node)
+    }
+
+    /// Q59 / #839: one read per unresolved upstream identity at open, never on
+    /// a periodic look. The normal inbox retains failures for incident recovery.
+    pub(crate) fn recover_prerequisites(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let world = crate::snapshot::decode(&snapshot)?;
+        let mut commit = Commit::new(
+            format!("prerequisite-open:{}", snapshot.revision.get()),
+            json!({"prerequisite_open":true}),
+            &snapshot,
+        );
+        let requests = bindings(&snapshot, &commit)?;
+        let mut seen = BTreeSet::new();
+        for dependency in world.dependencies() {
+            if dependency.rejected
+                || dependency.status != DependencyStatus::Pending
+                || world.nodes[dependency.node.0 as usize].phase.is_closed()
+            {
+                continue;
+            }
+            let Some(request) = requests.get(&dependency.node) else {
+                continue;
+            };
+            let key = fact_key(
+                &request.repo,
+                dependency.target.kind,
+                dependency.target.number,
+            );
+            if !self.bootstrap.repos.contains(&request.repo) || !seen.insert(key.clone())
+                || retained_fact(&snapshot, &commit, &request.repo, dependency.target.kind, dependency.target.number)?.is_some()
+                || snapshot.rows.iter().any(|row| row.table == "inbox" && matches!(
+                    serde_json::from_value::<executor::Observation>(row.value.clone()),
+                    Ok(executor::Observation::PrerequisiteRead { repository, kind, number, .. })
+                        if same_repository(&repository, &request.repo) && kind == dependency.target.kind && number == dependency.target.number
+                ))
+            {
+                continue;
+            }
+            commit.rows.push(put(
+                "inbox",
+                format!(
+                    "external:prerequisite-open:{}:{key}",
+                    snapshot.revision.get()
+                ),
+                json!(executor::Observation::PrerequisiteRead {
+                    node: dependency.node,
+                    repository: request.repo.clone(),
+                    kind: dependency.target.kind,
+                    number: dependency.target.number,
+                }),
+            ));
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
     fn apply_fact(
         &self,
         snapshot: &Snapshot,
@@ -371,7 +563,7 @@ impl Controller {
                     number,
                     request: root,
                 },
-                status,
+                status: kernel_status(kind, status),
                 source_quote: quote.into(),
             });
         }
@@ -544,6 +736,7 @@ impl Controller {
                     dependency.target.number,
                 )?
                 .map_or_else(|| root_status(world, bound), |fact| fact.status);
+                let status = kernel_status(dependency.target.kind, status);
                 let ending = (bound == root && world.nodes[root.0 as usize].phase.is_closed())
                     .then(|| {
                         format!(
@@ -625,7 +818,7 @@ impl Controller {
                         node: dependency.node,
                         fact: Fact::Dependency {
                             target: dependency.target,
-                            status: fact.status,
+                            status: kernel_status(fact.kind, fact.status),
                         },
                     },
                     &mut outputs,
@@ -973,6 +1166,10 @@ mod tests {
     }
 
     fn ingest_brief(c: &mut Controller, node: NodeId, numbers: &[u64]) {
+        ingest_brief_kind(c, node, numbers, "issue");
+    }
+
+    fn ingest_brief_kind(c: &mut Controller, node: NodeId, numbers: &[u64], kind: &str) {
         let quote = format!(
             "Merge prerequisites: {}",
             numbers
@@ -995,7 +1192,7 @@ mod tests {
                 generation,
                 role: "ingest".into(),
                 model: None,
-                reply: json!({"kind":"brief", "brief":"Implement after prerequisites merge", "goals":[{"description":"Implement", "verification":"test"}], "memory_ids":[], "files":[], "forecast":{"tokenizer":"o200k_base", "brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}, "merge_prerequisites": numbers.iter().map(|n| json!({"kind":"issue", "number":n,"source_quote":quote})).collect::<Vec<_>>()}),
+                reply: json!({"kind":"brief", "brief":"Implement after prerequisites merge", "goals":[{"description":"Implement", "verification":"test"}], "memory_ids":[], "files":[], "forecast":{"tokenizer":"o200k_base", "brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}, "merge_prerequisites": numbers.iter().map(|n| json!({"kind":kind, "number":n,"source_quote":quote})).collect::<Vec<_>>()}),
             },
         );
     }

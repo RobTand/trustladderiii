@@ -876,6 +876,7 @@ pub(crate) fn observation_context(
     use tl3_kernel::Event;
     let node = match observation {
         Observation::ScratchSaved { node, .. }
+        | Observation::PrerequisiteRead { node, .. }
         | Observation::Steering { node, .. }
         | Observation::WorkerReply { node, .. }
         | Observation::WorkerFailed { node, .. }

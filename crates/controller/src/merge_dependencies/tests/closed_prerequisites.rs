@@ -43,15 +43,23 @@ fn live_closed_roots_are_visible_through_nine_and_four_waiter_chains() {
     let mut db = Database::start();
     let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_chains");
     let mut waiters = Vec::new();
-    for (root, count) in [(2763, 9), (2773, 4)] {
+    for (root, count) in [(2763, 9), (2773, 4), (2779, 1), (2781, 1)] {
         set_issue(&repo, root, "open", None);
-        intake(&mut c, &repository, root);
+        let root_node = intake(&mut c, &repository, root);
         for number in root + 1..=root + count {
             set_issue(&repo, number, "open", None);
             let node = intake(&mut c, &repository, number);
             ingest(&mut c, node, &[number - 1]);
             waiters.push((node, root, number));
         }
+        reply(
+            &mut c,
+            root_node,
+            Reply::IngestEarlyEnd(EarlyEnd::NotActionable),
+        );
+        reply(&mut c, root_node, Reply::AuditAgrees);
+        confirm(&mut c, root_node);
+        set_issue(&repo, root, "closed", Some("not_planned"));
         external(&mut c, &repository, root, DependencyStatus::Abandoned);
     }
     let model = status(&settings);
@@ -71,6 +79,16 @@ fn live_closed_roots_are_visible_through_nine_and_four_waiter_chains() {
             )),
             "{}",
             card.waiting_on
+        );
+        assert!(
+            c.prerequisite_evidence(node)
+                .unwrap()
+                .iter()
+                .any(|e| e.target.number == root
+                    && e.state
+                        == PrerequisiteState::ClosedUnmerged {
+                            reason: ClosedPrerequisiteReason::NotPlanned
+                        })
         );
     }
 }
@@ -157,7 +175,7 @@ fn caught_up_closure_has_identical_text_and_html_status() {
     c.observe(
         "t839-catch-up",
         Observation::Prerequisite(ExternalFact {
-            repository,
+            repository: repository.clone(),
             kind: PrerequisiteKind::Issue,
             number: 2761,
             status: DependencyStatus::Abandoned,
@@ -169,4 +187,138 @@ fn caught_up_closure_has_identical_text_and_html_status() {
     let expected = "waiting for #2761 to merge: closed without merge (not planned)";
     assert!(crate::status::render_text(&model).contains(expected));
     assert!(crate::status::render_html(&model).contains(expected));
+}
+
+/// #839 / Q27: closed PR evidence does not invent an abandonment transition.
+#[test]
+fn closed_pr_is_typed_and_displayed_without_changing_the_kernel_wait() {
+    let mut db = Database::start();
+    let (_repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_pr");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest_brief_kind(&mut c, waiter, &[2761], "pull_request");
+    reply(&mut c, waiter, Reply::AuditAgrees);
+    c.observe(
+        "t839-pr-closed",
+        Observation::Prerequisite(ExternalFact {
+            repository: repository.clone(),
+            kind: PrerequisiteKind::PullRequest,
+            number: 2761,
+            status: DependencyStatus::Abandoned,
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+    assert_eq!(
+        c.prerequisite_evidence(waiter).unwrap()[0].state,
+        PrerequisiteState::ClosedUnmerged {
+            reason: ClosedPrerequisiteReason::PullRequestClosed
+        }
+    );
+    assert_eq!(
+        status(&settings).requests[0].waiting_on,
+        "waiting for #2761 to merge: closed without merge"
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .pending_effects
+            .iter()
+            .any(|effect| effect.payload.to_string().contains("DependencyAbandoned"))
+    );
+    c.observe(
+        "t839-pr-merged-later",
+        Observation::Prerequisite(ExternalFact {
+            repository,
+            kind: PrerequisiteKind::PullRequest,
+            number: 2761,
+            status: DependencyStatus::Delivered,
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Planning { must_split: false }
+    );
+}
+
+struct CountReads {
+    github: crate::adapters::github::Fake,
+    reads: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl executor::Executor for CountReads {
+    fn prerequisite(
+        &mut self,
+        repo: &Repository,
+        kind: PrerequisiteKind,
+        number: u64,
+    ) -> Result<DependencyStatus> {
+        self.reads.set(self.reads.get() + 1);
+        self.github.prerequisite(repo, kind, number)
+    }
+    fn execute(&mut self, delivery: &executor::Delivery) -> Result<executor::Completion> {
+        self.github.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &executor::Delivery) -> Result<executor::Reconciliation> {
+        self.github.reconcile(delivery)
+    }
+}
+
+/// #839 / Q59: startup deduplicates identities and looks consume stored facts.
+#[test]
+fn shared_prerequisite_has_one_startup_read_and_no_look_polling() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_bounded");
+    let mut waiters = Vec::new();
+    for number in [42, 2772, 2779] {
+        let node = intake(&mut c, &repository, number);
+        ingest(&mut c, node, &[2761]);
+        waiters.push(node);
+    }
+    let bootstrap = c.bootstrap.clone();
+    drop(c);
+    let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut adapters = crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap();
+    adapters.register(
+        executor::Upstream::GitHub,
+        CountReads {
+            github: crate::adapters::github::Fake::new(&repo.root.path().join("fakes")),
+            reads: reads.clone(),
+        },
+    );
+    let mut c = Controller::open(
+        tl3_store::Store::open(&settings).unwrap(),
+        adapters,
+        bootstrap,
+    )
+    .unwrap();
+    assert_eq!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "inbox")
+            .count(),
+        1
+    );
+    assert!(c.drive_once().unwrap());
+    assert_eq!(reads.get(), 1);
+    for node in waiters {
+        assert_eq!(
+            c.prerequisite_evidence(node).unwrap()[0].state,
+            PrerequisiteState::Open
+        );
+    }
+    c.look_now().unwrap();
+    c.look_now().unwrap();
+    assert_eq!(reads.get(), 1, "looks must never poll prerequisites");
 }

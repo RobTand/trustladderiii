@@ -400,7 +400,7 @@ impl Executor for Adapter {
         kind: tl3_kernel::PrerequisiteKind,
         number: u64,
     ) -> Result<tl3_kernel::DependencyStatus> {
-        use tl3_kernel::{DependencyStatus, PrerequisiteKind};
+        use tl3_kernel::PrerequisiteKind;
         match kind {
             PrerequisiteKind::Issue => Ok(crate::merge_dependencies::issue_status(
                 &self.issue(repository, number)?,
@@ -414,11 +414,7 @@ impl Executor for Adapter {
                     client
                         .pull_request(&format!("{}/{}", repository.owner, repository.name), number),
                 )?;
-                Ok(if pr.merged_at.is_some() {
-                    DependencyStatus::Delivered
-                } else {
-                    DependencyStatus::Pending
-                })
+                Ok(crate::merge_dependencies::pr_status(&pr))
             }
         }
     }

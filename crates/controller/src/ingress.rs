@@ -503,11 +503,7 @@ fn prerequisite_pr(repository: &Repository, pr: &tl3_github::PullRequest) -> Opt
         repository,
         tl3_kernel::PrerequisiteKind::PullRequest,
         pr.number,
-        if pr.merged_at.is_some() {
-            tl3_kernel::DependencyStatus::Delivered
-        } else {
-            tl3_kernel::DependencyStatus::Pending
-        },
+        crate::merge_dependencies::pr_status(pr),
         &pr.updated_at.to_rfc3339(),
     )
 }

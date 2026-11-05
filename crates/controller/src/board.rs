@@ -294,6 +294,7 @@ pub struct Request {
     pub maker_model: Option<String>,
     /// The open question's stored context, with the deciding worker's findings.
     pub question_context: Option<serde_json::Value>,
+    pub prerequisites: Vec<crate::merge_dependencies::PrerequisiteEvidence>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -509,7 +510,19 @@ fn card(
             .waiting_prerequisite
             .filter(|_| node.phase == Phase::Unplanned)
         {
-            format!("waiting for #{number} to merge")
+            let waits = request
+                .prerequisites
+                .iter()
+                .filter(|fact| {
+                    fact.state != crate::merge_dependencies::PrerequisiteState::Delivered
+                })
+                .map(crate::merge_dependencies::PrerequisiteEvidence::waiting_text)
+                .collect::<Vec<_>>();
+            if waits.is_empty() {
+                format!("waiting for #{number} to merge")
+            } else {
+                waits.join("; ")
+            }
         } else if let Some(position) = pool_position.filter(|_| wait == Wait::AgentPool) {
             format!(
                 "{} ({priority}, {} in line)",
@@ -897,6 +910,9 @@ impl Rows {
             });
             let details = details.remove(&id);
             rows.requests.push(Request {
+                prerequisites: crate::merge_dependencies::prerequisite_evidence(
+                    &snapshot, &world, id,
+                )?,
                 id,
                 node: *node,
                 repo: format!("{}/{}", request.repo.owner, request.repo.name),
