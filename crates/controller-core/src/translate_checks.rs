@@ -44,7 +44,14 @@ pub enum PlanUpdate {
         else { PlanUpdate::KeepFixes },
 ))]
 pub fn plan_update(same_head: bool, reviewed: bool, unavailable: bool) -> PlanUpdate {
-    PlanUpdate::KeepFixes
+    if same_head {
+        PlanUpdate::Retarget {
+            set_reviewed: reviewed,
+            replace_tests: unavailable,
+        }
+    } else {
+        PlanUpdate::KeepFixes
+    }
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
