@@ -6,6 +6,8 @@ pub enum Read {
     Json,
     Git,
     Invalid,
+    Store,
+    Worktree(u8),
 }
 #[derive(Clone, Debug)]
 pub struct Schedule {
@@ -46,6 +48,24 @@ pub fn read(op: &str, args: Value) -> Result<Value> {
             Read::Json => Err(Error::Json(serde_json::from_str::<Value>("{").unwrap_err())),
             Read::Git => Err(Error::Adapter("recorded git failure".into())),
             Read::Invalid => Err(Error::Invalid("recorded invalid evidence")),
+            Read::Store => Err(::tl3_store::Error::Invalid("recorded store failure").into()),
+            Read::Worktree(kind) => Err(match kind {
+                0 => tl3_worktrees::Error::Io,
+                1 => tl3_worktrees::Error::Spawn,
+                2 => tl3_worktrees::Error::Git {
+                    operation: "recorded",
+                    code: Some(1),
+                },
+                3 => tl3_worktrees::Error::Response,
+                4 => tl3_worktrees::Error::MissingBranch,
+                5 => tl3_worktrees::Error::Network {
+                    operation: "recorded",
+                    code: None,
+                },
+                6 => tl3_worktrees::Error::Remote,
+                _ => tl3_worktrees::Error::CommitId,
+            }
+            .into()),
         };
         let outcome = match &result {
             Ok(v) => json!({"ok":v}),

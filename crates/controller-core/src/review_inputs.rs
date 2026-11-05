@@ -102,6 +102,23 @@ pub mod selection {
             decreases flags.len() - i,
         ] {
             if flags[i] { out.push(i); }
+            #[cfg(verus_keep_ghost)]
+            vstd::prelude::proof! {
+                assert forall|j: int| 0 <= j < i + 1 implies
+                    out@.contains(j as usize) == flags[j] by {
+                    if j < i {
+                    } else {
+                        assert(j == i);
+                        if flags[i] {
+                            assert(out@[out.len() - 1] == i);
+                            assert(out@.contains(i));
+                        } else {
+                            assert forall|k: int| 0 <= k < out.len() implies out[k] != i by {};
+                            assert(!out@.contains(i));
+                        }
+                    }
+                }
+            }
             i += 1;
         } }
         out

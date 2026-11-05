@@ -28,15 +28,17 @@ pub fn history_witness() {
 pub fn selection_witness() {
     let a=indices(&[]); assert(a.len() == 0);
     let b=indices(&[true,false,true]);
-    assert(b.len() == 2) by {
-        assert(b@.contains(0usize)); assert(b@.contains(2usize));
-        if b.len() < 2 { assert(false); }
-        if b.len() > 2 {
-            assert(b[0] == 0); assert(b[1] == 1); assert(b[2] == 2);
-            assert(!b@.contains(1usize));
-            assert(false);
-        }
+    assert(b@.contains(0usize)); assert(b@.contains(2usize));
+    assert(!b@.contains(1usize));
+    assert forall|k: int| 0 <= k < b.len() implies b[k] == 0 || b[k] == 2 by {
+        assert(b@.contains(b[k]));
+    };
+    if b.len() > 2 {
+        assert(b[0] < b[1]); assert(b[1] < b[2]);
+        assert(false);
     }
+    if b.len() < 2 { assert(false); }
+    assert(b.len() == 2);
     assert(b[0] == 0); assert(b[1] == 2);
     let c=forced(true,false,false); assert(c);
     let d=forced(false,true,false); assert(d);

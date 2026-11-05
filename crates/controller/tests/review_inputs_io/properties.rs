@@ -126,7 +126,7 @@ fn mandatory_empty_exact_wire_and_trace() {
 proptest! {
     #![proptest_config(Config {cases:64,rng_seed:RngSeed::Fixed(0x17_0730_2026),failure_persistence:persistence(),..Config::default()})]
     #[test]
-    fn generated_read_tapes(flags in any::<u16>(), fail in 0usize..24, classes in prop::collection::vec(0u8..5,0..20)) {
+    fn generated_read_tapes(flags in any::<u16>(), fail in 0usize..24, classes in prop::collection::vec(0u8..8,0..20)) {
         let mut s=fixture();
         if flags&1 != 0 {s.delivery.round=1;s.session=Some(json!({"head_sha":REVIEWED}));}
         if flags&2 != 0 {s.delivery.checks.as_mut().unwrap().reviewed_sha=Some(CommitId::new(REVIEWED).unwrap());}
@@ -140,7 +140,7 @@ proptest! {
             let key=keys[fail/3]; let at=fail%3;
             let tape=s.tapes.entry(key.into()).or_default(); while tape.len()<=at {tape.push(Read::Value(Value::Null));}
             let class=classes.first().copied().unwrap_or(0);
-            if class>0 {tape[at]=match class {1=>Read::Io,2=>Read::Json,3=>Read::Git,_=>Read::Invalid};}
+            if class>0 {tape[at]=match class {1=>Read::Io,2=>Read::Json,3=>Read::Git,4=>Read::Invalid,5=>Read::Store,_=>Read::Worktree(class)};}
         }
         compare(&s);
     }
@@ -621,7 +621,21 @@ fn mandatory_all_recorded_error_classes_at_every_reached_read() {
         let op = call["op"].as_str().unwrap();
         let at = *counts.entry(op.into()).or_default();
         *counts.get_mut(op).unwrap() += 1;
-        for class in [Read::Io, Read::Json, Read::Git, Read::Invalid] {
+        for class in [
+            Read::Io,
+            Read::Json,
+            Read::Git,
+            Read::Invalid,
+            Read::Store,
+            Read::Worktree(0),
+            Read::Worktree(1),
+            Read::Worktree(2),
+            Read::Worktree(3),
+            Read::Worktree(4),
+            Read::Worktree(5),
+            Read::Worktree(6),
+            Read::Worktree(7),
+        ] {
             let mut broken = s.clone();
             let tape = broken.tapes.entry(op.into()).or_default();
             while tape.len() <= at {
@@ -732,4 +746,18 @@ proptest! {
         if bits&1024!=0 {s.snapshot.rows[1].value["selected_failures"]=Value::Null;}
         compare(&s);
     }
+}
+
+#[test]
+fn mandatory_invalid_commit_ids_before_any_read() {
+    let mut s = fixture();
+    s.delivery.head_sha = Some("invalid".into());
+    let r = compare(&s);
+    assert!(r.result.unwrap_err().contains("invalid commit id"));
+    assert!(r.trace.is_empty());
+    let mut s = reviewed();
+    s.session = Some(json!({"head_sha":"invalid"}));
+    let r = compare(&s);
+    assert!(r.result.unwrap_err().contains("invalid commit id"));
+    assert!(r.trace.is_empty());
 }
