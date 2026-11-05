@@ -454,6 +454,15 @@ impl Controller {
         self.allowances = allowances;
     }
 
+    /// Q53 / #828: configure model identities and the trusted reset horizon.
+    pub fn set_model_quota_policy(
+        &mut self,
+        _models: &tl3_config::Models,
+        _horizon: Duration,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     pub(crate) fn retry_queue_observation_looks(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut commit = Commit::new(

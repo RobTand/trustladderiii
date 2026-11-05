@@ -17,7 +17,7 @@ use tl3_controller::{
         workers::{Supervisor, WorkerOutputSource},
     },
     cli::Input,
-    executor::{Completion, Delivery, Executor, Output, Reconciliation, Upstream},
+    executor::{Completion, Delivery, Executor, Observation, Output, Reconciliation, Upstream},
     status,
 };
 use tl3_kernel::{EffectKind, Phase, Role};
@@ -34,7 +34,7 @@ impl tl3_controller::clock::Clock for Clock {
 
 // Only audit uses a real worker. Planning stays in flight so these tests cannot
 // accidentally finish a request while checking its audit ending.
-struct Audit(Supervisor, adapters::workers::Fake);
+struct Audit(Supervisor, adapters::workers::Fake, Rc<Cell<bool>>);
 impl Executor for Audit {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         match d.output {
@@ -54,7 +54,16 @@ impl Executor for Audit {
             Output::Effect {
                 kind: EffectKind::StartRun(Role::Audit),
                 ..
-            } => self.0.reconcile(d),
+            } => {
+                let result = self.0.reconcile(d)?;
+                if self.2.get()
+                    && matches!(&result, Reconciliation::Found(c) if c.observations.iter().any(|o| matches!(o, Observation::Quota { .. })))
+                {
+                    Ok(Reconciliation::Pending)
+                } else {
+                    Ok(result)
+                }
+            }
             Output::Effect {
                 kind: EffectKind::StartRun(Role::Plan),
                 ..
@@ -83,6 +92,10 @@ struct Fixture {
     source: WorkerOutputSource,
     store: Store,
     clock: Clock,
+    config: tl3_config::Config,
+    defer_quota: Rc<Cell<bool>>,
+    deferred: Vec<(String, Observation)>,
+    success_reply: Option<Observation>,
 }
 
 impl Fixture {
@@ -107,10 +120,13 @@ root = pathlib.Path(sys.argv[1])
 node = r['operation']['node']
 attempt = pathlib.Path(r['trace']['completion']).parent
 (root / ('started-' + str(node))).write_text(str(attempt))
-if node == 1:
+if node == 1 and not (root / 'quota-all').exists():
     while not (root / 'success').exists():
         time.sleep(0.01)
-quota = node == 0 and not (root / 'restored').exists()
+if attempt.name != 'attempt-00000000' and (root / 'probe-block').exists():
+    while not (root / 'probe-release').exists():
+        time.sleep(0.01)
+quota = (node == 0 or (root / 'quota-all').exists()) and not (root / 'restored').exists()
 now = int(time.time() * 1000)
 facts = dict(started_ms=now, finished_ms=now, outcome='quota' if quota else 'succeeded', release=None,
              model=r['model']['name'], input_tokens=None, cached_tokens=None, output_tokens=None,
@@ -128,17 +144,25 @@ else:
         let supervisor =
             Supervisor::new(&config, &root.path().join("records"), &mut ownership).unwrap();
         let source = supervisor.source();
+        let defer_quota = Rc::new(Cell::new(false));
         registry.register(
             Upstream::Workers,
-            Audit(supervisor, adapters::workers::Fake::new(root.path())),
+            Audit(
+                supervisor,
+                adapters::workers::Fake::new(root.path()),
+                defer_quota.clone(),
+            ),
         );
-        let controller = Controller::open_with_clock(
+        let mut controller = Controller::open_with_clock(
             ownership.into_store(),
             registry,
             Bootstrap::from_config(&config).unwrap(),
             clock.clone(),
         )
         .unwrap();
+        controller
+            .set_model_quota_policy(&config.models, Duration::from_secs(6 * 3600))
+            .unwrap();
         let mut store = Store::open(&settings).unwrap();
         let snapshot = store.load().unwrap();
         let mut commit = Commit::new("fixture:briefs", json!({}), &snapshot);
@@ -155,6 +179,10 @@ else:
             source,
             store,
             clock,
+            config,
+            defer_quota,
+            deferred: vec![],
+            success_reply: None,
         }
     }
     fn intake(&mut self, number: u64) {
@@ -186,6 +214,19 @@ else:
         self.source.poll_once(&mut self.store, &tx).unwrap();
         for input in rx.try_iter() {
             if let Input::Observation { key, observation } = input {
+                if self.defer_quota.get() && matches!(observation, Observation::Quota { .. }) {
+                    self.deferred.push((key, observation));
+                    continue;
+                }
+                if matches!(
+                    observation,
+                    Observation::WorkerReply {
+                        node: tl3_kernel::NodeId(1),
+                        ..
+                    }
+                ) {
+                    self.success_reply = Some(observation.clone());
+                }
                 self.controller.observe(&key, observation).unwrap();
             }
         }
@@ -212,6 +253,9 @@ else:
         }
     }
     fn hold(&mut self) -> Option<(String, serde_json::Value)> {
+        self.hold_for(0)
+    }
+    fn hold_for(&mut self, node: u64) -> Option<(String, serde_json::Value)> {
         self.controller
             .snapshot()
             .unwrap()
@@ -219,7 +263,7 @@ else:
             .into_iter()
             .find(|r| {
                 r.table == "allowances"
-                    && r.value["delivery"]["output"]["Effect"]["node"] == 0
+                    && r.value["delivery"]["output"]["Effect"]["node"] == node
                     && r.value["quota_ms"].as_u64().is_some()
             })
             .map(|r| (r.id, r.value))
@@ -256,11 +300,75 @@ else:
             "the real successful reply clears the model quota record"
         );
     }
+    fn restart(self) -> Self {
+        let Self {
+            _db,
+            root,
+            settings,
+            controller,
+            source,
+            store,
+            clock,
+            config,
+            defer_quota,
+            deferred,
+            success_reply,
+        } = self;
+        drop(controller);
+        drop(source);
+        let mut reader = Reader::open(&settings).unwrap();
+        let mut tx = reader.transaction().unwrap();
+        tx.query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        tx.query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        tx.commit().unwrap();
+        let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+        let mut ownership =
+            tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+        let supervisor =
+            Supervisor::new(&config, &root.path().join("records"), &mut ownership).unwrap();
+        let source = supervisor.source();
+        registry.register(
+            Upstream::Workers,
+            Audit(
+                supervisor,
+                adapters::workers::Fake::new(root.path()),
+                defer_quota.clone(),
+            ),
+        );
+        let mut controller = Controller::open_with_clock(
+            ownership.into_store(),
+            registry,
+            Bootstrap::from_config(&config).unwrap(),
+            clock.clone(),
+        )
+        .unwrap();
+        controller
+            .set_model_quota_policy(&config.models, Duration::from_secs(6 * 3600))
+            .unwrap();
+        Self {
+            _db,
+            root,
+            settings,
+            controller,
+            source,
+            store,
+            clock,
+            config,
+            defer_quota,
+            deferred,
+            success_reply,
+        }
+    }
 }
 
 #[test]
 fn quota_status_names_the_durable_hold_and_retry() {
     let mut f = Fixture::new();
+    f.controller
+        .set_model_quota_policy(&f.config.models, Duration::from_secs(5 * 86_400))
+        .unwrap();
     let key = f.held(false);
     let (_, hold) = f.hold().unwrap();
     assert_eq!(hold["quota_ms"], RESET);
@@ -304,23 +412,29 @@ fn quota_status_names_the_durable_hold_and_retry() {
 }
 
 #[test]
-fn same_model_success_keeps_the_existing_durable_deadline() {
+fn duplicate_success_and_reset_do_not_dispatch_twice() {
     let mut f = Fixture::new();
     let key = f.held(true);
     f.success();
     f.controller.look_due().unwrap();
-    assert_eq!(f.attempt(&key), 0, "slice A preserves Q53 scheduling");
-    let view = status::load(&mut Reader::open(&f.settings).unwrap()).unwrap();
-    assert!(
-        view.requests[0]
-            .waiting_on
-            .contains("model quota (audit, alternate-model)"),
-        "the allowance remains authoritative after the global model record clears"
+    assert_eq!(f.attempt(&key), 1);
+    let reply = f.success_reply.clone().expect("real successful ending");
+    for suffix in ["duplicate-1", "duplicate-2"] {
+        f.controller.observe(suffix, reply.clone()).unwrap();
+        f.drain();
+        f.controller.look_due().unwrap();
+    }
+    f.clock.0.set(RESET);
+    f.controller.look_due().unwrap();
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "success duplicates and the reset share one attempt"
     );
 }
 
 #[test]
-#[ignore = "expected red pending Q27 #828: early wake on same-model success"]
 fn same_model_success_redispatches_the_quota_held_key() {
     let mut f = Fixture::new();
     let key = f.held(true);
@@ -331,4 +445,83 @@ fn same_model_success_redispatches_the_quota_held_key() {
         1,
         "a later same-model success must redispatch the held idempotency key before reset"
     );
+}
+
+#[test]
+fn restart_between_success_and_redispatch_keeps_the_wake() {
+    let mut f = Fixture::new();
+    let key = f.held(true);
+    f.success();
+    assert_eq!(f.attempt(&key), 0, "success persisted before redispatch");
+    let mut f = f.restart();
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 1, "restart must preserve the success wake");
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 1);
+}
+
+#[test]
+fn success_before_quota_is_durable_does_not_park_it() {
+    let mut f = Fixture::new();
+    f.defer_quota.set(true);
+    f.intake(2662);
+    f.intake(2663);
+    f.until(|f| !f.deferred.is_empty() && f.root.path().join("started-1").exists());
+    let key = match &f.deferred[0].1 {
+        Observation::Quota { key, .. } => key.clone(),
+        _ => unreachable!(),
+    };
+    f.success();
+    f.defer_quota.set(false);
+    for (key, observation) in std::mem::take(&mut f.deferred) {
+        f.controller.observe(&key, observation).unwrap();
+    }
+    f.drain();
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "a delayed quota ending cannot overwrite later success"
+    );
+}
+
+#[test]
+fn far_reset_uses_one_hourly_probe_per_model_and_family() {
+    let mut f = Fixture::new();
+    fs::write(f.root.path().join("quota-all"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-block"), "yes").unwrap();
+    f.intake(2662);
+    f.intake(2663);
+    f.until(|f| f.hold_for(0).is_some() && f.hold_for(1).is_some());
+    f.controller.look_due().unwrap();
+    let key0 = f.hold_for(0).unwrap().0;
+    let key1 = f.hold_for(1).unwrap().0;
+    let hour = f.clock.0.get() + 3_600_000;
+    f.clock.0.set(hour - 1);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key0) + f.attempt(&key1), 0);
+    f.clock.0.set(hour);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key0) + f.attempt(&key1),
+        1,
+        "one probe for the shared model and family"
+    );
+    f.clock.0.set(hour + 2 * 3_600_000);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key0) + f.attempt(&key1),
+        1,
+        "the outstanding probe fences later hours"
+    );
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-release"), "yes").unwrap();
+    f.until(|f| {
+        f.controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|n| n.phase != Phase::Auditing)
+    });
 }
