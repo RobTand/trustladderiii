@@ -1,9 +1,11 @@
 """#823: persistent old/new I/O oracle driven by controller-side proptest."""
 import builtins
+from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -23,6 +25,7 @@ sys.modules[legacy_action.__name__] = legacy_action
 exec(compile((REFERENCE / 'test_tool.py.txt').read_text(), 'pre-extraction/test_tool.py', 'exec'), legacy_action.__dict__)
 legacy_worker = types.ModuleType('tl3_workers.legacy_pb_tests')
 legacy_worker.__package__ = 'tl3_workers'
+legacy_worker.__file__ = str(REFERENCE / 'pb_tests.py.txt')
 sys.modules[legacy_worker.__name__] = legacy_worker
 # This reference retains all six original bounding call sites verbatim.
 exec(compile((REFERENCE / 'pb_tests.py.txt').read_text(), 'pre-extraction/pb_tests.py', 'exec'), legacy_worker.__dict__)
@@ -89,7 +92,7 @@ def action(module, directory, schedule):
 
     outcomes = ['passed', 'failed', 'error', 'skipped']
     entries = [{'event': 'result', 'test': f't.py::t{index:02}',
-                'outcome': outcomes[code % 4], 'message': f'message-{code}', 'truncated': False}
+                'outcome': outcomes[code % 4], 'message': '' if schedule.get('empty_messages') else f'message-{code}', 'truncated': False}
                for index, code in enumerate(schedule['reads'])]
     exit_code = int(any(entry['outcome'] in ('failed', 'error') for entry in entries))
     records = [{'event': 'start', 'schema': 1}, *entries, {'event': 'finish', 'exit_code': exit_code}]
@@ -270,6 +273,7 @@ def lifecycle(module, directory, schedule):
     original_open, original_mkdir = Path.open, Path.mkdir
     original_read_bytes, original_read_text = Path.read_bytes, Path.read_text
     original_replace = Path.replace
+    original_chmod = os.fchmod
 
     def name(path):
         path = Path(path)
@@ -295,6 +299,8 @@ def lifecycle(module, directory, schedule):
         def __enter__(self): self.stream.__enter__(); return self
         def __exit__(self, *args): return self.stream.__exit__(*args)
         def fileno(self): return self.stream.fileno()
+        @property
+        def buffer(self): return File(self.stream.buffer, self.path)
         def read(self, *args):
             value = self.stream.read(*args)
             trace.append(('stage-read', self.path, value.hex() if isinstance(value, bytes) else value))
@@ -374,6 +380,23 @@ def lifecycle(module, directory, schedule):
         patch.setattr(Path, 'open', opened); patch.setattr(Path, 'mkdir', mkdir)
         patch.setattr(Path, 'read_bytes', read_bytes); patch.setattr(Path, 'read_text', read_text)
         patch.setattr(Path, 'replace', lambda path, target: change(('stage-rename', name(path), name(target)), lambda: original_replace(path, target)))
+        original_directory, original_walk, original_file = tree._directory, tree._walk, tree._file
+        @contextmanager
+        def source_directory(parts):
+            trace.append(('source-directory', parts))
+            with original_directory(parts) as descriptor: yield descriptor
+        def source_walk(descriptor):
+            values = list(original_walk(descriptor))
+            trace.append(('source-walk', values))
+            return iter(values)
+        @contextmanager
+        def source_file(path):
+            trace.append(('source-file', path))
+            with original_file(path) as stream: yield File(stream, source / path)
+        patch.setattr(tree, '_directory', source_directory)
+        patch.setattr(tree, '_walk', source_walk)
+        patch.setattr(tree, '_file', source_file)
+        patch.setattr(os, 'fchmod', lambda fd, mode: change(('stage-chmod', mode), lambda: original_chmod(fd, mode)))
         patch.setattr(module.tempfile, 'TemporaryDirectory', Temporary)
         patch.setattr(module.shutil, 'copytree', copytree)
         patch.setattr(module, '_git', git); patch.setattr(module, '_json_command', command)
@@ -394,12 +417,18 @@ def lifecycle(module, directory, schedule):
             result = ('result', module.make_test_tool(tree, settings, emit=emit)(['t.py'], repeat=2))
         except Crash:
             result = ('crash',)
-    state = {str(path.relative_to(directory)):path.read_bytes().hex()
+    state = {str(path.relative_to(directory)):(path.read_bytes().hex(), path.stat().st_mode & 0o777)
         for path in sorted(staged.rglob('*')) if path.is_file()}
     return trace, result, state, mutation
 
 
 REFUSALS_CHECKED = False
+
+
+def equivalent(before, after, context):
+    if before != after:
+        detail = next(((index, old, new) for index, (old, new) in enumerate(zip(before, after)) if old != new), ('length', len(before), len(after)))
+        raise AssertionError((context, str(detail)[:1600]))
 
 
 def compare_crashes(function, before_module, after_module, schedule):
@@ -409,10 +438,10 @@ def compare_crashes(function, before_module, after_module, schedule):
             return function(module, Path(name), {**schedule, 'crash':crash})
     old = run(before_module, -1)
     new = run(after_module, -1)
-    assert old == new, ('complete schedule changed', function.__name__, schedule, old, new)
+    equivalent(old, new, ('complete schedule changed', function.__name__, schedule))
     for crash in range(old[3]):
         before, after = run(before_module, crash), run(after_module, crash)
-        assert before == after, ('crash schedule changed', function.__name__, schedule, crash, before, after)
+        equivalent(before, after, ('crash schedule changed', function.__name__, schedule, crash))
     return old
 
 
@@ -421,11 +450,11 @@ def decide(schedule):
     # The fixed below-cap counterexample must be compared before the random paths.
     if not REFUSALS_CHECKED:
         example = {**schedule, 'reads':[1] * 21, 'selector_reads':[1, 1],
-                   'selectors':['t.py'], 'repeat':2, 'mode':'run', 'crash':-1}
+                   'selectors':['t.py'], 'repeat':2, 'mode':'run', 'crash':-1, 'empty_messages':True}
         with tempfile.TemporaryDirectory(prefix='harness-repeat-') as name:
             old = action(legacy_action, Path(name), example)
             new = action(test_tool, Path(name), example)
-        assert old == new, ('legacy run-list cap changed', old, new)
+        equivalent(old, new, 'legacy run-list cap changed')
         vector = json.loads((REFERENCE / 'repeated-run.json').read_text())
         assert old[1] == ('result', vector['action'])
         before = worker(legacy_worker, schedule, facts=old[1][1])

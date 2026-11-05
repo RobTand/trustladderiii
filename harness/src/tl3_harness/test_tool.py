@@ -328,7 +328,7 @@ def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
             return {**result, "repeat": repeat, **extra, "runs": runs}
         failed = [item["test"] for item in outcomes.outcomes.values() if item["outcome"] in ("failed", "error")]
         runs.append({"run": number, "status": "completed", "totals": result["totals"],
-                     "failed": failed})
+                     "failed": failed[:RUN_FAILURES]})
         for item in outcomes.outcomes.values():
             if item["test"] not in worst or WORST.index(item["outcome"]) > WORST.index(worst[item["test"]]["outcome"]):
                 worst[item["test"]] = item
