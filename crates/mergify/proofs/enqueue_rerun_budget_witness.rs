@@ -56,21 +56,27 @@ fn result_budget(state: EnqueueState, receipt: Rerun, result: RerunResult,
     }
 }
 
-/// Concrete branch witnesses for every read gate and the write-ahead receipt.
-fn read_covers() {
+/// Unavailable/stale, running, final writable read, and closed branches.
+fn read_gates() {
     let empty = EnqueueState { intent: None, confirmed: false, recovery: None, rerun: None };
     let (_, stale) = decide(empty, QueueEvent::RerunRead { head: Head::Other,
         attempt: 0, status: Status::Completed, writable: Some(true) });
     assert(stale@ == seq![Effect::Error(Failure::PullChanged)]);
-    let (waiting, running) = decide(empty, QueueEvent::RerunRead { head: Head::Current,
+    let (_, running) = decide(empty, QueueEvent::RerunRead { head: Head::Current,
         attempt: 0, status: Status::InProgress, writable: Some(true) });
     assert(running@ == Seq::empty().push(Effect::SaveRerun).push(Effect::Error(Failure::RerunFinishing)));
-    let (_, read) = decide(waiting, QueueEvent::RerunRead { head: Head::Current,
+    let (_, read) = decide(empty, QueueEvent::RerunRead { head: Head::Current,
         attempt: 0, status: Status::Completed, writable: None });
     assert(read@ == seq![Effect::Read(Need::RerunPull)]);
-    let (_, closed) = decide(waiting, QueueEvent::RerunRead { head: Head::Current,
+    let (_, closed) = decide(empty, QueueEvent::RerunRead { head: Head::Current,
         attempt: 0, status: Status::Completed, writable: Some(false) });
     assert(closed@ == seq![Effect::Error(Failure::PullChanged)]);
+}
+
+/// Waiting/completed dispatch, consumed receipt, and advanced attempt gates.
+fn read_receipts() {
+    let waiting = EnqueueState { intent: None, confirmed: false, recovery: None,
+        rerun: Some(Rerun { attempt: 0, accepted: false, waiting: true }) };
     let (sent, post) = decide(waiting, QueueEvent::RerunRead { head: Head::Current,
         attempt: 0, status: Status::Completed, writable: Some(true) });
     assert(post@ == Seq::empty().push(Effect::SaveRerun).push(Effect::Write(Write::Rerun)));
@@ -82,25 +88,30 @@ fn read_covers() {
     assert(advanced@ == seq![Effect::Continue]);
 }
 
-/// All four result classes, with and without an existing receipt. Waiting can
-/// resume only after completion; refusal resets rather than consuming budget.
-fn result_covers() {
+/// All four result classes with no receipt. The save effect is still emitted.
+fn absent_results(result: RerunResult) {
+    let empty = EnqueueState { intent: None, confirmed: false, recovery: None, rerun: None };
+    let (next, effects) = decide(empty, QueueEvent::RerunDone(result));
+    assert(next == empty);
+    assert(effects@ == seq![Effect::SaveRerun]);
+}
+
+/// Accepted consumes budget and Unknown preserves the fenced receipt.
+fn terminal_results() {
     let sent = EnqueueState { intent: None, confirmed: false, recovery: None,
         rerun: Some(Rerun { attempt: 7, accepted: false, waiting: false }) };
-    let empty = EnqueueState { rerun: None, ..sent };
-    let (none_a, _) = decide(empty, QueueEvent::RerunDone(RerunResult::Accepted));
-    assert(none_a == empty);
-    let (none_w, _) = decide(empty, QueueEvent::RerunDone(RerunResult::InProgress));
-    assert(none_w == empty);
-    let (none_r, _) = decide(empty, QueueEvent::RerunDone(RerunResult::Refused));
-    assert(none_r == empty);
-    let (none_u, _) = decide(empty, QueueEvent::RerunDone(RerunResult::Unknown));
-    assert(none_u == empty);
     let (accepted, a) = decide(sent, QueueEvent::RerunDone(RerunResult::Accepted));
     assert(accepted.rerun == Some(Rerun { attempt: 7, accepted: true, waiting: false }));
     assert(a@ == seq![Effect::SaveRerun]);
     let (unknown, u) = decide(sent, QueueEvent::RerunDone(RerunResult::Unknown));
     assert(unknown == sent); assert(u@ == seq![Effect::SaveRerun]);
+}
+
+/// InProgress waits; a completed run can resume. Refused clears budget and a
+/// later eligible read can retry. These exceptions prevent an overstated theorem.
+fn resumable_results() {
+    let sent = EnqueueState { intent: None, confirmed: false, recovery: None,
+        rerun: Some(Rerun { attempt: 7, accepted: false, waiting: false }) };
     let (waiting, w) = decide(sent, QueueEvent::RerunDone(RerunResult::InProgress));
     assert(waiting.rerun == Some(Rerun { attempt: 7, accepted: false, waiting: true }));
     assert(w@ == seq![Effect::SaveRerun]);

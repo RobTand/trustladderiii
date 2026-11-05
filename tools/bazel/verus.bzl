@@ -217,8 +217,8 @@ def verus_proofs():
         for part, module, count in [
             ("required_check", "enqueue#required_check", 1),
             ("required_check_witness", "witness", 1),
-            ("rerun_budget", "enqueue", 23),
-            ("rerun_budget_witness", "witness", 6),
+            ("rerun_budget", "enqueue#decide", 1),
+            ("rerun_budget_witness", "witness", 9),
         ]:
             root = part[:-8] if part.endswith("_witness") else part
             verus_test(
