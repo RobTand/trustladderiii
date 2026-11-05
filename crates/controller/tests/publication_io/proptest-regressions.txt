@@ -1,0 +1,1 @@
+# Fixed-seed schedules use 0x0769_0730_2026. Proptest appends minimized failures here.
