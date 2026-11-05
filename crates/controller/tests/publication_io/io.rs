@@ -362,6 +362,9 @@ fn delivery() -> Delivery {
             d.paths = vec!["src/changed.rs".into()];
             d.request_text = Some("A normal request".into());
         }
+        11 => d.steering = Some(serde_json::from_value(json!({"FileRequest":{"text":"correction","comment":7,"correction":true,"revert":true,"since":"2026-11-01T00:00:00Z","comment_issue":12}})).unwrap()),
+        12 => d.steering = Some(serde_json::from_value(json!({"Restart":{"comment_key":"restart-key","text":"restart","issue":null}})).unwrap()),
+        13 => d.steering = Some(serde_json::from_value(json!({"ConsoleNote":{"text":"The request was paused."}})).unwrap()),
         9 => {
             d.pull_request = None;
             d.request_text = Some("A normal request".into());

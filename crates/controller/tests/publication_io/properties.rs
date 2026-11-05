@@ -25,7 +25,7 @@ fn check(entry: Entry, scenario: Scenario) {
         0u8..3,
         proptest::option::of(0u8..5),
         0u8..4,
-        0u8..11,
+        0u8..14,
         0u8..7,
         0u8..6,
     )
@@ -242,6 +242,36 @@ fn mandatory_close_and_comment_duplicates() {
     assert_eq!(ops(&r, "github.issue"), 1);
     assert_eq!(ops(&r, "github.close_issue"), 1);
     assert_eq!(r.result["found"]["ack"], "Confirmed");
+    for word in [
+        0,
+        1,
+        1 << 12,
+        2 << 12,
+        3 << 12,
+        4 << 12,
+        5 << 12,
+        6 << 12,
+        7 << 12,
+    ] {
+        let mut s = Schedule::stable(Scenario::SummaryDuplicate);
+        s.initial_comments = 1;
+        s.over("github.issue", 0, word);
+        io::compare(&s, Entry::Reconcile).unwrap();
+        let r = io::observe(&s, Entry::Reconcile);
+        assert_eq!(ops(&r, "github.issue"), 1);
+        assert_eq!(ops(&r, "github.close_issue"), usize::from(word == 0));
+        if word >= 1 << 12 {
+            assert_eq!(r.result, "Pending");
+        }
+    }
+    for mode in 0..12 {
+        let mut s = Schedule::stable(Scenario::SummaryDuplicate);
+        s.initial_comments = 1;
+        s.api_results = vec![mode];
+        io::compare(&s, Entry::Reconcile).unwrap();
+        let r = io::observe(&s, Entry::Reconcile);
+        assert_eq!(ops(&r, "github.close_issue"), 1);
+    }
 }
 fn function<'a>(s: &'a str, name: &str, after: &str, indent: usize) -> &'a str {
     let s = &s[if after.is_empty() {
@@ -530,7 +560,7 @@ fn mandatory_open_pr_acceptance_shapes() {
 /// #769/#766, Q27: nonempty and optional delivery shapes enter both real shells.
 #[test]
 fn mandatory_delivery_input_shapes() {
-    for input_shape in 0..11 {
+    for input_shape in 0..14 {
         for scenario in [
             Scenario::Approval,
             Scenario::OpenPr,
