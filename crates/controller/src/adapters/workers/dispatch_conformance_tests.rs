@@ -204,7 +204,9 @@ fn sampled(controller: &mut Controller, root: &Path) -> Evidence {
                 && row.value["delivery"]["generation"] == json!(node.generation)
             {
                 e.deadline = row.value["due_ms"].as_u64().is_some();
-                e.quota_reset = row.value["quota_ms"].as_u64();
+                e.quota_reset = row.value["quota_retry_ms"]
+                    .as_u64()
+                    .or_else(|| row.value["quota_ms"].as_u64());
             }
         }
         if row.table == "inbox" {

@@ -493,7 +493,10 @@ impl Controller {
                     let d: Delivery = decode_stored(row.value["delivery"].clone())?;
                     e.deadline = matches(&d) && row.value["due_ms"].as_u64().is_some();
                     if matches(&d) {
-                        e.quota_reset = row.value["quota_ms"].as_u64();
+                        // Q53/#828: the ladder may retry before the last provider hint.
+                        e.quota_reset = row.value["quota_retry_ms"]
+                            .as_u64()
+                            .or_else(|| row.value["quota_ms"].as_u64());
                     }
                 }
             }
