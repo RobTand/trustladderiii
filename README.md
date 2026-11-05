@@ -57,8 +57,16 @@ require the checks `Rust` and `Python`.
   head with bazel-diff, runs the impacted tests, and uploads the impacted
   Bazel packages to Mergify as the PR's scopes. Build, lock and workflow
   changes test everything. Detection that cannot say what to test fails.
+- **Kani** is a temporary gate while #806 ports the remaining harnesses to
+  Verus. Kernel, manifest, toolchain and gate changes run the PR tier, measured
+  at most 600 seconds per harness, with fail-fast and a 30-minute wall target.
+  Other changes run no Kani proofs. Nightly attempts every remaining harness,
+  keeps verdicts and times for 90 days, and opens or updates one regression issue.
+  Pending #806 timeouts and kills are reported, while real proof failures fail.
+  Kernel releases should have a green nightly or manual full run at or after
+  their SHA.
 - **Rust** requires Bazel's Rust tests, rustfmt and Clippy with warnings
-  denied, and the feature and Kani compiles.
+  denied, the feature and Kani compiles, and the Kani job.
 - **Python** requires Bazel's Python tests, Ruff's syntax and Pyflakes rules,
   and the lock checks.
 - **Post-merge full run**: each push to `main` runs every test on amd64 and

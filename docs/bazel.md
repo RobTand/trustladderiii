@@ -224,6 +224,63 @@ merged PRs and says whether their selection included the failing test. The
 job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
 JSON line per run.
 
+## Kani proofs
+
+Kani is being retired in favour of Verus (#806); this gate shrinks as harnesses are ported.
+
+The Gate's `Kani` job runs `tools/ci/kani_gate.py pr`. The required `Rust`
+check needs it. On a kernel source or manifest change, a kernel path dependency
+change, a root `Cargo.toml` or `Cargo.lock` change, a toolchain change, or a change to the gate's own files, it proves the
+PR tier. Other changes run no proofs. The queue-aware base and head determine
+which files changed. Verus proofs continue to gate through Bazel.
+
+`tools/ci/kani-budgets.json` records measurements and each harness's tier.
+The budget builder assigns `pr` to harnesses measured at most 600 seconds and
+`nightly` to the rest. Tier changes require remeasurement and the builder.
+The gate discovers remaining harnesses across the kernel's Rust files, including
+`proofs/mod.rs` and literal `#[path]` modules. Removing a harness also requires
+removing its budget entry in the same change. A shrunken or empty inventory with
+unmatched budget entries fails. Cargo metadata supplies the path dependency
+closure; if unavailable, the gate conservatively triggers on Rust crate changes.
+
+The planner packs harnesses by measured time and peak memory onto BuildBuddy
+runners with 8 CPUs and 176 GB. Each shard installs Rust 1.99.1 and Kani 0.68.0,
+shares codegen, and reserves each running harness's measured peak plus 20%.
+The PR tier targets at most 30 minutes of wall time, including setup.
+It stops at the first failing proof and cancels sibling shards.
+The PR coordinator has a 50-minute deadline and its workflow has a 55-minute
+timeout, within Mergify's 60-minute window. Nightly retains its longer deadline.
+
+A proof passes only with exit 0, `VERIFICATION:- SUCCESSFUL`, and every cover
+satisfied. A missing verdict, unsatisfied cover, shard error, or hard timeout
+fails the check. Running over 1.5 times the measured budget only warns.
+Hard timeouts allow 3 times the measurement, at least 15 minutes, bounded to
+leave setup and upload time inside BuildBuddy's one-hour runner limit.
+The runner credential stays with the supervisor. Proof children use
+`child_env()`, and the supervisor scans artifacts before upload.
+
+`.github/workflows/kani-nightly.yml` attempts every remaining harness on
+`main`, with no fail-fast. It keeps each verdict, time and peak memory for
+90 days. A regression opens or updates one "Nightly Kani run failed on main"
+issue. `gate_leaf_progress_w2` and `gate_leaf_progress_w3` are explicitly
+`pending: "#806"` in the budgets. Each runs alone with a bounded attempt.
+A timeout or kill on either is reported as "pending #806" without a regression.
+An explicit `VERIFICATION:- FAILED` remains a regression. The summary lists
+both pending names and their outcomes, including successful proofs.
+
+To remeasure, run the nightly or submit `kani_gate.py shard --mode nightly`
+through the Run API. Collect the per-harness measurement records, including
+`seconds`, `peak_gb`, and `invocation`, into one JSON object keyed by name.
+Run the builder and commit its output:
+
+```sh
+python3 tools/ci/kani_gate.py budgets --measurements measurements.json --output tools/ci/kani-budgets.json
+```
+
+`kani_gate.py report --summary FILE --dry-run` prints the would-be regression
+issue without making GitHub requests. Releases that change the kernel should
+have a green nightly or a manual full run at or after their release SHA.
+
 ## Disk durability in pytest
 
 Harness and worker pytest fixtures skip `os.fsync` and `os.fdatasync` for

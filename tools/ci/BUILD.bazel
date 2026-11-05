@@ -302,6 +302,26 @@ py_binary(
     deps = [":bazel_gate"],
 )
 
+py_binary(
+    name = "kani_gate",
+    srcs = ["kani_gate.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":remote_gate",
+        "//tools/ci:child_env",
+    ],
+)
+
+tl3_py_test(
+    name = "test_kani_gate",
+    srcs = ["test_kani_gate.py"],
+    deps = [
+        ":kani_gate",
+        ":remote_gate",
+        "@tl3_pip//pyyaml",
+    ],
+)
+
 tl3_py_test(
     name = "test_verus_gate",
     srcs = ["test_verus_gate.py"],
