@@ -311,7 +311,6 @@ fn restart_at_every_direct_write_converges() {
         }
         boundaries.push(*trace.lock().unwrap().last().unwrap());
         drop(issuer);
-        let mut restarted = fixture.open(&settings);
         // A restart has no in-memory sleeping effects.
         let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
             &fixture.root.path().join("direct"), settings.clone()).unwrap();
@@ -321,6 +320,7 @@ fn restart_at_every_direct_write_converges() {
         };
         assert_eq!(completion.ack, tl3_kernel::Ack::Confirmed);
         drop(adapter);
+        let mut restarted = fixture.open(&settings);
         fixture.check_event(&settings);
         drain(&mut restarted);
         assert!(matches!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
@@ -385,6 +385,38 @@ fn repository_delivery_is_reconciled_in_stored_world() {
     controller.reconcile_repository_delivery(&[repo]).unwrap();
     assert_eq!(controller.snapshot().unwrap().revision, revision);
     drop(controller);
-    let controller = fixture.open(&settings);
+    let mut controller = fixture.open(&settings);
     assert_eq!(controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "repos").unwrap().value, direct.value);
+}
+
+
+#[test]
+fn missing_exact_head_approval_waits_without_put() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_no_approval");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (controller, delivery) = fixture.start(&settings);
+    fixture.check(Some("success"));
+    fixture.api.state.lock().unwrap().head_checks.retain(|check| check["name"] != "TL3 approval");
+    let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
+        &fixture.root.path().join("direct"), settings.clone()).unwrap();
+    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Pending));
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Publishing);
+}
+
+#[test]
+fn status_webhook_wakes_direct_protection_wait() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_status");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    fixture.check(Some("success"));
+    let body = json!({"repository":{"id":1,"name":"sandbox","owner":{"id":1,"login":"owner"}},"installation":{"id":3},"sha":delivery.head_sha,"state":"success"});
+    deliver(&settings, &fixture.api, "status", &body);
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
 }

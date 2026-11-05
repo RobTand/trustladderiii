@@ -112,12 +112,38 @@ impl Translator {
 }
 impl GitHubTranslator for Translator {
     fn translate(&mut self, delivery: &GitHubDelivery, snapshot: &Snapshot) -> Result<Vec<Input>> {
+        // Legacy protection statuses have no typed Event variant. The authenticated
+        // payload is still durably replayed by ingress, so decode just its wake key.
+        if let GitHubDelivery::Webhook(webhook) = delivery {
+            if webhook.event_name == "status" {
+                #[derive(Deserialize)]
+                struct Installation {
+                    id: u64,
+                }
+                #[derive(Deserialize)]
+                struct Status {
+                    repository: tl3_github::Repository,
+                    installation: Installation,
+                    sha: String,
+                }
+                let status: Status = serde_json::from_value(webhook.payload.clone())?;
+                let repo = Repository {
+                    owner: status.repository.owner.login,
+                    name: status.repository.name,
+                    installation: status.installation.id,
+                };
+                if repository_config::direct(snapshot, &repo)? {
+                    return self.wakes(snapshot, &repo, None, Some(&status.sha));
+                }
+            }
+        }
         let repo: Option<Repository> = match delivery {
             GitHubDelivery::Webhook(delivery) => delivery.event.as_ref().and_then(|event| {
                 let context = match event {
                     Event::PullRequestMerged { context, .. }
                     | Event::PullRequestClosed { context, .. }
                     | Event::PullRequestSynchronized { context, .. }
+                    | Event::PullRequestUpdated { context, .. }
                     | Event::PullRequestUnlabeled { context, .. }
                     | Event::CheckRunCompleted { context, .. }
                     | Event::CheckRunUpdated { context, .. }
@@ -156,9 +182,10 @@ impl GitHubTranslator for Translator {
                 Some(Event::CheckSuiteCompleted { check_suite, .. }) => {
                     self.wakes(snapshot, &repo, None, Some(&check_suite.head_sha))
                 }
-                Some(Event::PullRequestClosed { pull_request, .. }) => {
-                    self.wakes(snapshot, &repo, Some(pull_request.number), None)
-                }
+                Some(
+                    Event::PullRequestClosed { pull_request, .. }
+                    | Event::PullRequestUpdated { pull_request, .. },
+                ) => self.wakes(snapshot, &repo, Some(pull_request.number), None),
                 _ => Ok(vec![]), // No Mergify dequeue, missing-check or merge-group rules in direct mode.
             },
             GitHubDelivery::CatchUp { .. } => {

@@ -359,6 +359,7 @@ impl Adapter {
                 approved,
                 observed: head(&pull.head.sha)?,
                 checked,
+                checking: n.checked.is_some(),
                 approval: approval && approved_now && !pull.draft,
                 open: pull.state == "open",
                 merged: pull.merged_at.is_some(),
@@ -409,6 +410,7 @@ impl Adapter {
         Ok(Some(match plan.outcome {
             Outcome::Merged => {
                 let matched = read.facts.observed == read.facts.approved
+                    && read.facts.checking
                     && read.facts.checked == read.facts.approved;
                 self.merged(
                     d,
