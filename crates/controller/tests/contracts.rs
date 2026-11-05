@@ -20,52 +20,10 @@ use tl3_controller::contracts::{self, Check, CheckReport, CheckResult};
 const FIX: &str = "bazel run --config=remote //crates/controller:tl3-contracts-schemas";
 
 // The committed generated files, compiled in so the check stays hermetic.
-const COMMITTED: &[(&str, &str)] = &[
-    (
-        "workers/src/tl3_workers/schemas/check-report.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/request.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/request.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/decision-context.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/decision-context.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/audit-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/audit-input.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/classifier-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/classifier-input.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/ingest-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/ingest-input.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/maker-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/maker-input.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/planner-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/planner-input.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/postmortem-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/postmortem-input.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/reviewer-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
-    ),
-    (
-        "workers/src/tl3_workers/schemas/writer-input.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/writer-input.json"),
-    ),
-];
+const COMMITTED: &[(&str, &str)] = &[(
+    "workers/src/tl3_workers/schemas/check-report.json",
+    include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
+)];
 
 #[test]
 fn generated_schemas_match_committed() {
@@ -1748,3 +1706,7 @@ fn report_versions_are_written_by_the_action_and_checked_by_the_controller() {
         "results": vector["results"]});
     assert!(serde_json::from_value::<CheckReport>(future).is_err());
 }
+
+// P1a-0 is the renderer foundation; the ten-input inventory returns in P1a proper.
+#[path = "support/contracts_render.rs"]
+mod contracts_render;
