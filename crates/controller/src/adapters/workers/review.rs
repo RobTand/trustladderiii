@@ -289,31 +289,32 @@ pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<Blocki
 }
 
 #[cfg(test)]
+// Every successful producer fixture uses the typed wire contract as well as
+// the live schema. Keep direct serialization distinct from the sorted Value path.
+fn typed_inputs_for_tests(
+    delivery: &Delivery,
+    store: &mut Store,
+    snapshot: &tl3_store::Snapshot,
+    session: Option<&Value>,
+) -> Result<Value> {
+    let value = inputs(delivery, store, snapshot, session)?;
+    let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
+        serde_json::from_value(value.clone()).unwrap();
+    let sorted = serde_json::to_value(&typed).unwrap();
+    assert_eq!(
+        serde_json::to_string(&sorted).unwrap(),
+        serde_json::to_string(&value).unwrap()
+    );
+    assert_ne!(
+        serde_json::to_string(&typed).unwrap(),
+        serde_json::to_string(&value).unwrap()
+    );
+    Ok(value)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    // Every successful producer fixture uses the typed wire contract as well as
-    // the live schema. Keep direct serialization distinct from the sorted Value path.
-    fn inputs(
-        delivery: &Delivery,
-        store: &mut Store,
-        snapshot: &tl3_store::Snapshot,
-        session: Option<&Value>,
-    ) -> Result<Value> {
-        let value = super::inputs(delivery, store, snapshot, session)?;
-        let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
-            serde_json::from_value(value.clone()).unwrap();
-        let sorted = serde_json::to_value(&typed).unwrap();
-        assert_eq!(
-            serde_json::to_string(&sorted).unwrap(),
-            serde_json::to_string(&value).unwrap()
-        );
-        assert_ne!(
-            serde_json::to_string(&typed).unwrap(),
-            serde_json::to_string(&value).unwrap()
-        );
-        Ok(value)
-    }
 
     #[test]
     fn exhaustion_has_no_blocking_findings() {
@@ -345,6 +346,7 @@ mod tests {
 
 #[cfg(test)]
 mod hostile_tests {
+    use super::typed_inputs_for_tests as inputs;
     use super::*;
     use crate::git_tests::{Repo, documents, support::Database};
     #[test]
@@ -733,6 +735,7 @@ mod scope_fix_tests {
 
 #[cfg(test)]
 mod input_contract_tests {
+    use super::typed_inputs_for_tests as inputs;
     use super::*;
     use crate::git_tests::{Repo, documents, support::Database};
 
