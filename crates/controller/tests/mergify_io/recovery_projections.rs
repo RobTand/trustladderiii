@@ -37,7 +37,14 @@ fn approved_head(snapshot: &Snapshot, approved: Option<HeadId>) -> Result<String
     raw_approved_head(snapshot, approved)
 }
 fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
-    sample("decode_stored", (std::any::type_name::<T>(), &value));
+    // Both schema-pinned QueueFact copies represent the same production type.
+    let name = std::any::type_name::<T>();
+    let name = if name == std::any::type_name::<reference::QueueFact>() {
+        std::any::type_name::<QueueFact>()
+    } else {
+        name
+    };
+    sample("decode_stored", (name, &value));
     raw_decode_stored(value)
 }
 #[derive(Clone, Copy, Debug)]
