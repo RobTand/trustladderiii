@@ -1183,7 +1183,7 @@ mod priority_tests {
         let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         let bootstrap = Bootstrap::from_config(&config).unwrap();
         let repository = bootstrap.repos[0].clone();
-        let body = json!({"action":"closed", "repository":{"id":9,"name":repository.name,"owner":{"id":3,"login":repository.owner}}, "installation":{"id":repository.installation}, "sender":{"id":7,"login":"requester"}, "pull_request":{"number":2761,"user":{"id":7,"login":"requester"},"state":"closed","merged_at":null,"head":{"ref":"feature","sha":"abc","repo":null},"base":{"ref":"main","sha":"def","repo":null},"updated_at":"2026-11-03T23:00:00Z"}});
+        let body = json!({"action":"closed", "repository":{"id":9,"name":repository.name,"owner":{"id":3,"login":repository.owner}}, "installation":{"id":repository.installation}, "sender":{"id":7,"login":"requester"}, "pull_request":{"number":2761,"user":{"id":7,"login":"requester"},"state":"closed","merged_at":null,"merged":false,"head":{"ref":"feature","sha":"abc","repo":null},"base":{"ref":"main","sha":"def","repo":null},"updated_at":"2026-11-03T23:00:00Z"}});
         let delivery = tl3_github::webhook::parse(
             "t839-closed-pr",
             "pull_request",
