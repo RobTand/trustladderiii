@@ -61,8 +61,8 @@ The gate uses Mergify's queue-aware base commit unchanged, so earlier PRs in a
 batch belong to the base graph. It does not replace that commit with main or the
 PR's original merge base.
 
-The empty `tools/ci/graph-impact-allowlist.json` maps exception keys to nonempty
-reasons. Keys are `reach:<test-label>`, `edge:<group>:<consumer> -> <dependency>`, `figure:u_pct`, `figure:loc_u_pct`,
+`tools/ci/graph-impact-allowlist.json` maps exception keys to nonempty
+reasons or bounded crate entries. Keys are `reach:<test-label>`, `edge:<group>:<consumer> -> <dependency>`, `figure:u_pct`, `figure:loc_u_pct`,
 or `scc:<sorted,comma-separated-members>`. New entries must name a program issue
 with `#730` syntax or a full TL3 GitHub issue URL. For example:
 
@@ -77,6 +77,46 @@ even when another check fails. Existing reasons cannot change. Entries can be
 deleted. A `reach:` entry excuses both the test's package reach budget and its
 structural reach growth. It does not excuse existing-source fan-out growth,
 cycles, or forbidden edges. Those checks keep their existing rules.
+
+A `crate:<Cargo-package-name>` entry credits only the exact Bazel package in
+`head['crate_packages'][name]`, the same ownership mapping used for its source
+count. Subpackages and other packages receive no credit. For example:
+
+```json
+{
+  "crate:example-core": {
+    "reason": "Extract verified decisions for #730.",
+    "sources": 10,
+    "max_fanout": 66
+  }
+}
+```
+
+`sources` is N, the exact number of production source labels in that package at
+head, including unused sources. It excuses gained reach to those sources for
+per-test budgets and structural reach. A stale N fails and asks for an update in
+the same change. N can change only when the source count changes. Reasons remain
+immutable.
+
+`max_fanout` is the exact absolute maximum at head. For each production source in
+the package, count every runnable head test whose transitive reach includes it,
+then take the largest count. Unused sources count as zero; an empty source set
+has maximum zero. Compile and runtime data consumers count, each test once.
+This is `max(head['dependents'][source])` over the package's source labels.
+The existing structural fanout check counts only tests present at both base and
+head. Restricting the absolute bound to that population would change its meaning
+when a later PR advances the base. The bound therefore includes new head tests,
+so an unchanged head graph has the same absolute value against any base.
+
+Every crate entry needs a nonnegative integer `max_fanout`; booleans, fractions,
+strings, and missing values fail. Lower and higher stale values both fail with
+the measured value and "update max_fanout in the same change", even with zero
+fanout growth. Update it in every slice that changes the measured maximum.
+An exact entry excuses existing-source fanout growth only for sources in its
+own package with a validated N. Other existing sources still fail under the
+same consumer-count and added-edge rules. Source move identities retain their
+original labels for structural comparison and cannot transfer credit across
+packages. SCC, edge-group, and forbidden-edge checks use the full graph.
 
 The TL3 adapter matches source moves using the typed edge diff and SHA-256 of
 the file bytes read at each revision. A match needs a removed rule-to-source

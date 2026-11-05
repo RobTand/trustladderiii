@@ -172,6 +172,18 @@ class BazelGraphTests(unittest.TestCase):
         self.assertTrue(any('existing source fanout grew: //crates/controller:src/lib.rs +1'
                             in error for error in result['errors']), result['errors'])
 
+    def test_crate_credit_keeps_outside_growth_from_same_edge(self):
+        source, outside = '//crates/controller-core:src/core0.rs', '//crates/controller:src/lib.rs'
+        first, second, rule = '//crates/controller:first', '//crates/controller:second', '//pkg:lib'
+        deps = {first: [rule], second: [], rule: [source, outside], source: [], outside: []}
+        base = adapter.from_deps(deps, [first, second], [source, outside])
+        head = adapter.from_deps({**deps, second: [rule]}, [first, second], [source, outside])
+        for graph in (base, head):
+            graph['crate_packages'] = {'tl3-controller-core': '//crates/controller-core'}
+        result = self.check_crate(head, self.crate_entry(max_fanout=2), base)
+        fanout = [error for error in result['errors'] if error.startswith('existing source fanout grew:')]
+        self.assertEqual(fanout, [f'existing source fanout grew: {outside} +1; added edges: {second} -> {rule}'])
+
     def test_crate_exact_fanout_excuses_existing_package_source_growth(self):
         base, head = self.fanout_pair()
         result = self.check_crate(head, self.crate_entry(max_fanout=2), base)
@@ -229,6 +241,8 @@ class BazelGraphTests(unittest.TestCase):
         for test in head['reach']:
             head['reach'][test] = [source for source in head['reach'][test]
                                    if 'controller-core:' not in source]
+        head['dependents'] = {source: sum(source in files for files in head['reach'].values())
+                              for source in head['loc']}
         entries = self.crate_entry(count=2, max_fanout=0)
         self.assertEqual(self.check_crate(head, entries, base)['errors'], [])
 
