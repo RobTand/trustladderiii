@@ -60,6 +60,34 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
+        # #743 M1a: real observe/check/facts decisions and original-domain witnesses.
+        for name, module, count in [
+            ("observe", "observe", 11),
+            ("check", "check", 12),
+            ("check_facts", "facts", 6),
+            ("observe_witness", "observe_witness", 8),
+            ("observe_properties", "observe_properties", 2),
+        ]:
+            verus_test(
+                name = "verus_" + name,
+                src = "proofs/observe.rs",
+                srcs = [
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                    "src/decide/facts.rs",
+                ],
+                specs = ["src/decide/observe_witness.rs", "proofs/observe_properties.rs"],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
