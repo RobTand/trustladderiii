@@ -310,9 +310,12 @@ macro_rules! run_entry {
         }
     };
 }
+#[path = "../mergify_execute_schedule/base-enqueue.rs.txt"]
+mod adapter_baseline;
 // The mock store returns this module's Error directly; production converts StoreError.
 #[allow(clippy::needless_question_mark)]
 mod reference {
+    use super::adapter_baseline as lifecycle;
     adapter!();
     include!("reference.rs");
     mod ci_evidence {
@@ -320,13 +323,13 @@ mod reference {
         include!("reference-ci.rs");
     }
     mod waiting {
-        include!("reference-waiting.rs");
+        include!("reference-adapter-compat.rs");
     }
     mod head_checks {
         include!("reference-head.rs");
     }
     pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
-        let mut a = Adapter::new();
+        let mut a = waiting::AdapterBridge(Adapter::new());
         run_entry!(a, entry, d, false)
     }
 }
@@ -680,6 +683,35 @@ mod properties {
     }
     #[test]
     fn expanded_helpers_are_verbatim() {
+        // The adapter bridge compiles only copies from the pinned command protocol.
+        let pinned = include_str!("base-waiting-cdacce8f99.rs.txt");
+        let bridge = include_str!("reference-adapter-compat.rs");
+        for name in [
+            "recovery_key",
+            "recovery_path",
+            "retain_refused_command",
+            "retain_legacy_command",
+            "recovery",
+            "has_recovery",
+            "save_recovery",
+            "recovery_eligible",
+            "command_budget",
+            "reconcile_command",
+            "recover_waiting",
+            "queue_command",
+            "recovery_decide",
+            "recovery_now_ms",
+        ] {
+            assert_eq!(
+                function(pinned, name, ""),
+                function(bridge, name, ""),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            free_function(pinned, "refused"),
+            free_function(bridge, "refused")
+        );
         assert_eq!(
             free_function(
                 include_str!("../../src/adapters/mergify.rs"),

@@ -1,12 +1,6 @@
 use super::*;
 use crate::mergify_io::io::mock_std as std;
-#[derive(Clone, Copy, Serialize, Deserialize)]
-enum Requeue {
-    Ready,
-    Sending,
-    Refused,
-}
-
+use lifecycle::Requeue;
 #[derive(Serialize, Deserialize)]
 struct Attempt {
     before: Option<CheckRun>,
@@ -26,6 +20,24 @@ impl Attempt {
                 .and_then(|before| before.check_suite.clone());
         }
         self.before != current
+    }
+}
+
+fn lifecycle_error(failure: lifecycle::Failure) -> Error {
+    if failure == lifecycle::Failure::PullClosed {
+        adapter_error(tl3_mergify::Error::PullRequestClosed)
+    } else if failure == lifecycle::Failure::ChecksPending {
+        Error::ChecksPending
+    } else {
+        Error::Invalid(failure.class())
+    }
+}
+
+fn lifecycle_head(current: bool) -> tl3_mergify::decide::Head {
+    if current {
+        tl3_mergify::decide::Head::Current
+    } else {
+        tl3_mergify::decide::Head::Other
     }
 }
 
@@ -217,173 +229,203 @@ impl Adapter {
         snapshot: Option<&Snapshot>,
     ) -> Result<Reconciliation> {
         let mut baseline = self.baseline(delivery)?;
-        if baseline
-            .as_ref()
-            .is_some_and(|attempt| matches!(attempt.requeue, Some(Requeue::Refused)))
-        {
-            self.retain_refused_command(delivery)?;
-            return Ok(Reconciliation::Found(Box::new(Completion::permanent(
-                "queue_command_refused",
-            ))));
-        }
-        let (state, mut observations) = self.read(delivery, snapshot)?;
-        let previously_confirmed =
-            matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
-        if state.state != QueueState::Merged && self.unresolved_human_hold(delivery, snapshot)? {
-            return Ok(Reconciliation::Pending);
-        }
-        if !previously_confirmed
-            && state.state != QueueState::Merged
-            && let Some(attempt) = baseline.as_mut()
-            && matches!(attempt.requeue, Some(Requeue::Sending))
-        {
-            let github = self.clients[&delivery.repository.installation].clone();
-            if self
-                .runtime
-                .block_on(Mergify::new(github).command_refusal(
-                    &full_name(&delivery.repository),
-                    enqueue(delivery)?.0,
-                    &delivery.key,
-                ))
-                .map_err(adapter_error)?
-                .is_some()
-            {
-                attempt.requeue = Some(Requeue::Refused);
-                self.retain_refused_command(delivery)?;
-                self.records.write(
-                    &self.records.path(&delivery.key).with_extension("intent"),
-                    &serde_json::to_vec(attempt)?,
-                )?;
-                return Ok(Reconciliation::Found(Box::new(Completion::permanent(
-                    "queue_command_refused",
-                ))));
-            }
-        }
-        if !previously_confirmed && self.reruns_pending(delivery)? {
-            return Ok(Reconciliation::Pending);
-        }
-        let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
-        if !current_head && state.state != QueueState::Merged && !previously_confirmed {
-            return Ok(Reconciliation::Found(Box::new(Completion {
-                diagnostic: None,
-                ack: Ack::Retryable,
-                failure_class: None,
-                observations,
-                progress: None,
-            })));
-        }
-        if current_head
-            && state.pull_request.merged_at.is_none()
-            && state.pull_request.mergeable == Some(false)
-        {
-            observations.push(Observation::Kernel(tl3_kernel::Event::Fact {
-                node: delivery.node(),
-                fact: tl3_kernel::Fact::Conflict,
-            }));
-            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
-                observations,
-            ))));
-        }
-        let active = matches!(state.state, QueueState::Queued | QueueState::ChecksRunning);
-        let terminal = matches!(
-            state.state,
-            QueueState::Dequeued
-                | QueueState::FailedCi
-                | QueueState::Conflict
-                | QueueState::DequeuedByPerson
-        );
-        let mut person_removed = false;
-        if baseline.is_some() || self.repaired_head(delivery, snapshot)? {
-            let github = &self.clients[&delivery.repository.installation];
-            let events = self.runtime.block_on(
-                github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
-            )?;
-            let mut person_observations = Vec::new();
-            for fact in person_facts(
-                &delivery.repository,
-                enqueue(delivery)?.0,
-                &events,
-                state.pull_request.merged_at.is_some(),
-            ) {
-                let event = match fact.evidence {
-                    Evidence::DequeuedByPerson { event } | Evidence::ClosedByPerson { event } => {
-                        event
+        let mut core = lifecycle::EnqueueState {
+            intent: baseline.as_ref().map(|attempt| lifecycle::Intent {
+                requeue: attempt.requeue,
+            }),
+            ..Default::default()
+        };
+        let mut event = lifecycle::QueueEvent::Begin;
+        let mut observed = None;
+        let mut read = None;
+        let mut observations = Vec::new();
+        let mut issue = None;
+        loop {
+            let (next, effects) = lifecycle::decide(core, event);
+            core = next;
+            let mut requested = None;
+            for effect in effects {
+                match effect {
+                    lifecycle::Effect::SaveRecovery => self.retain_refused_command(delivery)?,
+                    lifecycle::Effect::SaveIntent => {
+                        let attempt = baseline
+                            .as_mut()
+                            .ok_or(Error::Invalid("enqueue intent missing"))?;
+                        attempt.requeue = core.intent.and_then(|intent| intent.requeue);
+                        self.records.write(
+                            &self.records.path(&delivery.key).with_extension("intent"),
+                            &serde_json::to_vec(attempt)?,
+                        )?;
                     }
-                    _ => continue,
-                };
-                let fresh = if let Some(snapshot) = snapshot {
-                    fact.unresolved_hold(snapshot)?
-                } else {
-                    baseline
-                        .as_ref()
-                        .is_some_and(|attempt| event > attempt.last_event)
-                };
-                if fresh {
-                    person_observations.push(Observation::Queue(fact));
+                    lifecycle::Effect::Read(need) => requested = Some(need),
+                    lifecycle::Effect::Complete(result) => {
+                        return Ok(match result {
+                            lifecycle::Complete::Confirmed { progress, conflict } => {
+                                if conflict {
+                                    observations.push(Observation::Kernel(
+                                        tl3_kernel::Event::Fact {
+                                            node: delivery.node(),
+                                            fact: tl3_kernel::Fact::Conflict,
+                                        },
+                                    ));
+                                }
+                                let mut completion = Completion::confirmed(observations);
+                                if progress {
+                                    completion.progress = observed.as_ref().map(|state| {
+                                        crate::executor::ProgressToken::Mergify(Progress::from(
+                                            state,
+                                        ))
+                                    });
+                                }
+                                Reconciliation::Found(Box::new(completion))
+                            }
+                            lifecycle::Complete::Retryable => {
+                                Reconciliation::Found(Box::new(Completion {
+                                    diagnostic: None,
+                                    ack: Ack::Retryable,
+                                    failure_class: None,
+                                    observations,
+                                    progress: None,
+                                }))
+                            }
+                            lifecycle::Complete::Permanent(failure) => Reconciliation::Found(
+                                Box::new(Completion::permanent(failure.class())),
+                            ),
+                            lifecycle::Complete::Pending => Reconciliation::Pending,
+                            lifecycle::Complete::Absent => Reconciliation::Absent,
+                        });
+                    }
+                    _ => return Err(Error::Invalid("unexpected enqueue reconciliation effect")),
                 }
             }
-            person_removed = !person_observations.is_empty();
-            observations.extend(person_observations);
-        }
-        if previously_confirmed
-            || person_removed
-            || state.state == QueueState::Merged
-            || (current_head
-                && (active
-                    || (terminal
-                        && baseline.as_ref().is_some_and(|before| {
-                            before.requeue.is_none() && before.check_changed(&state.check)
-                        }))))
-        {
-            let mut completion = Completion::confirmed(observations);
-            completion.progress = Some(crate::executor::ProgressToken::Mergify(Progress::from(
-                &state,
-            )));
-            return Ok(Reconciliation::Found(Box::new(completion)));
-        }
-        let github = &self.clients[&delivery.repository.installation];
-        let (number, _) = enqueue(delivery)?;
-        let issue = self
-            .runtime
-            .block_on(github.issue(&full_name(&delivery.repository), number))?;
-        // A repaired head's eligible waiting check is not dequeue completion.
-        // Its bounded recovery is reconciled by repository/PR/head below.
-        if state.state == QueueState::Waiting
-            && issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
-            && (self.has_recovery(delivery)? || self.repaired_head(delivery, snapshot)?)
-        {
-            return Ok(Reconciliation::Pending);
-        }
-        // Without a durable intent this key has never reached the label write.
-        if baseline.is_none() {
-            return Ok(if self.dequeue_pending(delivery, &state, &issue)? {
-                Reconciliation::Pending
-            } else {
-                Reconciliation::Absent
-            });
-        }
-        if let Some(requeue) = baseline.as_ref().and_then(|attempt| attempt.requeue) {
-            return Ok(
-                if self.has_recovery(delivery)?
-                    || matches!(requeue, Requeue::Sending)
-                    || self.dequeue_pending(delivery, &state, &issue)?
-                {
-                    Reconciliation::Pending
-                } else {
-                    Reconciliation::Absent
-                },
-            );
-        }
-        if issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
-            || self
-                .records
-                .path(&delivery.key)
-                .with_extension("applied")
-                .exists()
-        {
-            Ok(Reconciliation::Pending)
-        } else {
-            Ok(Reconciliation::Absent)
+            match requested.ok_or(Error::Invalid("enqueue reconciliation needs a read"))? {
+                lifecycle::Need::Queue => {
+                    let (state, facts) = self.read(delivery, snapshot)?;
+                    observations = facts;
+                    core.confirmed =
+                        matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
+                    read = Some(lifecycle::QueueRead {
+                        head: lifecycle_head(state.pull_request.head.sha == enqueue(delivery)?.1),
+                        queue: state.state,
+                        merged: state.pull_request.merged_at.is_some(),
+                        conflicts: state.pull_request.mergeable == Some(false),
+                        held: state.state != QueueState::Merged
+                            && self.unresolved_human_hold(delivery, snapshot)?,
+                        check_changed: baseline
+                            .as_ref()
+                            .is_some_and(|before| before.check_changed(&state.check)),
+                        refusal: None,
+                        reruns_pending: None,
+                        person_removed: None,
+                        issue: None,
+                    });
+                    observed = Some(state);
+                }
+                lifecycle::Need::Refusal => {
+                    let github = self.clients[&delivery.repository.installation].clone();
+                    read.as_mut().unwrap().refusal = Some(
+                        self.runtime
+                            .block_on(Mergify::new(github).command_refusal(
+                                &full_name(&delivery.repository),
+                                enqueue(delivery)?.0,
+                                &delivery.key,
+                            ))
+                            .map_err(adapter_error)?
+                            .is_some(),
+                    );
+                }
+                lifecycle::Need::Reruns => {
+                    read.as_mut().unwrap().reruns_pending = Some(self.reruns_pending(delivery)?)
+                }
+                lifecycle::Need::Person => {
+                    let mut removed = false;
+                    if baseline.is_some() || self.repaired_head(delivery, snapshot)? {
+                        let events = self.runtime.block_on(
+                            self.clients[&delivery.repository.installation].issue_events(
+                                &full_name(&delivery.repository),
+                                enqueue(delivery)?.0,
+                            ),
+                        )?;
+                        for fact in person_facts(
+                            &delivery.repository,
+                            enqueue(delivery)?.0,
+                            &events,
+                            observed.as_ref().unwrap().pull_request.merged_at.is_some(),
+                        ) {
+                            let event = match fact.evidence {
+                                Evidence::DequeuedByPerson { event }
+                                | Evidence::ClosedByPerson { event } => event,
+                                _ => continue,
+                            };
+                            let fresh = if let Some(snapshot) = snapshot {
+                                fact.unresolved_hold(snapshot)?
+                            } else {
+                                baseline
+                                    .as_ref()
+                                    .is_some_and(|attempt| event > attempt.last_event)
+                            };
+                            if fresh {
+                                removed = true;
+                                observations.push(Observation::Queue(fact));
+                            }
+                        }
+                    }
+                    read.as_mut().unwrap().person_removed = Some(removed);
+                }
+                lifecycle::Need::Issue => {
+                    let current = self.runtime.block_on(
+                        self.clients[&delivery.repository.installation]
+                            .issue(&full_name(&delivery.repository), enqueue(delivery)?.0),
+                    )?;
+                    read.as_mut().unwrap().issue = Some(lifecycle::IssueRead {
+                        queue_label: current.labels.iter().any(|label| label.name == QUEUE_LABEL),
+                        recovery: None,
+                        requeue_recovery: None,
+                        repaired: None,
+                        dequeue_pending: None,
+                        applied: None,
+                    });
+                    issue = Some(current);
+                }
+                lifecycle::Need::RecoveryFile => {
+                    read.as_mut().unwrap().issue.as_mut().unwrap().recovery =
+                        Some(self.has_recovery(delivery)?)
+                }
+                lifecycle::Need::RequeueRecoveryFile => {
+                    read.as_mut()
+                        .unwrap()
+                        .issue
+                        .as_mut()
+                        .unwrap()
+                        .requeue_recovery = Some(self.has_recovery(delivery)?)
+                }
+                lifecycle::Need::RepairedHead => {
+                    read.as_mut().unwrap().issue.as_mut().unwrap().repaired =
+                        Some(self.repaired_head(delivery, snapshot)?)
+                }
+                lifecycle::Need::Dequeue => {
+                    read.as_mut()
+                        .unwrap()
+                        .issue
+                        .as_mut()
+                        .unwrap()
+                        .dequeue_pending = Some(self.dequeue_pending(
+                        delivery,
+                        observed.as_ref().unwrap(),
+                        issue.as_ref().unwrap(),
+                    )?);
+                }
+                lifecycle::Need::Applied => {
+                    read.as_mut().unwrap().issue.as_mut().unwrap().applied = Some(
+                        self.records
+                            .path(&delivery.key)
+                            .with_extension("applied")
+                            .exists(),
+                    )
+                }
+                _ => return Err(Error::Invalid("unexpected enqueue read request")),
+            }
+            event = lifecycle::QueueEvent::Reconcile(read.unwrap());
         }
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
@@ -409,16 +451,38 @@ impl Adapter {
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
         let issue = self.runtime.block_on(github.issue(&repo, number))?;
-        if self.dequeue_pending(delivery, &state, &issue)? {
-            return Err(Error::Invalid("Mergify dequeue is still finishing"));
-        }
-        self.rerun_head_checks(delivery, &state)?;
-        if !self
-            .runtime
-            .block_on(head_checks::read(&github, &repo, &state.pull_request))?
-            .ready
-        {
-            return Err(Error::ChecksPending);
+        let pending = self.dequeue_pending(delivery, &state, &issue)?;
+        let (_, gate) = lifecycle::decide(
+            lifecycle::EnqueueState::default(),
+            lifecycle::QueueEvent::ExecuteGate {
+                dequeue_pending: pending,
+                checks_ready: None,
+            },
+        );
+        for effect in gate {
+            match effect {
+                lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
+                lifecycle::Effect::Read(lifecycle::Need::HeadChecks) => {
+                    self.rerun_head_checks(delivery, &state)?;
+                    let ready = self
+                        .runtime
+                        .block_on(head_checks::read(&github, &repo, &state.pull_request))?
+                        .ready;
+                    let (_, gate) = lifecycle::decide(
+                        lifecycle::EnqueueState::default(),
+                        lifecycle::QueueEvent::ExecuteGate {
+                            dequeue_pending: false,
+                            checks_ready: Some(ready),
+                        },
+                    );
+                    for effect in gate {
+                        if let lifecycle::Effect::Error(failure) = effect {
+                            return Err(lifecycle_error(failure));
+                        }
+                    }
+                }
+                _ => return Err(Error::Invalid("unexpected enqueue execution gate")),
+            }
         }
         let attempt = match self.baseline(delivery)? {
             Some(attempt) => attempt,
@@ -438,26 +502,58 @@ impl Adapter {
                     .then_some(Requeue::Ready),
             },
         };
-        let path = self.records.path(&delivery.key).with_extension("intent");
-        self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
-        self.fence(delivery)?;
-        if attempt.requeue.is_some() {
-            if let Reconciliation::Found(completion) = self.queue_command(delivery, false)? {
-                return Ok(*completion);
-            }
-        } else {
-            match self
-                .runtime
-                .block_on(Mergify::new(github).queue(&repo, number, head))
-            {
-                Ok(()) => {}
-                Err(tl3_mergify::Error::HeadChanged) => {
+        let (prepared, effects) = lifecycle::decide(
+            lifecycle::EnqueueState {
+                intent: Some(lifecycle::Intent {
+                    requeue: attempt.requeue,
+                }),
+                ..Default::default()
+            },
+            lifecycle::QueueEvent::Prepare {
+                dequeue_pending: false,
+                checks_ready: true,
+                queue_label: issue.labels.iter().any(|label| label.name == QUEUE_LABEL),
+            },
+        );
+        let mut effects = std::collections::VecDeque::from(effects);
+        while let Some(effect) = effects.pop_front() {
+            match effect {
+                lifecycle::Effect::SaveIntent => {
+                    self.records.write(
+                        &self.records.path(&delivery.key).with_extension("intent"),
+                        &serde_json::to_vec(&attempt)?,
+                    )?;
+                    self.fence(delivery)?;
+                }
+                lifecycle::Effect::Read(lifecycle::Need::Command) => {
+                    if let Reconciliation::Found(completion) = self.queue_command(delivery, None)? {
+                        return Ok(*completion);
+                    }
+                }
+                lifecycle::Effect::Read(lifecycle::Need::LabelPull) => {
+                    let pull = self.runtime.block_on(github.pull_request(&repo, number))?;
+                    let (_, next) = lifecycle::decide(
+                        prepared,
+                        lifecycle::QueueEvent::LabelRead {
+                            head: lifecycle_head(pull.head.sha == head),
+                            open: pull.state == "open",
+                            merged: pull.merged_at.is_some(),
+                        },
+                    );
+                    effects.extend(next);
+                }
+                lifecycle::Effect::Write(lifecycle::Write::Label) => {
+                    self.runtime
+                        .block_on(github.add_label(&repo, number, QUEUE_LABEL))?;
+                }
+                lifecycle::Effect::Complete(lifecycle::Complete::Retryable) => {
                     return match self.completion(delivery, self.snapshot()?.as_ref())? {
                         Reconciliation::Found(completion) => Ok(*completion),
                         _ => Err(Error::Invalid("PR changed during enqueue")),
                     };
                 }
-                Err(error) => return Err(adapter_error(error)),
+                lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
+                _ => return Err(Error::Invalid("unexpected enqueue execution effect")),
             }
         }
         self.records.write(
@@ -519,7 +615,8 @@ impl Adapter {
                 state.state,
                 QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
             );
-        if !retry || state.dequeue_rule_concluded {
+        if !lifecycle::dequeue_pending(retry, state.dequeue_rule_concluded, false, None, None, None)
+        {
             return Ok(false);
         }
         if !issue.labels.iter().any(|label| label.name == "dequeued") {
@@ -535,21 +632,28 @@ impl Adapter {
                 .filter(|event| event.label.as_ref().is_some_and(|label| label.name == name))
                 .max_by_key(|event| event.id)
         };
-        // Mergify can leave the previous cycle's dequeued label after re-entry.
-        let fresh = label_event("dequeued").is_some_and(|dequeued| {
-            dequeued.event == "labeled"
-                && label_event("queued").map_or_else(
-                    || {
-                        state
-                            .check
-                            .as_ref()
-                            .and_then(|check| check.completed_at)
-                            .is_some_and(|finished| dequeued.created_at >= finished)
-                    },
-                    |queued| dequeued.id > queued.id,
-                )
-        });
-        Ok(!fresh)
+        Ok(lifecycle::dequeue_pending(
+            retry,
+            state.dequeue_rule_concluded,
+            true,
+            label_event("dequeued").map(|event| lifecycle::LabelEvent {
+                id: event.id,
+                labeled: event.event == "labeled",
+                at: tl3_mergify::decide::Time {
+                    secs: event.created_at.timestamp(),
+                    nanos: event.created_at.timestamp_subsec_nanos(),
+                },
+            }),
+            label_event("queued").map(|event| event.id),
+            state
+                .check
+                .as_ref()
+                .and_then(|check| check.completed_at)
+                .map(|time| tl3_mergify::decide::Time {
+                    secs: time.timestamp(),
+                    nanos: time.timestamp_subsec_nanos(),
+                }),
+        ))
     }
     fn snapshot(&self) -> Result<Option<Snapshot>> {
         Ok(self

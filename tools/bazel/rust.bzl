@@ -147,6 +147,8 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
     # CC-M1 reuses the recorded leaf I/O boundary from the shipped extraction test.
     "tests/mergify_execute_schedule.rs": ["tests/mergify_io/**"],
+    # The adapter reference shares the same pinned pre-extraction enqueue core.
+    "tests/mergify_io.rs": ["tests/mergify_execute_schedule/base-enqueue.rs.txt"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/crash_safety.rs": ["tests/crash/**"],
     "tests/github.rs": ["tests/support/**", "tests/fixtures/decisions/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
