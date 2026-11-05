@@ -751,10 +751,15 @@ impl GitHub {
             .filter(|c| self.owns_comment(c) && c.body.lines().any(|line| line == marker))
             .collect();
         matches.sort_by_key(|c| c.id);
-        for duplicate in matches.iter().skip(1) {
+        #[allow(unexpected_cfgs)]
+        mod marker_dedupe {
+            include!("marker_dedupe.rs");
+        }
+        let plan = marker_dedupe::plan(matches.len());
+        for duplicate in matches.iter().skip(plan.delete_from) {
             self.delete_comment(repo, duplicate.id).await?;
         }
-        Ok(matches.into_iter().next())
+        Ok(plan.keep.and_then(|index| matches.into_iter().nth(index)))
     }
 
     pub async fn edit_comment(

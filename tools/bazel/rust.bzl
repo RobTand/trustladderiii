@@ -380,3 +380,6 @@ def _crate_test(kind, package, name, source, harness, options):
             deps = options["deps"],
             gate_args = ["--gate-group=" + group] if group else [],
         )
+
+# CC-G: recorded HTTP schedules and verbatim pre-extraction client reference.
+_CONTROLLER_TEST_SOURCES["tests/github_schedule/main.rs"] = ["tests/github_schedule/legacy*", "tests/github_schedule/*.txt"]
