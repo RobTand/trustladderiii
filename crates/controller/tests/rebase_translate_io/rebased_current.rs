@@ -19,7 +19,15 @@ impl Shell<'_> {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
