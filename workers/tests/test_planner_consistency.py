@@ -717,10 +717,12 @@ def test_pb2710_ids_fit_even_when_clipping_markers_do_not():
 
 
 @pytest.mark.parametrize('defect', ['edit', 'missing_forced_selector'])
+@pytest.mark.parametrize('execution', ['runtime', 'without_rehearsals'])
 def test_pb2710_global_coverage_without_rehearsal_stays_terminal(
-        planner_request, coverage_case, monkeypatch, defect):
+        planner_request, coverage_case, monkeypatch, defect, execution):
     from planner_fixtures import PID_FORCING
     from tl3_workers import runtime
+    from tl3_workers.roles.planner import check_reply
 
     fixture, draft, fixed = coverage_case
     if defect == 'edit':
@@ -738,11 +740,15 @@ def test_pb2710_global_coverage_without_rehearsal_stays_terminal(
         fixed['checks'][0]['node_ids'] = [draft['checks'][1]['node_ids'][0]]
     for reply in (draft, fixed):
         reply['checks'][0]['forcing'] = copy.deepcopy(PID_FORCING)
-    model = planner_model(monkeypatch, draft, fixed)
-    events = []
-    runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1, 'Q55 refusal must prevent the coverage correction turn'
-    violations = events[-1]['reply']['violations']
+    if execution == 'runtime':
+        model = planner_model(monkeypatch, draft, fixed)
+        events = []
+        runtime.run(planner_request, events.append)
+        assert len(model.calls) == 1, 'Q55 refusal must prevent the coverage correction turn'
+        violations = events[-1]['reply']['violations']
+    else:
+        check_reply(planner_request['inputs'], draft)
+        violations = draft['violations']
     assert fixture['violation'].split('goal 3:')[1] in '\n'.join(violations)
     assert any('Q55 check lacks a matching forcing rehearsal receipt' in item for item in violations)
     assert 'Planner coverage correction attempts: 0.' in violations

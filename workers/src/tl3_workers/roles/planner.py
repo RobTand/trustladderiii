@@ -519,12 +519,14 @@ def check_reply(inputs, reply, *, rehearsals=None):
         # Substantive plan failures still reach the controller under Q54.
         proof_errors = (rehearsals.violations(inputs.get('base_sha'),
                         [check for check in reply['checks'] if valid_forcing(check)])
-                        if mismatch.local and rehearsals is not None else [])
+                        if (mismatch.local or missing_goals) and rehearsals is not None else [])
+        proof_unavailable = missing_goals and rehearsals is None and any(
+            valid_forcing(check) for check in reply['checks'])
         message_fits = (mismatch.repair_text is not None if missing_goals else
                         not mismatch.local or len(str(mismatch).encode()) <= REPAIR_MESSAGE_BYTES)
         if not message_fits:
             violations.append('Planner declarations exceed the existing correction message limit.')
-        if not violations and not proof_errors and inputs.get('repair_plan_consistency', False):
+        if not violations and not proof_errors and not proof_unavailable and inputs.get('repair_plan_consistency', False):
             if not missing_goals:
                 raise mismatch
             repair_error = mismatch
