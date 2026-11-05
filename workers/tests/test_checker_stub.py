@@ -1,11 +1,13 @@
 """#807: unit-test recordings reject unrecorded and out-of-order calls."""
 from concurrent.futures import ThreadPoolExecutor
+import errno
 import json
 import math
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 
 import pytest
@@ -13,10 +15,38 @@ from tl3_workers import reply_check
 from tl3_workers.reply_check import ReplyCheckInfrastructureError
 
 import checker_stub
+import conftest
 
 
 def recorded_case():
     return next((case, rows) for case, rows in checker_stub.cases().items() if len(rows) >= 2)
+
+
+@pytest.mark.parametrize("unavailable", ["absent", errno.EROFS, errno.EACCES])
+def test_checker_state_falls_back_to_pytest_scratch(tmp_path_factory, monkeypatch, unavailable):
+    memory = Path("/dev/shm")
+    is_dir = Path.is_dir
+    allocate = tempfile.TemporaryDirectory
+
+    def memory_exists(path):
+        return unavailable != "absent" if path == memory else is_dir(path)
+
+    def allocate_state(*args, **kwargs):
+        if Path(kwargs["dir"]) == memory:
+            raise OSError(unavailable, "injected unavailable shared memory")
+        return allocate(*args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", memory_exists)
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", allocate_state)
+    states = conftest.checker_state_directory.__wrapped__(tmp_path_factory)
+    try:
+        state = next(states)
+        assert state.parent == tmp_path_factory.getbasetemp()
+        (state / "cursor").write_text("1")
+        assert (state / "cursor").read_text() == "1"
+    finally:
+        states.close()
+    assert not state.exists()
 
 
 @pytest.mark.parametrize("published", [False, True])
