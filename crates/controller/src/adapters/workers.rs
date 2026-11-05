@@ -1070,6 +1070,16 @@ impl Supervisor {
         match result {
             Reconciliation::Found(completion) => {
                 if !resume_quota
+                    || snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "allowances" && row.id == delivery.key)
+                        .and_then(|row| row.value["last_quota_attempt"].as_i64())
+                        .is_some_and(|held| {
+                            previous
+                                .as_ref()
+                                .is_some_and(|(number, _)| i64::from(*number) > held)
+                        })
                     || !matches!(
                         completion.observations.as_slice(),
                         [Observation::Quota { .. }]
@@ -1217,6 +1227,22 @@ impl Executor for Supervisor {
         self.launch(delivery, true).map(Some)
     }
 
+    fn quota_probe_model(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<crate::looks::QuotaModel>> {
+        let role =
+            protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        let candidates = self.candidates(delivery, role, &mut store, &snapshot)?;
+        let model = candidates[0];
+        Ok(Some(crate::looks::QuotaModel {
+            model: model.name.clone(),
+            family: model.family.to_ascii_lowercase(),
+        }))
+    }
+
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
         let role =
             protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
@@ -1226,7 +1252,12 @@ impl Executor for Supervisor {
         // Waits recorded before Q53 name their model only in the attempt itself.
         // A recorded model whose reset covers the ending is the one it charged,
         // such as a postmortem's grade model (#759).
-        if !resets.values().any(|reset| *reset >= announced)
+        if snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "allowances" && row.id == delivery.key)
+            .is_none_or(|row| row.value["last_quota_model"].is_null())
+            && !resets.values().any(|reset| *reset >= announced)
             && let Some((_, attempt)) = latest(&self.root(&delivery.key))?
             && let Some(request) = read(&attempt.join("request.json"))?
             && let Some(model) = request["model"]["name"].as_str()

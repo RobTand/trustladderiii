@@ -301,6 +301,16 @@ pub struct Ingress {
     pub payload: Vec<u8>,
 }
 
+fn recorded_worker_ending(row: Row) -> Result<RecordedWorkerEnding> {
+    let facts: WorkerRunFacts = serde_json::from_value(row.get(2))?;
+    facts.validate()?;
+    Ok(RecordedWorkerEnding {
+        key: row.get(0),
+        attempt: row.get(1),
+        facts,
+    })
+}
+
 fn ingress_row(row: Row) -> Ingress {
     Ingress {
         sequence: row.get(0),
@@ -1517,6 +1527,20 @@ impl Store {
                 &[&key, &attempt],
             )?
             .is_some())
+    }
+
+    /// Q53 / #828: completion evidence is imported before worker ingress.
+    pub fn latest_worker_ending(&mut self, key: &str) -> Result<Option<RecordedWorkerEnding>> {
+        self.client.query_opt("SELECT run_key, attempt, facts FROM tl3_worker_runs WHERE run_key = $1 ORDER BY attempt DESC LIMIT 1", &[&key])?.map(recorded_worker_ending).transpose()
+    }
+
+    /// Q53 / #828: a late success remains evidence after its node moved on.
+    pub fn latest_worker_success(
+        &mut self,
+        node: &str,
+        model: &str,
+    ) -> Result<Option<RecordedWorkerEnding>> {
+        self.client.query_opt("SELECT run_key, attempt, facts FROM tl3_worker_runs WHERE node_id = $1 AND facts->>'model' = $2 AND facts->>'outcome' = 'succeeded' ORDER BY (facts->>'finished_ms')::bigint DESC NULLS LAST, attempt DESC LIMIT 1", &[&node, &model])?.map(recorded_worker_ending).transpose()
     }
 
     /// Import a worker-owned terminal record before retiring its attempt files.

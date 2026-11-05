@@ -15,6 +15,9 @@ const LADDER_OUT_MS: u64 = 30 * 60 * 1000;
 /// #759: the operations note's fixed, typed reason.
 const LADDER_OUT_REASON: &str = "model_ladder_unavailable";
 
+mod model_quota;
+pub use model_quota::QuotaModel;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AllowanceState {
     pub delivery: Delivery,
@@ -32,6 +35,14 @@ pub(crate) struct AllowanceState {
     last_quota_ms: Option<u64>,
     #[serde(default)]
     last_quota_model: Option<String>,
+    #[serde(default)]
+    last_quota_family: Option<String>,
+    #[serde(default)]
+    last_quota_finished_ms: Option<i64>,
+    #[serde(default)]
+    last_quota_attempt: Option<i64>,
+    #[serde(default)]
+    quota_probe_at_ms: Option<u64>,
     /// #759: since this step's first model ending with no model turn served
     /// since. A progress checkpoint clears it.
     #[serde(default)]
@@ -72,6 +83,10 @@ impl AllowanceState {
             quota_retry_ms: None,
             last_quota_ms: None,
             last_quota_model: None,
+            last_quota_family: None,
+            last_quota_finished_ms: None,
+            last_quota_attempt: None,
+            quota_probe_at_ms: None,
             unserved_since_ms: None,
             ladder_out_noticed: false,
             stopping: false,
@@ -454,15 +469,6 @@ impl Controller {
         self.allowances = allowances;
     }
 
-    /// Q53 / #828: configure model identities and the trusted reset horizon.
-    pub fn set_model_quota_policy(
-        &mut self,
-        _models: &tl3_config::Models,
-        _horizon: Duration,
-    ) -> Result<()> {
-        Ok(())
-    }
-
     pub(crate) fn retry_queue_observation_looks(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut commit = Commit::new(
@@ -730,7 +736,9 @@ impl Controller {
                 now,
             )?;
             state.quota_retry_ms = Some(resume);
-            if resume > now {
+            let retry = self.quota_retry(state, resume, now)?;
+            state.quota_retry_ms = Some(retry);
+            if retry > now {
                 // #759: every model this step may use is out. Say so once
                 // when that has lasted LADDER_OUT_MS, so an outage can't wait silently.
                 let bound = state
@@ -739,10 +747,10 @@ impl Controller {
                     .map(|since| since.saturating_add(LADDER_OUT_MS));
                 if bound.is_some_and(|bound| bound <= now) {
                     state.ladder_out_noticed = true;
-                    state.due_ms = Some(resume);
-                    return self.ladder_out_note(state, resume, now);
+                    state.due_ms = Some(retry);
+                    return self.ladder_out_note(state, retry, now);
                 }
-                state.due_ms = Some(bound.map_or(resume, |bound| bound.min(resume)));
+                state.due_ms = Some(bound.map_or(retry, |bound| bound.min(retry)));
                 self.save_allowance(state)?;
                 return Ok(());
             }
@@ -782,6 +790,7 @@ impl Controller {
             }
             state.quota_ms = None;
             state.quota_retry_ms = None;
+            state.quota_probe_at_ms = None;
             self.remove_hold(&state.delivery);
             self.save_allowance(state)?;
             return Ok(());
@@ -1513,34 +1522,30 @@ impl Controller {
         Ok(())
     }
 
-    pub(crate) fn clear_model_quota(
-        &self,
-        snapshot: &Snapshot,
-        model: Option<&str>,
-        commit: &mut Commit,
-    ) {
-        if let Some(row) = snapshot
-            .rows
-            .iter()
-            .find(|row| row.table == "model_quotas" && Some(row.id.as_str()) == model)
-        {
-            commit.rows.push(RowChange::Delete {
-                table: row.table.clone(),
-                id: row.id.clone(),
-            });
-        }
-    }
-
     pub(crate) fn quota_allowance(
-        &self,
+        &mut self,
         snapshot: &Snapshot,
         key: &str,
         reset_ms: u64,
         model: Option<&str>,
         commit: &mut Commit,
     ) -> Result<()> {
+        let ending = self.store.latest_worker_ending(key)?;
+        let finished_ms = ending
+            .as_ref()
+            .filter(|e| e.facts.outcome == "quota" && Some(e.facts.model.as_str()) == model)
+            .and_then(|e| e.facts.finished_ms);
+        let attempt = ending.as_ref().map(|e| e.attempt);
+        let family = model.and_then(|model| self.quota_family(model));
+        self.release_model_probe(snapshot, key, attempt, commit)?;
+        let cleared = model.zip(family.as_deref()).zip(finished_ms).is_some_and(
+            |((model, family), finished_ms)| {
+                model_quota::success_after(snapshot, model, family, finished_ms)
+            },
+        );
         // Q53: record the model's quota so every step's ladder can skip it.
         if let Some(model) = model
+            && !cleared
             && snapshot
                 .rows
                 .iter()
@@ -1551,7 +1556,7 @@ impl Controller {
             commit.rows.push(put(
                 "model_quotas",
                 model.into(),
-                json!({"reset_ms": reset_ms}),
+                json!({"reset_ms": reset_ms, "family": family, "finished_ms": finished_ms}),
             ));
         }
         if let Some(row) = snapshot
@@ -1561,15 +1566,20 @@ impl Controller {
         {
             let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             // A replayed ending of the same model never restarts its wait.
-            if state.last_quota_ms.is_some_and(|old| old >= reset_ms)
+            if (attempt.is_some() && state.last_quota_attempt == attempt
+                || attempt.is_none() && state.last_quota_ms.is_some_and(|old| old >= reset_ms))
                 && state.last_quota_model.as_deref() == model
             {
                 return Ok(());
             }
             state.last_quota_ms = Some(reset_ms);
             state.last_quota_model = model.map(str::to_owned);
+            state.last_quota_family = family;
+            state.last_quota_finished_ms = finished_ms;
+            state.last_quota_attempt = attempt;
             state.quota_ms = Some(reset_ms);
             state.quota_retry_ms = None;
+            state.quota_probe_at_ms = None;
             state.unserved_since_ms.get_or_insert(self.now_ms());
             // The look asks the adapter whether another model can take the step now.
             state.due_ms = Some(self.now_ms());
@@ -1918,13 +1928,15 @@ pub fn model_quota_holds(
             tl3_kernel::Role::Make => &models.maker,
             tl3_kernel::Role::Review => &models.reviewer,
         });
-        let family = ladder
-            .and_then(|ladder| {
-                ladder
-                    .iter()
-                    .find(|model| Some(&model.name) == state.last_quota_model.as_ref())
-            })
-            .map(|model| model.family.clone());
+        let family = state.last_quota_family.or_else(|| {
+            ladder
+                .and_then(|ladder| {
+                    ladder
+                        .iter()
+                        .find(|model| Some(&model.name) == state.last_quota_model.as_ref())
+                })
+                .map(|model| model.family.clone())
+        });
         holds.push(ModelQuotaHold {
             node: state.delivery.node(),
             key: state.delivery.key,

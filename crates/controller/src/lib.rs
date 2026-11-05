@@ -40,6 +40,7 @@ mod narrowing;
 mod notices;
 pub mod postmortem_reply;
 mod postmortems;
+mod quota_wake;
 #[cfg(all(test, loom))]
 #[path = "../tests/support/ownership.rs"]
 mod startup_ownership;
@@ -339,6 +340,8 @@ pub struct Controller {
     #[cfg(test)]
     refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
     allowances: tl3_config::Allowances,
+    quota_models: Option<tl3_config::Models>,
+    quota_horizon_ms: u64,
     /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
     postmortems: Option<PostmortemPace>,
     /// The revision tl3d started at: failed postmortem runs before it never
@@ -438,6 +441,8 @@ impl Controller {
             #[cfg(test)]
             refusal_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
+            quota_models: None,
+            quota_horizon_ms: 6 * 3_600_000,
             postmortems: None,
             postmortem_since: 0,
             priority_reserve: BTreeMap::new(),
@@ -966,6 +971,7 @@ impl Controller {
             key.to_owned()
         };
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
+        self.model_success_evidence(&snapshot, &observation, &mut commit)?;
         commit
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
@@ -984,6 +990,7 @@ impl Controller {
         index: usize,
         observation: &Observation,
     ) -> Result<()> {
+        self.model_success_evidence(snapshot, observation, commit)?;
         if let Observation::Queue(fact) = observation
             && fact.setup()
         {
@@ -3296,7 +3303,18 @@ impl Controller {
                         }));
                     }
                 };
-                self.clear_model_quota(snapshot, model.as_deref(), commit);
+                // Legacy quota rows have no ordering identity. Preserve their
+                // once-only reply consumption until fresh quota facts replace them.
+                if let Some(row) = snapshot.rows.iter().find(|row| {
+                    row.table == "model_quotas"
+                        && Some(row.id.as_str()) == model.as_deref()
+                        && row.value["finished_ms"].is_null()
+                }) {
+                    commit.rows.push(RowChange::Delete {
+                        table: row.table.clone(),
+                        id: row.id.clone(),
+                    });
+                }
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {

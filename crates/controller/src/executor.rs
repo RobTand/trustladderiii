@@ -467,6 +467,13 @@ pub trait Executor {
     fn quota_resume_ms(&mut self, _delivery: &Delivery, announced: u64, _now: u64) -> Result<u64> {
         Ok(announced)
     }
+    /// Q53 / #828: identity of the model a quota probe would actually launch.
+    fn quota_probe_model(
+        &mut self,
+        _delivery: &Delivery,
+    ) -> Result<Option<crate::looks::QuotaModel>> {
+        Ok(None)
+    }
     /// Success proves that the exact stalled attempt has ended.
     fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {
         Err(crate::Error::Invalid("adapter cannot stop a stalled run"))

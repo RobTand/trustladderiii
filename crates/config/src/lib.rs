@@ -312,6 +312,9 @@ pub struct Limits {
     /// past it fails with the `deadline` class.
     #[serde(default = "default_postmortem_deadline_secs")]
     pub postmortem_deadline_secs: u32,
+    /// Q53 / #828: hints farther out than this use one shared hourly probe.
+    #[serde(default = "default_model_quota_horizon_secs")]
+    pub model_quota_horizon_secs: u32,
 }
 
 impl Limits {
@@ -321,6 +324,10 @@ impl Limits {
             .get(&format!("P{}", priority?))
             .copied()
     }
+}
+
+fn default_model_quota_horizon_secs() -> u32 {
+    6 * 3600
 }
 
 fn default_agent_pool() -> u8 {

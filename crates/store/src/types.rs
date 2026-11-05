@@ -575,6 +575,14 @@ pub struct WorkerRunFacts {
     pub retro: Option<serde_json::Value>,
 }
 
+/// #828: authoritative worker ending, including its durable attempt identity.
+#[derive(Clone, Debug)]
+pub struct RecordedWorkerEnding {
+    pub key: String,
+    pub attempt: i64,
+    pub facts: WorkerRunFacts,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerBoundaryFailure {
