@@ -39,9 +39,43 @@ pub(crate) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
 }
 
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
+    map_reply_with_plan_check(role, reply, None)
+}
+
+pub(crate) fn map_reply_with_plan_check(
+    role: &str,
+    reply: &Value,
+    provenance: Option<&crate::contracts::plan_check::PlanCheckProvenance>,
+) -> Result<MappedReply> {
     let validator = validator(role, "reply")?;
     if !validator.is_valid(reply) {
         return Err(Error::Invalid("worker reply breaks role schema"));
+    }
+    if let Some(provenance) = provenance {
+        use crate::contracts::plan_check::ObjectionClass;
+        if role != "planner"
+            || provenance.objections.is_empty()
+            || provenance.objections.iter().any(|objection| {
+                objection.rule.trim().is_empty()
+                    || objection.items.is_empty()
+                    || objection.items.iter().any(|item| item.trim().is_empty())
+                    || objection.diagnostic.trim().is_empty()
+            })
+        {
+            return Err(Error::Invalid("invalid plan-check provenance"));
+        }
+        forecast(reply)?;
+        return Ok(MappedReply::Kernel(
+            if provenance
+                .objections
+                .iter()
+                .any(|objection| objection.class == ObjectionClass::Other)
+            {
+                Reply::PlanCheckRejected
+            } else {
+                Reply::PlanCheckNeedsSplit
+            },
+        ));
     }
     if role == "maker" {
         return Ok(match reply["kind"].as_str().unwrap() {

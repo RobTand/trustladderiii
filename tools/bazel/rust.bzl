@@ -55,12 +55,6 @@ _WAVE_B_STUB = {
 }
 
 _WAVE_B_ENTRIES = {
-    # judge (#822)
-    "judge": _WAVE_B_STUB,
-    # phase-fold (#822)
-    "phase-fold": _WAVE_B_STUB,
-    # finish-teardown (#822)
-    "finish-teardown": _WAVE_B_STUB,
     # summary-bound (#823)
     "summary-bound": {
         "srcs": ["tests/summary_bound.rs", "tests/summary_bound/reference.rs", "tests/summary_bound/conformance.rs"],
@@ -82,7 +76,13 @@ _WAVE_B_ENTRIES = {
         "tags": ["rust", "wave-b-selector-identity"],
     },
     # limits (S4)
-    "limits": _WAVE_B_STUB,
+    "limits": {
+        "srcs": ["tests/limits.rs"],
+        "crate_root": "tests/limits.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde_json"],
+        "data": ["//harness:core_vectors", "tests/fixtures/limits/delay.json"],
+        "tags": ["wave-b-plan-only", "rust"],
+    },
     # red-match (S4)
     "red-match": {
         "srcs": [":sources"],
@@ -423,6 +423,8 @@ def _crate_test(kind, package, name, source, harness, options):
         sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
         if source == "tests/proof_map.rs":
             sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
+        if native.package_name() == "crates/kernel" and source == "tests/random_walks.rs":
+            sources = sources + ["tests/measure_equivalence/reference.rs"]
         if native.package_name() == "crates/store":
             sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":

@@ -6,6 +6,9 @@
 use std::collections::BTreeSet;
 use tl3_kernel::*;
 
+#[path = "measure_equivalence/reference.rs"]
+mod measure_reference;
+
 struct Rng(u64);
 
 impl Rng {
@@ -83,7 +86,7 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
             } else {
                 n.generation
             };
-            let reply = match rng.below(18) {
+            let reply = match rng.below(20) {
                 0 => Reply::IngestDone {
                     size: rng.below(4) as u8,
                 },
@@ -119,6 +122,8 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
                 14 => Reply::RebaseClean { head },
                 15 => Reply::RebaseNeedsChanges,
                 16 => Reply::ReviewerOutOfRoom,
+                17 => Reply::PlanCheckRejected,
+                18 => Reply::PlanCheckNeedsSplit,
                 _ => Reply::RunFailed,
             };
             Event::Reply {
@@ -208,8 +213,10 @@ fn random_walks_keep_every_rule() {
                 random_event(&mut w, pool, &mut rng)
             };
             let witnessed = w.witness() == Some(event);
+            measure_reference::compare(&w);
             let before = w.measure();
             let (next, out, passes) = step_with_passes(w.clone(), event);
+            measure_reference::compare(&next);
             let size = next.nodes.len().min(4);
             passes_by_size[size] = passes_by_size[size].max(passes);
             // Every intermediate world is consistent, and each internal
@@ -309,8 +316,10 @@ fn the_witness_always_finishes_the_work() {
         }
         for _ in 0..2_000 {
             let Some(e) = w.witness() else { break };
+            measure_reference::compare(&w);
             let before = w.measure();
             w = step(w, e).0;
+            measure_reference::compare(&w);
             assert!(w.measure() < before);
         }
         assert!(

@@ -1,4 +1,4 @@
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_python//python:defs.bzl", "py_binary", native_py_test = "py_test")
 
 # gazelle:resolve py _pytest.assertion.rewrite @tl3_pip//pytest
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
@@ -316,4 +316,15 @@ tl3_py_test(
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
     ],
+)
+
+# #835: keep the native unittest entry point outside Gazelle's py_test mapping.
+native_py_test(
+    name = "test_limits_boundary",
+    size = "small",
+    timeout = "short",
+    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
+    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
+    main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
+    deps = ["//harness/src/tl3_harness"],
 )

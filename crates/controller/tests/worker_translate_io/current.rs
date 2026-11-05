@@ -46,6 +46,7 @@ impl Shell<'_> {
                 role,
                 mut reply,
                 model,
+                plan_check,
             } => {
                 use tl3_controller_core::translate_worker as worker;
                 let n = world
@@ -77,7 +78,11 @@ impl Shell<'_> {
                     _ => worker::Role::Unknown,
                 };
                 let valid_role = worker::valid_role(phase, worker_role);
-                let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                let mut mapped = match adapters::workers::protocol::map_reply_with_plan_check(
+                    &role,
+                    &reply,
+                    plan_check.as_ref(),
+                ) {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         return Ok(Some(Event::Reply {
@@ -104,7 +109,7 @@ impl Shell<'_> {
                 {
                     mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
                 }
-                if role == "planner" && reply["kind"] == "leaf" {
+                if role == "planner" && reply["kind"] == "leaf" && plan_check.is_none() {
                     let checks = reply["checks"]
                         .as_array()
                         .unwrap()
@@ -305,9 +310,11 @@ impl Shell<'_> {
                 }
                 let checkpoint = commit.rows.len();
                 if let Some(document) = document {
-                    commit
-                        .rows
-                        .push(put(document, node.0.to_string(), reply.clone()));
+                    let mut stored = reply.clone();
+                    if let Some(provenance) = plan_check {
+                        stored["plan_check"] = serde_json::to_value(provenance)?;
+                    }
+                    commit.rows.push(put(document, node.0.to_string(), stored));
                 }
                 if role == "ingest"
                     && reply["kind"] == "brief"
@@ -487,10 +494,15 @@ pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Obse
 // The current arm resolves `adapters::workers::reproducing` to the current
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared
-// shim spans the changed leaf. P2b-1 also gives protocol its own current copy
-// for the typed planner arm; protocol.rs remains the frozen reference.
+// shim spans the changed leaf. The plan-size leaf likewise has a separate current copy (#835).
 mod adapters {
-    pub use super::super::adapters::{prismabuild, results};
+    pub use super::super::adapters::results;
+    pub mod prismabuild {
+        use super::super::super::*;
+        pub use tl3_controller::adapters::prismabuild::*;
+        const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+        include!("plan-size-current.rs");
+    }
     pub mod workers {
         pub use super::super::super::adapters::workers::review;
         pub mod protocol {
