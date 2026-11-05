@@ -43,8 +43,12 @@ def checker_state_directory(tmp_path_factory):
         state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir="/dev/shm")
     except OSError:
         state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir=tmp_path_factory.getbasetemp())
-    with state as directory:
-        yield Path(directory)
+    # Keep fixture cleanup independent of action tests replacing TemporaryDirectory.cleanup.
+    cleanup = state.cleanup
+    try:
+        yield Path(state.name)
+    finally:
+        cleanup()
 
 
 @pytest.fixture(autouse=True)
