@@ -51,6 +51,7 @@ impl Drop for ReleaseOnDrop {
 struct Api {
     fence: PathBuf,
     posts: Arc<Mutex<Vec<(String, i64)>>>,
+    checks: Arc<Mutex<Vec<Value>>>,
     preflight: Option<(mpsc::SyncSender<()>, Arc<ReadGate>)>,
 }
 
@@ -62,11 +63,12 @@ impl Respond for Api {
             }));
         }
         if request.method == "GET" && request.url.path().ends_with("/check-runs") {
+            let checks = self.checks.lock().unwrap().clone();
             if let Some((entered, gate)) = &self.preflight {
                 entered.send(()).unwrap();
                 gate.wait();
             }
-            return ResponseTemplate::new(200).set_body_json(json!({"check_runs":[]}));
+            return ResponseTemplate::new(200).set_body_json(json!({"check_runs":checks}));
         }
         if request.method == "POST" && request.url.path() == "/repos/owner/sandbox/check-runs" {
             let mut check: Value = serde_json::from_slice(&request.body).unwrap();
@@ -75,9 +77,28 @@ impl Respond for Api {
                 .lock()
                 .unwrap()
                 .push((check["external_id"].as_str().unwrap().into(), durable));
-            check["id"] = json!(1);
+            let mut checks = self.checks.lock().unwrap();
+            check["id"] = json!(checks.len() + 1);
             check["app"] = json!({"id":123,"slug":"factory"});
+            checks.push(check.clone());
             return ResponseTemplate::new(201).set_body_json(check);
+        }
+        if request.method == "PATCH" {
+            let id: u64 = request
+                .url
+                .path()
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let patch: Value = serde_json::from_slice(&request.body).unwrap();
+            let mut checks = self.checks.lock().unwrap();
+            let check = checks.iter_mut().find(|check| check["id"] == id).unwrap();
+            for (key, value) in patch.as_object().unwrap() {
+                check[key] = value.clone();
+            }
+            return ResponseTemplate::new(200).set_body_json(check.clone());
         }
         panic!(
             "unexpected fixture route {} {}",
@@ -156,6 +177,7 @@ fn stale_approval_is_refused_when_the_fence_precedes_execute() {
             .respond_with(Api {
                 fence: root.path().join("epoch.fence"),
                 posts: posts.clone(),
+                checks: Arc::default(),
                 preflight: None,
             })
             .mount(&server),
@@ -170,12 +192,12 @@ fn stale_approval_is_refused_when_the_fence_precedes_execute() {
     assert!(posts.lock().unwrap().is_empty());
 }
 
-/// State-table Effects, epoch fence: an old executor must not issue HTTP after
-/// the durable fence advances. Concrete bound: two adapters, one paused GET,
-/// one successor repair and one possible POST. Channels impose the ordering;
-/// deadlines only abort a broken test schedule.
+/// State-table Effects :744,753,755 and Q27 approval retries: after ownership
+/// loss a zombie POST is a late landing. A current-owner reconciliation repairs
+/// every matching copy, without applying an old key to a replacement operation.
+/// Bound: two adapters, one paused GET, two POSTs and one final repair.
 #[test]
-fn fence_advance_during_preflight_refuses_the_old_approval_post() {
+fn zombie_approval_after_fence_advance_converges_by_original_key() {
     let runtime = runtime();
     let root = tempfile::tempdir().unwrap();
     let posts = Arc::new(Mutex::new(Vec::new()));
@@ -188,6 +210,7 @@ fn fence_advance_during_preflight_refuses_the_old_approval_post() {
     let api = Api {
         fence: root.path().join("epoch.fence"),
         posts: posts.clone(),
+        checks: Arc::default(),
         preflight: None,
     };
     runtime.block_on(
@@ -200,10 +223,12 @@ fn fence_advance_during_preflight_refuses_the_old_approval_post() {
     );
     runtime.block_on(
         Mock::given(|_: &Request| true)
-            .respond_with(api)
+            .respond_with(api.clone())
             .mount(&current_server),
     );
     let mut current = adapter(&current_server.uri(), root.path(), 2);
+    let mut retry = approval(1);
+    retry.epoch = 2;
     let old_uri = old_server.uri();
     let old_root = root.path().to_owned();
     let worker = std::thread::spawn(move || adapter(&old_uri, &old_root, 1).execute(&approval(1)));
@@ -211,16 +236,51 @@ fn fence_advance_during_preflight_refuses_the_old_approval_post() {
     let fence = root.path().join("epoch.fence");
     assert_eq!(fs::read(&fence).unwrap(), b"1");
     assert!(matches!(
-        current.repair_approval(&approval(2)).unwrap().0,
+        current.repair_approval(&retry).unwrap().0,
         Reconciliation::Pending
     ));
     assert_eq!(fs::read(&fence).unwrap(), b"2");
+    // The adapter boundary models an explicitly authorized retry of the same key.
+    assert_eq!(
+        current.execute(&retry).unwrap().ack,
+        tl3_kernel::Ack::Confirmed
+    );
     gate.release();
     let result = worker.join().unwrap();
-    let observed = posts.lock().unwrap();
-    assert!(
-        observed.is_empty(),
-        "old epoch 1 issued POST after durable fence 2: {observed:?}"
+    assert_eq!(result.unwrap().ack, tl3_kernel::Ack::Confirmed);
+    assert_eq!(posts.lock().unwrap().len(), 2);
+    assert!(posts.lock().unwrap().iter().all(|(_, epoch)| *epoch == 2));
+    // Force repair to exercise PATCH rather than merely observing equal POSTs.
+    let expected = {
+        let mut checks = api.checks.lock().unwrap();
+        let expected = checks[0]["output"].clone();
+        checks[1]["conclusion"] = json!("failure");
+        checks[1]["output"] = json!({"title":"stale", "summary":"stale", "text":"stale"});
+        let mut replacement = checks[1].clone();
+        replacement["id"] = json!(3);
+        replacement["external_id"] = json!(format!("{}:{}", approval(2).key, "a".repeat(40)));
+        checks.push(replacement);
+        expected
+    };
+    let (repaired, copies) = current.repair_approval(&retry).unwrap();
+    assert_eq!(copies, Some(2));
+    let Reconciliation::Found(completion) = repaired else {
+        panic!("late approval was not reconciled");
+    };
+    assert_eq!(completion.ack, tl3_kernel::Ack::Confirmed);
+    assert!(completion.observations.is_empty());
+    let checks = api.checks.lock().unwrap();
+    for check in &checks[..2] {
+        assert_eq!(check["status"], "completed");
+        assert_eq!(check["conclusion"], "success");
+        assert_eq!(check["output"], expected);
+        assert_eq!(
+            check["external_id"],
+            format!("{}:{}", retry.key, "a".repeat(40))
+        );
+    }
+    assert_eq!(
+        checks[2]["conclusion"], "failure",
+        "repair crossed effect keys"
     );
-    assert!(result.is_err(), "the old executor must report fencing");
 }
