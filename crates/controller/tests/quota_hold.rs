@@ -400,7 +400,10 @@ fn legacy_restart_restores_the_earliest_ladder_deadline() {
     const EARLIER: u64 = RESET - 86_400_000;
     for maintenance in [false, true] {
         let mut f = Fixture::with_earlier_rung(true);
-        let key = f.held(false);
+        f.intake(2662);
+        f.until(|f| f.hold().is_some());
+        let key = f.hold().unwrap().0;
+        f.controller.look_due().unwrap();
         f.until(|f| {
             f.hold()
                 .is_some_and(|(_, hold)| hold["last_quota_model"] == "alternate-model")
