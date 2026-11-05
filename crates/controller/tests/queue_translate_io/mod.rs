@@ -12,6 +12,7 @@ mod current;
 mod io;
 mod properties;
 mod reference;
+mod reference_core;
 
 pub mod findings {
     pub use tl3_controller::findings::*;
