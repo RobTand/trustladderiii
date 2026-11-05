@@ -752,3 +752,16 @@ def test_t842_loader_exceptions_do_not_apply_to_unrelated_support(source):
 
     with pytest.raises(model.ProofRefusal, match='dynamic namespace'):
         validate_support(source, 'support.py')
+
+
+@pytest.mark.parametrize('case', json.loads(
+    (Path(__file__).parent / 'fixtures/subject_observer/review_842.json').read_text()),
+    ids=lambda case: case['finding'])
+def test_t842_review_counterexamples_refuse_before_execution(repository, case):
+    # #842 review / #645: assembly must refuse even when a forged proof would pass.
+    check = Check(case['finding'], Kind.DEMONSTRATING, tuple(case['tests']),
+                  proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'Proof assembly refused' in results[0].tests[0].message, results
+    assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
