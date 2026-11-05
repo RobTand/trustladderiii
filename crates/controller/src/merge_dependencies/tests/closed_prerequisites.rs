@@ -282,3 +282,18 @@ fn shared_prerequisite_has_one_startup_read_and_no_look_polling() {
     c.look_now().unwrap();
     assert_eq!(reads.get(), 1, "looks must never poll prerequisites");
 }
+
+/// #839 / Q27: a pre-deploy Abandoned kernel edge must not remain terminal.
+#[test]
+fn startup_reconciles_legacy_abandoned_edge_without_restart_command() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_legacy");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761]);
+    let target = c.world().unwrap().dependencies()[0].target;
+    event(&mut c, Event::Fact { node: waiter, fact: Fact::Dependency { target, status: DependencyStatus::Abandoned } });
+    set_issue(&repo, 2761, "closed", Some("not_planned"));
+    let mut c = reopen(&repo, c, &settings);
+    assert_eq!(c.world().unwrap().dependencies()[0].status, DependencyStatus::Delivered);
+    assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase, Phase::Planning { must_split: false });
+}
