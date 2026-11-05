@@ -12,6 +12,8 @@ pub(super) type World = tl3_kernel::World;
 #[derive(Clone, Debug)]
 pub(super) struct Step {
     pub conflict: bool,
+    pub passthrough: Option<u8>,
+    pub request: Option<Value>,
     pub present: bool,
     pub phase: u8,
     pub current: u64,
@@ -24,6 +26,10 @@ impl Default for Step {
     fn default() -> Self {
         Self {
             conflict: true,
+            passthrough: None,
+            request: Some(
+                json!({"repo":{"owner":"Owner","name":"Repo","installation":1},"issue":1,"issue_id":1}),
+            ),
             present: true,
             phase: 0,
             current: 7,
@@ -106,6 +112,7 @@ pub(super) struct Controller {
     pub(super) store: Store,
 }
 pub(super) struct Store;
+#[derive(Clone, Copy)]
 pub(super) struct InternId(i64);
 impl InternId {
     pub(super) fn get(&self) -> i64 {
@@ -113,6 +120,20 @@ impl InternId {
     }
 }
 impl Store {
+    pub(super) fn intern_repo(&mut self, owner: &str, name: &str) -> Result<InternId> {
+        if owner.is_empty() || name.is_empty() {
+            return Err(Error::Store(tl3_store::Error::Invalid(
+                "intern scope and value must be nonempty",
+            )));
+        }
+        self.intern_commit(
+            &format!("repo:{}", owner.to_ascii_lowercase()),
+            &name.to_ascii_lowercase(),
+        )
+    }
+    pub(super) fn intern_path(&mut self, repo: InternId, path: &str) -> Result<InternId> {
+        self.intern_commit(&format!("path:{}", repo.get()), path)
+    }
     pub(super) fn intern_commit(&mut self, scope: &str, sha: &str) -> Result<InternId> {
         let failed = with(|r| {
             let failed = r
@@ -254,7 +275,78 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
                 node.generation = step.current;
                 world.nodes.push(node);
             }
-            let observation = if step.conflict {
+            let snapshot = tl3_store::Snapshot {
+                revision: tl3_store::Revision::ZERO,
+                epoch: tl3_store::Epoch::ZERO,
+                rows: step
+                    .request
+                    .as_ref()
+                    .map(|v| {
+                        vec![tl3_store::WorldRow {
+                            table: "requests".into(),
+                            id: step.node.to_string(),
+                            value: v.clone(),
+                            version: tl3_store::Revision::ZERO,
+                            arrival: 0,
+                        }]
+                    })
+                    .unwrap_or_default(),
+                pending_effects: vec![],
+                credit: vec![],
+                interned: vec![],
+            };
+            let observation = if let Some(kind) = step.passthrough {
+                match kind {
+                    0 => Observation::ScratchSaved {
+                        node: NodeId(step.node),
+                        reference: step.sha.clone(),
+                    },
+                    1 => Observation::ScratchPruned {
+                        reference: step.sha.clone(),
+                    },
+                    2 => Observation::TraceLogsCapped {
+                        evicted: step.observed,
+                    },
+                    3 => Observation::Kernel(if step.conflict {
+                        Event::Fact {
+                            node: NodeId(step.node),
+                            fact: Fact::Conflict,
+                        }
+                    } else {
+                        Event::Command {
+                            node: NodeId(step.node),
+                            id: 0,
+                            command: tl3_kernel::Command::Stop,
+                        }
+                    }),
+                    4 => Observation::CiFailed {
+                        node: NodeId(step.node),
+                        infra: step.conflict,
+                        checks: vec![],
+                    },
+                    5 => Observation::Made {
+                        node: NodeId(step.node),
+                        generation: step.observed,
+                        sha: step.sha.clone(),
+                    },
+                    6 => Observation::Reviewed {
+                        node: NodeId(step.node),
+                        generation: step.observed,
+                        sha: step.sha.clone(),
+                    },
+                    7 => Observation::Merged {
+                        node: NodeId(step.node),
+                        sha: step.sha.clone(),
+                        checks_passed: step.conflict,
+                    },
+                    _ => Observation::Plan {
+                        node: NodeId(step.node),
+                        generation: step.observed,
+                        paths: step.files.clone(),
+                        fits: step.conflict,
+                    },
+                }
+            } else if step.conflict {
                 Observation::RebaseConflict {
                     node: NodeId(step.node),
                     generation: step.observed,
@@ -276,7 +368,38 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
                 (false, false) => rebased_reference::translate,
                 (true, false) => rebased_current::translate,
             };
-            match translate(&mut controller, &world, observation, &mut commit) {
+            let translated = if step.passthrough.is_some() {
+                if new {
+                    pass_current::translate(
+                        &mut controller,
+                        &snapshot,
+                        &mut world,
+                        observation,
+                        &mut commit,
+                    )
+                } else {
+                    pass_reference::translate(
+                        &mut controller,
+                        &snapshot,
+                        &mut world,
+                        observation,
+                        &mut commit,
+                    )
+                }
+            } else {
+                translate(&mut controller, &world, observation, &mut commit)
+            };
+            if let Ok(Some(Event::Reply {
+                reply: Reply::PlanLeaf { footprint, .. },
+                ..
+            })) = &translated
+            {
+                call(
+                    "world.footprint",
+                    json!(world.files(*footprint).unwrap().collect::<Vec<_>>()),
+                );
+            }
+            match translated {
                 Ok(event) => {
                     call("translation.result", json!(event));
                     match persist() {
