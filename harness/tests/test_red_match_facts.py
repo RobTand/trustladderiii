@@ -82,7 +82,7 @@ def extra_cases():
     yield 'multiple-boundaries', 'assert False, "first\\nassert embedded\\nassert again"', 'first', None
     yield 'manual-boundary', 'raise AssertionError("first\\n  second\\nassert manual")', 'first', None
     yield 'empty-explicit-message', 'assert False, ""', '', None
-    yield 'embedded-indentation', 'assert False, "first\\n  second\\n    third"', 'first\nsecond\n  third', None
+    yield 'embedded-indentation', 'assert False, "first\\n one\\n  second\\n   three\\n    third"', 'first\n one\nsecond\n three\n  third', None
     yield 'message-with-bad-tokens', 'raise AssertionError("assert (")', 'assert (', None
     yield 'manual-indentation', 'raise AssertionError("first\\n  second")', 'first\n  second', None
     yield 'surrogate-message', 'raise AssertionError("\\ud800")', '\ud800', None

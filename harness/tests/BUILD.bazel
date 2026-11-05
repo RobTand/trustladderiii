@@ -309,8 +309,8 @@ tl3_py_test(
 
 tl3_py_test(
     name = "test_red_match_facts",
-    data = ["//crates/harness-core:tests/fixtures/red_match.json"],
     srcs = ["test_red_match_facts.py"],
+    data = ["//crates/harness-core:tests/fixtures/red_match.json"],
     deps = [
         ":conftest",
         "//harness/src/tl3_harness",
