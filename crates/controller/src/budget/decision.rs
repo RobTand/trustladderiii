@@ -3,15 +3,8 @@
 #[cfg(kani)]
 use std::convert::TryFrom;
 
-/// Q4: the fit limit is exclusive.
-pub fn fits(size: u64, limit: u64) -> bool {
-    size < limit
-}
-
-/// #698/#718: counters never wrap and remaining allowance cannot be negative.
-pub fn remaining(used: u64, allowed: u64) -> u64 {
-    allowed.saturating_sub(used)
-}
+mod limits;
+pub use limits::{Exhaustion, Run, compacted, exhaustion, finalizing, fits, remaining};
 
 #[path = "cutoff.rs"]
 mod threshold;
@@ -32,84 +25,9 @@ pub fn context(estimate: u64, last_input: u64, last_estimate: Option<i64>) -> Op
     }
 }
 
-/// #698: ineffective compaction must be reported, never counted as freed room.
-pub fn compacted(before: u64, after: u64) -> bool {
-    after < before
-}
-
 /// #718: unfinished mandatory verification cannot be a successful maker reply.
 pub fn reject_done(done: bool, unfinished: bool) -> bool {
     done && unfinished
-}
-
-/// #698/#718: finalization reserves are verification-only and survive recovery.
-pub fn finalizing(
-    maker: bool,
-    turns: u64,
-    no_progress: u64,
-    allowed: u64,
-    window: u64,
-    reserve: u64,
-) -> bool {
-    maker
-        && (turns.saturating_add(reserve.min(allowed)) >= allowed
-            || (window != 0 && no_progress.saturating_add(reserve.min(allowed)) >= window))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
-pub enum Exhaustion {
-    Backstop,
-    ToolTurns,
-    NoProgress,
-    ContextTokens,
-    InputTokens,
-}
-
-/// State-table execution feasibility (#614/#692): ordered, distinct limits.
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
-pub struct Run {
-    pub maker: bool,
-    pub turns: u64,
-    pub allowed: u64,
-    pub stalled: bool,
-    pub context_full: bool,
-    pub spent: u64,
-    pub predicted: u64,
-    pub reserve: u64,
-    pub input_limit: u64,
-}
-
-pub fn exhaustion(run: Run) -> Option<Exhaustion> {
-    let Run {
-        maker,
-        turns,
-        allowed,
-        stalled,
-        context_full,
-        spent,
-        predicted,
-        reserve,
-        input_limit,
-    } = run;
-    if turns >= allowed {
-        Some(if maker {
-            Exhaustion::Backstop
-        } else {
-            Exhaustion::ToolTurns
-        })
-    } else if stalled {
-        Some(Exhaustion::NoProgress)
-    } else if context_full {
-        Some(Exhaustion::ContextTokens)
-    } else if u128::from(spent) + u128::from(predicted) + u128::from(reserve)
-        > u128::from(input_limit)
-    {
-        Some(Exhaustion::InputTokens)
-    } else {
-        None
-    }
 }
 
 /// Nonnegative IEEE-754 values, decoded at the wire boundary. Integer operations
