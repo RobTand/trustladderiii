@@ -35,5 +35,5 @@ pub fn covers(chosen: &[u8], subject: &[u8]) -> bool {
     chosen.len() == subject.len()
         || subject.len() - chosen.len() >= 2
             && subject[chosen.len()] == b':'
-            && subject[chosen.len() + 1] != b':'
+            && subject[chosen.len() + 1] == b':'
 }
