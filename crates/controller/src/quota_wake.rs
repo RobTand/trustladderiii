@@ -7,5 +7,5 @@ use vstd::prelude::SpecOrd;
     clears == (same_model && same_family && success_ms > quota_ms),
 ))]
 pub fn clears_hold(same_model: bool, same_family: bool, success_ms: i64, quota_ms: i64) -> bool {
-    same_model && same_family && success_ms > quota_ms
+    same_model && same_family && success_ms >= quota_ms
 }
