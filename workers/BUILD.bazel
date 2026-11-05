@@ -15,3 +15,13 @@ filegroup(
         "//workers/src:runtime_files",
     ],
 )
+
+# #754/#807: tokenizer parity reads the offline loader, not the agent stack.
+filegroup(
+    name = "tokenizer_oracle_files",
+    srcs = [
+        "pyproject.toml",
+        "uv.lock",
+        "//workers/src:offline_tokenizer_source",
+    ],
+)

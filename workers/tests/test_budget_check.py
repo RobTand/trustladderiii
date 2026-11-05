@@ -67,3 +67,11 @@ def test_budget_uses_the_shared_reply_validator_transport(monkeypatch):
     monkeypatch.setattr(subprocess, "run", separate)
     assert budget_check.check("compaction", before=10, after=2) is True
     assert observed == [(["check-budget"], {"kind": "compaction", "before": 10, "after": 2}, "budget")]
+
+
+def test_worker_unit_tests_do_not_have_the_controller_binary():
+    """#807: unit-test orchestration must not pull in controller adapters."""
+    import os
+    from pathlib import Path
+    root = Path(os.environ["TEST_SRCDIR"]) / "_main"
+    assert not (root / "crates/controller/tl3").exists()

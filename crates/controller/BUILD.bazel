@@ -23,6 +23,7 @@ tl3_crate(
         "tl3d",
     ],
     examples = {
+        "checker-vectors": "examples/checker-vectors.rs",
         "pb_trial": "examples/pb_trial.rs",
         "tl3-deploy": "//deploy/dl380g10:helper.rs",
     },
