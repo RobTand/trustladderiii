@@ -38,12 +38,12 @@ impl Executor for Fake {
     fn prerequisite(
         &mut self,
         repository: &crate::Repository,
-        _kind: tl3_kernel::PrerequisiteKind,
+        kind: tl3_kernel::PrerequisiteKind,
         number: u64,
     ) -> Result<tl3_kernel::DependencyStatus> {
-        Ok(crate::merge_dependencies::issue_status(
-            &self.issue(repository, number)?,
-        ))
+        let issue = self.issue(repository, number)?;
+        crate::input_resources::validate(repository, kind, &issue)?;
+        Ok(crate::merge_dependencies::issue_status(&issue))
     }
     fn issue(&mut self, _repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
         let bytes = std::fs::read(fake_issue_path(&self.1, number))?;
@@ -330,12 +330,34 @@ impl Adapter {
     fn restart(&mut self, delivery: &Delivery) -> Result<Completion> {
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        let mut issue = self
+            .runtime
+            .block_on(client.issue(&repo, delivery.issue))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::prerequisite(
+                        &delivery.repository,
+                        tl3_kernel::PrerequisiteKind::Issue,
+                        delivery.issue,
+                    ),
+                    delivery.repository.installation,
+                )
+            })?;
         if issue.state == "closed" {
             let app = format!("{}[bot]", client.app_slug());
             let events = self
                 .runtime
-                .block_on(client.issue_events(&repo, delivery.issue))?;
+                .block_on(client.issue_events(&repo, delivery.issue))
+                .map_err(|error| {
+                    crate::input_resources::github(
+                        error,
+                        crate::input_resources::Resource::GithubEndpoint {
+                            path: format!("repos/{repo}/issues/{}/events", delivery.issue),
+                        },
+                        delivery.repository.installation,
+                    )
+                })?;
             if events
                 .iter()
                 .rev()
@@ -401,19 +423,28 @@ impl Executor for Adapter {
         number: u64,
     ) -> Result<tl3_kernel::DependencyStatus> {
         use tl3_kernel::{DependencyStatus, PrerequisiteKind};
+        let client = self
+            .clients
+            .get(&repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", repository.owner, repository.name);
+        let resource = crate::input_resources::Resource::prerequisite(repository, kind, number);
+        let issue = self
+            .runtime
+            .block_on(client.issue(&repo, number))
+            .map_err(|error| {
+                crate::input_resources::github(error, resource.clone(), repository.installation)
+            })?;
+        crate::input_resources::validate(repository, kind, &issue)?;
         match kind {
-            PrerequisiteKind::Issue => Ok(crate::merge_dependencies::issue_status(
-                &self.issue(repository, number)?,
-            )),
+            PrerequisiteKind::Issue => Ok(crate::merge_dependencies::issue_status(&issue)),
             PrerequisiteKind::PullRequest => {
-                let client = self
-                    .clients
-                    .get(&repository.installation)
-                    .ok_or(Error::Invalid("missing GitHub installation client"))?;
-                let pr = self.runtime.block_on(
-                    client
-                        .pull_request(&format!("{}/{}", repository.owner, repository.name), number),
-                )?;
+                let pr = self
+                    .runtime
+                    .block_on(client.pull_request(&repo, number))
+                    .map_err(|error| {
+                        crate::input_resources::github(error, resource, repository.installation)
+                    })?;
                 Ok(if pr.merged_at.is_some() {
                     DependencyStatus::Delivered
                 } else {
@@ -429,7 +460,19 @@ impl Executor for Adapter {
             .cloned()
             .ok_or(Error::Invalid("missing GitHub installation client"))?;
         let repo = format!("{}/{}", repository.owner, repository.name);
-        Ok(self.runtime.block_on(client.issue(&repo, number))?)
+        self.runtime
+            .block_on(client.issue(&repo, number))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::prerequisite(
+                        repository,
+                        tl3_kernel::PrerequisiteKind::Issue,
+                        number,
+                    ),
+                    repository.installation,
+                )
+            })
     }
     fn input_incident(
         &mut self,
@@ -465,7 +508,7 @@ impl Executor for Adapter {
         policy.own_issue = Some(notice.target.issue);
         let input = WriteRequest {
             kind: MessageKind::Note,
-            facts: json!({"issue_title":notice.title, "request":notice.title, "change":notice.summary}),
+            facts: json!({"issue_title":notice.title, "request":notice.title, "change":notice.summary,"input_resource_failure":notice.resource_failure}),
             violations: vec![],
             request: None,
         };
@@ -509,7 +552,19 @@ impl Executor for Adapter {
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        self.runtime
+            .block_on(client.issue(&repo, delivery.issue))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::prerequisite(
+                        &delivery.repository,
+                        tl3_kernel::PrerequisiteKind::Issue,
+                        delivery.issue,
+                    ),
+                    delivery.repository.installation,
+                )
+            })?;
         Ok(true)
     }
 
@@ -813,6 +868,14 @@ pub fn writer_input(
     {
         input.facts["worker_input_failure"] = failure.clone();
     }
+    if let Some(failure) = delivery
+        .question_context
+        .as_ref()
+        .and_then(|context| context.get("input_resource_failure"))
+        .filter(|value| !value.is_null())
+    {
+        input.facts["input_resource_failure"] = failure.clone();
+    }
     // #427: the draft is written for this delivery's request.
     input.request = Some(super::workers::writer::WriteFor {
         node: delivery.node().0,
@@ -1111,7 +1174,20 @@ impl Adapter {
                         .ok_or(Error::Invalid("incident request link missing"))?,
                 )?
             } else {
-                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                let issue = self
+                    .runtime
+                    .block_on(client.issue(&repo, delivery.issue))
+                    .map_err(|error| {
+                        crate::input_resources::github(
+                            error,
+                            crate::input_resources::Resource::prerequisite(
+                                &delivery.repository,
+                                tl3_kernel::PrerequisiteKind::Issue,
+                                delivery.issue,
+                            ),
+                            delivery.repository.installation,
+                        )
+                    })?;
                 policy.request_title = Some(issue.title.clone());
                 policy.request_body = issue.body.clone().unwrap_or_default();
                 writer_input(
