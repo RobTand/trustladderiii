@@ -314,6 +314,10 @@ fn review_symptom_run_containers_match_python() {
         r#"
 for value in [None, True, 1, 1.0, '', 'x', {}, {'run': 1}, [], [None]]:
     compare(oracle.log_input({**oracle.completed(), 'declared_symptom': oracle.SYMPTOM, 'symptom_runs': value}))
+for record in [{}, {'run': 0}, {'run': 0, 'sha256': 'bad'}]:
+    summary = {**oracle.completed(), 'declared_symptom': oracle.SYMPTOM, 'symptom_runs': [None]}
+    raw = oracle.PREFIX + json.dumps(summary) + chr(10) + 'TL3_SYMPTOM_RUN ' + json.dumps(record) + chr(10)
+    compare({'ending': oracle.ending(raw.encode()), 'log': raw})
 "#,
     );
 }
