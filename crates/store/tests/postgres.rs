@@ -35,6 +35,10 @@ fn main() {
             dispatch_legacy_migration_is_bounded,
         ),
         ("worker_completion_facts", worker_completion_facts),
+        (
+            "worker_identity_retention_is_bounded",
+            worker_identity_retention_is_bounded,
+        ),
         ("review_fixes_worker_document", review_fixes_worker_document),
         (
             "atomic_commit_and_idempotency",
@@ -3224,4 +3228,74 @@ fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
     assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
     assert!(!store.migrate_dispatch_evidence().unwrap());
     assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
+}
+
+/// Q53 / #828: retain at most 65,536 recent identity records; lost identity is unknown.
+fn worker_identity_retention_is_bounded(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let facts = WorkerRunFacts {
+        started_ms: 100,
+        finished_ms: Some(200),
+        outcome: "succeeded".into(),
+        model: "fixture-model".into(),
+        release: None,
+        input_tokens: None,
+        cached_tokens: None,
+        usage_complete: false,
+        output_tokens: None,
+        trace_id: None,
+        session_id: None,
+        failure: None,
+        retro: None,
+        prismabuild: vec![],
+    };
+    let mut client = raw(settings);
+    // Full records exercise the real SQL retention boundary without 65k client round trips.
+    client.execute("INSERT INTO tl3_worker_runs (run_key, node_id, attempt, role, facts) SELECT 'retained-' || i, '0', 0, 'audit', $1 FROM generate_series(1, 65536) i", &[&serde_json::to_value(&facts).unwrap()]).unwrap();
+    client.batch_execute("INSERT INTO tl3_worker_run_models (run_key, attempt, model, family) SELECT 'retained-' || i, 0, 'fixture-model', 'fixture-family' FROM generate_series(1, 65536) i").unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = Commit::new("fixture:retention-boundary", json!({}), &snapshot);
+    commit.rows.push(RowChange::Put {
+        table: "model_attempts".into(),
+        id: serde_json::to_string(&("newest", 0)).unwrap(),
+        value: json!({"model":"fixture-model","family":"fixture-family"}),
+    });
+    store.commit(&commit).unwrap();
+    store
+        .record_worker_facts("newest", "0", 0, "audit", &facts)
+        .unwrap();
+    let count: i64 = client
+        .query_one("SELECT count(*) FROM tl3_worker_run_models", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 65536, "identity history has a finite row bound");
+    assert_eq!(
+        store
+            .latest_worker_ending("newest")
+            .unwrap()
+            .unwrap()
+            .family
+            .as_deref(),
+        Some("fixture-family")
+    );
+    let missing: String = client.query_one("SELECT r.run_key FROM tl3_worker_runs r LEFT JOIN tl3_worker_run_models m USING (run_key, attempt) WHERE m.run_key IS NULL LIMIT 1", &[]).unwrap().get(0);
+    assert!(
+        store
+            .latest_worker_ending(&missing)
+            .unwrap()
+            .unwrap()
+            .family
+            .is_none(),
+        "evicted identity is unknown, never today's configured family"
+    );
+    store
+        .record_worker_facts("newest", "0", 0, "audit", &facts)
+        .unwrap();
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM tl3_worker_run_models", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        65536
+    );
 }

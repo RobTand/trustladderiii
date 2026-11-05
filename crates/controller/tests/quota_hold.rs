@@ -170,7 +170,7 @@ if attempt.name != 'attempt-00000000' and (root / 'probe-block').exists():
     while not (root / 'probe-release').exists():
         time.sleep(0.01)
 quota = (node == 0 or (root / 'quota-all').exists()) and not (root / 'restored').exists()
-now = int(time.time() * 1000)
+now = int((root / "success-time").read_text()) if node == 1 and (root / "success-time").exists() else int(time.time() * 1000)
 failed = attempt.name != 'attempt-00000000' and (root / 'probe-fail').exists()
 if failed:
     (root / 'probe-fail').unlink()
@@ -1259,5 +1259,138 @@ fn completed_attempt_identity_retires_from_world_rows() {
             .iter()
             .any(|row| row.table == "model_attempts" && row.id == id),
         "terminal attempt identity must be retained with the immutable ending, not the world snapshot"
+    );
+}
+
+/// Q53 / #828 upgrade: unknown legacy order/family cannot be replaced by reply identity.
+#[test]
+fn upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success() {
+    for other_family in [false, true] {
+        let mut f = Fixture::new();
+        let key = f.held(false);
+        let ending = f.store.latest_worker_ending(&key).unwrap().unwrap();
+        if other_family {
+            for ladder in [
+                &mut f.config.models.ingest,
+                &mut f.config.models.audit,
+                &mut f.config.models.planner,
+                &mut f.config.models.maker,
+                &mut f.config.models.reviewer,
+                &mut f.config.models.rebaser,
+                &mut f.config.models.comment_classifier,
+                &mut f.config.models.writer,
+                &mut f.config.models.postmortem,
+            ] {
+                for model in ladder {
+                    if model.name == "alternate-model" {
+                        model.family = "replacement-family".into();
+                    }
+                }
+            }
+        } else {
+            fs::write(
+                f.root.path().join("success-time"),
+                (ending.facts.finished_ms.unwrap() - 1).to_string(),
+            )
+            .unwrap();
+        }
+        let snapshot = f.store.load().unwrap();
+        let mut commit = Commit::new("fixture:pre-B-legacy-hold", json!({}), &snapshot);
+        commit.rows.push(RowChange::Put {
+            table: "model_quotas".into(),
+            id: "alternate-model".into(),
+            value: json!({"reset_ms": RESET}),
+        });
+        let mut hold = f.hold().unwrap().1;
+        for field in ["last_quota_family", "last_quota_finished_ms"] {
+            hold.as_object_mut().unwrap().remove(field);
+        }
+        commit.rows.push(RowChange::Put {
+            table: "allowances".into(),
+            id: key.clone(),
+            value: hold,
+        });
+        f.store.commit(&commit).unwrap();
+        let mut f = f.restart();
+        f.intake(2663);
+        fs::write(f.root.path().join("restored"), "yes").unwrap();
+        fs::write(f.root.path().join("success"), "yes").unwrap();
+        f.until(|f| f.controller.world().unwrap().nodes[1].phase != Phase::Auditing);
+        assert!(
+            f.controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "model_quotas" && row.id == "alternate-model"),
+            "an older or other-family success cannot erase unknown legacy quota"
+        );
+        f.controller.look_due().unwrap();
+        assert_eq!(f.attempt(&key), 0);
+    }
+}
+
+/// Q53 / #828: failure after durable identity but before claim leaves no ending to import.
+#[test]
+fn preclaim_crash_identity_retires_after_restart_and_stop() {
+    let mut f = Fixture::new();
+    let mut raw = postgres::Config::new()
+        .host(&f.settings.host)
+        .port(f.settings.port)
+        .user(&f.settings.user)
+        .dbname(&f.settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    raw.batch_execute("CREATE FUNCTION fixture_crash_before_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture crash before worker claim'; END $$; CREATE TRIGGER fixture_preclaim BEFORE INSERT ON tl3_worker_progress FOR EACH ROW EXECUTE FUNCTION fixture_crash_before_claim();").unwrap();
+    f.intake(2662);
+    let identity = f
+        .controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| row.table == "model_attempts")
+        .expect("real dispatch committed identity before injected claim failure");
+    let (key, attempt): (String, i64) = serde_json::from_str(&identity.id).unwrap();
+    assert!(!f.store.worker_facts_recorded(&key, attempt).unwrap());
+    assert!(f.store.worker_progress(None).unwrap().is_empty());
+    assert!(!f.root.path().join("started-0").exists());
+    raw.batch_execute("DROP TRIGGER fixture_preclaim ON tl3_worker_progress; DROP FUNCTION fixture_crash_before_claim();").unwrap();
+    let mut f = f.restart();
+    // Restart cannot discard identity while the original delivery may still run.
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.id == identity.id && row.table == "model_attempts")
+    );
+    f.controller
+        .observe(
+            "stop-unstarted-delivery",
+            Observation::Steering {
+                node: tl3_kernel::NodeId(0),
+                command: tl3_kernel::Command::Stop,
+            },
+        )
+        .unwrap();
+    f.drain();
+    let mut f = f.restart();
+    f.drain();
+    assert!(
+        !f.store.worker_reconcilable(&key).unwrap(),
+        "delivery is authoritatively retired"
+    );
+    assert!(!f.store.worker_facts_recorded(&key, attempt).unwrap());
+    assert!(
+        !f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "model_attempts" && row.id == identity.id),
+        "abandoned pre-claim identity must not survive retirement and restart"
     );
 }
