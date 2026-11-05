@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -30,9 +31,21 @@ def _artifact(ending, key):
     return tuple(_check_pb('generator-finish', ending=facts, key=key, raw=encoded(raw)))
 
 
+def _generator_helper(kind, **facts):
+    return _check_pb('generator-helper', helper={'kind': kind, **facts})
+
+
+def _configured_argv(command):
+    return _generator_helper('argv', argv=shlex.split(command))
+
+
+def _budget(cpus=1, mem_gb=2, timeout_s=generator.TIMEOUT):
+    return _generator_helper('budget', value={'cpus': cpus, 'mem_gb': mem_gb, 'timeout_s': timeout_s})
+
+
 def _validate_artifact(artifact, before, contract, settings, selected, *, check_identity=False):
     return _check_pb('generator-validate', artifact=artifact, before=before, check_identity=check_identity,
-                     contract={'command': contract['command'], 'argv': generator.configured_argv(contract['command']),
+                     contract={'command': contract['command'], 'argv': _configured_argv(contract['command']),
                                'generated_files': contract['generated_files'], 'protected_paths': contract['protected_paths'],
                                'image': settings.image, 'implementation': generator.IMPLEMENTATION, 'budget': selected})
 
@@ -103,8 +116,8 @@ def make_generator_tool(worktree, *, restore_only=False):
         patterns = list(getattr(worktree, "generated_files", ()))
         if not isinstance(settings, TestSettings) or not command or not patterns:
             return {"status": "not_available", "message": "No admitted generator command/output contract was configured."}
-        generator.configured_argv(command)
-        selected = generator.budget(settings.cpus, settings.mem_gb,
+        _configured_argv(command)
+        selected = _budget(settings.cpus, settings.mem_gb,
                                     getattr(worktree, "generator_timeout_s", generator.TIMEOUT))
         checkout = worktree.test_checkout
         contract = {"command": command, "generated_files": patterns,

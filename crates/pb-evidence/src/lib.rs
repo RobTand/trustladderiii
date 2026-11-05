@@ -104,6 +104,9 @@ pub enum Request {
         base_sha: Value,
         checks: Vec<Value>,
     },
+    GeneratorHelper {
+        helper: generator::Helper,
+    },
     GeneratorIdentity {
         artifact: Value,
         command: String,
@@ -201,6 +204,7 @@ pub fn evaluate(request: Request) -> Result<Value> {
             base_sha,
             checks,
         } => identity::violations(&failure, &receipts, &base_sha, &checks),
+        Request::GeneratorHelper { helper } => generator::helper(helper),
         Request::GeneratorIdentity {
             artifact,
             command,

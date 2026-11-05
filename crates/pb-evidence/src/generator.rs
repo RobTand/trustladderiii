@@ -195,15 +195,7 @@ pub fn validate(
         if total > 32 * 1_048_576 {
             return Err(Refusal::value("generator output exceeds total size limit"));
         }
-        if raw.len() > 16 * 1_048_576 {
-            return Err(Refusal::value(
-                "generator output exceeds the file size limit",
-            ));
-        }
-        std::str::from_utf8(&raw).map_err(|e| Refusal::utf8(&raw, e))?;
-        if raw.iter().any(|b| *b < 32 && !matches!(b, 9 | 10 | 13)) {
-            return Err(Refusal::value("generator output must be text"));
-        }
+        text(&raw)?;
         let entry = get(output, "entry")?;
         if entry["sha256"] != sha(&raw)
             || !equal(&entry["bytes"], &json!(raw.len()))
@@ -215,6 +207,27 @@ pub fn validate(
         }
         after.insert(name.to_owned(), entry.clone());
     }
+    let changed = changed(before, &Value::Object(after.clone()), contract)?;
+    if changed != seen {
+        return Err(Refusal::value(
+            "generator artifact contains an unchanged output",
+        ));
+    }
+    let after = Value::Object(after);
+    if artifact["output_manifest"] != digest(&after) {
+        return Err(Refusal::value("generator output manifest digest mismatch"));
+    }
+    Ok(after)
+}
+
+pub fn changed(
+    before: &Value,
+    after: &Value,
+    contract: &GeneratorContract,
+) -> Result<BTreeSet<String>> {
+    let after = after
+        .as_object()
+        .ok_or_else(|| Refusal::value("manifest must be an object"))?;
     let mut changed = BTreeSet::new();
     for name in after.keys().chain(
         before
@@ -268,14 +281,107 @@ pub fn validate(
             )));
         }
     }
-    if changed != seen {
+    Ok(changed)
+}
+
+pub fn text(raw: &[u8]) -> Result<()> {
+    if raw.len() > 16 * 1_048_576 {
         return Err(Refusal::value(
-            "generator artifact contains an unchanged output",
+            "generator output exceeds the file size limit",
         ));
     }
-    let after = Value::Object(after);
-    if artifact["output_manifest"] != digest(&after) {
-        return Err(Refusal::value("generator output manifest digest mismatch"));
+    std::str::from_utf8(raw).map_err(|error| Refusal::utf8(raw, error))?;
+    if raw.iter().any(|b| *b < 32 && !matches!(b, 9 | 10 | 13)) {
+        return Err(Refusal::value("generator output must be text"));
     }
-    Ok(after)
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Helper {
+    Text {
+        raw: String,
+    },
+    Path {
+        name: String,
+    },
+    Changed {
+        before: Value,
+        after: Value,
+        contract: GeneratorContract,
+    },
+    Budget {
+        value: Value,
+    },
+    Argv {
+        argv: Vec<String>,
+    },
+}
+
+pub fn helper(helper: Helper) -> Result<Value> {
+    match helper {
+        Helper::Text { raw } => {
+            text(&crate::bytes(&raw)?)?;
+            Ok(Value::Null)
+        }
+        Helper::Path { name } => {
+            path(&name)?;
+            Ok(if name == "." {
+                json!([])
+            } else {
+                json!(name.split('/').collect::<Vec<_>>())
+            })
+        }
+        Helper::Changed {
+            before,
+            after,
+            contract,
+        } => Ok(json!(changed(&before, &after, &contract)?)),
+        Helper::Budget { value } => {
+            let mut result = json!({"cpus":1,"mem_gb":2,"timeout_s":120});
+            for (name, maximum) in [("cpus", 16), ("mem_gb", 64), ("timeout_s", 600)] {
+                if let Some(v) = value.get(name) {
+                    result[name] = v.clone();
+                }
+                if !crate::python_json::integer(&result[name])
+                    .is_some_and(|n| (1..=maximum).contains(&n))
+                {
+                    return Err(Refusal::value(
+                        "generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600",
+                    ));
+                }
+            }
+            result["outer_timeout_s"] =
+                json!(result["timeout_s"].as_u64().expect("validated timeout") + 60);
+            Ok(result)
+        }
+        Helper::Argv { argv } => {
+            let executable = argv.first().map(String::as_str).unwrap_or("");
+            let absolute = executable.starts_with('/');
+            let components: Vec<_> = executable
+                .split('/')
+                .filter(|p| !p.is_empty() && *p != ".")
+                .collect();
+            let root = if executable.starts_with("//") && !executable.starts_with("///") {
+                "//"
+            } else {
+                "/"
+            };
+            let normalized = format!("{root}{}", components.join("/"));
+            let reserved = ["/checkout", "/proc", "/sys", "/dev", "/tmp"]
+                .iter()
+                .any(|root| executable == *root || executable.starts_with(&format!("{root}/")));
+            if executable.is_empty()
+                || (!absolute && (executable.contains('/') || [".", ".."].contains(&executable)))
+                || (absolute
+                    && (normalized != executable || components.contains(&"..") || reserved))
+            {
+                return Err(Refusal::value(
+                    "Use an explicit configured image interpreter, such as python3 tools/bazel/build_files.py",
+                ));
+            }
+            Ok(json!(argv))
+        }
+    }
 }

@@ -22,9 +22,13 @@ impl<'de> Deserialize<'de> for Order {
                 out.write_str("JSON")
             }
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Order, A::Error> {
-                let mut fields = Vec::new();
+                let mut fields: Vec<(String, Order)> = Vec::new();
                 while let Some((key, value)) = map.next_entry()? {
-                    fields.push((key, value));
+                    if let Some((_, child)) = fields.iter_mut().find(|(name, _)| *name == key) {
+                        *child = value;
+                    } else {
+                        fields.push((key, value));
+                    }
                 }
                 Ok(Order::Object(fields))
             }
@@ -217,6 +221,9 @@ fn layout(operation: &str, document: &Value, input: &Order, summary: Order) -> O
             order.put("declared_symptom", input.child("declared_symptom"));
             order
         }
+        "generator-helper" if document["helper"]["kind"] == "budget" => {
+            Order::object(&["cpus", "mem_gb", "timeout_s", "outer_timeout_s"])
+        }
         "generator-validate" => {
             let mut order = input.child("before");
             if let Order::Array(outputs) = input.child("artifact").child("outputs") {
@@ -234,6 +241,7 @@ fn layout(operation: &str, document: &Value, input: &Order, summary: Order) -> O
 
 pub fn respond(operation: &str, raw: &str) -> Result<Box<RawValue>, serde_json::Error> {
     let mut document: Value = serde_json::from_str(raw)?;
+    crate::python_json::normalize_floats(&mut document);
     let input = if matches!(operation, "identity" | "consistency" | "generator-validate") {
         serde_json::from_str(raw)?
     } else {

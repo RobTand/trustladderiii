@@ -34,6 +34,7 @@ def checker(command, document, **kwargs):
 
 pb_evidence.run_check = checker
 count = 0
+covered = 0
 for kind in (sys.argv[2],):
     cases = json.loads((repo / 'workers/tests/pb-evidence-vectors' / (kind + '.json')).read_text())['cases']
     for index, case in enumerate(cases):
@@ -45,7 +46,8 @@ for kind in (sys.argv[2],):
             actual = oracle.observe(kind, case['input'])
             if label == 'Rust worker' and not case['input'].get('default_bound'):
                 assert invocations > before, ('ported case bypasses Rust', kind, case['case'])
+                covered += 1
             assert oracle.encoded(actual) == oracle.encoded(case['output']), (kind, case['case'], label, str(case['output'])[:1600], str(actual)[:1600])
         count += 1
-print('PB_CORPUS_COVERAGE ' + json.dumps({'kind': kind, 'cases': count, 'checker_calls': invocations}), file=sys.stderr)
+print('PB_CORPUS_COVERAGE ' + json.dumps({'kind': kind, 'cases': count, 'rust_cases': covered, 'bounding_only': count - covered, 'checker_calls': invocations}), file=sys.stderr)
 print(json.dumps({'done': count}), flush=True)

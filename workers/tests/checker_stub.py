@@ -30,57 +30,93 @@ def vectors():
     return [row for rows in cases().values() for row in rows]
 
 
-def rebound(response, recorded, current):
-    """Rebind copied facts in a recording, including JSON carried as log bytes.
+# Declared volatile fixture fields. Verdict inputs such as counts, status,
+# selectors, resource limits and container structure must remain identical.
+_GIT_FIXTURE_FIELDS = {'base_sha', 'tree', 'input_tree', 'subject_tree', 'observer_tree', 'assembled_tree'}
+_TEMP_FIXTURE_ROOTS = ('/tmp/', '/buildbuddy-execroot/_tmp/', '/home/buildbuddy/',
+                       '/recording/', '/recorded/', '/current-test/', '/current/')
 
-    Verdicts stay recorded. Only unambiguous input values copied into the Rust
-    response move with a fixture's temporary paths, receipts and tree hashes.
-    """
+
+def rebound(response, recorded, current):
+    """Relocate declared fixture leaves; reject every other changed fact."""
     import base64
+    import hashlib
+    import re
 
     bindings = {}
+    derived = {}
 
     def key(value):
         return json.dumps(value, sort_keys=True, ensure_ascii=False)
 
-    def pair(old, new):
-        if type(old) is not type(new):
-            return
-        if (isinstance(old, (dict, list)) and old) or (isinstance(old, str) and len(old) >= 16):
-            bindings.setdefault(key(old), {})[key(new)] = new
-        if isinstance(old, dict):
-            for name in old.keys() & new.keys():
-                pair(old[name], new[name])
-        elif isinstance(old, list):
-            for before, after in zip(old, new):
-                pair(before, after)
+    def changed(path):
+        raise RuntimeError('changed PB fixture fact: ' + '.'.join(map(str, path)))
 
-    pair(recorded, current)
-    # The transport stores raw facts as base64. Decode fixture lines only to
-    # find copied values; this does not decide whether a record is acceptable.
-    for name in recorded.keys() & current.keys():
-        if name != 'raw' or not isinstance(recorded[name], str) or not isinstance(current[name], str):
-            continue
+    def bind(old, new, path):
+        token = key(old)
+        if token in bindings and bindings[token] != new:
+            changed(path)
+        bindings[token] = new
+
+    def pair(old, new, path=()):
+        if type(old) is not type(new):
+            changed(path)
+        if isinstance(old, dict):
+            if old.keys() != new.keys():
+                changed(path)
+            for name in old:
+                pair(old[name], new[name], (*path, name))
+        elif isinstance(old, list):
+            if len(old) != len(new):
+                changed(path)
+            for index, (before, after) in enumerate(zip(old, new)):
+                pair(before, after, (*path, index))
+        elif old != new:
+            if isinstance(old, str) and isinstance(new, str):
+                temporary = (old.startswith(_TEMP_FIXTURE_ROOTS) and new.startswith(_TEMP_FIXTURE_ROOTS)
+                             and Path(old).name == Path(new).name and '..' not in Path(new).parts)
+                git = (path and path[-1] in _GIT_FIXTURE_FIELDS
+                       and re.fullmatch('[0-9a-f]{40}', old) and re.fullmatch('[0-9a-f]{40}', new))
+                if temporary or git or (key(old), key(new)) in derived:
+                    bind(old, new, path)
+                    return
+            if path[-2:] in (('stdout', 'bytes'), ('stdout', 'sha256')) and (key(old), key(new)) in derived:
+                bind(old, new, path)
+                return
+            changed(path)
+        elif isinstance(old, str):
+            bind(old, new, path)
+
+    # Only JSON log leaves may vary. Prefixes, line counts, field sets and all
+    # nonvolatile values are compared before admitting the encoded-log copy.
+    if recorded.get('raw') != current.get('raw'):
         try:
-            before = base64.b64decode(recorded[name], validate=True).splitlines()
-            after = base64.b64decode(current[name], validate=True).splitlines()
-            for old, new in zip(before, after):
-                try:
-                    pair(json.loads(old[old.index(b'{'):]), json.loads(new[new.index(b'{'):]))
-                except (ValueError, UnicodeError):
-                    pass
-        except ValueError:
-            pass
+            before = base64.b64decode(recorded['raw'], validate=True)
+            after = base64.b64decode(current['raw'], validate=True)
+            old_lines, new_lines = before.splitlines(), after.splitlines()
+            if len(old_lines) != len(new_lines):
+                changed(('raw',))
+            for old, new in zip(old_lines, new_lines):
+                if old == new:
+                    continue
+                index, offset = old.index(b'{'), new.index(b'{')
+                if old[:index] != new[:offset]:
+                    changed(('raw',))
+                pair(json.loads(old[index:]), json.loads(new[offset:]), ('raw',))
+            derived[key(recorded['raw']), key(current['raw'])] = True
+            derived[key(hashlib.sha256(before).hexdigest()), key(hashlib.sha256(after).hexdigest())] = True
+            derived[key(len(before)), key(len(after))] = True
+            bind(recorded['raw'], current['raw'], ('raw',))
+        except (KeyError, ValueError, UnicodeError):
+            changed(('raw',))
+    pair(recorded, current)
 
     def replace(value):
-        candidates = bindings.get(key(value), {})
-        if len(candidates) == 1:
-            return deepcopy(next(iter(candidates.values())))
         if isinstance(value, dict):
             return {name: replace(item) for name, item in value.items()}
         if isinstance(value, list):
             return [replace(item) for item in value]
-        return value
+        return deepcopy(bindings.get(key(value), value))
 
     return replace(response)
 
@@ -110,6 +146,8 @@ def replay(case, cursor, command, document):
         row = script[position]
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
+        response = (rebound(row["response"], row["document"], document)
+                    if command[0] == "check-pb" else deepcopy(row["response"]))
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(mode="w", dir=cursor.parent,
@@ -122,9 +160,7 @@ def replay(case, cursor, command, document):
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
-        if command[0] == "check-pb":
-            return rebound(row["response"], row["document"], document)
-        return deepcopy(row["response"])
+        return response
 
 
 def record(case, temporary, monkeypatch):

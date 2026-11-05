@@ -9,7 +9,7 @@ doctest = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value", "float_roundtrip"] }
+serde_json = { version = "1", features = ["raw_value", "float_roundtrip", "arbitrary_precision"] }
 schemars = "1"
 sha2 = "0.10"
 base64 = "0.22"

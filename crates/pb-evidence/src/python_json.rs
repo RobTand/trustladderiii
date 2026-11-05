@@ -63,6 +63,28 @@ pub fn equal(left: &Value, right: &Value) -> bool {
         },
     }
 }
+/// Integer decisions inspect decimal tokens, including integers beyond u64.
+pub fn nonnegative_integer(value: &Value) -> bool {
+    match value {
+        Value::Number(number) => number.to_string().bytes().all(|b| b.is_ascii_digit()),
+        _ => false,
+    }
+}
+
+/// CPython rounds floating tokens once at decoding; integer lexemes stay exact.
+pub fn normalize_floats(value: &mut Value) {
+    match value {
+        Value::Number(number) if number.to_string().contains(['.', 'e', 'E']) => {
+            if let Some(rounded) = number.as_f64().and_then(serde_json::Number::from_f64) {
+                *number = rounded;
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(normalize_floats),
+        Value::Object(items) => items.values_mut().for_each(normalize_floats),
+        _ => {}
+    }
+}
+
 pub fn integer(value: &Value) -> Option<u64> {
     value.as_u64().filter(|_| value.is_u64() || value.is_i64())
 }

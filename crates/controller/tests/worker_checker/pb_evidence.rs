@@ -289,13 +289,22 @@ compare({'ending': oracle.ending(raw.encode()), 'log': raw})
 fn review_json_decode_errors_match_real_python_json() {
     review_parity(
         r#"
-seeds = ['', ' ', 'x', 'tru', 'falsex', '[', '[1', '[1,', '[1,]', '{', '{"x"', '{"x":', '{"x":1', '{"x":1,', '{"x":1,}', '{x:1}', '"', ' "abc', '["abc', '"a\\q"', '"\\uZZZZ"', '"\\u12"', '"a\t"', '0 1', '-x', '1e', '1.', '\ufeff{}']
-for raw in seeds:
+slash = chr(92)
+seeds = ['', ' ', 'x', 'tru', 'falsex', '[', '[1', '[1,', '[1,]', '{', '{"x"', '{"x":', '{"x":1', '{"x":1,', '{"x":1,}', '{x:1}', '"', '  "雪', '["abc', '"a' + slash + 'q"', '"' + slash + 'uZZZZ"', '"' + slash + 'u12"', '"a' + chr(9) + '"', '0 1', '-x', '1e', '1.', chr(0xfeff) + '{}']
+for valid in ['{"é":"x","a":[1,true,null]}', '[0,-1.5e+2,"雪"]', '"escaped' + slash + 'u0041"']:
+    seeds.extend(valid[:i] + valid[i+1:] for i in range(len(valid)))
+    seeds.extend(valid[:i] + token + valid[i:] for i in range(len(valid)+1) for token in ['x', ',', ':', '"', slash, chr(9)])
+reasons = set()
+for raw in dict.fromkeys(seeds):
     try:
         json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as error:
+        reasons.add(error.msg)
         text = oracle.PREFIX + raw
         compare({'ending': oracle.ending(text.encode()), 'log': text})
+assert reasons == {"Expecting value", "Extra data", "Expecting property name enclosed in double quotes", "Expecting ':' delimiter", "Expecting ',' delimiter", "Unterminated string starting at", "Invalid " + slash + "escape", "Invalid control character at", "Invalid " + slash + "uXXXX escape", "Unexpected UTF-8 BOM (decode using utf-8-sig)"}, reasons
+print('PB_JSON_ORACLE ' + json.dumps({'cases': len(dict.fromkeys(seeds)), 'error_classes': sorted(reasons)}), file=sys.stderr)
+
 "#,
     );
 }

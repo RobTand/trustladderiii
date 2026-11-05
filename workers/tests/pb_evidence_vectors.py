@@ -394,29 +394,46 @@ def evaluate(kind, data, root):
     data = deepcopy(data)
     if kind == 'generator-artifact' and 'operation' in data:
         op = data['operation']
-        if op == 'text':
-            return generator.text(bytes.fromhex(data['hex']))
-        if op == 'argv':
-            return generator.configured_argv(data['command'])
-        if op == 'budget':
-            return generator.budget(**data['value'])
-        if op == 'path-control':
-            return generator.path_parts('tests/\x1fBUILD.bazel')
-        if op == 'path':
-            size = data['size']
-            # Several short components isolate the whole-path byte bound.
-            name = 'x' * size if data['component'] else ('x' * 200 + '/') * (size // 201) + 'x' * (size % 201)
-            assert len(name.encode()) == size
-            return generator.path_parts(name)
+        rust = getattr(pb_generators, '_generator_helper', None)
+        settings = SimpleNamespace(image=IMAGE)
+        selected = generator.budget(1, 2, generator.TIMEOUT)
         contract = {'command': 'python3 generate.py', 'generated_files': ['**/BUILD.bazel'],
                     'protected_paths': [], 'files': []}
+        def helper(kind, **facts):
+            return rust(kind, **facts)
+        def validate(artifact):
+            if rust is None:
+                return generator.validate_artifact(artifact, {}, contract)
+            return pb_generators._validate_artifact(artifact, {}, contract, settings, selected)
+        def changed(before, after):
+            if rust is None:
+                return generator.changed(before, after, **{k: v for k, v in contract.items() if k != 'command'})
+            return helper('changed', before=before, after=after,
+                          contract={**{k: v for k, v in contract.items() if k != 'files'},
+                                    'argv': ['python3', 'generate.py'], 'image': IMAGE,
+                                    'implementation': generator.IMPLEMENTATION, 'budget': selected})
+        if op == 'text':
+            raw = bytes.fromhex(data['hex'])
+            return generator.text(raw) if rust is None else helper('text', raw=pb_tests.encoded(raw))
+        if op == 'argv':
+            return generator.configured_argv(data['command']) if rust is None else pb_generators._configured_argv(data['command'])
+        if op == 'budget':
+            return generator.budget(**data['value']) if rust is None else helper('budget', value=data['value'])
+        if op in ('path-control', 'path'):
+            if op == 'path-control':
+                name = 'tests/\x1fBUILD.bazel'
+            else:
+                size = data['size']
+                name = 'x' * size if data['component'] else ('x' * 200 + '/') * (size // 201) + 'x' * (size % 201)
+                assert len(name.encode()) == size
+            return generator.path_parts(name) if rust is None else helper('path', name=name)
         if op == 'validate-failed':
-            return generator.validate_artifact({'status': 'failed', 'exit_code': 1, 'message': 'fixture generator failed'}, {}, contract)
+            return validate({'status': 'failed', 'exit_code': 1, 'message': 'fixture generator failed'})
         if op == 'changed-count':
             after = {f'tests/{i}/BUILD.bazel': {'sha256': digest(b'x'), 'bytes': 1, 'mode': 0o644} for i in range(data['count'])}
-            return generator.changed({}, after, **{k: v for k, v in contract.items() if k != 'command'})
+            return changed({}, after)
         if op == 'changed':
-            return generator.changed(data['before'], data['after'], **{k: v for k, v in contract.items() if k != 'command'})
+            return changed(data['before'], data['after'])
         assert op == 'validate'
         outputs, after = [], {}
         for index, size in enumerate(data['sizes']):
@@ -428,7 +445,7 @@ def evaluate(kind, data, root):
         artifact = {'status': 'completed', 'exit_code': 0, 'command': contract['command'],
                     'argv': generator.configured_argv(contract['command']), 'input_manifest': generator.digest({}),
                     'outputs': outputs, 'output_manifest': generator.digest(after)}
-        result = generator.validate_artifact(artifact, {}, contract)
+        result = validate(artifact)
         return {'outputs': len(outputs), 'bytes': sum(e['bytes'] for e in result.values()),
                 'manifest': generator.digest(result)}
     if kind == 'ending-summary' and 'target_bytes' in data:

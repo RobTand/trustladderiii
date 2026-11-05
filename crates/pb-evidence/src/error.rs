@@ -119,33 +119,198 @@ impl Refusal {
     }
 }
 
+// Diagnose malformed JSON using CPython's grammar and error positions. Serde's
+// messages and EOF positions differ, so they cannot define Python cause text.
+struct JsonSyntax<'a> {
+    raw: &'a str,
+    at: usize,
+}
+impl JsonSyntax<'_> {
+    fn fail<T>(&self, reason: &str, at: usize) -> Result<T> {
+        Err(Refusal::json(reason, self.raw, at))
+    }
+    fn byte(&self) -> Option<u8> {
+        self.raw.as_bytes().get(self.at).copied()
+    }
+    fn space(&mut self) {
+        while matches!(self.byte(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            self.at += 1;
+        }
+    }
+    fn string(&mut self) -> Result<()> {
+        let opening = self.at;
+        self.at += 1;
+        while let Some(byte) = self.byte() {
+            match byte {
+                b'"' => {
+                    self.at += 1;
+                    return Ok(());
+                }
+                b'\\' => {
+                    let slash = self.at;
+                    self.at += 1;
+                    match self.byte() {
+                        Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => {
+                            self.at += 1
+                        }
+                        Some(b'u') => {
+                            let marker = self.at;
+                            self.at += 1;
+                            for _ in 0..4 {
+                                if !self.byte().is_some_and(|b| b.is_ascii_hexdigit()) {
+                                    return self.fail("Invalid \\uXXXX escape", marker);
+                                }
+                                self.at += 1;
+                            }
+                        }
+                        None => return self.fail("Unterminated string starting at", opening),
+                        _ => return self.fail("Invalid \\escape", slash),
+                    }
+                }
+                0..=31 => return self.fail("Invalid control character at", self.at),
+                _ => {
+                    self.at += self.raw[self.at..]
+                        .chars()
+                        .next()
+                        .expect("remaining char")
+                        .len_utf8()
+                }
+            }
+        }
+        self.fail("Unterminated string starting at", opening)
+    }
+    fn value(&mut self) -> Result<()> {
+        self.space();
+        match self.byte() {
+            Some(b'"') => self.string(),
+            Some(b'[') => {
+                self.at += 1;
+                self.space();
+                if self.byte() == Some(b']') {
+                    self.at += 1;
+                    return Ok(());
+                }
+                loop {
+                    self.value()?;
+                    self.space();
+                    match self.byte() {
+                        Some(b']') => {
+                            self.at += 1;
+                            return Ok(());
+                        }
+                        Some(b',') => self.at += 1,
+                        _ => return self.fail("Expecting ',' delimiter", self.at),
+                    }
+                }
+            }
+            Some(b'{') => {
+                self.at += 1;
+                self.space();
+                if self.byte() == Some(b'}') {
+                    self.at += 1;
+                    return Ok(());
+                }
+                loop {
+                    self.space();
+                    if self.byte() != Some(b'"') {
+                        return self
+                            .fail("Expecting property name enclosed in double quotes", self.at);
+                    }
+                    self.string()?;
+                    self.space();
+                    if self.byte() != Some(b':') {
+                        return self.fail("Expecting ':' delimiter", self.at);
+                    }
+                    self.at += 1;
+                    self.value()?;
+                    self.space();
+                    match self.byte() {
+                        Some(b'}') => {
+                            self.at += 1;
+                            return Ok(());
+                        }
+                        Some(b',') => self.at += 1,
+                        _ => return self.fail("Expecting ',' delimiter", self.at),
+                    }
+                }
+            }
+            _ => {
+                for word in ["null", "true", "false", "NaN", "Infinity", "-Infinity"] {
+                    if self.raw[self.at..].starts_with(word) {
+                        self.at += word.len();
+                        return Ok(());
+                    }
+                }
+                let start = self.at;
+                if self.byte() == Some(b'-') {
+                    self.at += 1;
+                }
+                match self.byte() {
+                    Some(b'0') => self.at += 1,
+                    Some(b'1'..=b'9') => {
+                        while self.byte().is_some_and(|b| b.is_ascii_digit()) {
+                            self.at += 1;
+                        }
+                    }
+                    _ => return self.fail("Expecting value", start),
+                }
+                if self.byte() == Some(b'.')
+                    && self
+                        .raw
+                        .as_bytes()
+                        .get(self.at + 1)
+                        .is_some_and(|b| b.is_ascii_digit())
+                {
+                    self.at += 1;
+                    while self.byte().is_some_and(|b| b.is_ascii_digit()) {
+                        self.at += 1;
+                    }
+                }
+                if matches!(self.byte(), Some(b'e' | b'E')) {
+                    let exponent = self.at;
+                    self.at += 1;
+                    if matches!(self.byte(), Some(b'+' | b'-')) {
+                        self.at += 1;
+                    }
+                    if self.byte().is_some_and(|b| b.is_ascii_digit()) {
+                        while self.byte().is_some_and(|b| b.is_ascii_digit()) {
+                            self.at += 1;
+                        }
+                    } else {
+                        self.at = exponent;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 pub fn parse(raw: &str) -> Result<Value> {
-    serde_json::from_str(raw).map_err(|error| {
-        let text = error.to_string();
-        let position = if error.is_eof() {
-            raw.len()
-        } else {
-            raw.split_inclusive('\n')
-                .take(error.line().saturating_sub(1))
-                .map(str::len)
-                .sum::<usize>()
-                + error.column().saturating_sub(1)
-        };
-        let reason = if text.starts_with("trailing characters") {
-            "Extra data"
-        } else if text.starts_with("key must be a string")
-            || text.starts_with("EOF while parsing an object")
-        {
-            "Expecting property name enclosed in double quotes"
-        } else if text.starts_with("expected `:`") {
-            "Expecting ':' delimiter"
-        } else if text.starts_with("expected `,`") {
-            "Expecting ',' delimiter"
-        } else {
-            "Expecting value"
-        };
-        Refusal::json(reason, raw, position)
-    })
+    match serde_json::from_str(raw) {
+        Ok(mut value) => {
+            crate::python_json::normalize_floats(&mut value);
+            Ok(value)
+        }
+        Err(error) => {
+            if raw.starts_with('\u{feff}') {
+                return Err(Refusal::json(
+                    "Unexpected UTF-8 BOM (decode using utf-8-sig)",
+                    raw,
+                    0,
+                ));
+            }
+            let mut syntax = JsonSyntax { raw, at: 0 };
+            syntax.value()?;
+            syntax.space();
+            if syntax.at < raw.len() {
+                return Err(Refusal::json("Extra data", raw, syntax.at));
+            }
+            // Valid JSON rejected for a representation/depth constraint is not a
+            // malformed token; retain the decoder diagnostic for that boundary.
+            Err(Refusal::value(error.to_string()))
+        }
+    }
 }
 
 pub fn get<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {

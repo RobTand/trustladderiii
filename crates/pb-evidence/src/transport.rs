@@ -1,6 +1,6 @@
 use crate::ending::RECORD_LIMIT;
 use crate::error::{Refusal, Result, parse};
-use crate::python_json::integer;
+use crate::python_json::{nonnegative_integer, truth};
 use serde_json::{Value, json};
 
 pub fn capability(code: i64, raw: &[u8]) -> bool {
@@ -17,7 +17,8 @@ pub fn capability(code: i64, raw: &[u8]) -> bool {
         .is_some_and(|value| {
             value.as_object().is_some_and(|map| map.len() == 2)
                 && value["schema"] == "prismabuild.machine_record_capability.v1"
-                && integer(&value["machine_record_fd"]).is_some_and(|version| version >= 1)
+                && nonnegative_integer(&value["machine_record_fd"])
+                && truth(&value["machine_record_fd"])
         })
 }
 

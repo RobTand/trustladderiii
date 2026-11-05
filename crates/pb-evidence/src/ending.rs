@@ -1,5 +1,5 @@
 use crate::error::{Refusal, Result, get, parse};
-use crate::python_json::{dumps, equal, integer, sha, truth};
+use crate::python_json::{dumps, equal, integer, nonnegative_integer, sha, truth};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -138,8 +138,9 @@ pub fn start(ending: &PbEnding, key: &str, generator: bool) -> Result<LogReceipt
 }
 
 fn metadata(ending: &PbEnding, receipt: &mut Value) {
-    if let Some(attempt) = integer(ending.attempt.optional()).filter(|n| *n > 0) {
-        receipt["attempt"] = json!(attempt);
+    let attempt = ending.attempt.optional();
+    if nonnegative_integer(attempt) && truth(attempt) {
+        receipt["attempt"] = attempt.clone();
     }
     let generation = &ending.publication.optional()["generation"];
     if digest(generation) {
@@ -167,7 +168,7 @@ fn summary_shape(value: &Value) -> bool {
             totals.len() == 4
                 && outcomes
                     .iter()
-                    .all(|o| totals.get(*o).is_some_and(|n| integer(n).is_some()))
+                    .all(|o| totals.get(*o).is_some_and(|n| nonnegative_integer(n)))
         }),
         value["tests"].as_array().is_some_and(|tests| {
             tests.iter().all(|t| {
@@ -235,11 +236,21 @@ pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Resu
                 .filter_map(|line| line.strip_prefix("TL3_SYMPTOM_RUN "))
                 .map(parse)
                 .collect::<Result<_>>()?;
-            let summaries = result
-                .get("symptom_runs")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let summaries = match result.get("symptom_runs") {
+                None => Vec::new(),
+                Some(Value::Array(items)) => items.clone(),
+                Some(Value::Object(items)) => items.keys().cloned().map(Value::String).collect(),
+                Some(Value::String(text)) => text.chars().map(|ch| json!(ch.to_string())).collect(),
+                Some(value) => {
+                    return Err(Refusal::typed(
+                        "TypeError",
+                        format!(
+                            "object of type '{}' has no len()",
+                            crate::error::python_type(value)
+                        ),
+                    ));
+                }
+            };
             if records.len() != summaries.len() {
                 return Err(Refusal::value("missing symptom run receipt"));
             }
@@ -346,8 +357,9 @@ pub fn failure(ending: &PbEnding, record: Option<&FailedRecord>) -> Result<Value
         receipt["termination_reason"] = reason;
     }
     metadata(ending, &mut receipt);
-    if let Some(peak) = integer(&diagnostics["resource_profile"]["scope"]["memory_peak_bytes"]) {
-        receipt["memory_peak_bytes"] = json!(peak);
+    let peak = &diagnostics["resource_profile"]["scope"]["memory_peak_bytes"];
+    if nonnegative_integer(peak) {
+        receipt["memory_peak_bytes"] = peak.clone();
     }
     Ok(receipt)
 }

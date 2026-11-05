@@ -1,5 +1,5 @@
 use crate::error::{Refusal, Result};
-use crate::python_json::{dumps, equal, integer, sha};
+use crate::python_json::{dumps, equal, integer, nonnegative_integer, sha};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -130,7 +130,7 @@ pub fn settings(value: &Value) -> Result<Value> {
     let mut result = value.clone();
     for (key, default) in [("cpus", 1), ("mem_gb", 2), ("quiet_seconds", 120)] {
         let v = value.get(key).cloned().unwrap_or(json!(default));
-        if !integer(&v).is_some_and(|n| n >= 1) {
+        if !(nonnegative_integer(&v) && crate::python_json::truth(&v)) {
             return Err(Refusal::value(
                 "Test resource and quiet allowances must be positive integers",
             ));

@@ -220,7 +220,7 @@ print('CHECKER_TIMING ' + json.dumps([imported-started, finished-imported]), fil
 
 def test_copied_fixture_facts_follow_paths_and_encoded_logs():
     before = {'result': {'stdout': {'path': '/recording/tools/action.log', 'bytes': 123}}}
-    after = {'result': {'stdout': {'path': '/current-test/tools/action.log', 'bytes': 124}}}
+    after = {'result': {'stdout': {'path': '/current-test/tools/action.log', 'bytes': 123}}}
     response = {'return': before['result']['stdout']}
     assert checker_stub.rebound(response, before, after) == {'return': after['result']['stdout']}
     def encoded(value):
@@ -230,7 +230,8 @@ def test_copied_fixture_facts_follow_paths_and_encoded_logs():
     # Refusals remain recorded, and ambiguous copies cannot select a new value.
     assert checker_stub.rebound({'return': False}, before, after) == {'return': False}
     repeated = {'a': before, 'b': before}
-    assert checker_stub.rebound(response, repeated, {'a': before, 'b': after}) == response
+    with pytest.raises(RuntimeError, match='changed PB fixture fact'):
+        checker_stub.rebound(response, repeated, {'a': before, 'b': after})
 
 @pytest.mark.parametrize("prepared", [False, True])
 def test_pb_fixture_facts_survive_prepared_replay(tmp_path, monkeypatch, prepared):
