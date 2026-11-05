@@ -112,6 +112,8 @@ def main():
     for encoded in sorted(schedules):
         schedule = json.loads(encoded)
         for kind, inputs in cases():
+            if sys.argv[1:] and kind != sys.argv[1]:
+                continue
             old = execute(old_check, schedule, inputs)
             new = execute(new_check, schedule, inputs)
             assert old == new, (kind, schedule, old, new)

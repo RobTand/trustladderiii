@@ -195,8 +195,7 @@ print(json.dumps(rows))
 #[cfg(test)]
 mod io_schedules {
     use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
-    #[test]
-    fn maker_extraction_preserves_real_runtime_schedules() {
+    fn maker_schedules(kind: &str) {
         let mut runner = TestRunner::deterministic();
         let strategy = (0u8..3, any::<bool>());
         let mut rows = Vec::new();
@@ -208,6 +207,7 @@ mod io_schedules {
         use std::io::Write;
         let mut child = std::process::Command::new(root.join("workers/.venv/bin/python"))
             .arg(root.join("workers/tests/p5/schedules.py"))
+            .arg(kind)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -227,4 +227,22 @@ mod io_schedules {
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("persisted bytes"));
     }
+    // Each violation keeps all read schedules and every real writer crash cut.
+    macro_rules! schedules {
+        ($($name:ident => $kind:literal),* $(,)?) => {
+            $(#[test] fn $name() { maker_schedules($kind); })*
+        };
+    }
+    schedules!(
+        maker_duplicate_schedules => "duplicate",
+        maker_empty_schedules => "empty",
+        maker_parent_schedules => "parent",
+        maker_git_schedules => "git",
+        maker_absolute_schedules => "absolute",
+        maker_long_schedules => "long",
+        maker_unknown_schedules => "unknown",
+        maker_feedback_schedules => "feedback",
+        maker_coverage_schedules => "maker-coverage",
+        checking_coverage_schedules => "checking-coverage",
+    );
 }

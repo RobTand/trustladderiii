@@ -84,7 +84,9 @@ def execute(module, legacy, schedule, crash=0):
         return status, calls, persisted, events, errors.getvalue(), disk.points
 
 
-for schedule in json.load(sys.stdin):
+for index, schedule in enumerate(json.load(sys.stdin)):
+    if sys.argv[1:] and index % 4 != int(sys.argv[1]):
+        continue
     before = execute(main_reference, True, schedule)
     after = execute(current, False, schedule)
     assert before == after, (schedule, before, after)

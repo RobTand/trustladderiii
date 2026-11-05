@@ -298,8 +298,7 @@ mod schema_drift {
 #[cfg(test)]
 mod io_schedules {
     use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
-    #[test]
-    fn quota_extraction_preserves_worker_clock_sample() {
+    fn quota_schedules(partition: u8) {
         let mut runner = TestRunner::deterministic();
         let strategy = (-1i32..2, 0u32..1000);
         let mut rows = Vec::new();
@@ -313,6 +312,7 @@ mod io_schedules {
         use std::io::Write;
         let mut child = std::process::Command::new(root.join("workers/.venv/bin/python"))
             .arg(root.join("workers/tests/p5/quota_schedules.py"))
+            .arg(partition.to_string())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -331,5 +331,21 @@ mod io_schedules {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("stale-reset boundary"));
+    }
+    #[test]
+    fn quota_worker_clock_schedules_0() {
+        quota_schedules(0);
+    }
+    #[test]
+    fn quota_worker_clock_schedules_1() {
+        quota_schedules(1);
+    }
+    #[test]
+    fn quota_worker_clock_schedules_2() {
+        quota_schedules(2);
+    }
+    #[test]
+    fn quota_worker_clock_schedules_3() {
+        quota_schedules(3);
     }
 }
