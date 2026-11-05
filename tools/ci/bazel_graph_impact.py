@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tomllib
 
 from child_env import child_env
 
@@ -98,16 +99,58 @@ def ratchet(policy):
 
 def allowlist_errors(current, previous):
     errors = []
-    for key, reason in sorted(current.items()):
+    for key, entry in sorted(current.items()):
+        crate = key.startswith('crate:')
+        reason = entry.get('reason') if crate and isinstance(entry, dict) else entry
+        if crate and (not isinstance(entry, dict) or type(entry.get('sources')) is not int
+                      or entry['sources'] < 0):
+            errors.append(f'allowlist exception {key} needs a nonnegative integer sources count')
         if not isinstance(reason, str) or not reason.strip():
             errors.append(f'allowlist exception {key} needs a reason')
-        elif key not in previous and not re.search(
+        elif (crate or key not in previous) and not re.search(
                 r'(?<!\w)#[1-9][0-9]*(?!\w)|'
                 r'https://github\.com/RobTand/trustladderiii/issues/[1-9][0-9]*(?![\w/])', reason):
             errors.append(f'allowlist exception {key} needs a reason naming a program issue (#730, for example)')
-        if key in previous and previous[key] != reason:
+        prior = previous.get(key)
+        prior_reason = prior.get('reason') if crate and isinstance(prior, dict) else prior
+        if key in previous and prior_reason != reason:
             errors.append(f'allowlist exception {key} reason cannot change')
     return errors
+
+
+def bounded_crate_sources(base, head, allowlist, previous):
+    """Validate exact head counts before granting package-scoped reach credits."""
+    excused, errors = set(), []
+    for key, entry in sorted(allowlist.items()):
+        if (not key.startswith('crate:') or not isinstance(entry, dict)
+                or type(entry.get('sources')) is not int or entry['sources'] < 0):
+            continue
+        name, limit = key.removeprefix('crate:'), entry['sources']
+        owner = head.get('crate_packages', {}).get(name)
+        if owner is None:
+            errors.append(f'allowlist exception {key} has no Cargo package in the head graph')
+            continue
+        sources = {source for source in head['loc'] if package(source) == owner}
+        if len(sources) != limit:
+            errors.append(f'allowlist exception {key} has N={limit}, but the head graph has '
+                          f'{len(sources)} sources; update N in the same change to match the source count')
+            continue
+        prior = previous.get(key)
+        old_owner = base.get('crate_packages', {}).get(name)
+        old_count = sum(package(source) == old_owner for source in base['loc'])
+        if isinstance(prior, dict) and prior.get('sources') != limit and old_count == len(sources):
+            errors.append(f'allowlist exception {key} cannot change N={limit} without a source-count change')
+            continue
+        excused.update(sources)
+    return excused, errors
+
+
+def crate_reach_head(base, head, sources):
+    # Subtract only gained labels after move normalization. Original identities
+    # stay reachable, so a moved file cannot pay for another new dependency.
+    return {**head, 'reach': {
+        test: sorted(set(reached) - (sources - set(base['reach'].get(test, ()))))
+        for test, reached in head['reach'].items()}}
 
 
 def source_moves(base, head, edge_diff):
@@ -166,6 +209,8 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     allowlist = allowlist or {}
     previous_allowlist = previous_allowlist if previous_allowlist is not None else allowlist
     errors = allowlist_errors(allowlist, previous_allowlist)
+    crate_sources, crate_errors = bounded_crate_sources(base, head, allowlist, previous_allowlist)
+    errors += crate_errors
     errors += graph_impact.baseline_errors(ratchet(policy), ratchet(previous_policy) if previous_policy else None)
     base_edges = set(map(tuple, base['edges']))
     # The core also checks absolute forbidden-edge exceptions. Supply those
@@ -180,8 +225,17 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     comparison_head = moved_head(head, moves)
     compared = graph_impact.compare({**base, 'edge_groups': base_groups}, comparison_head, comparison_policy,
                                     changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
+    reach_head = crate_reach_head(base, comparison_head, crate_sources)
+    if crate_sources:
+        # Keep fanout, SCC and edge checks on the full graph. Only the core's
+        # per-test budgets and our structural reach diagnostic use the credits.
+        budget_errors = graph_impact.compare(
+            {**base, 'edge_groups': base_groups}, reach_head, comparison_policy,
+            changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
+        compared = [error for error in compared if error.partition(' reach ')[0] not in head['reach']]
+        compared += [error for error in budget_errors if error.partition(' reach ')[0] in head['reach']]
     errors += [error for error in compared if not error.startswith('existing test reach grew: ')]
-    errors += structural_reach_errors(base, comparison_head, allowlist)
+    errors += structural_reach_errors(base, reach_head, allowlist)
     added = set(map(tuple, head['edges'])) - set(map(tuple, base['edges']))
     deps = {}
     for source, target in head['edges']:
@@ -201,6 +255,9 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     summary = graph_impact.summary(base, head, policy['reach_budget'])
     for key, reason in additions.items():
         summary += f'\nAdded allowlist entry {key}: {reason}'
+    for key, entry in sorted(allowlist.items()):
+        if key.startswith('crate:') and key in previous_allowlist and entry != previous_allowlist[key]:
+            summary += f'\nChanged allowlist entry {key}: {previous_allowlist[key]} -> {entry}'
     for destination, origin in moves.items():
         summary += f'\nSource move {origin} -> {destination}'
     return {'summary': summary, 'errors': errors, 'allowlist_additions': additions, 'source_moves': moves,
@@ -287,6 +344,13 @@ def load(deps_file, hashes_file, tests, root):
     reaches, edges, weights = graph_impact.read_deps(deps_file, tests, sources, loc=loc)
     graph = graph_impact.measure(reaches, edges, weights)
     graph['source_identities'] = {label: hashlib.sha256(data).hexdigest() for label, data in content.items()}
+    graph['crate_packages'] = {}
+    for owner in sorted({package(source) for source in sources}):
+        manifest = Path(root) / path(owner + ':Cargo.toml')
+        if manifest.is_file():
+            name = tomllib.loads(manifest.read_text()).get('package', {}).get('name')
+            if name:
+                graph['crate_packages'][name] = owner
     graph['test_packages'] = {test: package(test) for test in sorted(reaches)}
     graph['node_types'] = node_types(source_hashes)
     conftests = {node for node in deps if node.endswith((':conftest', ':conftest.py', '/conftest.py'))}
