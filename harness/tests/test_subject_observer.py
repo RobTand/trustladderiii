@@ -572,3 +572,16 @@ def test_git_disables_maintenance(monkeypatch, tmp_path):
               (path + '::test_git_disables_maintenance',), proof=proof))
     assert results[0].verdict == Verdict.PASS, results
 
+
+
+@pytest.mark.parametrize('case', json.loads(
+    (Path(__file__).parent / 'fixtures/subject_observer/ops_1105.json').read_text()),
+    ids=lambda case: case['case'])
+def test_t842_real_ops_proof_shapes(repository, case):
+    # Q27/#645: replay the actual observer and declaration, preserving base subjects.
+    check = Check(case['case'], Kind.DEMONSTRATING, tuple(case['tests']),
+                  proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+    assert results[0].proof['rule'] == 'subject-observer-v1'
