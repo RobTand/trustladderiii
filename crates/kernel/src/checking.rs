@@ -17,6 +17,7 @@ impl World {
             invariant i <= w.nodes.len(), settle_ready(w), out.len == 0,
                 w.nodes@ == self.nodes@, w.gates@ == self.gates@,
                 w.pool_capacity == self.pool_capacity, w.dependencies@ == self.dependencies@,
+                w.next_ticket == self.next_ticket, w.file_sets@ == self.file_sets@,
                 forall|j: int| 0 <= j < i ==> !movable(*self, j),
             decreases w.nodes.len() - i,
         ] {
@@ -25,7 +26,10 @@ impl World {
             }
             kernel_snapshot! { before_probe = w }
             if advance(&mut w, i, &mut out) { return false; }
-            kernel_proof! { movable_frame(*self, before_probe@, i as int); }
+            kernel_proof! {
+                movable_frame(*self, before_probe@, i as int);
+                reveal(settle_ready); reveal(scheduling_safe);
+            }
             i += 1;
         } }
         true
@@ -83,7 +87,7 @@ impl World {
             if n.holds {
                 let mut j = 0;
                 kernel_while! { (j < i) [
-                    invariant j <= i < self.nodes.len(),
+                    invariant j <= i < self.nodes.len(), n == self.nodes@[i as int],
                         forall|k: int| 0 <= k < self.nodes@.len() ==> node_checked(*self, self.nodes@[k]),
                     decreases i - j,
                 ] {
