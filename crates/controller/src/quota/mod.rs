@@ -54,11 +54,6 @@ fn evaluated(facts: &Facts) -> Option<(u64, QuotaFacts)> {
     for link in &facts.links {
         let announced = parse::announced(&link.headers, now);
         let milliseconds = announced.and_then(parse::milliseconds);
-        let (status, code) = if facts.role == "postmortem" && link.judge {
-            (link.judge_status, link.judge_code.as_deref())
-        } else {
-            (link.api_status, link.api_code.as_deref())
-        };
         let normalized = QuotaFacts {
             sampled_now: sample,
             response_status: link.response_status.unwrap_or(0),
@@ -69,8 +64,12 @@ fn evaluated(facts: &Facts) -> Option<(u64, QuotaFacts)> {
             fraction: milliseconds.is_some_and(|value| value.1),
             stale: link.response_status == Some(429)
                 && announced.is_some_and(|value| value.is_finite() && value <= now),
-            status,
-            unroutable: code == Some("model_not_found"),
+            postmortem: facts.role == "postmortem",
+            judge: link.judge,
+            api_status: link.api_status,
+            api_unroutable: link.api_code.as_deref() == Some("model_not_found"),
+            judge_status: link.judge_status,
+            judge_unroutable: link.judge_code.as_deref() == Some("model_not_found"),
         };
         if let Some(reset) = decision::quota_reset(normalized) {
             return Some((reset, normalized));

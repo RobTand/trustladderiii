@@ -294,8 +294,12 @@ pub struct QuotaFacts {
     pub whole: u64,
     pub fraction: bool,
     pub stale: bool,
-    pub status: Option<i64>,
-    pub unroutable: bool,
+    pub postmortem: bool,
+    pub judge: bool,
+    pub api_status: Option<i64>,
+    pub api_unroutable: bool,
+    pub judge_status: Option<i64>,
+    pub judge_unroutable: bool,
 }
 
 /// Q53/#759: announced reset precedes the total probe table for each link.
@@ -311,8 +315,12 @@ pub fn quota_reset(facts: QuotaFacts) -> Option<u64> {
     ) {
         return Some(reset);
     }
-    let status = facts.status?;
-    match probe(status, facts.unroutable, facts.stale) {
+    let (status, unroutable) = if facts.postmortem && facts.judge {
+        (facts.judge_status, facts.judge_unroutable)
+    } else {
+        (facts.api_status, facts.api_unroutable)
+    };
+    match probe(status?, unroutable, facts.stale) {
         120 => facts.sampled_now.short_ms,
         900 => facts.sampled_now.long_ms,
         _ => None,
