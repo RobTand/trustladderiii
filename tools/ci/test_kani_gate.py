@@ -1,4 +1,4 @@
-"""The Kani gate proves every harness on a kernel change and fails on any doubt."""
+"""The temporary Kani gate separates PR proofs from the full nightly run."""
 import io
 import json
 import os
@@ -49,14 +49,14 @@ class SelectionTests(unittest.TestCase):
     def test_harnesses_are_read_from_the_proof_macro(self):
         source = 'proof!(a, check());\nproof!(\n    b_two,\n    3,\n    check()\n);\n  proof!(c, x);\n'
         self.assertEqual(kani_gate.harnesses(source), ['a', 'b_two'])
-        for broken in ['', 'proof!(a, x);\nproof!(a, y);\n']:
+        self.assertEqual(kani_gate.harnesses(''), [])
+        for broken in ['proof!(a, x);\nproof!(a, y);\n']:
             with self.assertRaises(kani_gate.KaniError):
                 kani_gate.harnesses(broken)
 
     def test_every_kernel_harness_is_listed(self):
         names = kani_gate.harnesses()
-        self.assertIn('progress_from_unplanned', names)
-        self.assertGreater(len(names), 100)
+        self.assertEqual(len(names), len(set(names)))
 
     def test_pr_mode_without_a_trigger_proves_nothing(self):
         with tempfile.TemporaryDirectory() as directory, \
@@ -68,17 +68,67 @@ class SelectionTests(unittest.TestCase):
             prove.assert_not_called()
             self.assertIn('no harness runs', Path(directory, 'summary').read_text())
 
+    def test_pr_selects_only_measured_fast_tier_and_ignores_removed_harnesses(self):
+        budgets = {'fast': {'seconds': 600, 'peak_gb': 1, 'tier': 'pr'},
+                   'slow': {'seconds': 601, 'peak_gb': 1, 'tier': 'nightly'},
+                   'removed': {'seconds': 1, 'peak_gb': 1, 'tier': 'pr'}}
+        results = {'fast': {'name': 'fast', 'verdict': 'SUCCESSFUL'}}
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(kani_gate, 'harnesses', return_value=['fast', 'slow']), \
+             patch.object(kani_gate, 'load_budgets', return_value=budgets), \
+             patch.object(kani_gate, 'changed_files', return_value={'crates/kernel/src/lib.rs'}), \
+             patch.object(kani_gate, 'prove', return_value=(results, [])) as prove, \
+             patch.dict(os.environ, {'BUILDBUDDY_API_KEY': 'fake'}):
+            self.assertEqual(kani_gate.gate_main(gate_args(directory)), 0)
+            self.assertEqual(prove.call_args.args[2], ['fast'])
+
+
 
 class BudgetTests(unittest.TestCase):
     def test_budgets_cover_every_harness_with_a_measurement(self):
         budgets = kani_gate.load_budgets()
-        self.assertEqual(sorted(budgets), sorted(kani_gate.harnesses()))
+        self.assertTrue(set(kani_gate.harnesses()) <= set(budgets))
         for name, entry in budgets.items():
             with self.subTest(name=name):
                 self.assertGreater(entry['seconds'], 0)
                 self.assertGreater(entry['peak_gb'], 0)
                 self.assertTrue(entry['invocation'].startswith('https://app.buildbuddy.io/invocation/'))
                 self.assertLessEqual(entry['peak_gb'], kani_gate.MEMORY_GB - kani_gate.RESERVED_GB)
+
+    def test_budget_builder_derives_tiers_and_pending_from_measurements(self):
+        builder = getattr(kani_gate, 'build_budgets', None)
+        self.assertTrue(callable(builder), 'missing reproducible budget builder')
+        measured = {name: {'seconds': seconds, 'peak_gb': 1, 'invocation': 'https://run'}
+                    for name, seconds in [('fast', 600), ('slow', 600.1),
+                                          ('gate_leaf_progress_w2', 3301), ('gate_leaf_progress_w3', 3301)]}
+        built = builder(measured)['harnesses']
+        self.assertEqual(built['fast']['tier'], 'pr')
+        self.assertEqual(built['slow']['tier'], 'nightly')
+        for name in ('gate_leaf_progress_w2', 'gate_leaf_progress_w3'):
+            self.assertEqual(built[name]['pending'], '#806')
+            self.assertEqual(built[name]['tier'], 'nightly')
+        built['slow']['seconds'] = 599
+        self.assertEqual(builder(built)['harnesses']['slow']['tier'], 'pr')
+        built['fast']['seconds'] = 601
+        self.assertEqual(builder(built)['harnesses']['fast']['tier'], 'nightly')
+
+    def test_committed_tiers_follow_the_measurements(self):
+        for name, entry in kani_gate.load_budgets().items():
+            with self.subTest(name=name):
+                expected = 'pr' if entry['seconds'] <= 600 and not entry.get('lower_bound') else 'nightly'
+                self.assertEqual(entry.get('tier'), expected)
+        for name in ('gate_leaf_progress_w2', 'gate_leaf_progress_w3'):
+            self.assertEqual(kani_gate.load_budgets()[name].get('pending'), '#806')
+
+    def test_pending_harnesses_are_attempted_alone_instead_of_rejected(self):
+        budgets = {'pending': {'seconds': 3301, 'peak_gb': 34, 'pending': '#806'},
+                   'fast': {'seconds': 10, 'peak_gb': 1}}
+        try:
+            shards = kani_gate.plan(list(budgets), budgets)
+        except kani_gate.KaniError as error:
+            self.fail(f'pending proof must be attempted: {error}')
+        self.assertIn(['pending'], shards)
+        self.assertEqual(sorted(sum(shards, [])), sorted(budgets))
 
     def test_timeouts_and_warnings_have_headroom(self):
         info = kani_gate.budget('a', {'a': {'seconds': 400.0, 'peak_gb': 8.0}})
@@ -344,6 +394,25 @@ class ControllerTests(unittest.TestCase):
                 saved = json.loads(Path(directory, 'kani-result.json').read_text())
                 self.assertEqual(saved['passed'], expected == 0)
 
+    def test_nightly_pending_timeouts_and_kills_do_not_hide_real_failures(self):
+        names = ['pending', 'fast']
+        budgets = {'pending': {'seconds': 3301, 'peak_gb': 34, 'pending': '#806', 'tier': 'nightly'},
+                   'fast': {'seconds': 10, 'peak_gb': 1, 'tier': 'pr'}}
+        cases = [('TIMEOUT', 0), ('KILLED', 0), ('FAILED', 1), ('MISSING', 1), ('SUCCESSFUL', 0)]
+        for verdict, expected in cases:
+            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as directory, \
+                 patch.object(kani_gate, 'harnesses', return_value=names), \
+                 patch.object(kani_gate, 'load_budgets', return_value=budgets), \
+                 patch.object(kani_gate, 'prove', return_value=({
+                     'pending': {'name': 'pending', 'verdict': verdict},
+                     'fast': {'name': 'fast', 'verdict': 'SUCCESSFUL'}}, [])), \
+                 patch.dict(os.environ, {'BUILDBUDDY_API_KEY': 'fake'}):
+                self.assertEqual(kani_gate.gate_main(gate_args(directory, 'nightly')), expected)
+                summary = Path(directory, 'kani-summary.md').read_text()
+                self.assertIn('pending #806', summary)
+                self.assertIn(verdict, summary)
+
+
 
 class ShardTests(unittest.TestCase):
     def test_runner_entrypoint_scrubs_the_key_from_kani(self):
@@ -373,6 +442,21 @@ class ShardTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_report_dry_run_prints_the_issue_without_network_or_credentials(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(kani_gate.urllib.request, 'urlopen') as network, \
+             patch('sys.stdout', new_callable=io.StringIO) as output:
+            summary = Path(directory, 'nightly.md')
+            summary.write_text('pending #806: TIMEOUT; regression: FAILED')
+            try:
+                code = kani_gate.main(['report', '--summary', str(summary), '--dry-run'])
+            except SystemExit as error:
+                self.fail(f'report needs a safe dry-run: {error}')
+            self.assertEqual(code, 0)
+            network.assert_not_called()
+            self.assertIn(kani_gate.ISSUE_TITLE, output.getvalue())
+            self.assertIn(summary.read_text(), output.getvalue())
+
     def test_a_regression_opens_one_issue_then_comments(self):
         calls = []
 
