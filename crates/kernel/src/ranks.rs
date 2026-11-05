@@ -45,7 +45,7 @@ impl Node {
         pub fn settle_rank(&self) -> (result: u64) [
             ensures result as int == 4 * node_distance(*self) + pending_rank(*self),
                 result <= 16387,
-        ] proof [progress_gate_leaf_ranks::rank_definitions_all();] {
+        ] {
             4 * self.distance() + self.pending()
         }
     }
@@ -319,7 +319,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             progress_gate_leaf_steps::advance_details(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket)),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all();] {
+    ] {
         let n = *node;
         kernel_proof! { progress_gate_leaf_steps::teardown_item(n, kind); }
         if n.question.is_some() {
@@ -365,7 +365,7 @@ kernel_fn! {
             advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         false
     }
 }
@@ -387,7 +387,7 @@ kernel_fn! {
             },
             progress_gate_leaf_steps::advance_details(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket)),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all();] {
+    ] {
         kernel_proof! { reveal(progress_gate_leaf_steps::advance_details); }
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
