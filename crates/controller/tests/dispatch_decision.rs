@@ -46,7 +46,15 @@ fn delivery_contracts_and_current_endings_are_distinct() {
     ] {
         e.class = class;
         assert_eq!(
-            classify(Wait::Effect(EffectKind::Push), e),
+            classify(
+                Wait::Effect(match class {
+                    DeliveryClass::Once => EffectKind::SubmitChecks,
+                    DeliveryClass::Converges => EffectKind::Push,
+                    DeliveryClass::AtLeastOnce => EffectKind::PostApproval,
+                    DeliveryClass::Worker => unreachable!(),
+                }),
+                e
+            ),
             DispatchStatus::Dispatched(class)
         );
     }

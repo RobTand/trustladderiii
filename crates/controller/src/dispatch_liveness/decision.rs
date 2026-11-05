@@ -33,7 +33,7 @@ pub enum RetryPending {
 
 /// #817 / #828 integration seam: `until` is the persisted quota reset in Unix ms.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
-    result == RetryPending::ModelQuota { until },
+    result == (RetryPending::ModelQuota { until }),
 ))]
 pub fn quota_retry(until: u64) -> RetryPending {
     RetryPending::ModelQuota { until }
@@ -81,14 +81,7 @@ pub struct Evidence {
 
 /// State-table effect-delivery classes. Rebase belongs to the worktree adapter.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
-    result == match kind {
-        EffectKind::StartRun(_) | EffectKind::StopRun => DeliveryClass::Worker,
-        EffectKind::SubmitChecks => DeliveryClass::Once,
-        EffectKind::PostApproval => DeliveryClass::AtLeastOnce,
-        EffectKind::StartRebase | EffectKind::PrepareWorktree | EffectKind::Push
-        | EffectKind::OpenPr | EffectKind::Enqueue | EffectKind::WithdrawJob
-        | EffectKind::ClosePr | EffectKind::RemoveWorktree => DeliveryClass::Converges,
-    },
+    result == delivery_contract(kind),
 ))]
 pub fn delivery_class(kind: EffectKind) -> DeliveryClass {
     match kind {
@@ -140,7 +133,17 @@ pub fn classify(wait: Wait, e: Evidence) -> DispatchStatus {
                 DispatchStatus::Silent
             }
         }
-        Wait::Effect(_) | Wait::WorkerReply | Wait::CheckResults => operation_status(e),
+        Wait::Effect(kind) => {
+            let mut effect = e;
+            effect.class = delivery_class(kind);
+            operation_status(effect)
+        }
+        Wait::WorkerReply => operation_status(e),
+        Wait::CheckResults => {
+            let mut checks = e;
+            checks.class = DeliveryClass::Once;
+            operation_status(checks)
+        }
         Wait::Answer => {
             if e.question {
                 DispatchStatus::Answer
@@ -214,6 +217,12 @@ pub enum Repair {
     LostWorker,
 }
 
+/// #816 P2 / #771: only the durable parking marker's clearance enables a scan.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == !parked,))]
+pub fn scan_queued(parked: bool) -> bool {
+    !parked
+}
+
 /// #816 / Q7: stages preserve effect-read and clock sampling points. There is
 /// deliberately no launch or successful-reply action in this decision language.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
@@ -259,6 +268,16 @@ pub fn supervisor_ending(acknowledged: bool, absent: bool) -> Repair {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+pub open spec fn delivery_contract(kind: EffectKind) -> DeliveryClass {
+    match kind {
+        EffectKind::StartRun(_) | EffectKind::StopRun => DeliveryClass::Worker,
+        EffectKind::SubmitChecks => DeliveryClass::Once,
+        EffectKind::PostApproval => DeliveryClass::AtLeastOnce,
+        EffectKind::StartRebase | EffectKind::PrepareWorktree | EffectKind::Push
+        | EffectKind::OpenPr | EffectKind::Enqueue | EffectKind::WithdrawJob
+        | EffectKind::ClosePr | EffectKind::RemoveWorktree => DeliveryClass::Converges,
+    }
+}
 pub open spec fn operation_classification(e: Evidence) -> DispatchStatus {
     if e.class == DeliveryClass::Worker && e.watch && e.process == ProcessEvidence::Live {
         DispatchStatus::Dispatched(DeliveryClass::Worker)
@@ -277,7 +296,9 @@ pub open spec fn classification(wait: Wait, e: Evidence) -> DispatchStatus {
         Wait::Resume => if e.watch && e.process == ProcessEvidence::Live { DispatchStatus::Dispatched(e.class) }
             else if e.paused { DispatchStatus::Paused } else { DispatchStatus::Silent },
         Wait::AgentPool => if e.ticket && e.obstruction { DispatchStatus::PoolWait } else { DispatchStatus::Silent },
-        Wait::Effect(_) | Wait::WorkerReply | Wait::CheckResults => operation_classification(e),
+        Wait::Effect(kind) => operation_classification(Evidence { class: delivery_contract(kind), ..e }),
+        Wait::WorkerReply => operation_classification(e),
+        Wait::CheckResults => operation_classification(Evidence { class: DeliveryClass::Once, ..e }),
         Wait::Answer => if e.question { DispatchStatus::Answer } else { DispatchStatus::Silent },
         Wait::MergeQueue => if e.external { DispatchStatus::MergeQueue } else { DispatchStatus::Silent },
         Wait::SlotOrFiles => if e.ticket && e.obstruction { DispatchStatus::SlotOrFiles } else { DispatchStatus::Silent },

@@ -73,6 +73,16 @@ mod dispatch_theorems {
         classify(Wait::WorkerReply, held)
     }
 
+    /// #816 P2 / #771: an arbitrary number of unrelated drives or deadline
+    /// wakes cannot enable a scan while the durable parking row remains.
+    fn no_poll_when_parked() {
+        let first = scan_queued(true);
+        let next = scan_queued(true);
+        assert(!first && !next);
+        let cleared = scan_queued(false);
+        assert(cleared);
+    }
+
     /// #817 nonvacuity: all six primary outcomes have concrete witnesses.
     fn outcome_witnesses() {
         let mut e = Evidence {

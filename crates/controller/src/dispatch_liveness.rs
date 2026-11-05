@@ -119,16 +119,27 @@ fn matches_dispatch(d: &Delivery, id: NodeId, node: &Node, key: &str, epoch: i64
                 && operation(node).is_some_and(|(_, expected)| kind == expected))
 }
 
-fn blocked(snapshot: &Snapshot, world: &World) -> bool {
-    // No conclusion about a missing dispatch is valid ahead of retained inputs
-    // or Q27/#771 headroom recovery. Their transaction may not have started it.
-    crate::input_errors::kernel_backlog(snapshot)
-        || snapshot.rows.iter().any(|r| {
-            r.table == "incidents"
-                && r.value["open"] == true
-                && r.value["signature"]["class"] == crate::input_errors::COUNTER_HEADROOM
-        })
-        || world.counter_exhaustion().is_some()
+enum Deferral {
+    Inputs,
+    Incident,
+    Counter(tl3_kernel::CounterExhaustion),
+}
+
+fn blocked(snapshot: &Snapshot, world: &World, scan: &mut impl FnMut()) -> Option<Deferral> {
+    // Preserve the original short-circuit order, including the sampling point
+    // of the global counter scan. Retained inputs may not have started a run.
+    if crate::input_errors::kernel_backlog(snapshot) {
+        return Some(Deferral::Inputs);
+    }
+    if snapshot.rows.iter().any(|r| {
+        r.table == "incidents"
+            && r.value["open"] == true
+            && r.value["signature"]["class"] == crate::input_errors::COUNTER_HEADROOM
+    }) {
+        return Some(Deferral::Incident);
+    }
+    scan();
+    world.counter_exhaustion().map(Deferral::Counter)
 }
 
 pub(crate) fn queue_pool_changes(
@@ -221,16 +232,23 @@ impl Controller {
                 candidates.push(id);
             }
         }
-        if blocked(&snapshot, &world) {
+        if let Some(reason) = blocked(&snapshot, &world, &mut || {}) {
             let mut commit = Commit::new(
                 format!("worker-wait-deferred:{}", snapshot.revision.get()),
                 json!({"worker_wait_deferred": true}),
                 &snapshot,
             );
-            if !crate::input_errors::kernel_backlog(&snapshot) {
+            if !matches!(reason, Deferral::Inputs) {
                 // The existing #771 halt covers a parked wait even when no
                 // kernel input has arrived yet. Clearance releases the queue.
-                self.kernel_headroom(&snapshot, &world, &mut commit)?;
+                if let Deferral::Counter(exhausted) = reason {
+                    self.counter_exhausted(
+                        &snapshot,
+                        &mut commit,
+                        exhausted.node,
+                        format!("kernel counter headroom exhausted: {}", exhausted.counter),
+                    )?;
+                }
                 commit
                     .rows
                     .push(put(PARKED, "headroom".into(), json!(true)));
@@ -274,7 +292,7 @@ impl Controller {
     ) -> Result<bool> {
         // #816 P2: only startup or committed #771 clearance releases this row.
         // Unrelated drives, allowance wakes and row writes do not scan headroom.
-        if snapshot.rows.iter().any(|r| r.table == PARKED) {
+        if !decision::scan_queued(snapshot.rows.iter().any(|r| r.table == PARKED)) {
             return Ok(false);
         }
         let candidates = snapshot
@@ -306,20 +324,26 @@ impl Controller {
             self.store.commit(&settled)?;
             return Ok(true);
         }
-        if !candidates.is_empty() {
-            hook(crate::Boundary::WorkerWaitHeadroom, "headroom");
-        }
         if candidates.is_empty() {
             return Ok(false);
         }
-        if blocked(snapshot, world) {
-            if !crate::input_errors::kernel_backlog(snapshot) {
+        if let Some(reason) = blocked(snapshot, world, &mut || {
+            hook(crate::Boundary::WorkerWaitHeadroom, "headroom")
+        }) {
+            if !matches!(reason, Deferral::Inputs) {
                 let mut commit = Commit::new(
                     format!("worker-wait-park:{}", snapshot.revision.get()),
                     json!({"worker_wait_park": true}),
                     snapshot,
                 );
-                self.kernel_headroom(snapshot, world, &mut commit)?;
+                if let Deferral::Counter(exhausted) = reason {
+                    self.counter_exhausted(
+                        snapshot,
+                        &mut commit,
+                        exhausted.node,
+                        format!("kernel counter headroom exhausted: {}", exhausted.counter),
+                    )?;
+                }
                 commit
                     .rows
                     .push(put(PARKED, "headroom".into(), json!(true)));
