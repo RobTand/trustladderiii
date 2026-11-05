@@ -844,18 +844,23 @@ fn check_dependency_abandoned() {
         })
     ));
     out = Outbox::new();
+    let status: DependencyStatus = kani::any();
     apply(
         &mut world,
-        fact(Fact::Dependency {
-            target,
-            status: kani::any(),
-        }),
+        fact(Fact::Dependency { target, status }),
         &mut out,
     );
     assert!(out.is_empty());
-    assert!(!advance(&mut world, 0, &mut out));
-    assert_eq!(world.nodes[0].phase, Phase::Unplanned);
-    assert_eq!(world.dependencies[0].status, DependencyStatus::Abandoned);
+    let delivered = status == DependencyStatus::Delivered;
+    assert_eq!(advance(&mut world, 0, &mut out), delivered);
+    assert_eq!(
+        world.dependencies[0].status,
+        if delivered {
+            DependencyStatus::Delivered
+        } else {
+            DependencyStatus::Abandoned
+        }
+    );
     require_consistent(&world);
     kani::cover!(
         world.nodes[0].waiting_prerequisite.is_some(),
@@ -959,11 +964,12 @@ fn check_dependency_fact() {
         fact(Fact::Dependency { target, status }),
         &mut out,
     );
-    let expected = if previous_status == DependencyStatus::Pending {
-        status
-    } else {
-        previous_status
-    };
+    let expected =
+        if previous_status == DependencyStatus::Pending || status == DependencyStatus::Delivered {
+            status
+        } else {
+            previous_status
+        };
     assert_eq!(world.dependencies[0].status, expected);
     assert_eq!(world.nodes[0].phase, phase);
     require_consistent(&world);

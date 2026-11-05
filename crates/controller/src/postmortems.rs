@@ -327,7 +327,7 @@ pub(crate) fn case_file(
         &crate::adapters::workers::ladder::quota_resets(snapshot),
         now,
     );
-    Ok(json!({
+    let mut inputs = json!({
         "record": {"id": id, "trigger": record.trigger, "reason": record.reason},
         "case": {
             "request": {"node": node.0, "repo": repo, "issue": request.issue,
@@ -349,7 +349,12 @@ pub(crate) fn case_file(
         "deadline_secs": deadline_secs,
         "trace_tags": {"node": key, "request": key, "repo": repo,
             "issue": request.issue.to_string()},
-    }))
+    });
+    let closures = crate::merge_dependencies::closures(snapshot, node)?;
+    if !closures.is_empty() {
+        inputs["case"]["prerequisite_closures"] = json!(closures);
+    }
+    Ok(inputs)
 }
 
 /// Case-file documents stay readable but bounded; the judge reads the rest in traces.

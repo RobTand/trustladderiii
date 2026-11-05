@@ -495,6 +495,12 @@ fn prerequisite_issue(repository: &Repository, issue: &tl3_github::Issue) -> Opt
         issue.number,
         crate::merge_dependencies::issue_status(issue),
         &issue.updated_at.to_rfc3339(),
+        Some(
+            issue
+                .state_reason
+                .clone()
+                .unwrap_or_else(|| "unspecified".into()),
+        ),
     )
 }
 
@@ -505,6 +511,7 @@ fn prerequisite_pr(repository: &Repository, pr: &tl3_github::PullRequest) -> Opt
         pr.number,
         crate::merge_dependencies::pr_status(pr),
         &pr.updated_at.to_rfc3339(),
+        Some("closed_without_merge".into()),
     )
 }
 
@@ -514,6 +521,7 @@ fn prerequisite_input(
     number: u64,
     status: tl3_kernel::DependencyStatus,
     at: &str,
+    reason: Option<String>,
 ) -> Option<Input> {
     if status == tl3_kernel::DependencyStatus::Pending {
         return None;
@@ -526,6 +534,7 @@ fn prerequisite_input(
             repository.installation
         ),
         observation: Observation::Prerequisite(crate::merge_dependencies::ExternalFact {
+            reason,
             repository: repository.clone(),
             kind,
             number,

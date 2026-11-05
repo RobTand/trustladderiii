@@ -2928,21 +2928,11 @@ impl Controller {
                 ..
             } => {
                 if self.bootstrap.repos.contains(&repository) {
-                    let status = self
+                    let fact = self
                         .adapters
                         .get(executor::Upstream::GitHub)?
-                        .prerequisite(&repository, kind, number)?;
-                    self.external_dependency_fact(
-                        snapshot,
-                        world,
-                        merge_dependencies::ExternalFact {
-                            repository,
-                            kind,
-                            number,
-                            status,
-                        },
-                        commit,
-                    )?;
+                        .prerequisite_detail(&repository, kind, number)?;
+                    self.external_dependency_fact(snapshot, world, fact, commit)?;
                 }
                 return Ok(None);
             }

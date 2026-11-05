@@ -950,12 +950,19 @@ prerequisite does not make the request not actionable. After ingest and audit,
 the root waits in Unplanned until every prerequisite is delivered. The wait
 holds no slot, file lock or spendable credit, and avoids planner and maker cost.
 
-Each declaration names an active TL3 request root or an external merge fact.
-A merged PR, an issue closed as completed, or a TL3 request closed as done
-delivers. A stopped request with an open issue stays pending and can later
-restart. An issue closed as not planned abandons, posts one note, and keeps
-the waiting request blocked until Rob changes or stops it. Status says
-"waiting for #N to merge". Planning after release uses current main.
+Each declaration names an active TL3 request root or an external prerequisite fact.
+Rob, 2026-11-05, #839 (Q27): 'If it's truly closed, the prerequisite should just continue.' [Decision](https://github.com/RobTand/trustladderiii/issues/839#issuecomment-6671251113). 
+Any truly closed issue or PR delivers, whether merged, completed, not planned,
+or closed by TL3 as not actionable. A stopped request with an open issue stays
+pending and restartable under Q49; status says "waiting for #N: stopped".
+The dependent retains typed closure-without-merge evidence naming the prerequisite
+and its reason. Both its planner input and postmortem input carry that record.
+No additional gate is added; the planner's normal checks catch missing code.
+Planning after release uses current main. Each chain link proceeds only when its
+own prerequisite resolves; closing an ancestor does not resolve open successors.
+Startup performs one bounded read per unresolved prerequisite identity, or replays
+its retained terminal fact, so closures before deploy release waits without any
+request restart. Subsequent evidence arrives through webhooks and catch-up.
 
 Facts are never stale or dropped and update dependencies in every phase.
 Declarations reconcile retained terminal facts before waiting, even when an

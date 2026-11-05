@@ -733,7 +733,9 @@ impl World {
         }
         if let Some(index) = existing {
             let previous = self.dependencies[index];
-            if previous.rejected || previous.status != DependencyStatus::Pending {
+            // #839 / Q27: upgrade historical abandonment when closure is delivered.
+            if previous.rejected || previous.status == DependencyStatus::Delivered
+                || (previous.status == DependencyStatus::Abandoned && status != DependencyStatus::Delivered) {
                 return None;
             }
             if status == DependencyStatus::Pending && target.request == previous.target.request {

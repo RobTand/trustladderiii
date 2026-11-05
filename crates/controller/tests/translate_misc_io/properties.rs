@@ -279,6 +279,7 @@ fn delegated_shapes() -> Vec<(&'static str, Observation)> {
             shapes.push((
                 "external_dependency_fact",
                 Observation::Prerequisite(ExternalFact {
+                    reason: None,
                     repository: repo(),
                     kind,
                     number: 19,

@@ -25,6 +25,8 @@ pub struct Case {
     pub phases: JsonArray,
     pub questions: JsonArray,
     pub incidents: JsonArray,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prerequisite_closures: Vec<crate::prerequisites::Closure>,
     #[serde(
         default,
         deserialize_with = "present",
@@ -126,6 +128,7 @@ impl SchemaOrder for Case {
                     "phases",
                     "questions",
                     "incidents",
+                    "prerequisite_closures",
                     "plan",
                     "brief",
                     "audit",

@@ -310,7 +310,11 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         )
         .unwrap(),
     );
-    commit.rows.push(crate::put("prerequisite_closures", "0:Issue:2763".into(), json!({"kind":"issue","number":2763,"reason":"not_planned"})));
+    commit.rows.push(crate::put(
+        "prerequisite_closures",
+        "0:Issue:2763".into(),
+        json!({"kind":"issue","number":2763,"reason":"not_planned"}),
+    ));
     store.commit(&commit).unwrap();
     let postmortem = store.owed_postmortem().unwrap().unwrap().id;
     let mut coverage = std::collections::BTreeSet::new();
@@ -362,7 +366,10 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                     protocol::validate_inputs(role, &request["inputs"]).unwrap();
                     typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
                     if role == "planner" {
-                        assert_eq!(request["inputs"]["prerequisite_closures"], json!([{"kind":"issue","number":2763,"reason":"not_planned"}]));
+                        assert_eq!(
+                            request["inputs"]["prerequisite_closures"],
+                            json!([{"kind":"issue","number":2763,"reason":"not_planned"}])
+                        );
                     }
                     if role == "reviewer" {
                         typed_round_trip::<tl3_contracts::roles::reviewer_input::ReviewerInput>(
@@ -460,7 +467,10 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         let request = supervisor
             .request(&delivery, "postmortem", &mut store, &snapshot)
             .unwrap();
-        assert_eq!(request["inputs"]["case"]["prerequisite_closures"], json!([{"kind":"issue","number":2763,"reason":"not_planned"}]));
+        assert_eq!(
+            request["inputs"]["case"]["prerequisite_closures"],
+            json!([{"kind":"issue","number":2763,"reason":"not_planned"}])
+        );
         protocol::validate_inputs("postmortem", &request["inputs"]).unwrap();
         typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
         typed_round_trip::<tl3_contracts::roles::postmortem_input::PostmortemInput>(

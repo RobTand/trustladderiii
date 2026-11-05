@@ -14,10 +14,12 @@ pub struct ExternalFact {
     pub kind: PrerequisiteKind,
     pub number: u64,
     pub status: DependencyStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Q59 / #839: controller evidence preserves the reason a prerequisite blocks.
-/// A closed PR remains Pending in the kernel until Q27 selects an action.
+/// Closed evidence satisfies admission; Stopped still describes an open issue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrerequisiteState {
     Open,
@@ -30,6 +32,7 @@ pub enum PrerequisiteState {
 pub enum ClosedPrerequisiteReason {
     NotPlanned,
     PullRequestClosed,
+    IssueClosed,
 }
 
 /// Direct and transitive facts for a dependent's look. No upstream read occurs.
@@ -50,20 +53,20 @@ impl PrerequisiteEvidence {
             PrerequisiteState::ClosedUnmerged { reason } => {
                 let reason = match reason {
                     ClosedPrerequisiteReason::NotPlanned => " (not planned)",
-                    ClosedPrerequisiteReason::PullRequestClosed => "",
+                    ClosedPrerequisiteReason::PullRequestClosed
+                    | ClosedPrerequisiteReason::IssueClosed => "",
                 };
-                format!("waiting for #{number} to merge: closed without merge{reason}")
+                format!("#{number}: closed without merge{reason}; dependency satisfied")
             }
         }
     }
 }
 
-/// #839: Abandoned on an external PR records closure, without introducing a
-/// kernel abandonment rule for PRs. Issues retain their existing Q59 meaning.
-fn kernel_status(kind: PrerequisiteKind, status: DependencyStatus) -> DependencyStatus {
-    match (kind, status) {
-        (PrerequisiteKind::PullRequest, DependencyStatus::Abandoned) => DependencyStatus::Pending,
-        _ => status,
+/// Rob, 2026-11-05, #839 (Q27): truly closed prerequisites satisfy admission.
+fn kernel_status(_kind: PrerequisiteKind, status: DependencyStatus) -> DependencyStatus {
+    match status {
+        DependencyStatus::Abandoned => DependencyStatus::Delivered,
+        other => other,
     }
 }
 
@@ -109,7 +112,21 @@ pub fn prerequisite_evidence(
                 DependencyStatus::Delivered => PrerequisiteState::Delivered,
                 DependencyStatus::Abandoned => PrerequisiteState::ClosedUnmerged {
                     reason: match dependency.target.kind {
-                        PrerequisiteKind::Issue => ClosedPrerequisiteReason::NotPlanned,
+                        PrerequisiteKind::Issue => {
+                            match retained_fact(
+                                snapshot,
+                                &commit,
+                                &request.repo,
+                                dependency.target.kind,
+                                dependency.target.number,
+                            )?
+                            .and_then(|fact| fact.reason)
+                            .as_deref()
+                            {
+                                None | Some("not_planned") => ClosedPrerequisiteReason::NotPlanned,
+                                _ => ClosedPrerequisiteReason::IssueClosed,
+                            }
+                        }
                         PrerequisiteKind::PullRequest => {
                             ClosedPrerequisiteReason::PullRequestClosed
                         }
@@ -152,7 +169,7 @@ struct Declaration {
 pub fn issue_status(issue: &tl3_github::Issue) -> DependencyStatus {
     match (issue.state.as_str(), issue.state_reason.as_deref()) {
         ("closed", Some("completed")) => DependencyStatus::Delivered,
-        ("closed", Some("not_planned")) => DependencyStatus::Abandoned,
+        ("closed", _) => DependencyStatus::Abandoned,
         _ => DependencyStatus::Pending,
     }
 }
@@ -355,8 +372,6 @@ fn retain_fact(
 ) -> Result<ExternalFact> {
     if let Some(previous) =
         retained_fact(snapshot, commit, &fact.repository, fact.kind, fact.number)?
-        && !(previous.kind == PrerequisiteKind::PullRequest
-            && previous.status == DependencyStatus::Abandoned)
     {
         return Ok(previous);
     }
@@ -366,6 +381,42 @@ fn retain_fact(
         json!(fact),
     ));
     Ok(fact)
+}
+
+fn record_closure(node: NodeId, fact: &ExternalFact, commit: &mut Commit) {
+    if fact.status != DependencyStatus::Abandoned {
+        return;
+    }
+    use crate::contracts::prerequisites::{Closure, Kind};
+    let closure = Closure {
+        kind: match fact.kind {
+            PrerequisiteKind::Issue => Kind::Issue,
+            PrerequisiteKind::PullRequest => Kind::PullRequest,
+        },
+        number: fact.number,
+        reason: fact.reason.clone().unwrap_or_else(|| match fact.kind {
+            PrerequisiteKind::Issue => "not_planned".into(),
+            PrerequisiteKind::PullRequest => "closed_without_merge".into(),
+        }),
+    };
+    commit.rows.push(put(
+        "prerequisite_closures",
+        format!("{}:{:?}:{}", node.0, fact.kind, fact.number),
+        json!(closure),
+    ));
+}
+
+pub(crate) fn closures(
+    snapshot: &Snapshot,
+    node: NodeId,
+) -> Result<Vec<crate::contracts::prerequisites::Closure>> {
+    let prefix = format!("{}:", node.0);
+    snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == "prerequisite_closures" && row.id.starts_with(&prefix))
+        .map(|row| decode_stored(row.value.clone()))
+        .collect()
 }
 
 impl Controller {
@@ -390,7 +441,7 @@ impl Controller {
         let mut seen = BTreeSet::new();
         for dependency in world.dependencies() {
             if dependency.rejected
-                || dependency.status != DependencyStatus::Pending
+                || dependency.status == DependencyStatus::Delivered
                 || world.nodes[dependency.node.0 as usize].phase.is_closed()
             {
                 continue;
@@ -404,7 +455,7 @@ impl Controller {
                 dependency.target.number,
             );
             if !self.bootstrap.repos.contains(&request.repo) || !seen.insert(key.clone())
-                || retained_fact(&snapshot, &commit, &request.repo, dependency.target.kind, dependency.target.number)?.is_some()
+
                 || snapshot.rows.iter().any(|row| row.table == "inbox" && matches!(
                     serde_json::from_value::<executor::Observation>(row.value.clone()),
                     Ok(executor::Observation::PrerequisiteRead { repository, kind, number, .. })
@@ -419,12 +470,21 @@ impl Controller {
                     "external:prerequisite-open:{}:{key}",
                     snapshot.revision.get()
                 ),
-                json!(executor::Observation::PrerequisiteRead {
-                    node: dependency.node,
-                    repository: request.repo.clone(),
-                    kind: dependency.target.kind,
-                    number: dependency.target.number,
-                }),
+                match retained_fact(
+                    &snapshot,
+                    &commit,
+                    &request.repo,
+                    dependency.target.kind,
+                    dependency.target.number,
+                )? {
+                    Some(fact) => json!(executor::Observation::Prerequisite(fact)),
+                    None => json!(executor::Observation::PrerequisiteRead {
+                        node: dependency.node,
+                        repository: request.repo.clone(),
+                        kind: dependency.target.kind,
+                        number: dependency.target.number,
+                    }),
+                },
             ));
         }
         if !commit.rows.is_empty() {
@@ -534,7 +594,9 @@ impl Controller {
             let observed = self
                 .adapters
                 .get(executor::Upstream::GitHub)?
-                .prerequisite(&request.repo, kind, number)?;
+                .prerequisite_detail(&request.repo, kind, number)?;
+            let observed_reason = observed.reason.clone();
+            let observed = observed.status;
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
             let status =
                 if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
@@ -556,6 +618,7 @@ impl Controller {
                         snapshot,
                         commit,
                         ExternalFact {
+                            reason: observed_reason,
                             repository: request.repo.clone(),
                             kind,
                             number,
@@ -564,6 +627,9 @@ impl Controller {
                     )?
                     .status
                 };
+            if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
+                record_closure(node, &fact, commit);
+            }
             declarations.push(Declaration {
                 target: DependencyTarget {
                     kind,
@@ -703,6 +769,7 @@ impl Controller {
                         snapshot,
                         commit,
                         ExternalFact {
+                            reason: None,
                             repository: request.repo.clone(),
                             kind,
                             number,
@@ -818,6 +885,7 @@ impl Controller {
                     .transpose()?
                     .is_some_and(|r| same_repository(&r.repo, &fact.repository))
             {
+                record_closure(dependency.node, &fact, commit);
                 self.apply_fact(
                     snapshot,
                     world,
@@ -1213,6 +1281,7 @@ mod tests {
         observation(
             c,
             Observation::Prerequisite(ExternalFact {
+                reason: None,
                 repository: repo.clone(),
                 kind: PrerequisiteKind::Issue,
                 number,
@@ -1241,6 +1310,7 @@ mod tests {
             c.observe(
                 &format!("unserved-{index}"),
                 Observation::Prerequisite(ExternalFact {
+                    reason: None,
                     repository,
                     kind: PrerequisiteKind::Issue,
                     number: 810,
@@ -1272,6 +1342,7 @@ mod tests {
         c.observe(
             "missing-number",
             Observation::Prerequisite(ExternalFact {
+                reason: None,
                 repository: repo,
                 kind: PrerequisiteKind::Issue,
                 number: 0,
@@ -1385,7 +1456,7 @@ mod tests {
     }
 
     #[test]
-    fn abandonment_and_cycles_remain_blocked_and_emit_one_note() {
+    fn closure_releases_predecessor_but_rejected_cycle_stays_blocked() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "prerequisite_abandoned");
         let a = intake(&mut c, &repo, 2761);
@@ -1405,8 +1476,13 @@ mod tests {
             .iter()
             .filter(|r| r.payload.to_string().contains("DependencyAbandoned"))
             .count();
-        assert_eq!(notes, 1);
-        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Unplanned);
+        assert_eq!(notes, 0);
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Planning { must_split: false }
+        );
+        assert_eq!(c.world().unwrap().nodes[1].phase, Phase::Unplanned);
+        assert!(c.world().unwrap().dependencies()[1].rejected);
     }
 
     #[test]
@@ -1437,16 +1513,16 @@ mod tests {
         ingest(&mut c, waiter, &[2761]);
         assert_eq!(
             c.world().unwrap().dependencies()[0].status,
-            DependencyStatus::Abandoned
+            DependencyStatus::Delivered
         );
         assert_eq!(
             c.world().unwrap().nodes[waiter.0 as usize].phase,
-            Phase::Unplanned
+            Phase::Planning { must_split: false }
         );
     }
 
     #[test]
-    fn reingest_retains_abandonment_and_announces_once() {
+    fn reingest_retains_closed_evidence_and_delivers_without_abandonment_note() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "reingest_abandoned");
         intake(&mut c, &repo, 2761);
@@ -1461,11 +1537,11 @@ mod tests {
         ingest(&mut c, waiter, &[2761]);
         assert_eq!(
             c.world().unwrap().dependencies()[0].status,
-            DependencyStatus::Abandoned
+            DependencyStatus::Delivered
         );
         assert_eq!(
             c.world().unwrap().nodes[waiter.0 as usize].phase,
-            Phase::Unplanned
+            Phase::Planning { must_split: false }
         );
         assert_eq!(
             c.snapshot()
@@ -1474,7 +1550,7 @@ mod tests {
                 .iter()
                 .filter(|r| r.payload.to_string().contains("DependencyAbandoned"))
                 .count(),
-            1
+            0
         );
     }
 

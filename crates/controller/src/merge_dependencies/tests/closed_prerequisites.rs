@@ -54,14 +54,32 @@ fn live_closed_roots_release_nine_and_four_waiter_chains_in_order() {
         for (index, &node) in waiters.iter().enumerate() {
             let predecessor = root + index as u64;
             set_issue(&repo, predecessor, "closed", Some("not_planned"));
-            external(&mut c, &repository, predecessor, DependencyStatus::Abandoned);
-            assert_eq!(c.world().unwrap().nodes[node.0 as usize].phase,
-                Phase::Planning { must_split: false });
+            external(
+                &mut c,
+                &repository,
+                predecessor,
+                DependencyStatus::Abandoned,
+            );
+            assert_eq!(
+                c.world().unwrap().nodes[node.0 as usize].phase,
+                Phase::Planning { must_split: false }
+            );
             for &later in &waiters[index + 1..] {
-                assert_eq!(c.world().unwrap().nodes[later.0 as usize].phase, Phase::Unplanned);
+                assert_eq!(
+                    c.world().unwrap().nodes[later.0 as usize].phase,
+                    Phase::Unplanned
+                );
             }
-            assert_eq!(c.prerequisite_evidence(node).unwrap()[0].state,
-                PrerequisiteState::ClosedUnmerged { reason: ClosedPrerequisiteReason::NotPlanned });
+            assert_eq!(
+                super::super::closures(&c.snapshot().unwrap(), node).unwrap()[0].reason,
+                "not_planned"
+            );
+            assert_eq!(
+                c.prerequisite_evidence(node).unwrap()[0].state,
+                PrerequisiteState::ClosedUnmerged {
+                    reason: ClosedPrerequisiteReason::NotPlanned
+                }
+            );
         }
     }
     assert!(!crate::status::render_text(&status(&settings)).contains("waiting for"));
@@ -149,6 +167,7 @@ fn caught_up_closure_has_identical_text_and_html_status() {
     c.observe(
         "t839-catch-up",
         Observation::Prerequisite(ExternalFact {
+            reason: None,
             repository: repository.clone(),
             kind: PrerequisiteKind::Issue,
             number: 2761,
@@ -158,12 +177,15 @@ fn caught_up_closure_has_identical_text_and_html_status() {
     .unwrap();
     assert!(c.drive_once().unwrap());
     let model = status(&settings);
-    assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase, Phase::Planning { must_split: false });
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Planning { must_split: false }
+    );
     assert!(!crate::status::render_text(&model).contains("waiting for #2761"));
     assert!(!crate::status::render_html(&model).contains("waiting for #2761"));
 }
 
-/// #839 / Q27: closed PR evidence does not invent an abandonment transition.
+/// #839 / Q27: a closed unmerged PR releases planning with retained closure evidence.
 #[test]
 fn closed_pr_delivers_and_retains_its_reason() {
     let mut db = Database::start();
@@ -180,6 +202,7 @@ fn closed_pr_delivers_and_retains_its_reason() {
     c.observe(
         "t839-pr-closed",
         Observation::Prerequisite(ExternalFact {
+            reason: None,
             repository: repository.clone(),
             kind: PrerequisiteKind::PullRequest,
             number: 2761,
@@ -188,14 +211,29 @@ fn closed_pr_delivers_and_retains_its_reason() {
     )
     .unwrap();
     assert!(c.drive_once().unwrap());
-    assert_eq!(c.world().unwrap().dependencies()[0].status, DependencyStatus::Delivered);
-    assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase, Phase::Planning { must_split: false });
-    assert_eq!(c.prerequisite_evidence(waiter).unwrap()[0].state,
-        PrerequisiteState::ClosedUnmerged { reason: ClosedPrerequisiteReason::PullRequestClosed });
-    assert!(!status(&settings).requests[0].waiting_on.contains("waiting for"));
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Delivered
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Planning { must_split: false }
+    );
+    assert_eq!(
+        c.prerequisite_evidence(waiter).unwrap()[0].state,
+        PrerequisiteState::ClosedUnmerged {
+            reason: ClosedPrerequisiteReason::PullRequestClosed
+        }
+    );
+    assert!(
+        !status(&settings).requests[0]
+            .waiting_on
+            .contains("waiting for")
+    );
     c.observe(
         "t839-pr-merged-later",
         Observation::Prerequisite(ExternalFact {
+            reason: None,
             repository,
             kind: PrerequisiteKind::PullRequest,
             number: 2761,
@@ -291,9 +329,56 @@ fn startup_reconciles_legacy_abandoned_edge_without_restart_command() {
     let waiter = intake(&mut c, &repository, 42);
     ingest(&mut c, waiter, &[2761]);
     let target = c.world().unwrap().dependencies()[0].target;
-    event(&mut c, Event::Fact { node: waiter, fact: Fact::Dependency { target, status: DependencyStatus::Abandoned } });
+    event(
+        &mut c,
+        Event::Fact {
+            node: waiter,
+            fact: Fact::Dependency {
+                target,
+                status: DependencyStatus::Abandoned,
+            },
+        },
+    );
     set_issue(&repo, 2761, "closed", Some("not_planned"));
     let mut c = reopen(&repo, c, &settings);
-    assert_eq!(c.world().unwrap().dependencies()[0].status, DependencyStatus::Delivered);
-    assert_eq!(c.world().unwrap().nodes[waiter.0 as usize].phase, Phase::Planning { must_split: false });
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Delivered
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Planning { must_split: false }
+    );
+}
+
+/// #839 / Q59: merged PRs satisfy the same controller path without missing-code evidence.
+#[test]
+fn merged_pr_delivers_without_closure_record() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_merged_pr");
+    crate::adapters::github::set_fake_issue(&repo.root.path().join("fakes"), &serde_json::from_value(json!({"number":2761,"title":"Prerequisite PR","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z","pull_request":{}})).unwrap());
+    let waiter = intake(&mut c, &repository, 42);
+    ingest_brief_kind(&mut c, waiter, &[2761], "pull_request");
+    reply(&mut c, waiter, Reply::AuditAgrees);
+    c.observe(
+        "t839-merged-control",
+        Observation::Prerequisite(ExternalFact {
+            repository,
+            kind: PrerequisiteKind::PullRequest,
+            number: 2761,
+            status: DependencyStatus::Delivered,
+            reason: None,
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Planning { must_split: false }
+    );
+    assert!(
+        super::super::closures(&c.snapshot().unwrap(), waiter)
+            .unwrap()
+            .is_empty()
+    );
 }
