@@ -1,4 +1,4 @@
-use serde::{Deserialize,Serialize};
+use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Serialize, thiserror::Error)]
 #[error("worker inputs break role schema: role={role} pointer={pointer} rule={rule}")]
 pub struct Failure {
