@@ -292,7 +292,12 @@ fn fixed_seed_passthrough_sequences_and_crash_schedules() {
                 ..Schedule::default()
             };
             let r = compare(&s);
-            prop_assert_eq!(r.results.len(), s.steps.len());
+            let expected = s
+                .steps
+                .iter()
+                .position(|step| step.passthrough == Some(3) && !step.conflict)
+                .map_or(s.steps.len(), |index| index + 1);
+            prop_assert_eq!(r.results.len(), expected);
             Ok(())
         })
         .unwrap();
