@@ -1319,3 +1319,29 @@ fn immutable_image(image: &str) -> bool {
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
     })
 }
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    #[test]
+    fn repository_delivery_defaults_to_queue_and_is_strict() {
+        let original = r#"{"owner":"owner","name":"repo","installation_id":3}"#;
+        let queue: Repository = serde_json::from_str(original).unwrap();
+        assert_eq!(queue.delivery, Delivery::Queue);
+        for mode in ["queue", "direct"] {
+            let value = serde_json::json!({"owner":"owner","name":"repo","installation_id":3,"delivery":mode});
+            let repo: Repository = serde_json::from_value(value).unwrap();
+            assert_eq!(serde_json::to_value(repo.delivery).unwrap(), mode);
+        }
+        for mode in [
+            serde_json::json!("Direct"),
+            serde_json::json!("mergify"),
+            serde_json::json!(""),
+            serde_json::json!(null),
+            serde_json::json!(3),
+        ] {
+            let value = serde_json::json!({"owner":"owner","name":"repo","installation_id":3,"delivery":mode});
+            assert!(serde_json::from_value::<Repository>(value).is_err());
+        }
+    }
+}

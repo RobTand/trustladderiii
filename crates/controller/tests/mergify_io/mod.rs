@@ -62,6 +62,7 @@ pub fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> 
 }
 pub mod executor {
     use super::*;
+    use ::tl3_store;
     pub use tl3_controller::executor::{Delivery, Output};
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub enum Observation {

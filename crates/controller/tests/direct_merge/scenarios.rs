@@ -9,6 +9,7 @@ struct DirectState {
     moved: bool,
     already_merged: bool,
     reads: usize,
+    reject_as_merged: bool,
     root: std::path::PathBuf,
 }
 #[derive(Clone)]
@@ -43,6 +44,7 @@ impl Respond for DirectApi {
             let mut state = self.base.0.lock().unwrap();
             if state.pull["merged_at"].is_string() { return ResponseTemplate::new(405); }
             if body["sha"] != state.pull["head"]["sha"] { return ResponseTemplate::new(409); }
+            if direct.reject_as_merged { state.merged(false); return ResponseTemplate::new(405); }
             if let Some(status) = direct.status { return ResponseTemplate::new(status); }
             state.merged(false);
             direct.successes += 1;
@@ -254,4 +256,136 @@ fn queue_repository_keeps_mergify() {
     assert_eq!(fixture.api.state.lock().unwrap().posts, 1);
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+}
+
+
+#[test]
+fn already_merged_405_reconciles_without_failure() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_405");
+    let fixture = DirectFixture::new();
+    fixture.direct.lock().unwrap().reject_as_merged = true;
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+    assert!(!controller.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents"));
+}
+
+#[test]
+fn restart_at_every_direct_write_converges() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // Fence, intent, annotation, merge and receipt, before and after each. The
+    // real Records writer performs fsync/rename; the callback never replaces it.
+    let mut database = support::Database::start();
+    let mut boundaries = Vec::new();
+    for cut in 0..24 {
+        let settings = database.create(&format!("direct_crash_{cut}"));
+        let fixture = DirectFixture::new();
+        fixture.check(None);
+        let (controller, delivery) = fixture.start(&settings);
+        drop(controller);
+        fixture.check(Some("success"));
+        let seen = Arc::new(AtomicUsize::new(0));
+        let count = seen.clone();
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let recorded = trace.clone();
+        // Fresh process wake state, but the same durable records and world.
+        let mut issuer = direct_merge::Adapter::new(fixture.api.clients(), 0,
+            &fixture.root.path().join("direct"), settings.clone()).unwrap()
+            .with_write_boundary(move |boundary| {
+                recorded.lock().unwrap().push(boundary);
+                if count.fetch_add(1, Ordering::SeqCst) == cut { panic!("#830 injected write crash"); }
+            });
+        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| issuer.execute(&delivery)));
+        let count = seen.load(Ordering::SeqCst);
+        if crashed.is_ok() {
+            assert_eq!(cut, count, "all preceding boundaries must have crashed");
+            assert_eq!(cut, boundaries.len());
+            break;
+        }
+        boundaries.push(*trace.lock().unwrap().last().unwrap());
+        drop(issuer);
+        let mut restarted = fixture.open(&settings);
+        // A restart has no in-memory sleeping effects.
+        let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
+            &fixture.root.path().join("direct"), settings.clone()).unwrap();
+        let completion = match adapter.reconcile(&delivery).unwrap() {
+            Reconciliation::Found(c) => c,
+            _ => panic!("fresh reconciliation must converge at cut {cut}"),
+        };
+        assert_eq!(completion.ack, tl3_kernel::Ack::Confirmed);
+        drop(adapter);
+        fixture.check_event(&settings);
+        drain(&mut restarted);
+        assert!(matches!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+        assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    }
+    for write in [direct_merge::Write::Fence, direct_merge::Write::Intent,
+        direct_merge::Write::Annotation, direct_merge::Write::Merge, direct_merge::Write::Receipt] {
+        for after in [false, true] {
+            assert!(boundaries.contains(&direct_merge::WriteBoundary { write, after }), "unreached {write:?}/{after}");
+        }
+    }
+}
+
+#[test]
+fn racing_pinned_puts_have_one_success_and_both_converge() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_race");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (controller, delivery) = fixture.start(&settings);
+    drop(controller);
+    fixture.check(Some("success"));
+    // Both independently reconcile the open, approved head before either PUT.
+    // Separate record roots simulate two controller processes with private state.
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let mut issuers = Vec::new();
+    for index in 0..2 {
+        let path = fixture.root.path().join(format!("issuer-{index}"));
+        let gate = barrier.clone();
+        let adapter = direct_merge::Adapter::new(fixture.api.clients(), 0, &path, settings.clone()).unwrap()
+            .with_write_boundary(move |boundary| {
+                if boundary == (direct_merge::WriteBoundary { write: direct_merge::Write::Merge, after: false }) { gate.wait(); }
+            });
+        issuers.push(adapter);
+    }
+    // The mock validates each issuer's fence/intent directory at its request.
+    // Use an existing durable intent copy for the common server assertion.
+    let mut warmup = direct_merge::Adapter::new(fixture.api.clients(), 0,
+        &fixture.root.path().join("direct"), settings.clone()).unwrap().with_write_boundary(|boundary| {
+            if boundary == (direct_merge::WriteBoundary { write: direct_merge::Write::Merge, after: false }) { panic!("before PUT"); }
+        });
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| warmup.execute(&delivery)));
+    let handles: Vec<_> = issuers.into_iter().map(|mut adapter| {
+        let delivery = delivery.clone();
+        std::thread::spawn(move || adapter.execute(&delivery))
+    }).collect();
+    for handle in handles { assert_eq!(handle.join().unwrap().unwrap().ack, tl3_kernel::Ack::Confirmed); }
+    let state = fixture.direct.lock().unwrap();
+    assert_eq!(state.puts.len(), 2);
+    assert_eq!(state.successes, 1);
+    assert!(state.puts.iter().all(|put| put["sha"] == json!(delivery.head_sha)));
+}
+
+#[test]
+fn repository_delivery_is_reconciled_in_stored_world() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_config");
+    let fixture = DirectFixture::new();
+    let mut controller = fixture.open(&settings);
+    let direct = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "repos").unwrap();
+    assert_eq!(direct.value["delivery"], "direct");
+    let mut repo = direct_repo(); repo.delivery = tl3_config::Delivery::Queue;
+    controller.reconcile_repository_delivery(&[repo]).unwrap();
+    let queue = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "repos").unwrap();
+    assert!(queue.value.get("delivery").is_none());
+    let revision = controller.snapshot().unwrap().revision;
+    let mut repo = direct_repo(); repo.delivery = tl3_config::Delivery::Queue;
+    controller.reconcile_repository_delivery(&[repo]).unwrap();
+    assert_eq!(controller.snapshot().unwrap().revision, revision);
+    drop(controller);
+    let controller = fixture.open(&settings);
+    assert_eq!(controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "repos").unwrap().value, direct.value);
 }

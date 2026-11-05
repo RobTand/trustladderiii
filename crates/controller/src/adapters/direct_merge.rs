@@ -61,7 +61,23 @@ impl Wakes {
     }
 }
 
+/// Durable and upstream write boundaries exposed for process-crash verification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Write {
+    Fence,
+    Intent,
+    Annotation,
+    Merge,
+    Receipt,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WriteBoundary {
+    pub write: Write,
+    pub after: bool,
+}
+
 pub struct Adapter {
+    boundary: Option<Arc<dyn Fn(WriteBoundary) + Send + Sync>>,
     wakes: Wakes,
     clients: BTreeMap<u64, GitHub>,
     epoch: i64,
@@ -78,6 +94,7 @@ impl Adapter {
     ) -> Result<Self> {
         fs::create_dir_all(records)?;
         Ok(Self {
+            boundary: None,
             wakes: Wakes::default(),
             clients,
             epoch,
@@ -89,6 +106,24 @@ impl Adapter {
     pub fn with_wakes(mut self, wakes: Wakes) -> Self {
         self.wakes = wakes;
         self
+    }
+    pub fn with_write_boundary(
+        mut self,
+        boundary: impl Fn(WriteBoundary) + Send + Sync + 'static,
+    ) -> Self {
+        self.boundary = Some(Arc::new(boundary));
+        self
+    }
+    fn boundary(&self, write: Write, after: bool) {
+        if let Some(hook) = &self.boundary {
+            hook(WriteBoundary { write, after });
+        }
+    }
+    fn write(&self, kind: Write, path: &Path, bytes: &[u8]) -> Result<()> {
+        self.boundary(kind, false);
+        self.records.write(path, bytes)?;
+        self.boundary(kind, true);
+        Ok(())
     }
     fn client(&self, d: &Delivery) -> Result<&GitHub> {
         self.clients
@@ -132,7 +167,9 @@ impl Adapter {
         {
             return Err(Error::ChecksPending);
         }
+        self.boundary(Write::Fence, false);
         self.records.fence(d.epoch)?;
+        self.boundary(Write::Fence, true);
         self.epoch = d.epoch;
         Ok(())
     }
@@ -355,8 +392,11 @@ impl Adapter {
         Ok(Completion::confirmed(observations))
     }
     fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
-        self.records
-            .write(&self.receipt_path(d)?, &serde_json::to_vec(&merged)?)?;
+        self.write(
+            Write::Receipt,
+            &self.receipt_path(d)?,
+            &serde_json::to_vec(&merged)?,
+        )?;
         self.fact(
             d,
             Evidence::Merged {
@@ -442,7 +482,8 @@ impl Adapter {
                                 .checked_add(1)
                                 .ok_or(Error::Invalid("direct intent counter exhausted"))
                         })?;
-                        self.records.write(
+                        self.write(
+                            Write::Intent,
                             &path,
                             &serde_json::to_vec(&Intent {
                                 head: sha.clone(),
@@ -460,20 +501,24 @@ impl Adapter {
                             "{}\n\n{VISIBILITY}\n",
                             read.pull.body.as_deref().unwrap_or_default().trim_end()
                         );
+                        self.boundary(Write::Annotation, false);
                         self.runtime.block_on(github.update_pull_request_body(
                             &repo,
                             number(d)?,
                             &body,
                         ))?;
+                        self.boundary(Write::Annotation, true);
                     }
                     Step::Merge => {
                         self.fence(d)?;
+                        self.boundary(Write::Merge, false);
                         let result = self.runtime.block_on(github.merge_pull_request(
                             &repo,
                             number(d)?,
                             &sha,
                             read.method.ok_or(Error::Invalid("missing merge method"))?,
                         ));
+                        self.boundary(Write::Merge, true);
                         match result {
                             Ok(result) if result.merged => {
                                 return self.merged(
