@@ -240,7 +240,7 @@ impl Kind {
 }
 /// #743/K-translate-route and Q52: the full production routing relation.
 pub open spec fn route_spec(kind: Kind, node: NodeView, head_current: bool, approved_head: bool) -> Route {
-    if kind.names_attempt_head_spec() && !head_current { return Route::Record; }
+    if kind.names_attempt_head_spec() && !head_current { Route::Record } else {
     match kind {
         Kind::ChecksUnavailable => Route::SetupIncident,
         Kind::CheckMissing if node.enqueuing_spec() && approved_head => Route::MissingIncident,
@@ -253,6 +253,7 @@ pub open spec fn route_spec(kind: Kind, node: NodeView, head_current: bool, appr
         Kind::DequeuedByPerson | Kind::DequeuedByCommand => Route::Kernel(KernelFact::PrDequeuedByPerson),
         Kind::ClosedByPerson => Route::Kernel(KernelFact::PrClosedByPerson),
         Kind::PushByOther => Route::Kernel(KernelFact::PushByOther),
+    }
     }
 }
 }
