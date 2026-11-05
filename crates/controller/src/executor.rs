@@ -466,6 +466,14 @@ pub trait Executor {
     fn probe_memory(&mut self) -> Result<()> {
         Ok(())
     }
+    /// #828: whether an operator can name this configured model.
+    fn configured_model(&self, _model: &str) -> bool {
+        false
+    }
+    /// #828 / Q53: membership in this operation's currently eligible model ladder.
+    fn quota_model_eligible(&mut self, _delivery: &Delivery, _model: &str) -> Result<bool> {
+        Ok(false)
+    }
     /// Resume an owner-confirmed quota ending under the same operation key.
     fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {
         Ok(None)

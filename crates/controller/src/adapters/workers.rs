@@ -1157,6 +1157,12 @@ impl Supervisor {
             }
             None => Command::new(&executable),
         };
+        // Use the same pinned interpreter sample; never resolve current again.
+        if let Some(binary) = release_prompt_binary(&python) {
+            command.env("TL3_RELEASE_BINARY", binary);
+        } else {
+            command.env_remove("TL3_RELEASE_BINARY");
+        }
         isolate_credentials(&attempt, &mut request, &mut command)?;
         write(&attempt.join("request.json"), &request)?;
         write(&attempt.join("command.json"), &self.settings.command)?;
@@ -1195,6 +1201,23 @@ impl Supervisor {
 }
 
 impl Executor for Supervisor {
+    fn configured_model(&self, model: &str) -> bool {
+        [
+            &self.models.ingest,
+            &self.models.audit,
+            &self.models.planner,
+            &self.models.maker,
+            &self.models.reviewer,
+            &self.models.rebaser,
+            &self.models.comment_classifier,
+            &self.models.writer,
+            &self.models.postmortem,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|configured| configured.name == model)
+    }
+
     fn probe_memory(&mut self) -> Result<()> {
         self.memory.retry()
     }
@@ -1217,6 +1240,17 @@ impl Executor for Supervisor {
 
     fn resume_after_quota(&mut self, delivery: &Delivery) -> Result<Option<Completion>> {
         self.launch(delivery, true).map(Some)
+    }
+
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+        let role =
+            protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        Ok(self
+            .candidates(delivery, role, &mut store, &snapshot)?
+            .iter()
+            .any(|candidate| candidate.name == model))
     }
 
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
@@ -1417,6 +1451,14 @@ fn release_python(python: &Path) -> Result<PathBuf> {
         (Some(directory), Some(name)) => Ok(fs::canonicalize(directory)?.join(name)),
         _ => Err(Error::Invalid("workers.python must name a file")),
     }
+}
+
+fn release_prompt_binary(python: &Path) -> Option<PathBuf> {
+    python
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "workers"))
+        .and_then(Path::parent)
+        .map(|release| release.join("bin/tl3"))
 }
 
 fn supervisor_executable() -> Result<PathBuf> {
@@ -1739,6 +1781,62 @@ mod active_tests;
 mod release_tests {
     use super::release_python;
     use std::fs;
+
+    /// #819: before-pin switches choose B; after-pin switches cannot retarget Rust.
+    #[test]
+    fn prompt_binary_uses_the_same_release_sample_as_python() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        for release in ["one", "two"] {
+            fs::create_dir_all(root.path().join(release).join("workers/.venv/bin")).unwrap();
+            let bin = root.path().join(release).join("bin");
+            fs::create_dir_all(&bin).unwrap();
+            // Different immutable release resources, returned through the real
+            // worker transport. Renderer byte parity has its own real-Rust test.
+            fs::write(bin.join("tl3"), format!(
+                "#!/bin/sh\ncat >/dev/null\ncase \"$2\" in\nrole) printf '%s' '{{\"text\":\"{release} guidance\"}}';;\ncache) printf '%s' '{{\"identity\":\"{release} schema identity\"}}';;\nesac\n"
+            )).unwrap();
+            fs::set_permissions(bin.join("tl3"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let observed = |python: &std::path::Path, release: &str| {
+            let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let output = std::process::Command::new(checkout.join("workers/.venv/bin/python"))
+                .arg("-c")
+                .arg("from tl3_workers import runtime; import sys; assert runtime.role_prompt(runtime.ROLES['planner']) == sys.argv[1] + ' guidance'; assert runtime.prompt_cache_identity({'role': 'planner', 'inputs': {}}) == sys.argv[1] + ' schema identity'")
+                .arg(release)
+                .env("TL3_RELEASE_BINARY", super::release_prompt_binary(python).unwrap())
+                .env("TL3_BINARY", "/absent/controller/tl3")
+                .current_dir(checkout)
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        let current = root.path().join("current");
+        std::os::unix::fs::symlink(root.path().join("one"), &current).unwrap();
+        let configured = current.join("workers/.venv/bin/python");
+        let first = release_python(&configured).unwrap();
+        observed(&first, "one");
+        fs::remove_file(&current).unwrap();
+        std::os::unix::fs::symlink(root.path().join("two"), &current).unwrap();
+        let second = release_python(&configured).unwrap();
+        observed(&second, "two");
+        let expected = fs::canonicalize(root.path().join("two"))
+            .unwrap()
+            .join("bin/tl3");
+        assert_eq!(
+            super::release_prompt_binary(&second),
+            Some(expected.clone())
+        );
+        assert_ne!(super::release_prompt_binary(&first), Some(expected.clone()));
+        fs::remove_file(&current).unwrap();
+        std::os::unix::fs::symlink(root.path().join("one"), &current).unwrap();
+        observed(&second, "two");
+        assert_eq!(super::release_prompt_binary(&second), Some(expected));
+        assert!(super::release_prompt_binary(std::path::Path::new("/usr/bin/python3")).is_none());
+    }
 
     #[test]
     fn launch_pins_the_release_a_switched_link_names() {

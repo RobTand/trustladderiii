@@ -1,0 +1,10 @@
+        if let Observation::GitHubComment {
+            repository,
+            issue,
+            comment,
+        } = &observation
+            && self.operations_comment(snapshot, repository, *issue, comment, commit)?
+        {
+            return Ok(None);
+        }
+

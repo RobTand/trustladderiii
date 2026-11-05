@@ -1,6 +1,7 @@
 use crate::{Error, Result, executor::Delivery};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
+use tl3_controller_core::review_inputs::{bounds, history, selection};
 use tl3_store::Store;
 use tl3_worktrees::{CommitId, Worktrees};
 
@@ -39,28 +40,34 @@ pub(super) fn inputs(
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
     // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
-    let mut base = if delivery.round == 1 && session.is_some() {
-        match &run.reviewed_sha {
-            Some(reviewed) => reviewed.clone(),
-            None => session
-                .as_ref()
-                .map(|s| {
-                    CommitId::new(
-                        s["head_sha"]
-                            .as_str()
-                            .ok_or(Error::Invalid("reviewer session has no reviewed head"))?,
-                    )
-                    .map_err(Error::from)
-                })
-                .transpose()?
-                .unwrap_or_else(|| run.base_sha.clone()),
-        }
-    } else {
-        run.base_sha.clone()
+    let mut base = match history::base_source(
+        delivery.round == 1,
+        session.is_some(),
+        run.reviewed_sha.is_some(),
+    ) {
+        history::BaseSource::Reviewed => run.reviewed_sha.as_ref().unwrap().clone(),
+        history::BaseSource::Session => session
+            .as_ref()
+            .map(|s| {
+                CommitId::new(
+                    s["head_sha"]
+                        .as_str()
+                        .ok_or(Error::Invalid("reviewer session has no reviewed head"))?,
+                )
+                .map_err(Error::from)
+            })
+            .transpose()?
+            .unwrap_or_else(|| run.base_sha.clone()),
+        history::BaseSource::Check => run.base_sha.clone(),
     };
     let head_id = CommitId::new(head)?;
     let repository = Worktrees::open(&run.repository, &run.repository)?;
-    if base != run.base_sha && repository.merge_base(&base, &run.base_sha)? != run.base_sha {
+    if base != run.base_sha
+        && history::reset_base(
+            true,
+            repository.merge_base(&base, &run.base_sha)? == run.base_sha,
+        )
+    {
         // Rebasing moves the check base beyond the previously reviewed history.
         base = run.base_sha.clone();
     }
@@ -81,50 +88,61 @@ pub(super) fn inputs(
     }
     let criteria = criteria(store, snapshot, delivery.node())?;
     let diff = repository.diff(&base, &head_id)?;
-    if diff.len() > 512 * 1024 {
+    if !bounds::diff_allowed(diff.len()) {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
     let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     // A test that failed a selected check is no longer selected once edited (#359).
     if let Some(failures) = report["selected_failures"].as_array() {
         let touched = repository.changed_paths_since_merge_base(&base, &head_id)?;
-        let edited: Vec<_> = failures
+        let failures: Vec<_> = failures.iter().filter_map(|test| test.as_str()).collect();
+        let edited_flags: Vec<_> = failures
             .iter()
-            .filter_map(|test| test.as_str())
-            .filter(|test| {
+            .map(|test| {
                 let file = test.split("::").next().unwrap_or_default();
                 touched.iter().any(|path| path.as_os_str() == file)
             })
+            .collect();
+        let edited: Vec<_> = selection::indices(&edited_flags)
+            .into_iter()
+            .map(|i| failures[i])
             .collect();
         if !edited.is_empty() {
             inputs["edited_selected_tests"] = json!(edited);
         }
         // Missing head evidence cannot resolve a historical failure, even when no
         // test file changed. This also covers edited, filtered and unverified units.
-        let displaced: Vec<_> = failures
+        let displaced_flags: Vec<_> = failures
             .iter()
-            .filter_map(|test| test.as_str())
-            .filter(|test| {
+            .map(|test| {
                 let file = test.split("::").next().unwrap_or_default();
                 !report["results"]
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .filter(|result| result["name"] == "Existing tests that import the change")
                     .any(|result| {
                         result["tests"]
                             .as_array()
                             .into_iter()
                             .flatten()
                             .any(|current| {
-                                current["test"].as_str() == Some(file)
-                                    && matches!(
-                                        current["head"].as_str(),
-                                        Some("passed" | "assertion" | "error")
-                                    )
+                                selection::resolves_historical(
+                                    result["name"] == "Existing tests that import the change",
+                                    current["test"].as_str() == Some(file),
+                                    match current["head"].as_str() {
+                                        Some("passed") => selection::HeadOutcome::Passed,
+                                        Some("assertion") => selection::HeadOutcome::Assertion,
+                                        Some("error") => selection::HeadOutcome::Error,
+                                        _ => selection::HeadOutcome::Other,
+                                    },
+                                )
                             })
                     })
             })
+            .collect();
+        let displaced: Vec<_> = selection::indices(&displaced_flags)
+            .into_iter()
+            .map(|i| failures[i])
             .collect();
         if !displaced.is_empty() {
             inputs["unresolved_displaced_failures"] = json!(displaced);
@@ -133,7 +151,7 @@ pub(super) fn inputs(
     if base != run.base_sha {
         let scope_base = repository.merge_base(&run.base_sha, &head_id)?;
         let scope_diff = repository.diff(&scope_base, &head_id)?;
-        if scope_diff.len() > 512 * 1024 {
+        if !bounds::diff_allowed(scope_diff.len()) {
             return Err(Error::Invalid("scope diff exceeds the input bound"));
         }
         let scope_diff = String::from_utf8(scope_diff)
@@ -146,9 +164,11 @@ pub(super) fn inputs(
     // planner's description of it. The issue is the text ingest read, bounded.
     let forced = report["results"].as_array().is_some_and(|results| {
         results.iter().any(|r| {
-            r.get("forcing").is_some()
-                || r.get("proof").is_some()
-                || r.get("declared_symptom").is_some()
+            selection::forced(
+                r.get("forcing").is_some(),
+                r.get("proof").is_some(),
+                r.get("declared_symptom").is_some(),
+            )
         })
     });
     if forced
@@ -157,8 +177,8 @@ pub(super) fn inputs(
             .and_then(|materials| materials.get("issue").cloned())
     {
         inputs["issue"] = json!({
-            "title": crate::findings::clipped(issue["title"].as_str().unwrap_or_default(), 1_000),
-            "body": crate::findings::clipped(issue["body"].as_str().unwrap_or_default(), 16_000),
+            "title": issue["title"].as_str().unwrap_or_default().chars().take(bounds::prefix_len(issue["title"].as_str().unwrap_or_default().chars().count(), 1_000)).collect::<String>(),
+            "body": issue["body"].as_str().unwrap_or_default().chars().take(bounds::prefix_len(issue["body"].as_str().unwrap_or_default().chars().count(), 16_000)).collect::<String>(),
         });
     }
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
@@ -176,17 +196,19 @@ pub(super) fn inputs(
     {
         let head_tree = repository.tree(&head_id)?;
         let base_tree = repository.tree(&run.base_sha)?;
-        let tested: Vec<Value> = evidence
+        let tested_flags: Vec<_> = evidence
             .iter()
-            .filter(|entry| {
-                let expected = if entry["base"] == true {
-                    &base_tree
-                } else {
-                    &head_tree
-                };
-                entry["tree"].as_str() == Some(expected.as_str())
+            .map(|entry| {
+                selection::receipt_tree(
+                    entry["base"] == true,
+                    entry["tree"].as_str() == Some(base_tree.as_str()),
+                    entry["tree"].as_str() == Some(head_tree.as_str()),
+                )
             })
-            .cloned()
+            .collect();
+        let tested: Vec<Value> = selection::indices(&tested_flags)
+            .into_iter()
+            .map(|i| evidence[i].clone())
             .collect();
         if !tested.is_empty() {
             inputs["test_evidence"] = json!(tested);

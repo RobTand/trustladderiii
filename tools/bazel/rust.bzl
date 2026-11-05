@@ -25,6 +25,7 @@ _POSTGRES = ["crates/controller", "crates/store"]
 
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
+    "crates/contracts": ["//workers:schemas"],
     "crates/controller": ["//workers:schemas"],
     "crates/config": ["//deploy/dl380g10:models.toml"],
     "crates/github": ["//crates/mergify:sources"],
@@ -65,7 +66,12 @@ _WAVE_B_ENTRIES = {
     # limits (S4)
     "limits": _WAVE_B_STUB,
     # red-match (S4)
-    "red-match": _WAVE_B_STUB,
+    "red-match": {
+        "srcs": [":sources"],
+        "crate_root": "tests/red_match.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde", "@crates//:serde_json"],
+        "tags": ["rust", "wave-b-entry-point"],
+    },
 }
 
 # rust_gate.py runs the controller's github binary as two timed groups.
@@ -87,6 +93,7 @@ _SCENARIO_SHARDS = {
 _LIBTEST_SHARDS = {
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
+    "tl3-controller/operations_quota": 4,
     "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 32,
     "tl3-controller/redaction_generated": 8,
@@ -142,6 +149,7 @@ _CONTROLLER_RUNTIME = {
         "//workers/tools:scripts",
         "//workers/src:prompts",
         "//workers/tests:fixtures",
+        "//workers/tests:prompt_render_recordings",
     ],
     # The shared harness check-report vectors (#734) the typed contracts parse (#741).
     "test_test_contracts": ["//harness:project_files"],
@@ -293,13 +301,18 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             allow_empty = True,
         ),
     )
-    if directory in ["crates/controller", "crates/kernel", "crates/store"]:
+    separate_library = directory in ["crates/controller", "crates/kernel", "crates/store", "crates/contracts"]
+    if separate_library:
         native.filegroup(
             name = "library_sources",
             # Proof drivers and crate tooling are not linked into a Rust library.
-            srcs = native.glob(["src/**/*", "migrations/**"], exclude = ["src/proofs.rs"], allow_empty = True),
+            srcs = native.glob(
+                ["src/**/*", "migrations/**"],
+                exclude = ["src/proofs.rs"] + (["src/bin/**"] if directory == "crates/contracts" else []),
+                allow_empty = True,
+            ),
         )
-    library_sources = [":library_sources"] if directory in ["crates/controller", "crates/kernel", "crates/store"] else [":sources"]
+    library_sources = [":library_sources"] if separate_library else [":sources"]
     compile_data = _COMPILE_DATA.get(directory, [])
     script = []
     if build_script:
@@ -325,11 +338,14 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     )
     for name in bins:
         standalone_verifier = name == "verus-runner" and directory == "crates/mergify"
+        binary_sources = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources
+        if directory == "crates/contracts":
+            binary_sources = library_sources + ["src/bin/%s.rs" % name]
         rust_binary(
             name = name,
             crate_name = name.replace("-", "_"),
             crate_root = "src/bin/%s.rs" % name,
-            srcs = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources,
+            srcs = binary_sources,
             edition = "2024",
             crate_features = features,
             aliases = aliases(),
