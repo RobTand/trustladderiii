@@ -1,380 +1,735 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-input.json",
-  "type": "object",
-  "properties": {
-    "decision_context": {
-      "$ref": "decision-context.json"
+  "$defs": {
+    "Context": {
+      "additionalProperties": false,
+      "properties": {
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "request_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": 1,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_version",
+        "decisions"
+      ],
+      "type": "object"
     },
-    "brief": {
-      "$ref": "#/$defs/text"
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "origin_request_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "question": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "restrictions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source_comment": {
+          "type": "string"
+        },
+        "superseded_by": {
+          "type": "string"
+        },
+        "supersession_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "source_comment",
+        "question",
+        "answer",
+        "allowed_scope",
+        "restrictions",
+        "origin_request_version",
+        "superseded_by"
+      ],
+      "type": "object"
     },
-    "goals": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/$defs/text"
+    "DeclaredSymptom": {
+      "additionalProperties": false,
+      "properties": {
+        "exception": {
+          "pattern": "^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$",
+          "type": "string"
+        },
+        "node": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/SymptomPhase"
+        },
+        "repeat": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "exception",
+        "phase",
+        "repeat",
+        "parallel"
+      ],
+      "type": "object"
+    },
+    "Feedback": {
+      "additionalProperties": false,
+      "properties": {
+        "ci_checks": {
+          "items": {
+            "$ref": "#/$defs/FeedbackCiChecksItem"
           },
-          "description": {
-            "$ref": "#/$defs/text"
+          "maxItems": 20,
+          "type": "array"
+        },
+        "failed_tests": {
+          "items": {
+            "$ref": "#/$defs/FeedbackFailedTestsItem"
           },
-          "verification": {
-            "enum": [
-              "test",
-              "review"
-            ]
+          "maxItems": 20,
+          "type": "array"
+        },
+        "goal_ids": {
+          "items": {
+            "type": "string"
           },
-          "stage": {
-            "enum": [
-              "maker",
-              "checking",
-              "publishing"
-            ]
+          "type": "array",
+          "uniqueItems": true
+        },
+        "id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FeedbackKind"
+        },
+        "outside_paths": {
+          "items": {
+            "type": "string"
           },
-          "publication": {
-            "type": "object",
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        },
+        "outside_paths_total": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "report": {
+          "maxLength": 16000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "resolved_round": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "reviewed_sha": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "report",
+        "goal_ids"
+      ],
+      "type": "object"
+    },
+    "FeedbackCiChecksItem": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "summary",
+        "url"
+      ],
+      "type": "object"
+    },
+    "FeedbackFailedTestsItem": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "test": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "required": [
+        "test",
+        "message"
+      ],
+      "type": "object"
+    },
+    "FeedbackKind": {
+      "enum": [
+        "failed_check",
+        "review_finding"
+      ],
+      "type": "string"
+    },
+    "Forcing": {
+      "additionalProperties": false,
+      "description": "A forced reproduction (#393): the declarative condition the harness applies, outside the test, to recreate a flake. Only on demonstrating checks.",
+      "properties": {
+        "environment": {
+          "additionalProperties": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}$"
+          },
+          "type": "object"
+        },
+        "patches": {
+          "items": {
+            "additionalProperties": false,
+            "maxProperties": 2,
+            "minProperties": 2,
             "properties": {
-              "branch": {
-                "type": "string",
+              "delay_seconds": {
+                "exclusiveMinimum": 0,
+                "maximum": 5,
+                "type": "number"
+              },
+              "raises": {
                 "minLength": 1,
-                "pattern": "\\S"
+                "type": "string"
               },
-              "branch_prefix": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "\\S"
+              "returns": {},
+              "target": {
+                "maxLength": 200,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+                "type": "string"
               },
-              "non_draft": {
-                "const": true
-              },
-              "body_lines": {
-                "type": "array",
-                "uniqueItems": true,
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 512,
-                  "pattern": "^[^\\r\\n]+$"
-                }
-              },
-              "proof": {
-                "type": "boolean"
-              }
+              "value": {}
             },
             "required": [
-              "non_draft",
-              "body_lines",
-              "proof"
+              "target"
             ],
-            "additionalProperties": false
+            "type": "object"
           },
-          "proof_obligation": {
-            "$ref": "ingest-reply.json#/$defs/proof_obligation"
-          }
+          "maxItems": 8,
+          "type": "array"
         },
-        "required": [
-          "id",
-          "description"
-        ],
-        "additionalProperties": false,
-        "allOf": [
-          {
-            "if": {
-              "required": [
-                "stage"
-              ],
-              "properties": {
-                "stage": {
-                  "const": "publishing"
-                }
-              }
-            },
-            "then": {
+        "symptom": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "symptom",
+        "environment",
+        "patches"
+      ],
+      "type": "object"
+    },
+    "Forecast": {
+      "additionalProperties": false,
+      "properties": {
+        "context_tokens": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "fit_tokens": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "generated_files": {
+          "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "generator": {
+          "description": "Configured argv command, executed only by the admitted run_generator action.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "generator_available": {
+          "type": "boolean"
+        },
+        "generator_timeout_s": {
+          "maximum": 600,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "overhead_tokens": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Named overhead constants from controller config, summed by code.",
+          "minProperties": 1,
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "fit_tokens",
+        "context_tokens",
+        "overhead_tokens"
+      ],
+      "type": "object"
+    },
+    "Goal": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "not": {
               "required": [
                 "publication"
               ]
-            },
-            "else": {
-              "not": {
-                "required": [
-                  "publication"
-                ]
-              }
             }
-          }
-        ]
-      }
-    },
-    "plan": {
-      "type": "object",
-      "properties": {
-        "files": {
-          "$ref": "#/$defs/strings"
-        },
-        "checks": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
+          },
+          "if": {
             "properties": {
-              "name": {
-                "$ref": "#/$defs/text"
-              },
-              "kind": {
-                "enum": [
-                  "demonstrating",
-                  "regression",
-                  "behavior-preserving"
-                ]
-              },
-              "tests": {
-                "$ref": "#/$defs/strings"
-              },
-              "goal_ids": {
-                "$ref": "#/$defs/strings"
-              },
-              "forcing": {
-                "$ref": "check-report.json#/$defs/Forcing"
-              },
-              "proof": {
-                "$ref": "check-report.json#/$defs/ProofDeclaration"
-              },
-              "declared_symptom": {
-                "$ref": "check-report.json#/$defs/DeclaredSymptom"
+              "stage": {
+                "const": "publishing"
               }
             },
             "required": [
-              "name",
-              "kind",
-              "tests",
-              "goal_ids"
-            ],
-            "additionalProperties": false
-          }
-        }
-      },
-      "required": [
-        "files",
-        "checks"
-      ],
-      "additionalProperties": false
-    },
-    "attempt": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 3
-    },
-    "round": {
-      "type": "integer",
-      "enum": [
-        0,
-        1
-      ]
-    },
-    "check_base_sha": {
-      "type": "string",
-      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-    },
-    "reviewed_sha": {
-      "type": "string",
-      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-    },
-    "current_review_findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/$defs/text"
-          },
-          "reviewed_sha": {
-            "type": "string",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      }
-    },
-    "feedback": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "enum": [
-              "failed_check",
-              "review_finding"
+              "stage"
             ]
           },
-          "id": {
-            "$ref": "#/$defs/text"
-          },
-          "reviewed_sha": {
-            "type": "string",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-          },
-          "resolved_round": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "report": {
-            "$ref": "#/$defs/text",
-            "maxLength": 16000
-          },
-          "goal_ids": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "$ref": "#/$defs/text"
-            }
-          },
-          "failed_tests": {
-            "type": "array",
-            "maxItems": 20,
-            "items": {
-              "type": "object",
-              "properties": {
-                "test": {
-                  "$ref": "#/$defs/text"
-                },
-                "message": {
-                  "$ref": "#/$defs/text",
-                  "maxLength": 1000
-                }
-              },
-              "required": [
-                "test",
-                "message"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "outside_paths": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 100,
-            "items": {
-              "$ref": "#/$defs/text",
-              "maxLength": 4096
-            }
-          },
-          "outside_paths_total": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "ci_checks": {
-            "type": "array",
-            "maxItems": 20,
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "$ref": "#/$defs/text"
-                },
-                "summary": {
-                  "$ref": "#/$defs/text",
-                  "maxLength": 1000
-                },
-                "url": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "maxLength": 4096
-                }
-              },
-              "required": [
-                "name",
-                "summary",
-                "url"
-              ],
-              "additionalProperties": false
-            }
+          "then": {
+            "required": [
+              "publication"
+            ]
           }
-        },
-        "required": [
-          "kind",
-          "report",
-          "goal_ids"
-        ],
-        "additionalProperties": false,
-        "dependentRequired": {
-          "id": [
-            "reviewed_sha"
-          ],
-          "reviewed_sha": [
-            "id"
-          ]
         }
-      }
-    },
-    "tests": {
-      "type": "object",
+      ],
       "properties": {
-        "image": {
-          "type": "string",
-          "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$"
+        "description": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
         },
-        "tools_path": {
-          "type": "string",
-          "pattern": "^/",
-          "minLength": 1
+        "id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
         },
-        "cpus": {
-          "type": "integer",
-          "minimum": 1
+        "proof_obligation": {
+          "$ref": "ingest-reply.json#/$defs/proof_obligation"
         },
-        "mem_gb": {
-          "type": "integer",
-          "minimum": 1
+        "publication": {
+          "$ref": "#/$defs/GoalPublication"
         },
-        "quiet_seconds": {
-          "type": "integer",
-          "minimum": 1
+        "stage": {
+          "$ref": "#/$defs/GoalStage"
+        },
+        "verification": {
+          "$ref": "#/$defs/GoalVerification"
         }
       },
       "required": [
-        "image",
-        "tools_path"
+        "id",
+        "description"
       ],
-      "additionalProperties": false
+      "type": "object"
     },
-    "hindsight": {
-      "type": "object",
+    "GoalPublication": {
+      "additionalProperties": false,
       "properties": {
-        "endpoint": {
-          "type": "string",
-          "pattern": "^https?://"
+        "body_lines": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
         },
+        "branch": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "branch_prefix": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "non_draft": {
+          "const": true,
+          "type": "boolean"
+        },
+        "proof": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "non_draft",
+        "body_lines",
+        "proof"
+      ],
+      "type": "object"
+    },
+    "GoalStage": {
+      "enum": [
+        "maker",
+        "checking",
+        "publishing"
+      ],
+      "type": "string"
+    },
+    "GoalVerification": {
+      "enum": [
+        "test",
+        "review"
+      ],
+      "type": "string"
+    },
+    "Hindsight": {
+      "additionalProperties": false,
+      "properties": {
         "bank": {
-          "$ref": "#/$defs/text"
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "endpoint": {
+          "pattern": "^https?://",
+          "type": "string"
         }
       },
       "required": [
         "endpoint",
         "bank"
       ],
-      "additionalProperties": false
+      "type": "object"
     },
-    "protected_paths": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
+    "MakerInputCurrentReviewFindingsItem": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "reviewed_sha": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "MakerPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/PlanCheck"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "files",
+        "checks"
+      ],
+      "type": "object"
+    },
+    "PlanCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "declared_symptom": {
+          "$ref": "#/$defs/DeclaredSymptom"
+        },
+        "forcing": {
+          "$ref": "#/$defs/Forcing"
+        },
+        "goal_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "kind": {
+          "$ref": "#/$defs/PlanCheckKind"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "proof": {
+          "$ref": "#/$defs/ProofDeclaration"
+        },
+        "tests": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "tests",
+        "goal_ids"
+      ],
+      "type": "object"
+    },
+    "PlanCheckKind": {
+      "enum": [
+        "demonstrating",
+        "regression",
+        "behavior-preserving"
+      ],
+      "type": "string"
+    },
+    "ProofDeclaration": {
+      "additionalProperties": false,
+      "properties": {
+        "observer_support": {
+          "items": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "red_message": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "subjects": {
+          "items": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "subjects",
+        "observer_support",
+        "red_message"
+      ],
+      "type": "object"
+    },
+    "SymptomPhase": {
+      "enum": [
+        "call",
+        "setup"
+      ],
+      "type": "string"
+    },
+    "TestSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "cpus": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "image": {
+          "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "mem_gb": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "quiet_seconds": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "tools_path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image",
+        "tools_path"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-input.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "round": {
+        "const": 1
       }
+    }
+  },
+  "properties": {
+    "attempt": {
+      "maximum": 3,
+      "minimum": 1,
+      "type": "integer"
     },
-    "forecast": {
-      "$ref": "planner-input.json#/properties/forecast"
+    "brief": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "check_base_sha": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "type": "string"
     },
     "context_size": {
-      "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "type": "integer"
+    },
+    "current_review_findings": {
+      "items": {
+        "$ref": "#/$defs/MakerInputCurrentReviewFindingsItem"
+      },
+      "type": "array"
+    },
+    "decision_context": {
+      "$ref": "#/$defs/Context"
+    },
+    "feedback": {
+      "items": {
+        "$ref": "#/$defs/Feedback"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "forecast": {
+      "$ref": "#/$defs/Forecast"
+    },
+    "goals": {
+      "items": {
+        "$ref": "#/$defs/Goal"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "hindsight": {
+      "$ref": "#/$defs/Hindsight"
+    },
+    "plan": {
+      "$ref": "#/$defs/MakerPlan"
+    },
+    "protected_paths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "reviewed_sha": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "type": "string"
+    },
+    "round": {
+      "enum": [
+        0,
+        1
+      ],
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tests": {
+      "$ref": "#/$defs/TestSettings"
     }
   },
   "required": [
@@ -386,32 +741,10 @@
     "tests",
     "context_size"
   ],
-  "additionalProperties": false,
-  "if": {
-    "properties": {
-      "round": {
-        "const": 1
-      }
-    }
-  },
   "then": {
     "required": [
       "feedback"
     ]
   },
-  "$defs": {
-    "text": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "\\S"
-    },
-    "strings": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {
-        "$ref": "#/$defs/text"
-      }
-    }
-  }
+  "type": "object"
 }

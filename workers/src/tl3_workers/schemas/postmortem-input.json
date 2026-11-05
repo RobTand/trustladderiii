@@ -1,60 +1,159 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://trustladderiii.invalid/workers/protocol-1/postmortem-input.json",
-  "description": "The case file the controller writes for one postmortem (#403). The worker redacts `case` before any judge reads it.",
-  "type": "object",
-  "properties": {
-    "record": {
-      "type": "object",
+  "$defs": {
+    "Case": {
+      "additionalProperties": false,
       "properties": {
-        "id": {"type": "integer", "minimum": 1},
-        "trigger": {"type": "string", "minLength": 1},
-        "reason": {"type": "string", "minLength": 1}
+        "audit": true,
+        "brief": true,
+        "findings": true,
+        "grades": {
+          "items": true,
+          "type": "array"
+        },
+        "incidents": {
+          "items": true,
+          "type": "array"
+        },
+        "outcome": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "phases": {
+          "items": true,
+          "type": "array"
+        },
+        "plan": true,
+        "questions": {
+          "items": true,
+          "type": "array"
+        },
+        "release": {
+          "type": "string"
+        },
+        "request": {
+          "additionalProperties": true,
+          "type": "object"
+        }
       },
-      "required": ["id", "trigger", "reason"],
-      "additionalProperties": false
+      "required": [
+        "request",
+        "outcome",
+        "grades",
+        "phases",
+        "questions",
+        "incidents",
+        "release"
+      ],
+      "type": "object"
     },
-    "case": {
-      "type": "object",
+    "PostmortemInputRubric": {
+      "additionalProperties": true,
       "properties": {
-        "request": {"type": "object"},
-        "outcome": {"type": "string", "minLength": 1},
-        "grades": {"type": "array"},
-        "phases": {"type": "array"},
-        "questions": {"type": "array"},
-        "incidents": {"type": "array"},
-        "plan": {},
-        "brief": {},
-        "audit": {},
-        "findings": {},
-        "release": {"type": "string"}
+        "dimensions": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "version": {
+          "minimum": 1,
+          "type": "integer"
+        }
       },
-      "required": ["request", "outcome", "grades", "phases", "questions", "incidents", "release"],
-      "additionalProperties": false
+      "required": [
+        "version",
+        "dimensions"
+      ],
+      "type": "object"
     },
-    "rubric": {
-      "type": "object",
+    "PostmortemRecord": {
+      "additionalProperties": false,
       "properties": {
-        "version": {"type": "integer", "minimum": 1},
-        "dimensions": {"type": "object"}
+        "id": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "trigger": {
+          "minLength": 1,
+          "type": "string"
+        }
       },
-      "required": ["version", "dimensions"]
+      "required": [
+        "id",
+        "trigger",
+        "reason"
+      ],
+      "type": "object"
     },
-    "release": {"type": "string"},
-    "grade_model": {"type": "string", "minLength": 1},
-    "deadline_secs": {"type": "integer", "minimum": 1, "description": "The run's whole wall-clock allowance (#486)."},
-    "trace_tags": {
-      "type": "object",
+    "PostmortemTags": {
+      "additionalProperties": false,
       "properties": {
-        "node": {"type": "string", "pattern": "^[0-9]+$"},
-        "request": {"type": "string", "pattern": "^[0-9]+$"},
-        "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
-        "issue": {"type": "string", "pattern": "^[0-9]+$"}
+        "issue": {
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        },
+        "node": {
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        },
+        "repo": {
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "request": {
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        }
       },
-      "required": ["node", "request", "repo", "issue"],
-      "additionalProperties": false
+      "required": [
+        "node",
+        "request",
+        "repo",
+        "issue"
+      ],
+      "type": "object"
     }
   },
-  "required": ["record", "case", "rubric", "release", "grade_model", "deadline_secs", "trace_tags"],
-  "additionalProperties": false
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/postmortem-input.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The case file the controller writes for one postmortem (#403). The worker redacts `case` before any judge reads it.",
+  "properties": {
+    "case": {
+      "$ref": "#/$defs/Case"
+    },
+    "deadline_secs": {
+      "description": "The run's whole wall-clock allowance (#486).",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "grade_model": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "record": {
+      "$ref": "#/$defs/PostmortemRecord"
+    },
+    "release": {
+      "type": "string"
+    },
+    "rubric": {
+      "$ref": "#/$defs/PostmortemInputRubric"
+    },
+    "trace_tags": {
+      "$ref": "#/$defs/PostmortemTags"
+    }
+  },
+  "required": [
+    "record",
+    "case",
+    "rubric",
+    "release",
+    "grade_model",
+    "deadline_secs",
+    "trace_tags"
+  ],
+  "type": "object"
 }

@@ -1,79 +1,79 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "origin_request_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "question": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "restrictions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source_comment": {
+          "type": "string"
+        },
+        "superseded_by": {
+          "type": "string"
+        },
+        "supersession_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "source_comment",
+        "question",
+        "answer",
+        "allowed_scope",
+        "restrictions",
+        "origin_request_version",
+        "superseded_by"
+      ],
+      "type": "object"
+    }
+  },
   "$id": "https://trustladderiii.invalid/workers/protocol-1/decision-context.json",
-  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
   "properties": {
-    "schema_version": {
-      "const": 1
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/Decision"
+      },
+      "maxItems": 64,
+      "type": "array"
     },
     "request_version": {
-      "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
-    "decisions": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "source_comment": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "question": {
-            "type": "object"
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          },
-          "allowed_scope": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "restrictions": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "origin_request_version": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "superseded_by": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "supersession_reason": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "required": [
-          "id",
-          "source_comment",
-          "question",
-          "answer",
-          "allowed_scope",
-          "restrictions",
-          "origin_request_version",
-          "superseded_by"
-        ],
-        "additionalProperties": false
-      },
-      "maxItems": 64
+    "schema_version": {
+      "const": 1,
+      "minimum": 0,
+      "type": "integer"
     }
   },
   "required": [
@@ -81,5 +81,5 @@
     "request_version",
     "decisions"
   ],
-  "additionalProperties": false
+  "type": "object"
 }

@@ -80,11 +80,6 @@ proptest::proptest! {
         let document = value(&input).unwrap();
         let parsed: ClassifierInput = serde_json::from_value(document.clone()).unwrap();
         proptest::prop_assert_eq!(parsed, input);
-        let schema: Value = serde_json::from_str(&generated().into_iter().find(|f| f.path.ends_with("/classifier-input.json")).unwrap().text).unwrap();
-        // No cross-file properties are populated in this generator.
-        let mut schema = schema;
-        schema["properties"].as_object_mut().unwrap().remove("selected_answer");
-        let validator = jsonschema::validator_for(&schema).unwrap();
-        proptest::prop_assert!(validator.is_valid(&document));
+        proptest::prop_assert!(crate::adapters::workers::protocol::classifier_schema(&document, false).is_ok());
     }
 }

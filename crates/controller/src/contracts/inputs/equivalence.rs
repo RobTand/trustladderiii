@@ -124,7 +124,7 @@ fn old_and_typed_request_corpus_is_byte_identical() {
             ("goals", json!([{"id":"g1","description":text}])),
             ("review_fixes",json!({"head_sha":repo.head,"reviewed_sha":repo.base,
                 "findings":[{"id":"f1","report":text,"reason":"No valid assertion proof"}]}))]);
-        snapshot.rows.push(tl3_store::Row { table:"check_reports".into(), id:format!("0:{}",repo.head),
+        snapshot.rows.push(tl3_store::WorldRow { table:"check_reports".into(), id:format!("0:{}",repo.head),
             value:json!({"base_sha":repo.base,"selected_failures":[],"results":[{
                 "name":"regressions","kind":"regression","verdict":"pass","custody":"in-process",
                 "tests":[{"test":"test_a.py","base":"passed","head":"passed","pre_existing":false,"passed":true}]

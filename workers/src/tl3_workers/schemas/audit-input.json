@@ -1,43 +1,279 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Context": {
+      "additionalProperties": false,
+      "properties": {
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "request_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": 1,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_version",
+        "decisions"
+      ],
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "origin_request_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "question": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "restrictions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source_comment": {
+          "type": "string"
+        },
+        "superseded_by": {
+          "type": "string"
+        },
+        "supersession_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "source_comment",
+        "question",
+        "answer",
+        "allowed_scope",
+        "restrictions",
+        "origin_request_version",
+        "superseded_by"
+      ],
+      "type": "object"
+    },
+    "IngestInputMemoriesItem": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/IngestInputMemoriesItemKind"
+        },
+        "repo": {
+          "description": "The memory's repo tag. A run can flag only memories of its own repo.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content"
+      ],
+      "type": "object"
+    },
+    "IngestInputMemoriesItemKind": {
+      "enum": [
+        "lesson",
+        "decision",
+        "convention",
+        "run",
+        "other"
+      ],
+      "type": "string"
+    },
+    "Issue": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "comments": {
+          "items": {
+            "$ref": "#/$defs/IssueCommentsItem"
+          },
+          "type": "array"
+        },
+        "number": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "title",
+        "body",
+        "author",
+        "comments"
+      ],
+      "type": "object"
+    },
+    "IssueCommentsItem": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "body"
+      ],
+      "type": "object"
+    },
+    "PublicationBranch": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "issue": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "node": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repository": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "template": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "issue",
+        "node",
+        "template",
+        "branch"
+      ],
+      "type": "object"
+    },
+    "RepositoryInput": {
+      "additionalProperties": false,
+      "properties": {
+        "file_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "file_list": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "readme": {
+          "maxLength": 65536,
+          "type": "string"
+        },
+        "tree_summary": {
+          "maxLength": 16384,
+          "type": "string"
+        }
+      },
+      "required": [
+        "readme",
+        "file_list"
+      ],
+      "type": "object"
+    }
+  },
   "$id": "https://trustladderiii.invalid/workers/protocol-1/audit-input.json",
-  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
   "properties": {
-    "issue": {
-      "$ref": "ingest-input.json#/$defs/issue"
-    },
-    "repo": {
-      "$ref": "ingest-input.json#/$defs/repo",
-      "description": "Bounded orientation at the pinned base. Explore source evidence with read-only tools."
-    },
-    "memories": {
-      "$ref": "ingest-input.json#/$defs/memories"
+    "decision_context": {
+      "$ref": "#/$defs/Context",
+      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
     },
     "ingest": {
       "$ref": "ingest-reply.json"
     },
-    "protected_paths": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "uniqueItems": true,
-      "description": "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3."
+    "issue": {
+      "$ref": "#/$defs/Issue"
     },
-    "decision_context": {
-      "$ref": "decision-context.json",
-      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    "memories": {
+      "items": {
+        "$ref": "#/$defs/IngestInputMemoriesItem"
+      },
+      "maxItems": 8,
+      "type": "array"
+    },
+    "protected_paths": {
+      "description": "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "publication_branch": {
+      "$ref": "#/$defs/PublicationBranch"
+    },
+    "repo": {
+      "$ref": "#/$defs/RepositoryInput",
+      "description": "Bounded orientation at the pinned base. Explore source evidence with read-only tools."
     },
     "tool_capabilities": {
-      "type": "array",
       "items": {
         "$ref": "ingest-reply.json#/$defs/tool_capability"
       },
-      "maxItems": 64
-    },
-    "publication_branch": {
-      "$ref": "ingest-input.json#/$defs/publication_branch"
+      "maxItems": 64,
+      "type": "array"
     }
   },
   "required": [
@@ -45,5 +281,5 @@
     "repo",
     "ingest"
   ],
-  "additionalProperties": false
+  "type": "object"
 }

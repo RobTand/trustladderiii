@@ -17,6 +17,14 @@ run('bash', '-c', INSTALL_UV)
 try:
     run('bazel', 'run', '--config=remote', '--jobs=16',
         '//crates/controller:tl3-contracts-schemas', '--', '--root', str(Path.cwd()))
+    output_base = subprocess.check_output(['bazel', 'info', 'output_base'], text=True).strip()
+    candidates = sorted(Path(output_base, 'external').glob('*/bin/cargo'))
+    if candidates:
+        os.environ['CARGO'] = str(candidates[0])
+        os.environ['PATH'] = str(candidates[0].parent) + ':' + os.environ['PATH']
+    else:
+        from kani_gate import INSTALL_KANI
+        run('bash', '-c', INSTALL_KANI.split('if [ "$(cargo-kani')[0])
     run('bash', 'tools/bazel/generate.sh')
     python = subprocess.check_output(['uv', 'python', 'find', '3.14'], text=True).strip()
     run(python, 'crates/controller/tools/redaction_policy.py')

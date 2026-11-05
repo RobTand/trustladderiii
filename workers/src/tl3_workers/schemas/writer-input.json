@@ -1,160 +1,468 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://trustladderiii.invalid/workers/protocol-1/writer-input.json",
-  "type": "object",
-  "properties": {
-    "kind": {"enum": ["question", "note", "summary", "clarification"]},
-    "facts": {"type": "object"},
-    "violations": {
-      "type": "array",
-      "items": {"$ref": "writer-reply.json#/$defs/text"}
+  "$defs": {
+    "ClarificationFacts": {
+      "additionalProperties": false,
+      "properties": {
+        "comment_excerpt": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "issue_title": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "question": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "request": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "issue_title",
+        "request",
+        "question",
+        "comment_excerpt"
+      ],
+      "type": "object"
+    },
+    "NoteFacts": {
+      "additionalProperties": false,
+      "properties": {
+        "change": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "change_quote": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "issue_title": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "occurrences": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "publication_diagnostic": {
+          "additionalProperties": true,
+          "description": "Safe code-owned fields. Code appends these after the checked draft.",
+          "type": "object"
+        },
+        "request": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "worker_input_failure": {
+          "$ref": "#/$defs/QuestionFactsWorkerInputFailure"
+        }
+      },
+      "required": [
+        "issue_title",
+        "request",
+        "change"
+      ],
+      "type": "object"
+    },
+    "QuestionFacts": {
+      "additionalProperties": false,
+      "properties": {
+        "findings": {
+          "$ref": "#/$defs/QuestionFactsFindings",
+          "description": "The deciding worker's findings (#322). The worker redacts them before the model turn."
+        },
+        "how_to_answer": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "issue_title": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "obstacle": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "options": {
+          "$ref": "writer-reply.json#/$defs/options",
+          "maxItems": 3,
+          "minItems": 2
+        },
+        "recommendation_reason": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "recommended_option": {
+          "maximum": 2,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "request": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "worker_input_failure": {
+          "$ref": "#/$defs/QuestionFactsWorkerInputFailure"
+        }
+      },
+      "required": [
+        "issue_title",
+        "request",
+        "obstacle",
+        "options",
+        "recommended_option",
+        "recommendation_reason",
+        "how_to_answer"
+      ],
+      "type": "object"
+    },
+    "QuestionFactsFindings": {
+      "additionalProperties": false,
+      "description": "The deciding worker's findings (#322). The worker redacts them before the model turn.",
+      "properties": {
+        "decision": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "goals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "objections": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "pieces": {
+          "items": {
+            "$ref": "#/$defs/QuestionFactsFindingsPiecesItem"
+          },
+          "type": "array"
+        },
+        "reading": {
+          "type": "string"
+        },
+        "report": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/QuestionFactsFindingsSource"
+        }
+      },
+      "required": [
+        "source",
+        "decision"
+      ],
+      "type": "object"
+    },
+    "QuestionFactsFindingsPiecesItem": {
+      "additionalProperties": false,
+      "properties": {
+        "brief": {
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "brief",
+        "files"
+      ],
+      "type": "object"
+    },
+    "QuestionFactsFindingsSource": {
+      "enum": [
+        "audit",
+        "planner",
+        "maker",
+        "checks_and_review",
+        "incident",
+        "credit"
+      ],
+      "type": "string"
+    },
+    "QuestionFactsWorkerInputFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "maker_head": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "pointer": {
+          "maxLength": 320,
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/QuestionFactsWorkerInputFailureRole"
+        },
+        "rule": {
+          "maxLength": 48,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "pointer",
+        "rule"
+      ],
+      "type": "object"
+    },
+    "QuestionFactsWorkerInputFailureRole": {
+      "enum": [
+        "ingest",
+        "audit",
+        "planner",
+        "maker",
+        "reviewer",
+        "classifier",
+        "writer",
+        "postmortem"
+      ],
+      "type": "string"
+    },
+    "SummaryFacts": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "additionalProperties": true,
+          "description": "Recorded checks, verdicts, remaining failures, artifacts, review, audit, queue and scratch. Missing records mean not captured, never not run.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "evidence_status": {
+          "$ref": "#/$defs/SummaryFactsEvidenceStatus"
+        },
+        "findings": {
+          "$ref": "#/$defs/SummaryFactsFindings",
+          "description": "Evidence behind a stop for TL3 review (Q54). The worker redacts it before the model turn."
+        },
+        "issue_title": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "merge_status": {
+          "$ref": "#/$defs/SummaryFactsMergeStatus"
+        },
+        "outcome": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "pull_request": {
+          "additionalProperties": true,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "recorded_summary": {
+          "type": "string"
+        },
+        "removed_changes": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "request": {
+          "$ref": "writer-reply.json#/$defs/text",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "unmet_goals": {
+          "items": {
+            "$ref": "writer-reply.json#/$defs/text"
+          },
+          "type": "array"
+        },
+        "worker_input_failure": {
+          "$ref": "#/$defs/QuestionFactsWorkerInputFailure"
+        }
+      },
+      "required": [
+        "issue_title",
+        "request",
+        "outcome",
+        "unmet_goals"
+      ],
+      "type": "object"
+    },
+    "SummaryFactsEvidenceStatus": {
+      "enum": [
+        "captured",
+        "not_captured"
+      ],
+      "type": "string"
+    },
+    "SummaryFactsFindings": {
+      "additionalProperties": false,
+      "description": "Evidence behind a stop for TL3 review (Q54). The worker redacts it before the model turn.",
+      "properties": {
+        "report": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SummaryFactsFindingsSource"
+        }
+      },
+      "required": [
+        "source",
+        "report"
+      ],
+      "type": "object"
+    },
+    "SummaryFactsFindingsSource": {
+      "enum": [
+        "planner",
+        "maker",
+        "checks_and_review"
+      ],
+      "type": "string"
+    },
+    "SummaryFactsMergeStatus": {
+      "enum": [
+        "merged",
+        "not_recorded"
+      ],
+      "type": "string"
     }
   },
-  "required": ["kind", "facts"],
-  "additionalProperties": false,
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/writer-input.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "oneOf": [
     {
+      "additionalProperties": false,
       "properties": {
-        "kind": {"const": "question"},
         "facts": {
-          "type": "object",
-          "properties": {
-            "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
-            "worker_input_failure": {"$ref": "#/$defs/worker_input_failure"},
-            "request": {"$ref": "writer-reply.json#/$defs/text"},
-            "obstacle": {"$ref": "writer-reply.json#/$defs/text"},
-            "options": {"$ref": "writer-reply.json#/$defs/options"},
-            "recommended_option": {"type": "integer", "minimum": 0, "maximum": 2},
-            "recommendation_reason": {"$ref": "writer-reply.json#/$defs/text"},
-            "how_to_answer": {"$ref": "writer-reply.json#/$defs/text"},
-            "findings": {
-              "description": "The deciding worker's findings (#322). The worker redacts them before the model turn.",
-              "type": "object",
-              "properties": {
-                "source": {"enum": ["audit", "planner", "maker", "checks_and_review", "incident", "credit"]},
-                "report": {"type": "string"},
-                "outcome": {"type": "string"},
-                "decision": {"$ref": "writer-reply.json#/$defs/text"},
-                "reading": {"type": "string"},
-                "goals": {"type": "array", "items": {"type": "string"}},
-                "objections": {"type": "array", "items": {"type": "string"}},
-                "pieces": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "brief": {"type": "string"},
-                      "files": {"type": "array", "items": {"type": "string"}}
-                    },
-                    "required": ["brief", "files"],
-                    "additionalProperties": false
-                  }
-                }
-              },
-              "required": ["source", "decision"],
-              "additionalProperties": false
-            }
-          },
-          "required": [
-            "issue_title", "request", "obstacle", "options", "recommended_option",
-            "recommendation_reason", "how_to_answer"
-          ],
-          "additionalProperties": false
-        }
-      }
-    },
-    {
-      "properties": {
-        "kind": {"const": "note"},
-        "facts": {
-          "type": "object",
-          "properties": {
-            "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
-            "worker_input_failure": {"$ref": "#/$defs/worker_input_failure"},
-            "request": {"$ref": "writer-reply.json#/$defs/text"},
-            "change": {"$ref": "writer-reply.json#/$defs/text"},
-            "change_quote": {"$ref": "writer-reply.json#/$defs/text"},
-            "publication_diagnostic": {
-              "type": "object",
-              "description": "Safe code-owned fields. Code appends these after the checked draft."
-            },
-            "occurrences": {"type": "integer", "minimum": 1}
-          },
-          "required": ["issue_title", "request", "change"],
-          "additionalProperties": false
-        }
-      }
-    },
-    {
-      "properties": {
-        "kind": {"const": "summary"},
-        "facts": {
-          "type": "object",
-          "properties": {
-            "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
-            "worker_input_failure": {"$ref": "#/$defs/worker_input_failure"},
-            "request": {"$ref": "writer-reply.json#/$defs/text"},
-            "outcome": {"$ref": "writer-reply.json#/$defs/text"},
-            "evidence_status": {"enum": ["captured", "not_captured"]},
-            "merge_status": {"enum": ["merged", "not_recorded"]},
-            "recorded_summary": {"type": "string"},
-            "pull_request": {"type": ["object", "null"]},
-            "evidence": {
-              "type": ["object", "null"],
-              "description": "Recorded checks, verdicts, remaining failures, artifacts, review, audit, queue and scratch. Missing records mean not captured, never not run."
-            },
-            "removed_changes": {"$ref": "writer-reply.json#/$defs/text"},
-            "findings": {
-              "description": "Evidence behind a stop for TL3 review (Q54). The worker redacts it before the model turn.",
-              "type": "object",
-              "properties": {
-                "source": {"enum": ["planner", "maker", "checks_and_review"]},
-                "report": {"type": "string"}
-              },
-              "required": ["source", "report"],
-              "additionalProperties": false
-            },
-            "unmet_goals": {
-              "type": "array",
-              "items": {"$ref": "writer-reply.json#/$defs/text"}
-            }
-          },
-          "required": ["issue_title", "request", "outcome", "unmet_goals"],
-          "additionalProperties": false
-        }
-      }
-    },
-    {
-      "properties": {
-        "kind": {
-          "const": "clarification"
+          "$ref": "#/$defs/QuestionFacts"
         },
-        "facts": {
-          "type": "object",
-          "properties": {
-            "issue_title": {
-              "$ref": "writer-reply.json#/$defs/text"
-            },
-            "request": {
-              "$ref": "writer-reply.json#/$defs/text"
-            },
-            "question": {
-              "$ref": "writer-reply.json#/$defs/text"
-            },
-            "comment_excerpt": {
-              "$ref": "writer-reply.json#/$defs/text"
-            }
+        "kind": {
+          "const": "question",
+          "type": "string"
+        },
+        "violations": {
+          "items": {
+            "type": "string"
           },
-          "required": [
-            "issue_title",
-            "request",
-            "question",
-            "comment_excerpt"
-          ],
-          "additionalProperties": false
+          "type": [
+            "array",
+            "null"
+          ]
         }
-      }
+      },
+      "required": [
+        "kind",
+        "facts"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "$ref": "#/$defs/NoteFacts"
+        },
+        "kind": {
+          "const": "note",
+          "type": "string"
+        },
+        "violations": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "facts"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "$ref": "#/$defs/SummaryFacts"
+        },
+        "kind": {
+          "const": "summary",
+          "type": "string"
+        },
+        "violations": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "facts"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "$ref": "#/$defs/ClarificationFacts"
+        },
+        "kind": {
+          "const": "clarification",
+          "type": "string"
+        },
+        "violations": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "facts"
+      ],
+      "type": "object"
     }
-  ],
-  "$defs": {"worker_input_failure": {"type": "object", "properties": {"role": {"enum": ["ingest", "audit", "planner", "maker", "reviewer", "classifier", "writer", "postmortem"]}, "pointer": {"type": "string", "maxLength": 320}, "rule": {"type": "string", "minLength": 1, "maxLength": 48}, "maker_head": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}}, "required": ["role", "pointer", "rule"], "additionalProperties": false}}
+  ]
 }

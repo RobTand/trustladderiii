@@ -1,62 +1,54 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://trustladderiii.invalid/workers/protocol-1/request.json",
-  "type": "object",
-  "properties": {
-    "mlflow": {"type": ["object", "null"]},
-    "trace": {"type": "object"},
-    "protocol": {
-      "const": 1,
-      "type": "integer"
-    },
-    "operation": {
-      "type": "object",
+  "$defs": {
+    "WorkerRequestMemory": {
+      "additionalProperties": false,
       "properties": {
-        "node": {
-          "type": "integer",
-          "minimum": 0
+        "epoch": {
+          "minimum": 0,
+          "type": "integer"
         },
-        "generation": {
-          "type": "integer",
-          "minimum": 0
+        "issue": {
+          "minimum": 1,
+          "type": "integer"
         },
-        "kind": {
-          "type": "string",
-          "minLength": 1
+        "repo": {
+          "type": "string"
+        },
+        "request": {
+          "type": "string"
+        },
+        "summary_file": {
+          "pattern": "^/",
+          "type": "string"
         }
       },
       "required": [
-        "node",
-        "generation",
-        "kind"
+        "summary_file",
+        "repo",
+        "issue",
+        "request",
+        "epoch"
       ],
-      "additionalProperties": false
+      "type": "object"
     },
-    "role": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*$"
-    },
-    "model": {
-      "type": "object",
+    "WorkerRequestModel": {
+      "additionalProperties": false,
       "properties": {
         "base_url": {
-          "type": "string",
-          "pattern": "^https?://[^/\\s]+(?:/[^\\s]*)?$"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "effort": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "minLength": 1
+          "pattern": "^https?://[^/\\s]+(?:/[^\\s]*)?$",
+          "type": "string"
         },
         "budget_tokens": {
-          "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "type": "integer"
+        },
+        "effort": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
@@ -65,54 +57,129 @@
         "effort",
         "budget_tokens"
       ],
-      "additionalProperties": false
-    },
-    "hindsight_key_file": {"type": ["string", "null"], "pattern": "^/"},
-    "key_file": {
-      "type": "string",
-      "pattern": "^/"
-    },
-    "test_cpus": {"type": "integer", "minimum": 1},
-    "silence_secs": {"type": "integer", "minimum": 1, "description": "The agent worker silence allowance in seconds; the maker retro stays inside half of it."},
-    "no_progress_secs": {"type": "integer", "minimum": 1, "description": "The agent worker no-progress allowance in seconds; the maker retro stays inside half of it."},
-    "inputs": {
       "type": "object"
     },
-    "worktree": {
-      "type": "string",
-      "pattern": "^/"
+    "WorkerRequestOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "generation": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "node": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "generation",
+        "kind"
+      ],
+      "type": "object"
     },
-    "session_file": {
-      "type": "string",
-      "pattern": "^/"
+    "WorkerRequestPrompt": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/request.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "hindsight_key_file": {
+      "pattern": "^/",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "inputs": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "key_file": {
+      "pattern": "^/",
+      "type": "string"
     },
     "last_accepted_generation": {
-      "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
+    },
+    "memory": {
+      "$ref": "#/$defs/WorkerRequestMemory"
+    },
+    "mlflow": {
+      "additionalProperties": true,
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "model": {
+      "$ref": "#/$defs/WorkerRequestModel"
+    },
+    "no_progress_secs": {
+      "description": "The agent worker no-progress allowance in seconds; the maker retro stays inside half of it.",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "operation": {
+      "$ref": "#/$defs/WorkerRequestOperation"
+    },
+    "prompt": {
+      "$ref": "#/$defs/WorkerRequestPrompt"
+    },
+    "protocol": {
+      "const": 1,
+      "minimum": 0,
+      "type": "integer"
     },
     "resume_session": {
       "type": "boolean"
     },
-    "prompt": {
-      "type": "object",
-      "properties": {
-        "version": {"type": "integer", "minimum": 1},
-        "text": {"type": "string", "minLength": 1}
-      },
-      "required": ["version", "text"],
-      "additionalProperties": false
+    "role": {
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "type": "string"
     },
-    "memory": {
-      "type": "object",
-      "properties": {
-        "summary_file": {"type": "string", "pattern": "^/"},
-        "repo": {"type": "string"},
-        "issue": {"type": "integer", "minimum": 1},
-        "request": {"type": "string"},
-        "epoch": {"type": "integer", "minimum": 0}
-      },
-      "required": ["summary_file", "repo", "issue", "request", "epoch"],
-      "additionalProperties": false
+    "session_file": {
+      "pattern": "^/",
+      "type": "string"
+    },
+    "silence_secs": {
+      "description": "The agent worker silence allowance in seconds; the maker retro stays inside half of it.",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "test_cpus": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "trace": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "worktree": {
+      "pattern": "^/",
+      "type": "string"
     }
   },
   "required": [
@@ -124,5 +191,5 @@
     "inputs",
     "worktree"
   ],
-  "additionalProperties": false
+  "type": "object"
 }
