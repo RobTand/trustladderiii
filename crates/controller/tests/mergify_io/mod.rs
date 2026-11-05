@@ -357,6 +357,7 @@ mod current {
         include!("current-waiting.rs");
     }
     mod head_checks {
+        use tl3_mergify::decide::translate::Kind;
         include!("current-head.rs");
     }
     pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
