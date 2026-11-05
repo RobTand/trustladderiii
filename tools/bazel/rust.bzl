@@ -81,8 +81,6 @@ _WAVE_B_ENTRIES = {
         "data": ["//harness:core_vectors"],
         "tags": ["rust", "wave-b-selector-identity"],
     },
-    # node-id (#824)
-    "node-id": _WAVE_B_STUB,
     # limits (S4)
     "limits": _WAVE_B_STUB,
     # red-match (S4)
