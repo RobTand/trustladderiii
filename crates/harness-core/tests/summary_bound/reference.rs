@@ -34,6 +34,7 @@ pub struct Plan {
     ensures out.kind <= 4,
         out.kind < 4 ==> out.bytes <= limit,
         (out.kind == 0) == (full <= limit),
+        out.kind == 0 ==> out.bytes == full,
         (out.kind == 3 || out.kind == 4) == (core > limit),
         out.kind == 3 ==> out.bytes == diagnostic,
         out.kind == 4 ==> diagnostic > limit,
@@ -60,7 +61,7 @@ pub fn reduce(full: u64, core: u64, diagnostic: u64, prefix_sizes: &[u64], limit
     }
     let mut i = 0;
     reference_while! { (i < prefix_sizes.len()) [
-        invariant i <= prefix_sizes.len(),
+        invariant i <= prefix_sizes.len(), full > limit, core <= limit, core <= full,
             forall|j: int| 0 <= j < i ==> prefix_sizes[j] > limit,
         decreases prefix_sizes.len() - i,
     ] {

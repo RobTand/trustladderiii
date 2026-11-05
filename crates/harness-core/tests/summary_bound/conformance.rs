@@ -385,7 +385,7 @@ fn conform(input: V, limit: usize) {
 // facts. Include planned errors, failed RED, symptom RED, run lists, selectors,
 // immutable identities, UTF-8/escapes and optional display of every priority.
 fn node(mode: u8, outcomes: &[u8], width: usize, proof_width: usize, selected: usize) -> V {
-    let tests=outcomes.iter().enumerate().map(|(i,o)| serde_json::json!({"test":format!("t.py::t{i}"),"outcome":["passed","failed","error","skipped"][*o as usize%4],"message":"é\\\"".repeat(width)})).collect::<Vec<_>>();
+    let tests=outcomes.iter().enumerate().map(|(i,o)| serde_json::json!({"test":format!("t.py::t{i}"),"outcome":(["passed","failed","error","skipped"][*o as usize%4]),"message":"é\\\"".repeat(width)})).collect::<Vec<_>>();
     let mut v=value(&serde_json::json!({"status":"completed","tests":tests,"totals":{"failed":outcomes.len()},"note":"old note","origin":"test_run","selectors":(0..selected).map(|i|format!("t.py::{}-{i}","s".repeat(width))).collect::<Vec<_>>(),"runs":[{"run":1,"failed":["t.py::x","t.py::y"]}],"identity":"i".repeat(proof_width/2)}).to_string());
     if mode != 0 {
         set(&mut v,"proof",value(&serde_json::json!({"mode":if mode==1 || mode==2 {"head-observer"} else {"pytest-outcome"},"payload":"p".repeat(proof_width),"observer_sha256":{"t.py":"digest"}}).to_string()));
