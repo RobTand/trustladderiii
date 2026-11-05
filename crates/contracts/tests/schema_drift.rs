@@ -14,6 +14,14 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/decision-context.json",
         include_str!("../../../workers/src/tl3_workers/schemas/decision-context.json"),
     ),
+    (
+        "workers/src/tl3_workers/schemas/request.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/request.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/postmortem-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/postmortem-input.json"),
+    ),
 ];
 
 #[test]
