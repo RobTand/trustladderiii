@@ -171,3 +171,37 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    # CC-M2: production command functions, with type declarations projected from enqueue.rs.
+    if native.package_name() == "crates/controller":
+        native.genrule(
+            name = "recovery_schedule_proof_root",
+            srcs = [
+                "tests/mergify_io/recovery_schedule_types.py",
+                "//crates/mergify:src/decide/enqueue.rs",
+                "//crates/mergify:src/decide/check.rs",
+            ],
+            outs = ["recovery_schedule_verus.rs"],
+            cmd = "python3 $(location tests/mergify_io/recovery_schedule_types.py) $(location //crates/mergify:src/decide/enqueue.rs) $(location //crates/mergify:src/decide/check.rs) $@",
+        )
+        for group, module, count in [
+            ("core", "recovery", 7),
+            ("one_command", "recovery::proof_one_command", 2),
+            ("refused", "recovery::proof_refused", 2),
+            ("grace", "recovery::proof_grace", 2),
+            ("human_hold", "recovery::proof_human_hold", 2),
+            ("callers", "recovery::proof_callers", 2),
+        ]:
+            verus_test(
+                name = "verus_recovery_" + group,
+                src = ":recovery_schedule_verus.rs",
+                srcs = ["//crates/mergify:src/decide/recovery.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )

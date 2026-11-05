@@ -347,6 +347,25 @@ impl Adapter {
         self.save_recovery(delivery, &recovery)?;
         Ok(Reconciliation::Pending)
     }
+    fn human_hold_in_events(
+        &self,
+        delivery: &Delivery,
+        snapshot: Option<&Snapshot>,
+        events: &[tl3_github::IssueActivity],
+    ) -> Result<bool> {
+        for fact in person_facts(&delivery.repository, enqueue(delivery)?.0, events, false) {
+            if let Some(snapshot) = snapshot {
+                if fact.unresolved_hold(snapshot)? {
+                    return Ok(true);
+                }
+            } else {
+                // Without a snapshot there is no proof of an explicit resume.
+                return Ok(true);
+            }
+        }
+        self.unresolved_human_hold(delivery, snapshot)
+    }
+
 }
 fn refused(class: &'static str) -> Reconciliation {
     Reconciliation::Found(Box::new(Completion::permanent(class)))

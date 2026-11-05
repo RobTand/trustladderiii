@@ -272,17 +272,6 @@ macro_rules! adapter {
             ) -> Result<bool> {
                 Ok(snapshot.is_some_and(Snapshot::held))
             }
-            fn human_hold_in_events(
-                &self,
-                d: &Delivery,
-                snapshot: Option<&Snapshot>,
-                events: &[IssueActivity],
-            ) -> Result<bool> {
-                Ok(events
-                    .iter()
-                    .any(|e| e.actor.as_ref().is_some_and(|a| a.login == "person"))
-                    || self.unresolved_human_hold(d, snapshot)?)
-            }
         }
     };
 }
@@ -672,6 +661,7 @@ mod properties {
             "queue_command",
             "recovery_decide",
             "recovery_now_ms",
+            "human_hold_in_events",
         ] {
             assert_eq!(
                 function(waiting, name, ""),

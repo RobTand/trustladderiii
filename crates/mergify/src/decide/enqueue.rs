@@ -272,15 +272,6 @@ impl Effects {
     }
 }
 
-fn command_completion(command: Command) -> Complete {
-    match command {
-        Command::Refused => Complete::Permanent(Failure::Refused),
-        Command::PermissionDenied => Complete::Permanent(Failure::Permission),
-        Command::Rejected => Complete::Permanent(Failure::Rejected),
-        Command::Ready | Command::Sending | Command::Sent => Complete::Pending,
-    }
-}
-
 fn reconcile_issue(intent: Option<Intent>, queue: QueueState, issue: IssueRead) -> Effect {
     if queue == QueueState::Waiting && issue.queue_label {
         let Some(recovery) = issue.recovery else {
@@ -491,73 +482,21 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             });
         }
         QueueEvent::RecoveryTick { eligible, now_ms } => {
-            let recovery = state.recovery.get_or_insert(Recovery {
-                eligible_since_ms: None,
-                command: Command::Ready,
-            });
-            if recovery.command != Command::Ready {
-                out.push(Effect::Complete(command_completion(recovery.command)));
-            } else {
-                if !eligible {
-                    recovery.eligible_since_ms = None;
-                }
-                let matured = if eligible {
-                    let since = *recovery.eligible_since_ms.get_or_insert(now_ms);
-                    now_ms.saturating_sub(since) >= GRACE_MS
-                } else {
-                    false
-                };
-                out.push(Effect::SaveRecovery);
-                out.push(if matured {
-                    Effect::Read(Need::Command)
-                } else {
-                    Effect::Complete(Complete::Pending)
-                });
-            }
+            let step = super::recovery::tick(state.recovery, eligible, now_ms);
+            apply_recovery(&mut state, &mut out, step);
         }
-        QueueEvent::CommandStatus => {
-            let command = state.recovery.map_or(Command::Ready, |r| r.command);
-            out.push(match command {
-                Command::Ready => Effect::Continue,
-                Command::Sending | Command::Sent => Effect::Read(Need::CommandReply),
-                _ => Effect::Complete(command_completion(command)),
-            });
-        }
+        QueueEvent::CommandStatus => out.push(super::recovery::status(state.recovery)),
         QueueEvent::CommandReceipt { refused, found } => {
-            let recovery = state.recovery.get_or_insert(Recovery {
-                eligible_since_ms: None,
-                command: Command::Sending,
-            });
-            let in_flight = matches!(recovery.command, Command::Sending | Command::Sent);
-            if in_flight && refused {
-                recovery.command = Command::Refused;
-            } else if in_flight && found {
-                recovery.command = Command::Sent;
-            }
-            if in_flight && (refused || found) {
-                out.push(Effect::SaveRecovery);
-            }
-            out.push(Effect::Complete(command_completion(recovery.command)));
+            let step = super::recovery::receipt(state.recovery, refused, found);
+            apply_recovery(&mut state, &mut out, step);
         }
         QueueEvent::DispatchCommand(read) => {
             let step = super::recovery::dispatch(state.recovery, read);
             apply_recovery(&mut state, &mut out, step);
         }
         QueueEvent::CommandDone(result) => {
-            if let Some(recovery) = &mut state.recovery {
-                if recovery.command != Command::Sending {
-                    out.push(Effect::Complete(command_completion(recovery.command)));
-                    return (state, out);
-                }
-                recovery.command = match result {
-                    CommandResult::Accepted => Command::Sent,
-                    CommandResult::PermissionDenied => Command::PermissionDenied,
-                    CommandResult::Rejected => Command::Rejected,
-                    CommandResult::Unknown => recovery.command,
-                };
-                out.push(Effect::SaveRecovery);
-                out.push(Effect::Complete(command_completion(recovery.command)));
-            }
+            let step = super::recovery::done(state.recovery, result);
+            apply_recovery(&mut state, &mut out, step);
         }
         QueueEvent::RerunRead {
             head,

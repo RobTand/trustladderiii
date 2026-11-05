@@ -434,6 +434,24 @@ impl Adapter {
             .as_millis()
             .min(u64::MAX as u128) as u64
     }
+    fn human_hold_in_events(
+        &self,
+        delivery: &Delivery,
+        snapshot: Option<&Snapshot>,
+        events: &[tl3_github::IssueActivity],
+    ) -> Result<bool> {
+        for fact in person_facts(&delivery.repository, enqueue(delivery)?.0, events, false) {
+            let unresolved = match snapshot {
+                Some(snapshot) => fact.unresolved_hold(snapshot)?,
+                None => false,
+            };
+            if tl3_mergify::decide::recovery::human_hold(snapshot.is_some(), unresolved) {
+                return Ok(true);
+            }
+        }
+        self.unresolved_human_hold(delivery, snapshot)
+    }
+
 }
 fn refused(class: &'static str) -> Reconciliation {
     Reconciliation::Found(Box::new(Completion::permanent(class)))

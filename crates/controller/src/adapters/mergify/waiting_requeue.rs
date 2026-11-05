@@ -203,12 +203,11 @@ impl Adapter {
         events: &[tl3_github::IssueActivity],
     ) -> Result<bool> {
         for fact in person_facts(&delivery.repository, enqueue(delivery)?.0, events, false) {
-            if let Some(snapshot) = snapshot {
-                if fact.unresolved_hold(snapshot)? {
-                    return Ok(true);
-                }
-            } else {
-                // Without a snapshot there is no proof of an explicit resume.
+            let unresolved = match snapshot {
+                Some(snapshot) => fact.unresolved_hold(snapshot)?,
+                None => false,
+            };
+            if tl3_mergify::decide::recovery::human_hold(snapshot.is_some(), unresolved) {
                 return Ok(true);
             }
         }
