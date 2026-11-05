@@ -61,7 +61,7 @@ def verus_proofs():
         )
 
         # Group B1: production recovery residue and full-domain witnesses.
-        for name, count in [("budget", 7), ("eligibility", 5), ("schedule", 6), ("command", 4)]:
+        for name, count in [("budget", 10), ("eligibility", 10), ("schedule", 8), ("command", 6)]:
             verus_test(
                 name = "verus_recovery_" + name,
                 src = "proofs/recovery.rs",

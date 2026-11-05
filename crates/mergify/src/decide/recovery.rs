@@ -27,7 +27,7 @@ pub mod budget {
         pub pull_request: bool,
         pub head: bool,
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608. Legacy receipts consume the head budget.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608. Legacy receipts consume the head budget.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == match legacy { Legacy::Sending => Some(sending), Legacy::Refused => Some(refused), Legacy::Unused => None }))]
     pub fn legacy_command<T>(legacy: Legacy, sending: T, refused: T) -> Option<T> {
         match legacy {
@@ -36,22 +36,22 @@ pub mod budget {
             Legacy::Unused => None,
         }
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608. Never overwrite a spent recovery.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608. Never overwrite a spent recovery.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == matches!(stage, Stage::Ready)))]
     pub fn inspect_history(stage: Stage) -> bool {
         matches!(stage, Stage::Ready)
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608. Retired nodes have no PR/head binding.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608. Retired nodes have no PR/head binding.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (has_pr && has_head)))]
     pub fn legacy_binding(has_pr: bool, has_head: bool) -> bool {
         has_pr && has_head
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608. Archive history belongs to one repo/PR/head.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608. Archive history belongs to one repo/PR/head.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (binding.repository && binding.pull_request && binding.head && enqueue)))]
     pub fn archive_candidate(binding: Binding, enqueue: bool) -> bool {
         binding.repository && binding.pull_request && binding.head && enqueue
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608. Head key precedes effect keys, in archive order.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608. Head key precedes effect keys, in archive order.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (if position == 0 { None } else { Some((position - 1) as usize) })))]
     pub fn effect_key_index(position: usize) -> Option<usize> {
         if position == 0 {
@@ -60,7 +60,7 @@ pub mod budget {
             Some(position - 1)
         }
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608. Sent requires this bot, command first line and exact marker line.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608. Sent requires this bot, command first line and exact marker line.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (bot && queue_first_line && marker_line)))]
     pub fn sent(bot: bool, queue_first_line: bool, marker_line: bool) -> bool {
         bot && queue_first_line && marker_line
@@ -173,7 +173,7 @@ pub mod eligibility {
         Reruns,
         Eligible,
     }
-    /// State-table.md:537-546, :573-580 Publishing/Queued, Q41/Q47; #447/#608. Preserve snapshot parse gates.
+    /// docs/state-table.md:537-546, :573-580 Publishing/Queued, Q41/Q47; #447/#608. Preserve snapshot parse gates.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (if !r.phase || r.paused || r.incident || !r.open || !r.head_approved || !r.checked_approved { RepairStep::Stop }
  else { match r.approved_head { None => RepairStep::ApprovedHead, Some(false) => RepairStep::Stop, Some(true) => match r.repository {
  None => RepairStep::Repository, Some(false) => RepairStep::Stop, Some(true) => match r.pull_request {
@@ -197,7 +197,7 @@ pub mod eligibility {
             },
         }
     }
-    /// State-table.md:573-580 Queued CI/conflict rows, Q47; #447/#608. Only prior queue failure on another head establishes repair.
+    /// docs/state-table.md:573-580 Queued CI/conflict rows, Q47; #447/#608. Only prior queue failure on another head establishes repair.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (repository && pull_request && !matches!(failure, PriorFailure::Other) && other_head)))]
     pub fn prior_failure(
         repository: bool,
@@ -210,7 +210,7 @@ pub mod eligibility {
             && matches!(failure, PriorFailure::QueueCi | PriorFailure::Conflict)
             && other_head
     }
-    /// State-table.md:537-546, :573-580 Publishing/Queued, Q41/Q47; #447/#608. Request later reads only after every earlier eligibility gate.
+    /// docs/state-table.md:537-546, :573-580 Publishing/Queued, Q41/Q47; #447/#608. Request later reads only after every earlier eligibility gate.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (if !r.current_head || !r.open || r.merged || r.draft || !r.mergeable { EligibilityStep::Stop }
  else { match r.repaired { None => EligibilityStep::Repaired, Some(false) => EligibilityStep::Stop, Some(true) =>
  if !r.waiting || !r.settled || !r.eligible_check { EligibilityStep::Stop } else { match r.queue_label {
@@ -250,7 +250,7 @@ pub mod eligibility {
             }
         }
     }
-    /// State-table.md:573-580 Queued, Q41 human approval; #608. Without a snapshot there is no proof of explicit resume.
+    /// docs/state-table.md:573-580 Queued, Q41 human approval; #608. Without a snapshot there is no proof of explicit resume.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == match unresolved { None => true, Some(value) => value }))]
     pub fn event_hold(unresolved: Option<bool>) -> bool {
         unresolved.unwrap_or(true)
@@ -324,7 +324,7 @@ pub mod schedule {
         Holds,
         Ineligible,
     }
-    /// State-table.md:573-580 Queued, Q41/Q47; #608. Existing recovery skips repair parsing.
+    /// docs/state-table.md:573-580 Queued, Q41/Q47; #608. Existing recovery skips repair parsing.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (if saved { RecoveryGate::Proceed } else { match repaired { None => RecoveryGate::Repaired, Some(true) => RecoveryGate::Proceed, Some(false) => RecoveryGate::Pending } })))]
     pub fn recovery_gate(saved: bool, repaired: Option<bool>) -> RecoveryGate {
         if saved {
@@ -337,17 +337,17 @@ pub mod schedule {
             }
         }
     }
-    /// State-table.md:573-580 Queued, Q41/Q47; #608. An ineligible tick touches an existing recovery only.
+    /// docs/state-table.md:573-580 Queued, Q41/Q47; #608. An ineligible tick touches an existing recovery only.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == existing))]
     pub fn ineligible_tick(existing: bool) -> bool {
         existing
     }
-    /// State-table.md:573-580 Queued, Q41/Q47; #608/#760. Timer reread selects budget adoption without resampling the clock.
+    /// docs/state-table.md:573-580 Queued, Q41/Q47; #608/#760. Timer reread selects budget adoption without resampling the clock.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == timer.is_some()))]
     pub fn saved_timer(timer: Option<u64>) -> bool {
         timer.is_some()
     }
-    /// State-table.md:573-580 Queued, Q41/Q47; #608. Eligibility is sampled only for repaired-head dispatch; holds only when eligible.
+    /// docs/state-table.md:573-580 Queued, Q41/Q47; #608. Eligibility is sampled only for repaired-head dispatch; holds only when eligible.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (if !waiting { DispatchGate::Holds } else { match eligible { None => DispatchGate::Eligibility, Some(true) => DispatchGate::Holds, Some(false) => DispatchGate::Ineligible } })))]
     pub fn dispatch_gate(waiting: bool, eligible: Option<bool>) -> DispatchGate {
         if !waiting {
@@ -360,7 +360,7 @@ pub mod schedule {
             }
         }
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608/#751. Fence only the Sending save.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608/#751. Fence only the Sending save.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == matches!(stage, Stage::Sending)))]
     pub fn fence(stage: Stage) -> bool {
         matches!(stage, Stage::Sending)
@@ -422,7 +422,7 @@ pub mod command {
         Rejected,
         Unknown,
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608/#2705. Classification is total, with 403 preceding all other 4xx.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608/#2705. Classification is total, with 403 preceding all other 4xx.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == match reply { Reply::Accepted => Outcome::Accepted, Reply::Http(status) => if status == 403 { Outcome::PermissionDenied } else if 400 <= status && status <= 499 { Outcome::Rejected } else { Outcome::Unknown }, Reply::RateLimited => Outcome::Rejected, Reply::Other => Outcome::Unknown }))]
     pub fn command_result(reply: Reply) -> Outcome {
         match reply {
@@ -432,12 +432,12 @@ pub mod command {
             Reply::Http(_) | Reply::Other => Outcome::Unknown,
         }
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608. Refusal prevents the potentially destructive comment reconciliation.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608. Refusal prevents the potentially destructive comment reconciliation.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (!refusal && comment)))]
     pub fn receipt_found(refusal: bool, comment: bool) -> bool {
         !refusal && comment
     }
-    /// State-table.md:537-546 Publishing enqueue, Q41; #608/#2705. Only permission denial returns a permanent completion before propagating errors.
+    /// docs/state-table.md:537-546 Publishing enqueue, Q41; #608/#2705. Only permission denial returns a permanent completion before propagating errors.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == matches!(outcome, Outcome::PermissionDenied)))]
     pub fn permission_refusal(outcome: Outcome) -> bool {
         matches!(outcome, Outcome::PermissionDenied)

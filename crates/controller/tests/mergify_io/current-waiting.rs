@@ -40,7 +40,7 @@ impl Adapter {
         let Some(attempt) = self.baseline(delivery)? else {
             return Ok(());
         };
-        let Some(command) = legacy_command(attempt.requeue) else {
+        let Some(command) = Self::legacy_command(attempt.requeue) else {
             return Ok(());
         };
         // Closed nodes have already lost their PR binding. Their head receipt
@@ -50,7 +50,7 @@ impl Adapter {
         }
         if self
             .recovery(delivery)?
-            .is_some_and(|recovery| !budget::inspect_history(command_stage(recovery.command)))
+            .is_some_and(|recovery| !budget::inspect_history(Self::command_stage(recovery.command)))
         {
             return Ok(());
         }
@@ -147,7 +147,7 @@ impl Adapter {
             command: Command::Ready,
             command_key: self.recovery_key(delivery)?,
         });
-        if !budget::inspect_history(command_stage(recovery.command)) {
+        if !budget::inspect_history(Self::command_stage(recovery.command)) {
             return Ok(recovery);
         }
         let (number, head) = enqueue(delivery)?;
@@ -199,7 +199,7 @@ impl Adapter {
         }
         for prior in candidates {
             if let Some(attempt) = self.baseline(&prior)? {
-                let Some(command) = legacy_command(attempt.requeue) else {
+                let Some(command) = Self::legacy_command(attempt.requeue) else {
                     continue;
                 };
                 recovery.command = command;
@@ -396,7 +396,7 @@ impl Adapter {
         for effect in effects {
             match effect {
                 lifecycle::Effect::SaveRecovery => {
-                    if schedule::fence(command_stage(recovery.command)) {
+                    if schedule::fence(Self::command_stage(recovery.command)) {
                         self.fence(delivery)?;
                     }
                     self.save_recovery(delivery, &recovery)?;
@@ -489,25 +489,25 @@ impl Adapter {
             .as_millis()
             .min(u64::MAX as u128) as u64
     }
+    fn command_stage(command: Command) -> budget::Stage {
+        match command {
+            Command::Ready => budget::Stage::Ready,
+            Command::Sending => budget::Stage::Sending,
+            Command::Sent | Command::Refused | Command::PermissionDenied | Command::Rejected => {
+                budget::Stage::Spent
+            }
+        }
+    }
+    fn legacy_command(requeue: Option<Requeue>) -> Option<Command> {
+        let legacy = match requeue {
+            Some(Requeue::Sending) => budget::Legacy::Sending,
+            Some(Requeue::Refused) => budget::Legacy::Refused,
+            Some(Requeue::Ready) | None => budget::Legacy::Unused,
+        };
+        budget::legacy_command(legacy, Command::Sending, Command::Refused)
+    }
+
 }
 fn refused(class: &'static str) -> Reconciliation {
     Reconciliation::Found(Box::new(Completion::permanent(class)))
-}
-
-fn command_stage(command: Command) -> budget::Stage {
-    match command {
-        Command::Ready => budget::Stage::Ready,
-        Command::Sending => budget::Stage::Sending,
-        Command::Sent | Command::Refused | Command::PermissionDenied | Command::Rejected => {
-            budget::Stage::Spent
-        }
-    }
-}
-fn legacy_command(requeue: Option<Requeue>) -> Option<Command> {
-    let legacy = match requeue {
-        Some(Requeue::Sending) => budget::Legacy::Sending,
-        Some(Requeue::Refused) => budget::Legacy::Refused,
-        Some(Requeue::Ready) | None => budget::Legacy::Unused,
-    };
-    budget::legacy_command(legacy, Command::Sending, Command::Refused)
 }
