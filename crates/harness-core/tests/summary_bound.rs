@@ -334,10 +334,31 @@ mod reference;
 /// #823 review: the executable reference must reject the oversized fast path.
 #[test]
 fn reduction_reference_selects_a_fitting_document_and_retains_mandatory_atoms() {
-    assert_eq!(reference::reduce(900, 100, 300, &[980, 700, 200], 400),
-        reference::Plan { kind: 1, removed: 2, bytes: 200 });
-    assert_eq!(reference::reduce(900, 100, 300, &[980, 700, 200], 100),
-        reference::Plan { kind: 2, removed: 3, bytes: 100 });
-    assert_eq!(reference::reduce(900, 500, 300, &[980, 700, 600], 400),
-        reference::Plan { kind: 3, removed: 0, bytes: 300 });
+    assert_eq!(
+        reference::reduce(900, 100, 300, &[980, 700, 200], 400),
+        reference::Plan {
+            kind: 1,
+            removed: 2,
+            bytes: 200
+        }
+    );
+    assert_eq!(
+        reference::reduce(900, 100, 300, &[980, 700, 200], 100),
+        reference::Plan {
+            kind: 2,
+            removed: 3,
+            bytes: 100
+        }
+    );
+    assert_eq!(
+        reference::reduce(900, 500, 300, &[980, 700, 600], 400),
+        reference::Plan {
+            kind: 3,
+            removed: 0,
+            bytes: 300
+        }
+    );
 }
+
+#[path = "summary_bound/conformance.rs"]
+mod conformance;
