@@ -185,6 +185,19 @@ CASES = {
     'cleanup_confirmed_agenda_skipped': ('crates/kernel/src/acknowledgements.rs',
                                         'confirmed_agenda(m, kind);', 'let _ = kind;',
                                         '//crates/kernel:verus_acknowledgements_confirmed'),
+    'reply_ingest_budget': ('crates/kernel/src/ingest.rs',
+                            'm.credit.start = size as u64 + RESERVE;',
+                            'm.credit.start = size as u64 + RESERVE + 259;',
+                            '//crates/kernel:verus_ingest_finish_ingest_node'),
+    'timing3_ingest_deposit': ('crates/kernel/src/ingest.rs',
+                               'm.credit.start = size as u64 + RESERVE;',
+                               'm.credit.start = size as u64;',
+                               '//crates/kernel:verus_ingest_finish_ingest_node'),
+    'timing3_pause_release': ('crates/kernel/src/lib.rs',
+                             'm.holds = false;\n                set_phase(m, Phase::Ready(r));',
+                             'm.holds = true;\n                set_phase(m, Phase::Ready(r));',
+                             '//crates/kernel:verus_kernel_pause_node'),
+
 }
 
 

@@ -693,6 +693,8 @@ def verus_proofs():
             "events_footprints": ("kernel::events_lemmas#footprints_after", 1),
             "cleanup_teardown_progress": ("kernel::cleanup_lemmas#teardown_progress", 1),
             "cleanup_resource_distance": ("kernel::cleanup_lemmas#resource_distance", 1),
+            "timing3_ingest_deposit_bound": ("kernel::timing3_lemmas#ingest_deposit_bound", 1),
+            "timing3_pause_resume": ("kernel::timing3_lemmas#pause_resume", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

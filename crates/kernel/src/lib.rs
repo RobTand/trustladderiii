@@ -122,6 +122,10 @@ pub use queries::Wait;
 #[cfg(kani)]
 mod proofs;
 
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/timing3_lemmas.rs"]
+mod timing3_lemmas;
+
 /// Starting credit is the request's size in leaves plus this reserve.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const RESERVE: u64 = 3;
@@ -1949,6 +1953,7 @@ kernel_fn! {
         /// and files and waits in Ready, resuming at the step it reached. Q30 / #771.
         // The pinned Verus frontend requires nested if-let instead of let chains.
         #[allow(clippy::collapsible_if)]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn pause_node(m: &mut Node) -> (result: bool) [
     requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
     ensures final(m).generation as int <= old(m).generation as int + 1,
@@ -1975,6 +1980,7 @@ kernel_fn! {
         final(m).last_cmd == old(m).last_cmd,
         final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
     ] {
+        kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
         if m.phase.holding() {
             if let Some(r) = m.phase.resume() {
                 m.holds = false;
