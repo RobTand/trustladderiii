@@ -313,29 +313,27 @@ pub fn failure(ending: &PbEnding, record: Option<&FailedRecord>) -> Result<Value
     } else {
         ending.reason.optional().clone()
     };
-    if failure_read(ending) {
-        if let Some(record) = record {
-            if equal(&record.action_key, ending.action_key.optional())
-                && equal(
-                    &record.published_unix,
-                    &ending.publication.optional()["published_unix"],
-                )
-            {
-                let detail = &record.detail;
-                if truth(detail) && !detail.is_object() {
-                    return Err(Refusal::typed(
-                        "AttributeError",
-                        format!(
-                            "'{}' object has no attribute 'get'",
-                            crate::error::python_type(detail)
-                        ),
-                    ));
-                }
-                let fallback = &detail["termination_reason"];
-                if truth(fallback) {
-                    reason = fallback.clone();
-                }
-            }
+    if failure_read(ending)
+        && let Some(record) = record
+        && equal(&record.action_key, ending.action_key.optional())
+        && equal(
+            &record.published_unix,
+            &ending.publication.optional()["published_unix"],
+        )
+    {
+        let detail = &record.detail;
+        if truth(detail) && !detail.is_object() {
+            return Err(Refusal::typed(
+                "AttributeError",
+                format!(
+                    "'{}' object has no attribute 'get'",
+                    crate::error::python_type(detail)
+                ),
+            ));
+        }
+        let fallback = &detail["termination_reason"];
+        if truth(fallback) {
+            reason = fallback.clone();
         }
     }
     if reason.as_str().is_some_and(|s| {

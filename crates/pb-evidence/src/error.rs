@@ -14,9 +14,9 @@ pub struct Refusal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cause: Option<Box<Refusal>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub json: Option<JsonError>,
+    pub json: Option<Box<JsonError>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub unicode: Option<UnicodeError>,
+    pub unicode: Option<Box<UnicodeError>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -91,12 +91,12 @@ impl Refusal {
         Self {
             kind: "UnicodeDecodeError".into(),
             message: format!("'utf-8' codec can't decode {detail}: {reason}"),
-            unicode: Some(UnicodeError {
+            unicode: Some(Box::new(UnicodeError {
                 raw: base64::engine::general_purpose::STANDARD.encode(raw),
                 start,
                 end,
                 reason: reason.into(),
-            }),
+            })),
             ..Self::value("")
         }
     }
@@ -109,11 +109,11 @@ impl Refusal {
         Self {
             kind: "JSONDecodeError".into(),
             message: format!("{reason}: line {line} column {column} (char {character})"),
-            json: Some(JsonError {
+            json: Some(Box::new(JsonError {
                 reason: reason.into(),
                 document: document.into(),
                 position: character,
-            }),
+            })),
             ..Self::value("")
         }
     }

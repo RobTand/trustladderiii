@@ -495,14 +495,14 @@
       "type": "object",
       "properties": {
         "action_key": true,
-        "published_unix": true,
-        "termination_reason": true
+        "detail": true,
+        "published_unix": true
       },
       "additionalProperties": false,
       "required": [
         "action_key",
         "published_unix",
-        "termination_reason"
+        "detail"
       ]
     },
     "Forcing": {

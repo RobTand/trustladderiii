@@ -159,4 +159,16 @@ with tempfile.TemporaryDirectory() as directory:
         after = execute(new, directory, *schedule)
         assert before == after, (schedule, before, after)
         count += 1
+# An unmatched record must not inspect its malformed detail; a matching one
+# retains the original escaping AttributeError. Private object fields stay local.
+for matches in (False, True):
+    record = {'action_key': key if matches else 'x' * 64, 'published_unix': 4, 'detail': 7}
+    ending = {'action_key': key, 'status': 'failed', 'publication': {'published_unix': 4}}
+    def failure(module):
+        with patch.object(Path, 'open', lambda *args, **kwargs: io.BytesIO(json.dumps(record).encode())):
+            try:
+                return {'return': module._failure_receipt(ending, SimpleNamespace(tools_path=Path('tools')))}
+            except AttributeError as error:
+                return {'raise': type(error).__name__, 'message': str(error)}
+    assert failure(old) == failure(new)
 print(json.dumps({'done': count}), flush=True)
