@@ -71,7 +71,7 @@ fn mandatory_d2_quota_resume() {
             });
             assert_eq!(has(&r, "resume_quota"), effect == 1);
             assert!(!has(&r, "look"));
-            if effect == 1 && resume >= 2 && resume < 240 {
+            if effect == 1 && (2..240).contains(&resume) {
                 assert!(has(&r, "queue_observation"));
             }
         }
