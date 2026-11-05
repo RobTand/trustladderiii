@@ -4,7 +4,7 @@ mod support;
 
 use serde_json::json;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     fs,
     rc::Rc,
     sync::mpsc,
@@ -34,7 +34,13 @@ impl tl3_controller::clock::Clock for Clock {
 
 // Only audit uses a real worker. Planning stays in flight so these tests cannot
 // accidentally finish a request while checking its audit ending.
-struct Audit(Supervisor, adapters::workers::Fake, Rc<Cell<bool>>);
+struct Audit(
+    Supervisor,
+    adapters::workers::Fake,
+    Rc<Cell<bool>>,
+    Rc<Cell<bool>>,
+    Rc<RefCell<Option<Observation>>>,
+);
 impl Executor for Audit {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         match d.output {
@@ -56,6 +62,18 @@ impl Executor for Audit {
                 ..
             } => {
                 let result = self.0.reconcile(d)?;
+                if let Reconciliation::Found(completion) = &result {
+                    if let Some(reply) = completion
+                        .observations
+                        .iter()
+                        .find(|o| matches!(o, Observation::WorkerReply { .. }))
+                    {
+                        *self.4.borrow_mut() = Some(reply.clone());
+                        if self.3.get() {
+                            return Ok(Reconciliation::Pending);
+                        }
+                    }
+                }
                 if self.2.get()
                     && matches!(&result, Reconciliation::Found(c) if c.observations.iter().any(|o| matches!(o, Observation::Quota { .. })))
                 {
@@ -102,7 +120,8 @@ struct Fixture {
     defer_quota: Rc<Cell<bool>>,
     deferred: Vec<(String, Observation)>,
     success_reply: Option<Observation>,
-    defer_success: bool,
+    defer_success: Rc<Cell<bool>>,
+    observed_success: Rc<RefCell<Option<Observation>>>,
     allow_quota_incident: bool,
 }
 
@@ -115,6 +134,10 @@ impl Fixture {
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         config.store = settings.clone();
         config.limits.agent_pool = 2;
+        // These tests advance the quota clock by days; unrelated simulated
+        // workers have no silence/no-progress deadline in this fixture.
+        config.allowances.agent_worker.silence_secs = u32::MAX;
+        config.allowances.agent_worker.no_progress_secs = u32::MAX;
         config.models.key_file = root.path().join("fixture-key");
         fs::write(&config.models.key_file, "fixture-only").unwrap();
         config.workers.python = "/usr/bin/python3".into();
@@ -153,12 +176,16 @@ else:
             Supervisor::new(&config, &root.path().join("records"), &mut ownership).unwrap();
         let source = supervisor.source();
         let defer_quota = Rc::new(Cell::new(false));
+        let defer_success = Rc::new(Cell::new(false));
+        let observed_success = Rc::new(RefCell::new(None));
         registry.register(
             Upstream::Workers,
             Audit(
                 supervisor,
                 adapters::workers::Fake::new(root.path()),
                 defer_quota.clone(),
+                defer_success.clone(),
+                observed_success.clone(),
             ),
         );
         let mut controller = Controller::open_with_clock(
@@ -168,6 +195,7 @@ else:
             clock.clone(),
         )
         .unwrap();
+        controller.set_allowances(config.allowances.clone());
         controller
             .set_model_quota_policy(&config.models, Duration::from_secs(6 * 3600))
             .unwrap();
@@ -191,7 +219,8 @@ else:
             defer_quota,
             deferred: vec![],
             success_reply: None,
-            defer_success: false,
+            defer_success,
+            observed_success,
             allow_quota_incident: false,
         }
     }
@@ -217,7 +246,30 @@ else:
                 return;
             }
         }
-        panic!("controller did not settle");
+        let mut reader = Reader::open(&self.settings).unwrap();
+        let mut tx = reader.transaction().unwrap();
+        let rows: Vec<_> = tx
+            .query(
+                "SELECT event_key, payload FROM tl3_events ORDER BY revision DESC LIMIT 4",
+                &[],
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, serde_json::Value>(1)))
+            .collect();
+        let pending: Vec<_> = self
+            .controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|row| {
+                row.table == "inbox"
+                    || row.table == "allowances"
+                    || row.table == "model_quota_probes"
+            })
+            .collect();
+        panic!("controller did not settle: {rows:?}; pending {pending:?}");
     }
     fn step(&mut self) {
         let (tx, rx) = mpsc::channel();
@@ -236,7 +288,7 @@ else:
                     }
                 ) {
                     self.success_reply = Some(observation.clone());
-                    if self.defer_success {
+                    if self.defer_success.get() {
                         self.deferred.push((key, observation));
                         continue;
                     }
@@ -332,6 +384,7 @@ else:
             deferred,
             success_reply,
             defer_success,
+            observed_success,
             allow_quota_incident,
         } = self;
         drop(controller);
@@ -355,6 +408,8 @@ else:
                 supervisor,
                 adapters::workers::Fake::new(root.path()),
                 defer_quota.clone(),
+                defer_success.clone(),
+                observed_success.clone(),
             ),
         );
         let mut controller = Controller::open_with_clock(
@@ -364,6 +419,7 @@ else:
             clock.clone(),
         )
         .unwrap();
+        controller.set_allowances(config.allowances.clone());
         controller
             .set_model_quota_policy(&config.models, Duration::from_secs(6 * 3600))
             .unwrap();
@@ -380,6 +436,7 @@ else:
             deferred,
             success_reply,
             defer_success,
+            observed_success,
             allow_quota_incident,
         }
     }
@@ -440,7 +497,11 @@ fn duplicate_success_and_reset_do_not_dispatch_twice() {
     f.success();
     f.controller.look_due().unwrap();
     assert_eq!(f.attempt(&key), 1);
-    let reply = f.success_reply.clone().expect("real successful ending");
+    let reply = f
+        .success_reply
+        .clone()
+        .or_else(|| f.observed_success.borrow().clone())
+        .expect("real successful ending");
     for suffix in ["duplicate-1", "duplicate-2"] {
         f.controller.observe(suffix, reply.clone()).unwrap();
         f.drain();
@@ -560,7 +621,7 @@ fn far_reset_uses_one_hourly_probe_per_model_and_family() {
 fn late_success_wakes_another_request_after_its_node_moved_on() {
     let mut f = Fixture::new();
     let key = f.held(true);
-    f.defer_success = true;
+    f.defer_success.set(true);
     fs::write(f.root.path().join("restored"), "yes").unwrap();
     fs::write(f.root.path().join("success"), "yes").unwrap();
     f.until(|f| !f.deferred.is_empty());
