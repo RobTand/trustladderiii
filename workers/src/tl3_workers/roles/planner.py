@@ -414,17 +414,15 @@ class Correction:
         # Replacement permissions bind slots. Adding one replacement never
         # authorizes changing another selected node or its order.
         if replace:
-            retained = [node for node in a if node not in replace]
-            additions = [node for node in b if node not in retained]
-            if (not insertion(retained, b, additions) or not additions
-                    or any(node not in b for node in retained)):
+            if len(a) != len(b):
                 return False
-            for node in additions:
-                path = node.split('::')[0]
-                if not any(left.split('::')[0] == path for left in replace):
+            for before, after in zip(a, b):
+                if same(before, after):
+                    continue
+                if before not in replace or before.split('::')[0] != after.split('::')[0]:
                     return False
-                source = self.base_sources.get(path)
-                if source is None or test_function_source(source, node) is None:
+                source = self.base_sources.get(after.split('::')[0])
+                if source is None or test_function_source(source, after) is None:
                     return False
             return True
         if any(item.get('check') == index for item in self.permissions.get('NODE_DEDUP', [])) and same(list(dict.fromkeys(a)), b):
