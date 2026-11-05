@@ -3,9 +3,6 @@ use crate::{Error, Result};
 use serde_json::{Value, json};
 
 pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
-    if matches!(role, "ingest" | "audit") {
-        preserve_ingest(role, inputs, reply)?;
-    }
     let goals = if role == "audit" {
         &inputs["ingest"]["goals"]
     } else {
@@ -25,7 +22,7 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
     }
     let Some(capabilities) = inputs["tool_capabilities"].as_array() else {
         // #372: replies to requests started by the previous release still parse.
-        return Ok(());
+        return validate_ingest_preservation(role, inputs, reply);
     };
     if !matches!(role, "ingest" | "audit" | "planner") {
         return Ok(());
@@ -169,7 +166,7 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         }
         reply["report"] = json!(errors.join("\n"));
     }
-    Ok(())
+    validate_ingest_preservation(role, inputs, reply)
 }
 
 #[cfg(test)]
@@ -442,6 +439,23 @@ pub(super) fn preserve_ingest(role: &str, inputs: &Value, reply: &mut Value) -> 
     Ok(())
 }
 
+fn validate_ingest_preservation(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
+    if !matches!(role, "ingest" | "audit") {
+        return Ok(());
+    }
+    let mut checked = reply.clone();
+    preserve_ingest(role, inputs, &mut checked)?;
+    if role == "ingest" && checked != *reply {
+        // The worker must preserve before its forecast. Never accept an enlarged
+        // brief with token accounting for the lossy model draft.
+        return Err(Error::Invalid(
+            "ingest brief drops verbatim source material before forecasting",
+        ));
+    }
+    *reply = checked;
+    Ok(())
+}
+
 pub fn check_ingest_reply(
     role: &str,
     inputs: &Value,
@@ -460,6 +474,24 @@ pub fn check_ingest_reply(
 mod ingest_tests {
     use super::*;
     use proptest::{prelude::*, test_runner::TestRunner};
+
+    #[test]
+    fn controller_requires_preservation_before_worker_forecasting() {
+        let inputs = json!({"issue":{"body":"```python\ndef test_a(): pass\n```\n"}});
+        let mut reply = json!({"kind":"brief","brief":"Summary", "forecast":{"brief_tokens":2}});
+        let original = reply.clone();
+        assert!(
+            preflight("ingest", &inputs, &mut reply)
+                .unwrap_err()
+                .to_string()
+                .contains("before forecasting")
+        );
+        assert_eq!(reply, original);
+        preserve_ingest("ingest", &inputs, &mut reply).unwrap();
+        let preserved = reply.clone();
+        preflight("ingest", &inputs, &mut reply).unwrap();
+        assert_eq!(reply, preserved);
+    }
 
     #[test]
     fn fenced_source_survives_json_and_repeated_handoffs() {
