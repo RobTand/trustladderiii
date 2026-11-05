@@ -160,7 +160,8 @@ fn retained_boundary_checks_campaign_flags_and_forced_heads() {
     );
 
     report["results"][0]["verdict"] = json!("pass");
-    report["results"][0]["forcing"] = json!({"environment": {"OTHER": "1"}});
+    report["results"][0]["forcing"] =
+        json!({"symptom": "timeout", "environment": {"OTHER": "1"}, "patches": []});
     let typed: Report = serde_json::from_value(report.clone()).unwrap();
     assert!(!rejudged(&typed, &job));
     report["results"][0]["tests"][0]["head_forced"] = json!("passed");
