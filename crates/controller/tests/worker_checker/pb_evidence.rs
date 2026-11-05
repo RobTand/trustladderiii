@@ -50,6 +50,7 @@ fn drive(script: &str, args: &[String]) -> u64 {
     let status = child.wait().unwrap();
     let errors = errors.join().unwrap();
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
+    eprint!("{}", String::from_utf8_lossy(&errors));
     count
 }
 
@@ -213,15 +214,43 @@ fn pb_evidence_wire_schema_matches_rust_types() {
 #[test]
 fn artifact_limit_uses_the_strict_real_binary_transport() {
     let script = r#"
-import json,sys
+import concurrent.futures,json,sys,threading,time
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / 'workers/tests'))
 import pb_evidence_vectors as oracle
-cases = oracle.read_vectors()['generator-artifact']
-for case in cases:
-    if case['case'] in ('artifact-bytes-below', 'artifact-bytes-at'):
-        actual = oracle.observe('generator-artifact', case['input'])
-        assert oracle.encoded(actual) == oracle.encoded(case['output']), (case['case'], str(actual)[:500])
+from tl3_workers.reply_check import run_check, TIMEOUT_SECONDS
+stop, ready = threading.Event(), threading.Event()
+def load():
+    count = 0
+    while not stop.is_set():
+        run_check(['check-pb', 'canonical'], {'value': {'load': 'x' * 262144}})
+        count += 1
+        ready.set()
+    return count
+case_name = ''
+calls = []
+def measured(command, document, **kwargs):
+    started = time.monotonic()
+    response = run_check(command, document, **kwargs)
+    seconds = time.monotonic() - started
+    calls.append({'case': case_name, 'operation': command[1], 'seconds': seconds,
+                  'budget_seconds': TIMEOUT_SECONDS, 'margin_seconds': TIMEOUT_SECONDS - seconds})
+    return response
+oracle.pb_tests.run_check = measured
+with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    pending = pool.submit(load)
+    assert ready.wait(5), 'background checker workload did not start'
+    try:
+        for case in oracle.read_vectors()['generator-artifact']:
+            if case['case'] in ('artifact-bytes-below', 'artifact-bytes-at'):
+                case_name = case['case']
+                actual = oracle.observe('generator-artifact', case['input'])
+                assert oracle.encoded(actual) == oracle.encoded(case['output']), (case_name, str(actual)[:500])
+    finally:
+        stop.set()
+    load_calls = pending.result()
+assert len(calls) == 4 and load_calls > 1, (calls, load_calls)
+print('PB_ARTIFACT_TRANSPORT ' + json.dumps({'load': 'one concurrent CLI canonical loop, 256 KiB per call', 'load_calls': load_calls, 'calls': calls}), file=sys.stderr)
 print(json.dumps({'done': 2}))
 "#;
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
