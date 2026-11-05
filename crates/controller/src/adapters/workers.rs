@@ -1516,9 +1516,28 @@ fn inspect_recorded(
     delivery: &Delivery,
     store: &mut Store,
 ) -> Result<Reconciliation> {
+    let claimed = read(&attempt.join("claim.json"))?.is_some_and(|c| c["cancelled"] != true);
     let result = inspect(attempt, delivery)?;
     if !matches!(result, Reconciliation::Pending) {
         facts::record(store, &delivery.key, attempt)?;
+    }
+    let action = crate::dispatch_liveness::decision::supervisor_ending(
+        claimed,
+        matches!(&result, Reconciliation::Absent),
+    );
+    if action == crate::dispatch_liveness::decision::Repair::LostWorker {
+        // Q53 / #828: the completed quota attempt already has its retry.
+        if crate::looks::quota_waiting(&store.load()?, &delivery.key, 0)? {
+            return Ok(result);
+        }
+        // Fence a delayed ending against a newer attempt under the same key.
+        let root = attempt
+            .parent()
+            .ok_or(Error::Invalid("worker attempt has no root"))?;
+        if latest(root)?.is_some_and(|(_, current)| current == attempt) {
+            return Ok(Reconciliation::Found(Box::new(lost_worker(delivery))));
+        }
+        return Ok(Reconciliation::Pending);
     }
     Ok(result)
 }

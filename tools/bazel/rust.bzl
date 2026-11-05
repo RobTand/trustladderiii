@@ -160,7 +160,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
-    "src/lib.rs": ["tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json"],
+    "src/lib.rs": ["tests/worker_events_io/**", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
@@ -380,7 +380,11 @@ def _crate_test(kind, package, name, source, harness, options):
     if native.package_name() in ["crates/kernel", "crates/store"]:
         sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
         if source == "tests/proof_map.rs":
-            sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
+            sources = sources + [
+                "src/proofs.rs",
+                "//crates/controller:src/dispatch_liveness/decision.rs",
+                "//crates/controller:src/dispatch_liveness/model.rs",
+            ] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
         if native.package_name() == "crates/store":
             sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":

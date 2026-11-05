@@ -1,5 +1,4 @@
 //! #817: actual Wait, EffectKind, classifier and repair decisions.
-use vstd::prelude::*;
 #[path = "../../controller/src/dispatch_liveness/decision.rs"]
 mod decision;
 #[path = "../../controller/src/dispatch_liveness/model.rs"]
@@ -9,6 +8,7 @@ mod dispatch_theorems {
     use super::{decision, model};
     use crate::Wait;
     use decision::*;
+    use vstd::prelude::*;
     verus! {
     /// State-table Q7 / #816. K=1 recovery transaction after the immutable
     /// dispatch read, or one fenced process-ending ingress. No time bound and
