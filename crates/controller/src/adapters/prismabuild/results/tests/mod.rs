@@ -254,7 +254,7 @@ fn retained_boundary_checks_campaign_flags_and_forced_heads() {
     assert!(rejudged(&typed, &job));
 }
 
-mod recorded_io;
+pub(super) mod recorded_io;
 
 fn normalized(value: Result<CheckEvidence>) -> Value {
     match value {

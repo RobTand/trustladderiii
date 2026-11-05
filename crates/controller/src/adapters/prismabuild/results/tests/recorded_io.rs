@@ -44,9 +44,9 @@ pub(super) fn run<T>(
     let calls = STATE.with(|state| state.borrow().as_ref().unwrap().calls.clone());
     (value, calls)
 }
-pub(super) struct File(Option<std::fs::File>);
+pub(crate) struct File(Option<std::fs::File>);
 impl File {
-    pub(super) fn open(path: &std::path::Path) -> io::Result<Self> {
+    pub(crate) fn open(path: &std::path::Path) -> io::Result<Self> {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
             let Some(state) = state.as_mut() else {
@@ -59,7 +59,7 @@ impl File {
             Ok(Self(None))
         })
     }
-    pub(super) fn take(self, limit: u64) -> io::Take<Self> {
+    pub(crate) fn take(self, limit: u64) -> io::Take<Self> {
         if self.0.is_none() {
             STATE.with(|state| {
                 state

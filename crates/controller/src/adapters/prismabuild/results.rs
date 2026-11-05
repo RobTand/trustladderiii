@@ -8,9 +8,13 @@ use crate::{
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, clipped},
 };
+#[cfg(test)]
+use judge_tests::recorded_io::File;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::{fs::File, io::Read};
+#[cfg(not(test))]
+use std::fs::File;
+use std::io::Read;
 use tl3_harness_core::{judge as core_judge, phase as core_phase};
 use tl3_prismabuild::{ActionKey, Tool};
 
