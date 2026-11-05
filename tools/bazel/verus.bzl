@@ -214,13 +214,13 @@ def verus_proofs():
 
 
         # ctrl-core C2: required-check Kani port and rerun budgets, independently owned.
-        for part, module, count in [
-            ("required_check", "enqueue#required_check", 1),
-            ("required_check_witness", "witness", 1),
-            ("rerun_budget", "enqueue#decide", 1),
-            ("rerun_budget_witness", "witness", 9),
+        for part, root, module, count in [
+            ("required_check", "required_check", "enqueue#required_check", 1),
+            ("required_check_types", "required_check", "enqueue#RequiredState::clone", 1),
+            ("required_check_witness", "required_check", "witness", 1),
+            ("rerun_budget", "rerun_budget", "enqueue#decide", 1),
+            ("rerun_budget_witness", "rerun_budget", "witness", 9),
         ]:
-            root = part[:-8] if part.endswith("_witness") else part
             verus_test(
                 name = "verus_enqueue_" + part,
                 src = "proofs/enqueue_" + root + ".rs",
