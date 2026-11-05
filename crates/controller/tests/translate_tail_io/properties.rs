@@ -114,7 +114,7 @@ fn mandatory_reply_guards_and_checks_flags() {
                 s.nodes[0].generation = if generation_match { 9 } else { 10 };
                 let r = compare(&s);
                 assert_eq!(
-                    r.writes,
+                    r.row_writes,
                     usize::from((run_match || job_match) && generation_match)
                 );
             }
@@ -134,7 +134,7 @@ fn mandatory_reply_guards_and_checks_flags() {
                     },
                 };
                 let r = compare(&s);
-                assert_eq!(r.writes, usize::from(report && (!pass || !inside)));
+                assert_eq!(r.row_writes, usize::from(report && (!pass || !inside)));
             }
         }
     }
@@ -143,18 +143,18 @@ fn mandatory_reply_guards_and_checks_flags() {
     assert_eq!(operations(&compare(&s)), ["priority_reserve"]);
     let mut s = schedule(2);
     s.nodes[0].phase = Phase::Reviewing;
-    assert_eq!(compare(&s).writes, 0);
+    assert_eq!(compare(&s).row_writes, 0);
     let mut s = schedule(3);
     s.event = Event::Fact {
         node: NodeId(0),
         fact: Fact::CiFailed { infra: true },
     };
-    assert_eq!(compare(&s).writes, 0);
+    assert_eq!(compare(&s).row_writes, 0);
     let mut s = schedule(3);
     s.nodes[0].phase = Phase::Making;
-    assert_eq!(compare(&s).writes, 0);
+    assert_eq!(compare(&s).row_writes, 0);
     let s = schedule(4);
-    assert_eq!(compare(&s).writes, 0);
+    assert_eq!(compare(&s).row_writes, 0);
     let s = schedule(5);
     assert_eq!(operations(&compare(&s)), ["priority_reserve"]);
     let mut s = schedule(2);
@@ -344,7 +344,7 @@ fn generated_tails_and_crash_cuts() {
                     read_errors.set(counts);
                 }
             }
-            if r.writes > 0 {
+            if r.row_writes > 0 {
                 let k = match s.event {
                     Event::Fact { .. } => 3,
                     Event::Reply {

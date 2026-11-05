@@ -7,7 +7,7 @@ recorded leaf I/O methods. No changed production body is a shared shim.
 
 The boundary records worker-material/document reads, their results, diagnostics,
 row pushes, and the final priority_reserve call. Independent read tapes include
-absent values, malformed wire data and read errors. Each attempted row write is
+absent values, malformed wire data and read errors. Each diagnostic and attempted row write is
 replayed with crashes immediately before and after it. Results, exact traces,
 stderr bytes, buffered rows and transaction-model persisted bytes must match.
 This models transaction rollback, not PostgreSQL's on-disk format. Interning,

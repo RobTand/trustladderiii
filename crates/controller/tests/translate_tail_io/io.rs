@@ -49,6 +49,7 @@ impl Rows {
         let index = with(|r| {
             let index = r.writes;
             r.writes += 1;
+            r.row_writes += 1;
             r.trace.push(json!(["row.push", row]));
             index
         });
@@ -84,6 +85,7 @@ struct Recording {
     trace: Vec<Value>,
     stderr: Vec<u8>,
     writes: usize,
+    row_writes: usize,
     material_reads: usize,
     document_reads: usize,
     materials: Vec<Read>,
@@ -102,12 +104,20 @@ fn cut(index: usize, after: bool) {
     }
 }
 pub(super) fn diagnostic(message: String) {
-    with(|r| {
+    let index = with(|r| {
+        let index = r.writes;
+        r.writes += 1;
         r.trace.push(json!(["eprintln", message]));
+        index
+    });
+    cut(index, false);
+    with(|r| {
         r.stderr.extend_from_slice(message.as_bytes());
         r.stderr.push(b'\n');
     });
+    cut(index, true);
 }
+
 fn read(op: &str, node: &str, table: Option<&str>) -> Result<Option<Value>> {
     let value = with(|r| {
         let (tape, at) = if table.is_some() {
@@ -143,6 +153,7 @@ pub(super) struct Run {
     pub persisted: Vec<u8>,
     pub result: String,
     pub writes: usize,
+    pub row_writes: usize,
 }
 fn run(schedule: &Schedule, current: bool, cut_at: Option<(usize, bool)>) -> Run {
     ACTIVE.with(|r| {
@@ -224,6 +235,7 @@ fn run(schedule: &Schedule, current: bool, cut_at: Option<(usize, bool)>) -> Run
         persisted,
         result,
         writes: r.writes,
+        row_writes: r.row_writes,
     })
 }
 pub(super) fn compare(schedule: &Schedule) -> Run {
@@ -232,9 +244,15 @@ pub(super) fn compare(schedule: &Schedule) -> Run {
     assert_eq!(old, new, "complete schedule: {schedule:?}");
     for index in 0..old.writes {
         for after in [false, true] {
+            let old_cut = run(schedule, false, Some((index, after)));
+            let new_cut = run(schedule, true, Some((index, after)));
+            assert_eq!(old_cut.result, "crash", "cut must be reached");
             assert_eq!(
-                run(schedule, false, Some((index, after))),
-                run(schedule, true, Some((index, after))),
+                old_cut.persisted,
+                serde_json::to_vec(&schedule.rows).unwrap()
+            );
+            assert_eq!(
+                old_cut, new_cut,
                 "write {index}, after {after}, {schedule:?}"
             );
         }
