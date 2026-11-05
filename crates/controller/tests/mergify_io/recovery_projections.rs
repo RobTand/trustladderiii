@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use tl3_controller::{Error, Result, adoption};
 use tl3_github::{Actor, IssueActivity};
 use tl3_kernel::{EffectKind, FileId, HeadId, Node, NodeId, Phase, RepoId, World};
+use tl3_mergify::decide::completion as completion_core;
 use tl3_mergify::{QUEUE_LABEL, decide::facts};
 
 include!("projection-support.rs");
@@ -219,6 +220,20 @@ fn production_projection_functions_are_source_pinned() {
             );
         }
     }
+    let frozen_adapter = include_str!("base-adapter.rs.txt");
+    let reference_support = include_str!("reference-projection-support.rs");
+    for name in ["node", "identity", "unresolved_hold", "person_facts"] {
+        let needle = format!("fn {name}(");
+        assert_eq!(
+            item(frozen_adapter, &needle).replace("crate::", "super::"),
+            item(reference_support, &needle),
+            "reference helper source drift: {name}"
+        );
+    }
+    assert_eq!(
+        item(frozen_adapter, "struct QueueFact {"),
+        item(reference_support, "struct QueueFact {")
+    );
     let adapter = include_str!("../../src/adapters/mergify.rs");
     let controller = include_str!("../../src/lib.rs");
     let decoder = include_str!("../../src/snapshot.rs");
@@ -231,6 +246,7 @@ fn production_projection_functions_are_source_pinned() {
         (adapter, "node(", "node("),
         (adapter, "identity(", "identity("),
         (adapter, "unresolved_hold(", "unresolved_hold("),
+        (adapter, "completion_hold(", "completion_hold("),
         (adapter, "heal_phase(", "heal_phase("),
         (adapter, "enqueue(", "enqueue("),
         (adapter, "actor(", "actor("),

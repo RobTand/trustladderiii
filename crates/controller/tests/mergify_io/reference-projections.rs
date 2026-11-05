@@ -1,5 +1,6 @@
 use super::*;
 use tl3_mergify::decide::recovery::eligibility;
+include!("reference-projection-support.rs");
 struct Adapter;
 impl Adapter {
     pub(super) fn repaired_head(

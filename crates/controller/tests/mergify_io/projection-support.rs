@@ -107,16 +107,11 @@ impl QueueFact {
         )
     }
     fn unresolved_hold(&self, snapshot: &Snapshot) -> Result<bool> {
-        if !matches!(
-            self.evidence,
-            Evidence::DequeuedByPerson { .. }
-                | Evidence::ClosedByPerson { .. }
-                | Evidence::DequeuedByCommand { .. }
-        ) {
+        if !completion_core::hold_candidate(completion_hold(&self.evidence)) {
             return Ok(false);
         }
         let Some(node) = self.node(snapshot)? else {
-            return Ok(true);
+            return Ok(completion_core::unresolved_hold(None));
         };
         let observed = snapshot
             .rows
@@ -126,9 +121,9 @@ impl QueueFact {
             .rows
             .iter()
             .find(|row| row.table == "queue_resumes" && row.id == node.0.to_string());
-        Ok(!observed
-            .zip(resumed)
-            .is_some_and(|(observed, resumed)| resumed.version > observed.version))
+        Ok(completion_core::unresolved_hold(observed.zip(resumed).map(
+            |(observed, resumed)| (observed.version.get(), resumed.version.get()),
+        )))
     }
 }
 
@@ -278,4 +273,14 @@ fn person_facts(
             },
         })
         .collect()
+}
+
+fn completion_hold(evidence: &Evidence) -> completion_core::HoldEvidence {
+    match evidence {
+        Evidence::DequeuedByPerson { .. } | Evidence::ClosedByPerson { .. } => {
+            completion_core::HoldEvidence::Person
+        }
+        Evidence::DequeuedByCommand { .. } => completion_core::HoldEvidence::Command,
+        _ => completion_core::HoldEvidence::Other,
+    }
 }
