@@ -1312,6 +1312,14 @@ fn upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success() {
         });
         f.store.commit(&commit).unwrap();
         let mut f = f.restart();
+        let before_success: Vec<_> = f
+            .controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|row| row.table == "model_quotas")
+            .collect();
         f.intake(2663);
         fs::write(f.root.path().join("restored"), "yes").unwrap();
         fs::write(f.root.path().join("success"), "yes").unwrap();
@@ -1323,7 +1331,11 @@ fn upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success() {
                 .rows
                 .iter()
                 .any(|row| row.table == "model_quotas" && row.id == "alternate-model"),
-            "an older or other-family success cannot erase unknown legacy quota"
+            "an older or other-family success cannot erase unknown legacy quota: other_family={other_family}, before={before_success:?}, ending={:?}, success={:?}",
+            ending,
+            f.store
+                .latest_worker_success("1", "alternate-model")
+                .unwrap()
         );
         f.controller.look_due().unwrap();
         assert_eq!(f.attempt(&key), 0);
