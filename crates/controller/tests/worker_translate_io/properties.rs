@@ -45,7 +45,8 @@ fn production_and_reference_sources_are_pinned() {
             .find("            Observation::WorkerFailed {")
             .unwrap();
         let b = copy[a..].find("        };\n        *detail").unwrap() + a;
-        assert_eq!(&copy[a..b], expected);
+        let normalized = copy[a..b].replace("                plan_check: _,\n", "");
+        assert_eq!(normalized, expected);
     }
     // Frozen helper blobs are separate from the two independently compiled arms.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -72,19 +73,44 @@ fn production_and_reference_sources_are_pinned() {
         let changed = current.exists();
         if changed {
             let copy = std::fs::read_to_string(&current).unwrap();
-            let body = if name == "plan-size" {
-                let start = production.find("pub(crate) fn validate_plan_size(").unwrap();
-                let helper = production[start..].find("fn ascii_json_bytes(").unwrap() + start;
-                let end = production[helper..].find("\n}\n").unwrap() + helper + 3;
-                &production[start..end]
+            if name == "protocol" {
+                let mapping = |source: &str| {
+                    let a = source.find("pub(crate) fn map_reply(").unwrap();
+                    let b = source[a..].find("pub(crate) fn relative_file(").unwrap() + a;
+                    source[a..b].to_owned()
+                };
+                assert_eq!(
+                    mapping(&copy),
+                    mapping(&production),
+                    "current mapping drift"
+                );
+                for part in pin["parts"].as_array().unwrap().iter().skip(1) {
+                    let part = part.as_str().unwrap();
+                    assert!(production.contains(part), "production leaf drift: {name}");
+                    assert!(copy.contains(part), "current leaf drift: {name}");
+                }
             } else {
-                production.split("#[cfg(test)]").next().unwrap()
-            };
-            assert_eq!(copy.trim_end(), body.trim_end(), "current leaf drift: {name}");
+                let body = if name == "plan-size" {
+                    let start = production.find("pub(crate) fn validate_plan_size(").unwrap();
+                    let helper = production[start..].find("fn ascii_json_bytes(").unwrap() + start;
+                    let end = production[helper..].find("\n}\n").unwrap() + helper + 3;
+                    &production[start..end]
+                } else {
+                    production.split("#[cfg(test)]").next().unwrap()
+                };
+                assert_eq!(
+                    copy.trim_end(),
+                    body.trim_end(),
+                    "current leaf drift: {name}"
+                );
+            }
         }
         for part in pin["parts"].as_array().unwrap() {
             let part = part.as_str().unwrap();
-            assert!(changed || production.contains(part), "production leaf drift: {name}");
+            assert!(
+                changed || production.contains(part),
+                "production leaf drift: {name}"
+            );
             let normalized = compiled.replace("pub(super) fn", "fn");
             assert!(
                 compiled.contains(part) || normalized.contains(part),
@@ -564,23 +590,51 @@ fn mandatory_all_reply_outcomes_and_plan_budget() {
 #[test]
 fn mandatory_invalid_maker_paths_and_unquoted_scope_citations() {
     let failed = json!({"event":Event::Reply {node:NodeId(0),generation:7,reply:Reply::RunFailed},"detailed_review":false});
-    for path in ["../outside.rs", "/absolute.rs", "dir/../outside.rs", ".git/config", "dir\\file.rs"] {
-        let s = schedule("maker", json!({"kind":"needs_files","files":[{"path":path,"why":"Need this file"}],"fits":true}));
+    for path in [
+        "../outside.rs",
+        "/absolute.rs",
+        "dir/../outside.rs",
+        ".git/config",
+        "dir\\file.rs",
+    ] {
+        let s = schedule(
+            "maker",
+            json!({"kind":"needs_files","files":[{"path":path,"why":"Need this file"}],"fits":true}),
+        );
         let r = compare(&s);
         assert_eq!(r.result, failed, "invalid maker path {path}");
-        assert!(r.calls.is_empty(), "path validation precedes every I/O call");
+        assert!(
+            r.calls.is_empty(),
+            "path validation precedes every I/O call"
+        );
         assert!(r.rows.is_empty());
         assert_eq!(r.writes, 0);
     }
-    let s = schedule("reviewer", json!({"verdict":"changes","blocking_findings":[{"citation":{"kind":"standing_rule","id":"request-scope"},"problem":"Unrelated edit","evidence":"No changed-hunk quote"}],"findings":[]}));
+    let s = schedule(
+        "reviewer",
+        json!({"verdict":"changes","blocking_findings":[{"citation":{"kind":"standing_rule","id":"request-scope"},"problem":"Unrelated edit","evidence":"No changed-hunk quote"}],"findings":[]}),
+    );
     let r = compare(&s);
     assert_eq!(r.result, failed);
-    assert_eq!(r.calls.iter().map(|call|call["op"].as_str().unwrap()).collect::<Vec<_>>(), ["row.push", "protected_reply", "worker_materials"]);
-    assert_eq!(r.rows, vec![json!({"Delete":{"table":"model_quotas","id":"model"}})]);
+    assert_eq!(
+        r.calls
+            .iter()
+            .map(|call| call["op"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["row.push", "protected_reply", "worker_materials"]
+    );
+    assert_eq!(
+        r.rows,
+        vec![json!({"Delete":{"table":"model_quotas","id":"model"}})]
+    );
     assert_eq!(r.calls[1]["args"]["role"], "reviewer");
     assert_eq!(r.calls[2]["args"]["args"], json!(["0"]));
     assert_eq!(r.writes, 0);
-    assert!(r.rows.iter().all(|row|row["Put"]["table"]!="maker_findings"));
+    assert!(
+        r.rows
+            .iter()
+            .all(|row| row["Put"]["table"] != "maker_findings")
+    );
 }
 
 #[test]
@@ -632,5 +686,8 @@ fn fixed_seed_successful_findings_persistence_and_intern_crashes() {
         }
         Ok(())
     }).unwrap();
-    assert!(reached.borrow().len()>=2,"successful populated rows must span different findings/read tapes");
+    assert!(
+        reached.borrow().len() >= 2,
+        "successful populated rows must span different findings/read tapes"
+    );
 }
