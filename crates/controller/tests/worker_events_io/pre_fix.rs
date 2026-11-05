@@ -2,7 +2,6 @@
 use super::super::parse_event;
 use super::*;
 use tl3_controller_core::worker_events::*;
-#[rustfmt::skip]
 pub fn reply_step(event: WorkerEvent, reply_seen: bool, last_line_equal: bool) -> ReplyDecision {
     if reply_seen {
         return ReplyDecision::AfterReply;
@@ -11,7 +10,7 @@ pub fn reply_step(event: WorkerEvent, reply_seen: bool, last_line_equal: bool) -
         WorkerEvent::Progress { .. } => ReplyDecision::Progress,
         WorkerEvent::Reply => ReplyDecision::Reply,
         WorkerEvent::Invalid => ReplyDecision::InvalidEvent,
-        WorkerEvent::Quota { model, reset_ms, .. } => {
+        WorkerEvent::Quota { model, reset_ms } => {
             if matches!(model, QuotaModel::Forbidden) {
                 return ReplyDecision::InvalidQuotaModel;
             }

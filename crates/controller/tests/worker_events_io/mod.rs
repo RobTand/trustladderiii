@@ -10,8 +10,9 @@ use crate::{
 use serde_json::Value;
 use std::{collections::BTreeMap, io::SeekFrom, path::PathBuf};
 mod current;
+mod f2_compat;
 mod io;
-mod pre_fix;
+use f2_compat as pre_fix;
 mod reference;
 
 #[derive(Debug)]
@@ -224,14 +225,7 @@ fn pinned_reference_and_production_copies() {
         assert_eq!(
             format!(
                 "{:x}",
-                Sha256::digest(
-                    function(include_str!("pre_fix.rs"), name)
-                        // Ignore only the P5 payload wildcard added to the frozen F2 pattern.
-                        .replace(
-                            "WorkerEvent::Quota { model, reset_ms, .. }",
-                            "WorkerEvent::Quota { model, reset_ms }"
-                        )
-                )
+                Sha256::digest(function(include_str!("pre_fix.rs"), name))
             ),
             digest
         );
