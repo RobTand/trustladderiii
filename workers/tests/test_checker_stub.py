@@ -37,6 +37,14 @@ def test_unrecorded_calls_fail_closed_in_process_and_in_child(tmp_path):
         reply_check.run_check(["check-budget"], request)
 
 
+def test_staged_replay_never_loads_the_global_corpus(tmp_path, monkeypatch):
+    command, document = ['check-harness', 'identity'], {'kind': 'identity', 'selectors': []}
+    row = {'command': command, 'document': document, 'response': {'result': True}}
+    monkeypatch.setattr(checker_stub, 'cases', lambda: pytest.fail('global corpus read'))
+    assert checker_stub.replay('staged', tmp_path / 'cursor', command, document,
+                               script=[row]) == row['response']
+
+
 def test_concurrent_checker_processes_consume_each_step_once(tmp_path, monkeypatch):
     # #823: child workers share the cursor, beyond the parent's threading lock.
     import multiprocessing
