@@ -32,3 +32,11 @@ two Refused writes for a 404 reported as unsent. No extraction changes that beha
 
 Run `//crates/controller:test_test_publication_io` alone on BuildBuddy. The existing
 approval-race and publication adapter scenarios remain unchanged.
+
+Input-shape generation varies optional evidence, nonempty checks/reviews/goals/artifacts,
+publication obligations, proof requirements, missing context/head/proposed PR fields,
+all four operations-issue identity fields, absent/overlong/valid PR bodies, rule gaps,
+non-idempotent evidence and each GitHub error class. Mandatory tests enter these
+branches through the verbatim shells, including each OpenPr acceptance conjunct.
+Changed shell functions have separate old/current bodies; shared leaf shims contain
+no changed production function. The handoff records function-level SHA-256 pins.

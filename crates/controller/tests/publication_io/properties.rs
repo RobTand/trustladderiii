@@ -25,6 +25,9 @@ fn check(entry: Entry, scenario: Scenario) {
         0u8..3,
         proptest::option::of(0u8..5),
         0u8..4,
+        0u8..11,
+        0u8..7,
+        0u8..6,
     )
         .prop_map(
             move |(
@@ -36,6 +39,9 @@ fn check(entry: Entry, scenario: Scenario) {
                 effect_epoch,
                 initial_attempt,
                 initial_comments,
+                input_shape,
+                body_shape,
+                operations_shape,
             )| Schedule {
                 scenario,
                 reads,
@@ -47,6 +53,9 @@ fn check(entry: Entry, scenario: Scenario) {
                 effect_epoch,
                 initial_attempt,
                 initial_comments,
+                input_shape,
+                body_shape,
+                operations_shape,
             },
         );
     let comparisons = ::std::cell::Cell::new(0usize);
@@ -475,4 +484,92 @@ fn protected_approval_helpers_are_unchanged() {
         attempt(include_str!("base-publishing.rs.txt")),
         attempt(include_str!("../../src/adapters/github/publishing.rs"))
     );
+}
+
+/// #769/#766, Q27/Q45/Q52: acceptance through the real reconciliation shell.
+#[test]
+fn mandatory_open_pr_acceptance_shapes() {
+    for (input_shape, body_shape, word, found) in [
+        (0, 0, 0, true), // absent optional evidence
+        (1, 0, 0, true), // present empty evidence
+        (0, 0, 1, false),
+        (0, 0, 3, true),    // closed and merged
+        (0, 1, 0, false),   // absent body
+        (0, 2, 0, false),   // overlong body
+        (2, 3, 0, true),    // nonempty checks/reviews/goals/artifacts and valid body
+        (3, 3, 0, false),   // branch obligation
+        (2, 3, 8, false),   // draft obligation
+        (2, 4, 0, false),   // nonempty policy gaps
+        (2, 5, 0, false),   // missing required line
+        (2, 6, 0, false),   // valid rules/obligations, evidence not idempotent
+        (0, 0, 64, false),  // empty PR collection
+        (0, 0, 128, false), // missing head repository
+    ] {
+        let mut s = Schedule::stable(Scenario::OpenPr);
+        s.input_shape = input_shape;
+        s.body_shape = body_shape;
+        s.over("github.branch_prs", 0, word);
+        io::compare(&s, Entry::Reconcile).unwrap();
+        let r = io::observe(&s, Entry::Reconcile);
+        assert_eq!(ops(&r, "github.branch_prs"), 1);
+        assert_eq!(
+            r.result.get("found").is_some(),
+            found,
+            "{s:?}: {:?}",
+            r.result
+        );
+    }
+}
+
+/// #769/#766, Q27: nonempty and optional delivery shapes enter both real shells.
+#[test]
+fn mandatory_delivery_input_shapes() {
+    for input_shape in 0..11 {
+        for scenario in [
+            Scenario::Approval,
+            Scenario::OpenPr,
+            Scenario::Incident,
+            Scenario::Clarify,
+            Scenario::SummaryMerged,
+        ] {
+            let mut s = Schedule::stable(scenario);
+            s.input_shape = input_shape;
+            s.body_shape = 3;
+            for entry in [Entry::Reconcile, Entry::Execute] {
+                io::compare(&s, entry).unwrap();
+            }
+        }
+    }
+    for operations_shape in 0..6 {
+        let mut s = Schedule::stable(Scenario::Incident);
+        s.operations_shape = operations_shape;
+        io::compare(&s, Entry::Execute).unwrap();
+        let r = io::observe(&s, Entry::Execute);
+        assert_eq!(ops(&r, "github.comments") > 0, operations_shape == 0);
+    }
+    for (word, patches, posts) in [(0, 0, 1), (2, 1, 0), (4, 0, 0), (8, 0, 1), (16, 0, 1)] {
+        let mut s = Schedule::stable(Scenario::Approval);
+        s.over("github.check_runs", 0, word);
+        io::compare(&s, Entry::Execute).unwrap();
+        let r = io::observe(&s, Entry::Execute);
+        assert_eq!(ops(&r, "github.patch_check"), patches);
+        assert_eq!(ops(&r, "github.post_check"), posts);
+    }
+}
+
+/// #769/#766, Q27/Q54: every GitHub read error class enters permanence routing.
+#[test]
+fn mandatory_publication_read_error_classes() {
+    for class in 1..8 {
+        let mut s = Schedule::stable(Scenario::OpenPr);
+        s.over("github.branch_prs", 0, class << 12);
+        io::compare(&s, Entry::Reconcile).unwrap();
+        let r = io::observe(&s, Entry::Reconcile);
+        assert_eq!(ops(&r, "github.branch_prs"), 1);
+        if class <= 3 {
+            assert!(r.result.get("error").is_some(), "{class}: {:?}", r.result);
+        } else {
+            assert_eq!(r.result, "Pending");
+        }
+    }
 }

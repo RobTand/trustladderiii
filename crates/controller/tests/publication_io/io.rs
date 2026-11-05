@@ -55,6 +55,9 @@ pub(super) struct Schedule {
     pub effect_epoch: u8,
     pub initial_attempt: Option<u8>,
     pub initial_comments: u8,
+    pub input_shape: u8,
+    pub body_shape: u8,
+    pub operations_shape: u8,
 }
 impl Schedule {
     pub fn stable(scenario: Scenario) -> Self {
@@ -69,6 +72,9 @@ impl Schedule {
             effect_epoch: 1,
             initial_attempt: None,
             initial_comments: 0,
+            input_shape: 0,
+            body_shape: 0,
+            operations_shape: 0,
         }
     }
     pub fn over(&mut self, op: &str, nth: usize, word: u16) {
@@ -255,12 +261,24 @@ pub(super) fn owner_epoch() -> i64 {
     with(|r| i64::from(r.schedule.owner_epoch))
 }
 pub(super) fn operations() -> Option<tl3_config::OperationsIssue> {
-    Some(tl3_config::OperationsIssue {
+    let shape = with(|r| r.schedule.operations_shape);
+    if shape == 1 {
+        return None;
+    }
+    let mut target = tl3_config::OperationsIssue {
         owner: "OWNER".into(),
         name: "Sandbox".into(),
         installation_id: 3,
         number: 12,
-    })
+    };
+    match shape {
+        2 => target.owner = "wrong".into(),
+        3 => target.name = "wrong".into(),
+        4 => target.installation_id = 77,
+        5 => target.number = 77,
+        _ => {}
+    }
+    Some(target)
 }
 fn scenario() -> Scenario {
     with(|r| r.schedule.scenario)
@@ -308,7 +326,49 @@ fn delivery() -> Delivery {
         Scenario::RestartDropped => json!({"RestartDropped":{"text":"restart"}}),
         _ => Value::Null,
     };
-    serde_json::from_value(json!({"key":"publication-1","epoch":with(|r|r.schedule.effect_epoch),"output":output,"generation":0,"head_sha":"a".repeat(40),"repository":{"owner":"owner","name":"sandbox","installation":3},"issue":if s==Scenario::WrongIncident {13}else{12},"pull_request":100,"paths":[],"attempt":0,"round":0,"steering":steering,"request_text":if s==Scenario::EvidencePermanent {Some("publish proof with red/green")}else{None},"question_context":{"issue_title":"Original request","request":"[Original request](https://github.com/owner/requests/issues/7)","incident_id":"0.1"}})).unwrap()
+    let mut d: Delivery = serde_json::from_value(json!({"key":"publication-1","epoch":with(|r|r.schedule.effect_epoch),"output":output,"generation":0,"head_sha":"a".repeat(40),"repository":{"owner":"owner","name":"sandbox","installation":3},"issue":if s==Scenario::WrongIncident {13}else{12},"pull_request":100,"paths":[],"attempt":0,"round":0,"steering":steering,"request_text":if s==Scenario::EvidencePermanent {Some("publish proof with red/green")}else{None},"question_context":{"issue_title":"Original request","request":"[Original request](https://github.com/owner/requests/issues/7)","incident_id":"0.1"}})).unwrap();
+    let shape = with(|r| r.schedule.input_shape);
+    if matches!(shape, 1..=4 | 10) {
+        let mut evidence = tl3_controller::evidence::Evidence::default();
+        if matches!(shape, 2 | 3 | 10) {
+            evidence.goals.push(json!({"stage":"publishing","publication":{"branch":if shape==3 {"wrong"}else{"topic"},"body_lines":["Required line"]}}));
+            evidence.checks.push(json!({"head_sha":"a".repeat(40),"report":true,"pass":true,"failed_results":0,"results":[{"kind":"regression","verdict":"pass","tests":[{"head":"passed","passed":true}]}]}));
+            evidence
+                .reviews
+                .push(json!({"head_sha":"a".repeat(40),"verdict":"approve"}));
+            evidence
+                .artifacts
+                .push("https://github.com/owner/sandbox/actions/runs/1".into());
+        } else if shape == 4 {
+            evidence
+                .goals
+                .push(json!({"stage":"publishing","publication":{"proof":true}}));
+        }
+        if shape == 10 {
+            evidence.goals[0]["publication"]["proof"] = json!(true);
+        }
+        d.evidence = Some(evidence);
+    }
+    match shape {
+        5 => d.question_context = None,
+        6 => d.question_context = Some(json!({"issue_title":42})),
+        7 => d.head_sha = None,
+        8 => {
+            d.proposed = Some(tl3_controller::adoption::ProposedPullRequest {
+                number: 99,
+                head: "b".repeat(40),
+                head_repository: "owner/sandbox".into(),
+            });
+            d.paths = vec!["src/changed.rs".into()];
+            d.request_text = Some("A normal request".into());
+        }
+        9 => {
+            d.pull_request = None;
+            d.request_text = Some("A normal request".into());
+        }
+        _ => {}
+    }
+    d
 }
 fn init(schedule: Schedule, cut: Option<Cut>) {
     let mut files = BTreeMap::new();
@@ -594,7 +654,33 @@ fn comment(id: u64, body: &str) -> Comment {
     serde_json::from_value(json!({"id":id,"body":body,"user":{"id":9,"login":"factory[bot]"},"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-01T00:00:00Z","issue_url":"https://api.github.com/repos/owner/sandbox/issues/12"})).unwrap()
 }
 fn pull(number: u64, w: u16) -> PullRequest {
-    serde_json::from_value(json!({"number":number,"user":{"id":9,"login":"factory[bot]"},"state":if w&1!=0 {"closed"}else{"open"},"draft":w&8!=0,"merged_at":if w&2!=0 {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":w&4==0,"body":if w&16!=0 {""}else{"Change type: fix"},"head":{"sha":"a".repeat(40),"ref":if w&32!=0 {"foreign"}else{"topic"},"repo":{"id":1,"owner":{"id":1,"login":"owner"},"name":"sandbox","full_name":"owner/sandbox"}},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
+    let mut p: PullRequest = serde_json::from_value(json!({"number":number,"user":{"id":9,"login":"factory[bot]"},"state":if w&1!=0 {"closed"}else{"open"},"draft":w&8!=0,"merged_at":if w&2!=0 {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":w&4==0,"body":if w&16!=0 {""}else{"Change type: fix"},"head":{"sha":"a".repeat(40),"ref":if w&32!=0 {"foreign"}else{"topic"},"repo":{"id":1,"owner":{"id":1,"login":"owner"},"name":"sandbox","full_name":"owner/sandbox"}},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap();
+    let shape = with(|r| r.schedule.body_shape);
+    let d = delivery();
+    let evidence = crate::evidence::publication(&d, d.request_text.as_deref().unwrap_or(""))
+        .unwrap_or_default();
+    p.body = match shape {
+        1 => None,
+        2 => Some("x".repeat(60_001)),
+        3 => Some(crate::evidence::with_publication(
+            "Change type: fix\nRequired line",
+            &evidence,
+        )),
+        4 => Some(crate::evidence::with_publication(
+            "Required line",
+            &evidence,
+        )),
+        5 => Some(crate::evidence::with_publication(
+            "Change type: fix",
+            &evidence,
+        )),
+        6 => Some("Change type: fix\nRequired line".into()),
+        _ => p.body,
+    };
+    if w & 128 != 0 {
+        p.head.repo = None;
+    }
+    p
 }
 #[derive(Clone)]
 pub(super) struct GitHub(Arc<GitHubInner>);
@@ -643,6 +729,11 @@ impl GitHub {
         if w & 8 != 0 {
             let mut c = check(102, false);
             c.app.as_mut().unwrap().id = 77;
+            cs.push(c);
+        }
+        if w & 16 != 0 {
+            let mut c = check(103, false);
+            c.app = None;
             cs.push(c);
         }
         returned(&cs);
@@ -694,7 +785,7 @@ impl GitHub {
         n: u64,
     ) -> ::std::result::Result<Issue, tl3_github::Error> {
         let w = gh_read("github.issue", &format!("{repo}#{n}"))?;
-        let i=serde_json::from_value(json!({"number":n,"title":"Current issue title","body":"Current issue text","state":if w&1!=0 {"closed"}else{"open"},"updated_at":"2026-11-01T00:00:00Z","labels":[]})).unwrap();
+        let i=serde_json::from_value(json!({"number":n,"title":"Current issue title","body":if w&2!=0 {None}else{Some("Current issue text")},"state":if w&1!=0 {"closed"}else{"open"},"updated_at":"2026-11-01T00:00:00Z","labels":[]})).unwrap();
         returned(&i);
         Ok(i)
     }
