@@ -1756,7 +1756,13 @@ impl Controller {
                 previous.expect("existing reset")
             };
             let old_finished = value["finished_ms"].as_i64();
-            if old.is_none() || old_finished.is_none() || finished_ms > old_finished {
+            // A legacy shared row could come from a different call. Replaying
+            // this ending cannot establish that row's missing identity/order.
+            if old.is_none()
+                || old_finished.is_some()
+                    && value["family"].as_str().is_some()
+                    && finished_ms > old_finished
+            {
                 value["family"] = json!(family);
                 value["finished_ms"] = json!(finished_ms);
             }
