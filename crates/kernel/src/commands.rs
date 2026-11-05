@@ -4,6 +4,7 @@ use super::*;
 kernel_fn! {
 /// Command rows / #771: repeated IDs stutter; accepted IDs are assigned verbatim.
 /// Freshness is enforced by controller constructors, not by this raw kernel API.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,

@@ -10,7 +10,7 @@ fn start_credit(
     title: &str,
     labels: &[&str],
     reserve: &[(&str, u8)],
-) -> u32 {
+) -> u64 {
     let root = tempfile::tempdir().unwrap();
     let mut c = Controller::open(
         Store::open(settings).unwrap(),
