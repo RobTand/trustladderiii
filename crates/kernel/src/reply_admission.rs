@@ -104,7 +104,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(distance); reveal(reply_bounds); reveal(footprint::ordered_table);] {
+] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     let n = &w.nodes[i];
