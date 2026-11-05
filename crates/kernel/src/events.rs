@@ -4,6 +4,7 @@ use super::*;
 kernel_fn! {
 /// #771: compose the actual event handlers' per-apply counter bounds.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
     requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
