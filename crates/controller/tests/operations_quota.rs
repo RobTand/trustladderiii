@@ -29,6 +29,13 @@ impl Executor for Workers {
     fn configured_model(&self, model: &str) -> bool {
         model == MODEL
     }
+    fn quota_model_eligible(
+        &mut self,
+        delivery: &Delivery,
+        model: &str,
+    ) -> tl3_controller::Result<bool> {
+        Ok(model == MODEL && delivery.key != "other")
+    }
     fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
         Ok(Completion::confirmed(vec![]))
     }

@@ -77,6 +77,9 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
             None => self.fake.configured_model(model),
         }
     }
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+        self.primary().quota_model_eligible(delivery, model)
+    }
 
     fn input_incident(
         &mut self,

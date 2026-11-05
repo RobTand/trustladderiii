@@ -1240,6 +1240,17 @@ impl Executor for Supervisor {
         self.launch(delivery, true).map(Some)
     }
 
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+        let role =
+            protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        Ok(self
+            .candidates(delivery, role, &mut store, &snapshot)?
+            .iter()
+            .any(|candidate| candidate.name == model))
+    }
+
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
         let role =
             protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;

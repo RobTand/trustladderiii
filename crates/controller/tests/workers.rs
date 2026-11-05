@@ -994,6 +994,13 @@ fn worker_simulation(
         fn configured_model(&self, model: &str) -> bool {
             self.0.configured_model(model)
         }
+        fn quota_model_eligible(
+            &mut self,
+            delivery: &Delivery,
+            model: &str,
+        ) -> tl3_controller::Result<bool> {
+            self.0.quota_model_eligible(delivery, model)
+        }
         fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
             self.0.retire(store)
         }

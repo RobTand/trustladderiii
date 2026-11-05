@@ -28,6 +28,9 @@ impl Spy {
     }
 }
 impl Executor for Spy {
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+        self.hit("quota_model_eligible", format!("{}:{model}", delivery.key))
+    }
     fn configured_model(&self, model: &str) -> bool {
         let _: Result<()> = self.hit("configured_model", model.into());
         true
@@ -228,6 +231,11 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         };
         assert_delivery_methods(&mut router, &stop, primary, &calls);
         assert!(router.configured_model("configured"));
+        assert!(
+            router
+                .quota_model_eligible(&delivery(Role::Make), "configured")
+                .is_err()
+        );
         assert_eq!(router.implementation(), primary);
         assert_eq!(router.app_login(42).as_deref(), Some(primary));
         let question = tl3_controller::adoption::Clarification {
@@ -275,6 +283,11 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
             *calls.lock().unwrap(),
             vec![
                 (primary, "configured_model", "configured".into()),
+                (
+                    primary,
+                    "quota_model_eligible",
+                    format!("{}:configured", delivery(Role::Make).key)
+                ),
                 (primary, "implementation", String::new()),
                 (primary, "app_login", "42".into()),
                 (primary, "intake_question", format!("{}:3", question.key())),

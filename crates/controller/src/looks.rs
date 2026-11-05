@@ -1564,7 +1564,7 @@ impl Controller {
 
     /// #828 / Q53: operator reset evidence ends this model's hold atomically.
     pub(crate) fn operator_clear_quota(
-        &self,
+        &mut self,
         snapshot: &Snapshot,
         model: &str,
         now: u64,
@@ -1573,7 +1573,12 @@ impl Controller {
         self.clear_model_quota(snapshot, Some(model), commit);
         for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
             let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
-            if state.quota_ms.is_some() && state.last_quota_model.as_deref() == Some(model) {
+            if state.quota_ms.is_some()
+                && self
+                    .adapters
+                    .adapter(&state.delivery)?
+                    .quota_model_eligible(&state.delivery, model)?
+            {
                 // Keep the quota-resume path, but do not reconstruct the old reset
                 // from the worker's ending when quota_resume_ms next reads it.
                 state.quota_ms = Some(now);
