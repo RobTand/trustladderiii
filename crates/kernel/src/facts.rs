@@ -89,6 +89,7 @@ kernel_fn! {
 /// Fact rows / #771: non-dependency, non-merge facts allocate at most one
 /// generation, one question and one paid credit, and emit at most two notices.
 #[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
@@ -138,18 +139,21 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 ==> retirement::unapproved_note(*final(out), i),
             _ => true,
         },
-] proof [reveal(retry_bounds); reveal(retirement::fact_frame); reveal(distance);
-    reveal(retirement::fact_node); reveal(retirement::stopped);] {
+] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
             }
+            kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
+                kernel_proof! { reveal(retirement::fact_node); }
                 return;
             }
             m.pr_open = false;
@@ -157,6 +161,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 notice(out, i, Notice::Note(NoteKind::PrClosed));
                 enter_stopping(m, Outcome::Stopped);
             }
+            kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
         Fact::PushByOther { head } => {
@@ -172,6 +177,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
+                kernel_proof! { reveal(retry_bounds); }
             }
         }
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
@@ -180,6 +186,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
                 set_phase(m, Phase::Rebasing);
             }
+            kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::UpstreamStalled => {
             let m = &mut w.nodes[i];
@@ -191,6 +198,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             raise_incident(w, i, needs_rob, out);
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
+    }
+    kernel_proof! {
+        if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
+            facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+        }
     }
 }
 }
@@ -318,6 +330,7 @@ pub(super) fn pr_dequeued(w: &mut World, i: usize, out: &mut Outbox) -> (result:
 kernel_fn! {
 /// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
 #[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
@@ -327,11 +340,13 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         infra ==> final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra }),
         infra ==> final(w).next_question == old(w).next_question,
         infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);] {
+] proof [reveal(retirement::fact_frame);] {
+    kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
     if m.phase != Phase::Queued && !before_enqueue {
+        kernel_proof! { reveal(retirement::fact_node); }
         return;
     }
     if before_enqueue {
@@ -339,9 +354,17 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             effect.cancelling = true;
         }
     }
+    kernel_snapshot! { prepared_ci = *w }
+    kernel_snapshot! { prepared_out = *out }
     if !infra {
         failed_round(w, i, ReviewStop::CiFailed, out);
+        kernel_proof! {
+            facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
+        }
         return;
+    }
+    kernel_proof! {
+        facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
     }
     ci_infrastructure(w, i, out);
 }

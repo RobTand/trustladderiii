@@ -1408,10 +1408,33 @@ kernel_fn! {
     }
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #805 / #806: Ready continuations inherit the resumed phase rank and its bound.
+#[verifier::spinoff_prover]
+proof fn cont_rank_ready(r: Resume)
+    ensures continuation_rank(Cont::Ready(r)) == phase_rank(Phase::Ready(r)),
+        continuation_rank(Cont::Ready(r)) <= 24,
+{
+    reveal_with_fuel(phase_rank, 3);
+    match r {
+        Resume::Making => {},
+        Resume::Checking => {},
+        Resume::Reviewing => {},
+        Resume::Publishing => {},
+        Resume::Rebasing => {},
+    }
+}
+}
+
 kernel_fn! {
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn cont_rank(cont: Cont) -> (result: u64) [
         ensures result as int == continuation_rank(cont), result <= 32,
     ] {
+        kernel_proof! {
+            if let Cont::Ready(r) = cont { cont_rank_ready(r); }
+        }
         match cont {
             Cont::Ingesting => 32,
             Cont::Auditing => 30,
@@ -2023,3 +2046,14 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+mod allocation_stopping_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod allocation_incident_lemmas;
+#[cfg(verus_keep_ghost)]
+mod facts_transition_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod facts_ci_failed_lemmas;

@@ -678,6 +678,17 @@ def verus_proofs():
             "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
+            "allocation_stopping_active_distance": ("kernel::allocation_stopping_lemmas#active_distance_lower", 1),
+            "allocation_stopping_distance": ("kernel::allocation_stopping_lemmas#stopping_distance", 1),
+            "allocation_stopping_progress": ("kernel::allocation_stopping_lemmas#stopping_progress", 1),
+            "allocation_stopping_frame": ("kernel::allocation_stopping_lemmas#stopping_frame", 1),
+            "allocation_incident_frame": ("kernel::allocation_incident_lemmas#incident_frame", 1),
+            "facts_transition_frame": ("kernel::facts_transition_lemmas#frame_consequences", 1),
+            "allocation_incident_resumed_result": ("kernel::allocation_incident_lemmas#resumed_result", 1),
+            "allocation_incident_waiting_result": ("kernel::allocation_incident_lemmas#waiting_result", 1),
+            "facts_ci_failed_retry_frame": ("kernel::facts_ci_failed_lemmas#retry_frame", 1),
+            "facts_ci_failed_cancellation_input": ("kernel::facts_ci_failed_lemmas#cancellation_input", 1),
+            "kernel_cont_rank_ready": ("kernel#cont_rank_ready", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
