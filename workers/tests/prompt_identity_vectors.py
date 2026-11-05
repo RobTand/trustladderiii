@@ -1,7 +1,8 @@
 """Record the real worker prompt outputs before the Rust migration (#819).
 
 Run with the workers environment, with --check to refuse drift. No model or
-tool executes. The schema text comes from build_agent's actual system prompt.
+tool executes. Capture maker's run-time preparation and the postmortem judge's
+contract; other roles use build_agent's actual system prompt.
 """
 import argparse
 from copy import deepcopy
@@ -11,7 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tl3_workers import runtime
+from tl3_workers import judges, runtime
+from tl3_workers.roles import maker
 
 
 VECTORS = Path(__file__).with_name("prompt-identity-vectors.json")
@@ -23,12 +25,36 @@ def digest(text):
     return {"sha256": sha256(data).hexdigest(), "utf8_bytes": len(data)}
 
 
+class CapturedPrompt(Exception):
+    """Stop maker immediately after its real schema reaches build_agent."""
+
+
 def schema_text(role):
+    if role.name == "postmortem":
+        return judges.postmortem_contract("").split("Authoritative result JSON Schema:\n", 1)[1]
     model = SimpleNamespace(_get_ls_params=lambda: {"ls_provider": "tl3_fixture"})
     worktree = SimpleNamespace(generation_instruction=lambda: "Fixture generation instruction.")
+    build_agent = runtime.build_agent
+
+    def capture(*args, **kwargs):
+        raise CapturedPrompt(build_agent(*args, **kwargs))
+
     with patch.object(runtime, "build_tools", return_value=[]), patch.object(
             runtime, "create_deep_agent", side_effect=lambda **kwargs: kwargs["system_prompt"]):
-        system = runtime.build_agent(model, role, worktree)
+        if role.name == "maker":
+            request = {"worktree": "/fixture/worktree", "inputs": {
+                "goals": [], "plan": {"files": [], "checks": []}, "context_size": 150_000,
+                "tests": {"image": "sha256:" + "a" * 64, "tools_path": "/fixture/tools"},
+            }}
+            with patch.object(runtime, "build_agent", side_effect=capture):
+                try:
+                    maker.run(model, request, worktree, lambda event: None)
+                except CapturedPrompt as captured:
+                    system = captured.args[0]
+                else:
+                    raise AssertionError("maker did not build its agent")
+        else:
+            system = build_agent(model, role, worktree)
     return system.split(SCHEMA_MARKER, 1)[1]
 
 

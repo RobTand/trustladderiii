@@ -601,8 +601,8 @@
     },
     "maker": {
       "model_facing_schema": {
-        "sha256": "f054d44961126542081c88e25b88efa46376e11bb5bcaa22a56144c7f67382b1",
-        "utf8_bytes": 15587
+        "sha256": "2aefdd5ae04f286544215ab2a4ba7e348e7a99ee484bae020c6206a7f79dbb68",
+        "utf8_bytes": 4059
       },
       "identities": [
         {
@@ -970,8 +970,8 @@
     },
     "postmortem": {
       "model_facing_schema": {
-        "sha256": "aab44426f736023364d5a9799359ccb660a6cf8e6187fbcae6fc896f60df3a36",
-        "utf8_bytes": 4212
+        "sha256": "0da838fbc6baba6c025f5280056e3fc5bad2af2f66b422b41fdc7d940e9dfbb6",
+        "utf8_bytes": 2422
       },
       "identities": [
         {

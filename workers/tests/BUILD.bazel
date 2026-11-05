@@ -1141,6 +1141,7 @@ filegroup(
 py_binary(
     name = "prompt_identity_vectors",
     srcs = ["prompt_identity_vectors.py"],
+    data = ["prompt-identity-vectors.json"],  # keep: --check reads its baseline beside __file__
     visibility = ["//visibility:public"],
     deps = ["//workers/src"],
 )
