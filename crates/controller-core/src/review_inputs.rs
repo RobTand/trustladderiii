@@ -13,6 +13,8 @@ macro_rules! scan {
 }
 
 pub mod bounds {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:84-85, :136-140.
     /// The diff cap is inclusive and counts bytes, before UTF-8 decoding.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
@@ -34,6 +36,8 @@ pub mod bounds {
 }
 
 pub mod history {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
     #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Debug, PartialEq, Eq)]
@@ -88,7 +92,7 @@ pub mod selection {
         forall|a: int, b: int| 0 <= a < b < out.len() ==> out[a] < out[b],
     ))]
     pub fn indices(flags: &[bool]) -> Vec<usize> {
-        let mut out = Vec::new();
+        let mut out: Vec<usize> = Vec::new();
         let mut i = 0;
         scan! { (i < flags.len()) [
             invariant i <= flags.len(), out.len() <= i,

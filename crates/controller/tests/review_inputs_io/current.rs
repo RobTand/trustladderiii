@@ -94,7 +94,6 @@ pub(super) fn inputs(
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .filter(|result| result["name"] == "Existing tests that import the change")
                     .any(|result| {
                         result["tests"]
                             .as_array()
@@ -102,7 +101,7 @@ pub(super) fn inputs(
                             .flatten()
                             .any(|current| {
                                 selection::resolves_historical(
-                                    true,
+                                    result["name"] == "Existing tests that import the change",
                                     current["test"].as_str() == Some(file),
                                     match current["head"].as_str() {
                                         Some("passed") => selection::HeadOutcome::Passed,
