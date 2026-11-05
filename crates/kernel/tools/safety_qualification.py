@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'tools/ci'))
@@ -14,6 +15,14 @@ import bazel_gate  # noqa: E402
 
 
 CASES = {
+    'apply_enforcement': ('crates/controller/src/input_errors.rs',
+                          'world.counter_exhaustion()',
+                          'world.counter_exhaustion().filter(|_| false)',
+                          '//crates/controller:test_input_error_followups'),
+    'translate_enforcement': ('crates/controller/src/lib.rs',
+                              'kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?',
+                              'event',
+                              '//crates/controller:test_input_error_followups'),
     'headroom': ('crates/kernel/src/headroom.rs',
                  'node.generation > u64::MAX - GENERATION_STEP_BUDGET',
                  'node.generation > u64::MAX - (GENERATION_STEP_BUDGET - 1)',
@@ -57,7 +66,13 @@ def main():
     report = {'case': args.case, 'head': base, 'target': target}
     try:
         statuses, log = run(workspace, target, 'safety-baseline-' + args.case)
-        assert statuses.get(target) == 'PASSED' and 'VERUS_PROOF' in log, statuses
+        assert statuses.get(target) == 'PASSED', statuses
+        proof = ':verus_' in target
+        if proof:
+            assert 'VERUS_PROOF' in log
+        else:
+            assert re.search(r'test result: ok\. [1-9][0-9]* passed', log), (
+                'controller qualification must execute nonzero tests')
         path = workspace.root / filename
         source = path.read_text()
         assert source.count(before) == 1, 'mutant must select exactly one source expression'
@@ -68,11 +83,15 @@ def main():
         report['mutant'] = workspace.run('git', 'rev-parse', 'HEAD').strip()
         statuses, log = run(workspace, target, 'safety-mutant-' + args.case)
         assert statuses.get(target) == 'FAILED', statuses
-        assert any(message in log for message in (
-            'postcondition not satisfied', 'precondition not satisfied',
-            'arithmetic overflow', 'invariant not satisfied', 'assertion failed',
-        )), 'mutant must fail a real proof obligation'
-        assert 'verification results::' in log and '0 errors' not in log
+        if proof:
+            assert any(message in log for message in (
+                'postcondition not satisfied', 'precondition not satisfied',
+                'arithmetic overflow', 'invariant not satisfied', 'assertion failed',
+            )), 'mutant must fail a real proof obligation'
+            assert re.search(r'verification results:: [0-9]+ verified, [1-9][0-9]* errors', log)
+        else:
+            assert 'test result: FAILED' in log and 'panicked at' in log, (
+                'boundary mutant must fail an executed assertion, not compilation')
         verdicts, failed = bazel_gate.classify([target], statuses, {target})
         assert verdicts['rust'] == 'failure' and failed['rust'] == [target]
         report['required_rust_check'] = 'failure'
