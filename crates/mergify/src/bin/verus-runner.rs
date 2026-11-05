@@ -71,16 +71,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "30",
             "--multiple-errors",
             "0",
+            "-V",
+            "spinoff-all",
             "--sysroot",
         ])
         .arg(sysroot)
         .arg(source)
         .args(["--edition", "2024"]);
-    // The root's 91 obligations share a context to stay within the proof-time bound.
-    // Other groups retain their separately qualified solver isolation.
-    if module != "kernel" {
-        process.args(["-V", "spinoff-all"]);
-    }
     let (selected_module, function) = module
         .split_once('#')
         .map_or((module.as_str(), None), |(owner, function)| {
