@@ -198,6 +198,34 @@ def verus_proofs():
             )
 
 
+        # ctrl-core A4: enqueue_ack_sound, independent full-domain contract and witnesses.
+        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 4)]:
+            verus_test(
+                name = "verus_enqueue_ack_sound" + suffix,
+                src = "proofs/enqueue_ack_sound.rs",
+                srcs = [
+                    "src/decide/enqueue.rs",
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                ],
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_ack_sound_helpers.rs",
+                    "proofs/enqueue_ack_sound_spec.rs",
+                    "proofs/enqueue_ack_sound_witness.rs",
+                ],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(

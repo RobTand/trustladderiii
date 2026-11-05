@@ -34,7 +34,6 @@ PROOF_FILES = [
 # property its harness states, so the harness must fail. Every harness has at
 # least one.
 MUTANTS = [
-    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "let Some(recovery) = issue.requeue_recovery else", "let Some(recovery) = issue.recovery else"),
     ("q52", DECIDE + "translate.rs",
      "Kind::CheckMissing if node.enqueuing() && approved_head",
      "Kind::CheckMissing if approved_head"),
@@ -63,12 +62,10 @@ MUTANTS = [
     ("facts_outcome", DECIDE + "facts.rs",
      "head_infra.unwrap_or(true)",
      "head_infra.unwrap_or(false)"),
-    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "before.requeue.is_none() && read.check_changed", "read.check_changed"),
     ("enqueue_stale_head", DECIDE + "enqueue.rs", "read.head != Head::Current\n                || !read.open", "!read.open"),
     ("enqueue_stale_head", DECIDE + "enqueue.rs", "} else if head != Head::Current {\n                Effect::Complete(Complete::Retryable)", "} else if false && head != Head::Current {\n                Effect::Complete(Complete::Retryable)"),
     ("enqueue_dequeue_fresh", DECIDE + "enqueue.rs", "event.id > queued", "event.id >= queued"),
     ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
-    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "state.confirmed = true;", "// mutant: omit acknowledgement state"),
 ]
 
 
