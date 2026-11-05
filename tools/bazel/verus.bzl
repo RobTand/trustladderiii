@@ -857,3 +857,19 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
+
+    # #820 pure planner rules. No controller or worker-runtime dependency.
+    if native.package_name() == "crates/plan-check":
+        for group, count in [("paths", 12), ("subjects", 4)]:
+            verus_test(
+                name = "verus_" + group,
+                src = "proofs/" + group + ".rs",
+                srcs = ["src/" + group + "/decision.rs"],
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
