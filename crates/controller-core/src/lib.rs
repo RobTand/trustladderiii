@@ -9,6 +9,8 @@ pub mod looks;
 pub mod looks_state;
 pub mod publication;
 pub mod translate;
+pub mod translate_arms;
+pub mod translate_checks;
 pub mod translate_misc;
 pub mod worker_events;
 
