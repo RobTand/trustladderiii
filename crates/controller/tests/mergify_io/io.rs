@@ -248,7 +248,9 @@ fn init(schedule: Schedule, cut: Option<Cut>) {
     }
 }
 fn delivery_value(key: &str) -> Value {
-    json!({"key":key,"epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0})
+    configured_delivery(
+        json!({"key":key,"epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0}),
+    )
 }
 fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
     static HOOK: ::std::sync::Once = ::std::sync::Once::new();
@@ -514,6 +516,7 @@ pub(crate) struct Row {
     pub table: &'static str,
     pub id: String,
     pub value: Value,
+    pub version: Version,
 }
 #[derive(Clone)]
 pub(crate) struct Snapshot {
@@ -542,14 +545,15 @@ impl Store {
         let f = read("store.snapshot", "");
         let repaired = (profile() == Profile::Waiting) ^ (f.word & 4 != 0);
         returned(&(repaired, f.word & 8 != 0, f.word & 16 != 0));
-        Ok(Snapshot {
+        Ok(configured_snapshot(Snapshot {
             rows: vec![Row {
                 table: "nodes",
                 id: "0".into(),
                 value: json!({"held":f.word&8!=0,"paused":f.word&16!=0}),
+                version: Version(0),
             }],
             repaired,
-        })
+        }))
     }
     pub fn effects(&self) -> Result<Vec<Archive>> {
         let f = read("store.effects", "");
@@ -628,7 +632,7 @@ fn github_frame(op: &str, args: &str) -> ::std::result::Result<Frame, ::tl3_gith
     Ok(f)
 }
 fn pull(f: &Frame) -> PullRequest {
-    serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0 || profile() == Profile::Draft,"merged_at":if f.word&4!=0 || profile() == Profile::Merged {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":!(f.word&512!=0 || profile()==Profile::MergeFalse),"mergeable_state":if f.word&512!=0 || profile()==Profile::MergeFalse {"dirty"}else{"clean"},"body":if profile()==Profile::Body {""} else {"Change type: fix"},"merge_commit_sha":if profile()==Profile::Merged {Some("merge")}else{None},"head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
+    configured_pull(serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0 || profile() == Profile::Draft,"merged_at":if f.word&4!=0 || profile() == Profile::Merged {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":!(f.word&512!=0 || profile()==Profile::MergeFalse),"mergeable_state":if f.word&512!=0 || profile()==Profile::MergeFalse {"dirty"}else{"clean"},"body":if profile()==Profile::Body {""} else {"Change type: fix"},"merge_commit_sha":if profile()==Profile::Merged {Some("merge")}else{None},"head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap())
 }
 fn check(f: &Frame, queue: bool) -> CheckRun {
     let summary = include_str!("../../../mergify/tests/fixtures/waiting/checks.json");
@@ -1065,6 +1069,102 @@ fn base64(s: &str) -> String {
         }
     }
     out
+}
+
+// A1 r1 fixtures extend returned facts; the I/O recorder and crash machinery
+// remain shared and unchanged. Thread-local fixtures reset even on a panic.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Version(pub i64);
+impl Version {
+    pub fn get(self) -> i64 {
+        self.0
+    }
+}
+#[derive(Clone, Default)]
+pub(super) struct A1Inputs {
+    pub rows: Vec<Row>,
+    pub delivery: Option<Delivery>,
+    pub body: Option<String>,
+}
+thread_local! { static A1_INPUTS: RefCell<A1Inputs> = RefCell::new(A1Inputs::default()); }
+pub(super) fn with_inputs<T>(inputs: A1Inputs, f: impl FnOnce() -> T) -> T {
+    struct Restore(A1Inputs);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            A1_INPUTS.with(|v| *v.borrow_mut() = self.0.clone());
+        }
+    }
+    let _restore = Restore(A1_INPUTS.with(|v| v.replace(inputs)));
+    f()
+}
+fn configured_snapshot(mut snapshot: Snapshot) -> Snapshot {
+    A1_INPUTS.with(|v| snapshot.rows.extend(v.borrow().rows.clone()));
+    snapshot
+}
+fn configured_delivery(default: Value) -> Value {
+    A1_INPUTS.with(|v| {
+        v.borrow()
+            .delivery
+            .as_ref()
+            .map_or(default, |d| serde_json::to_value(d).unwrap())
+    })
+}
+fn configured_pull(mut pull: PullRequest) -> PullRequest {
+    A1_INPUTS.with(|v| {
+        if let Some(body) = &v.borrow().body {
+            pull.body = Some(body.clone());
+        }
+    });
+    pull
+}
+pub(super) fn fixture_delivery() -> Delivery {
+    serde_json::from_value(delivery_value("enqueue-1")).unwrap()
+}
+pub(super) fn projection(name: &str) {
+    with(|r| {
+        r.calls.push(Call {
+            op: format!("projection.{name}"),
+            args: String::new(),
+            result: vec![],
+        })
+    });
+}
+pub(super) fn require_no_writes(s: &Schedule, e: Entry) {
+    assert_eq!(run(s, e, false, None).writes, 0);
+}
+
+// B1 reachability checks inspect the reference trace as well as comparing both shells.
+pub(super) fn require_recovery(s: &Schedule, entry: Entry, command: &str, timer: Option<u64>) {
+    let trace = run(s, entry, false, None);
+    let bytes = trace.files.get(&recovery_path()).expect("recovery receipt");
+    let saved: Value = serde_json::from_slice(bytes).unwrap();
+    assert_eq!(saved["command"], json!(command), "{trace:#?}");
+    assert_eq!(saved["eligible_since_ms"], json!(timer), "{trace:#?}");
+}
+pub(super) fn require_no_op(s: &Schedule, entry: Entry, op: &str) {
+    let trace = run(s, entry, false, None);
+    assert!(!trace.calls.iter().any(|c| c.op == op), "{trace:#?}");
+}
+pub(super) fn require_command_fence(s: &Schedule) {
+    let trace = run(s, Entry::Command, false, None);
+    let fence = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "file.read" && c.args.ends_with("epoch.fence"))
+        .unwrap();
+    let intent = trace
+        .calls
+        .iter()
+        .position(|c| {
+            c.op == "file.write" && String::from_utf8_lossy(&c.result).contains("Sending")
+        })
+        .unwrap();
+    let post = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "github.command")
+        .unwrap();
+    assert!(fence < intent && intent < post, "{trace:#?}");
 }
 
 // ctrl-core C1: direct evaluate inputs share the existing recorded leaf boundary.
