@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 #[path = "before.rs"]
 mod before;
 
+mod producer_cases;
+
 fn fixture(base: &str, head: &str, passed: bool, pre_existing: bool) -> (Job, Value) {
     let job: Job = serde_json::from_value(json!({
         "action": "a".repeat(64),
@@ -43,6 +45,32 @@ fn ending(raw: &[u8]) -> Ending {
 fn evaluate(job: &Job, report: &Value) -> CheckEvidence {
     let raw = raw(report);
     evidence_with_read(ending(&raw), job, |_| Ok(raw.clone())).unwrap()
+}
+
+/// #822: use real producer output after late parse rejection and selected retries.
+#[test]
+fn producer_overrides_preserve_retained_phases() {
+    let cases: Vec<Value> = serde_json::from_str(producer_cases::CASES).unwrap();
+    for selected in [false, true] {
+        let (mut job, mut report) = fixture("passed", "passed", true, false);
+        if selected {
+            job.selected_tests = Some(1);
+            report["results"]
+                .as_array_mut()
+                .unwrap()
+                .push(cases[1].clone());
+        } else {
+            report["results"][0] = cases[0].clone();
+        }
+        let bytes = raw(&report);
+        recorded_io::reset(bytes.clone(), 0);
+        let old = normalized(before::run(ending(&bytes), &job));
+        let new = normalized(Ok(evaluate(&job, &report)));
+        assert_eq!(new, old, "producer override selected={selected}");
+        assert_eq!(new["class"], Value::Null);
+        assert_eq!(new["pass"], false);
+        assert!(!new["results"].as_array().unwrap().is_empty());
+    }
 }
 
 #[test]
