@@ -1924,7 +1924,7 @@ pub fn model_quota_holds(
             model: state.last_quota_model,
             family,
             reset_ms,
-            retry_at_ms: state.quota_retry_ms.or(state.due_ms).unwrap_or(reset_ms),
+            retry_at_ms: state.quota_retry_ms.unwrap_or(reset_ms),
         });
     }
     Ok(holds)
