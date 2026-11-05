@@ -658,7 +658,7 @@ def run_pytest(reporter, arguments):
             return reporter.finished
         # The finish record precedes later hooks, including the checkout's. Their
         # uncaught exit would be 1, which a finish record of failed tests matches.
-        return int(pytest.ExitCode.TESTS_FAILED)
+        return int(pytest.ExitCode.INTERNAL_ERROR)
 
 
 def main():
