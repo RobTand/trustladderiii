@@ -50,7 +50,7 @@ _SCENARIO_SHARDS = {
     "tl3-controller/github-notices": 32,
     "tl3-controller/mergify": 50,
     "tl3-controller/publishing": 38,
-    "tl3-controller/prismabuild": 16,
+    "tl3-controller/prismabuild": 53,
     "tl3-controller/simulation": 16,
     "tl3-controller/workers": 32,
 }
@@ -63,6 +63,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/budget_parity": 3,
     "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 8,
+    "tl3-controller/tl3_controller_loom": 4,
     "tl3-controller/redaction_generated": 8,
 }
 
