@@ -203,6 +203,29 @@ never reported progress still shows no recorded progress. Closed requests have
 no summary. These side-table writes do not change the kernel revision.
 
 
+Migration 23 records the immutable dispatched family beside worker endings.
+Migration 24 makes that identity table a bounded evidence cache. It retains at
+most 65,536 identities with the greatest admission sequence IDs. Each fact
+import serializes cache admission and pruning with its own transaction advisory
+lock. Identity values cannot be updated; old rows may be deleted. The migration
+bounds earlier B data and every later import enforces the same bound. The range
+`max(retention_id) - 65536 < retention_id <= max(retention_id)` contains at most
+65,536 distinct integer IDs, including sequence gaps and rollbacks. Replaying a
+retained identity does not allocate a new ID.
+
+The worker-ending audit log remains under its existing append-only policy and
+has no finite retention bound. This ticket does not claim otherwise. An evicted
+family is unknown: success must not infer it from current configuration. Quota
+holds retain their own family/order and retry deadline, and reset, operator
+clear and the approved hourly probe remain available. The cache therefore
+bounds new historical rows without inventing availability evidence.
+
+Transient `model_attempts` rows retire after a recorded ending, or once their
+delivery is terminal and unwatched and has no worker progress claim. A live
+claim protects metadata until actual process/file retirement. This also cleans
+up a crash between identity commit and claim, where no ending can exist.
+
+
 ## Prompt store
 
 Migration 12, `0012_prompts.sql`, adds role prompts as versions (PRD #327,
