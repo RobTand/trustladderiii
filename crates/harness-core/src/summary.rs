@@ -781,13 +781,13 @@ mod runtime {
         // Worker group envelopes repeat their display entries at the root.
         // Protect the same RED in both views, rather than retaining its proof
         // key while losing the actual root-level result a consumer reads.
-        if failed || error {
-            if let Some(SummaryValue::Array(groups)) = summary.field("groups") {
-                return groups.iter().any(|group| {
-                    matches!(group.field("tests"), Some(SummaryValue::Array(tests)) if tests.contains(entry))
-                        && is_red(group, entry)
-                });
-            }
+        if (failed || error)
+            && let Some(SummaryValue::Array(groups)) = summary.field("groups")
+        {
+            return groups.iter().any(|group| {
+                matches!(group.field("tests"), Some(SummaryValue::Array(tests)) if tests.contains(entry))
+                    && is_red(group, entry)
+            });
         }
         false
     }

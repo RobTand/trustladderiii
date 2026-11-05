@@ -115,7 +115,6 @@ def action(module, directory, schedule):
             return ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'incomplete_report')
 
     original_open, original_read, original_replace = Path.open, Path.read_text, Path.replace
-    original_sync = execution.os.fsync
     times = iter([code / 1000 for code in schedule['times']])
 
     def clock():
@@ -146,7 +145,7 @@ def action(module, directory, schedule):
         patch.setattr(module.tempfile, 'TemporaryFile', Selection)
         patch.setattr(execution.time, 'time', clock)
         patch.setattr(execution.os, 'getpid', lambda: 823)
-        patch.setattr(execution.os, 'fsync', lambda fd: change(('fsync',), lambda: original_sync(fd)))
+        patch.setattr(execution.os, 'fsync', lambda fd: change(('fsync',), lambda: None))
         patch.setattr(Path, 'open', opened)
         patch.setattr(Path, 'read_text', read)
         patch.setattr(Path, 'replace', replace)
