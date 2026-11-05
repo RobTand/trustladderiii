@@ -622,14 +622,17 @@ def test_both_stderr_log_prefixes_are_redacted(tmp_path, monkeypatch, capsys):
         'container_start', 'incomplete_report', stderr_tail='password: zE9!pR4#cV7$')
     failure.log()
     result = infrastructure(failure.message())
-    result['execution'] = failure.as_json()
+    result['execution'] = {**failure.as_json(), 'stderr_tail': failure.stderr_tail}
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, 'argv', ['test_tool', IMAGE, '[]'])
     monkeypatch.setattr(test_tool, 'run', lambda *args, **kwargs: result)
     test_tool.main()
     output = capsys.readouterr().out
     assert 'TL3_EXECUTION_FAILURE ' in output and 'TL3_TEST_SUMMARY ' in output
-    assert 'zE9!pR4#cV7$' not in output
+    for prefix in (supervision.FAILURE_PREFIX, test_tool.PREFIX):
+        records = [line for line in output.splitlines() if line.startswith(prefix)]
+        assert records
+        assert all('zE9!pR4#cV7$' not in line for line in records)
 
 
 # #826 review: the real StructuredTool boundary excludes diagnostics in every shape.
