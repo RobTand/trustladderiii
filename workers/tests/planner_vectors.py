@@ -85,7 +85,7 @@ class Tape:
             assert self.position < len(self.rows), f'extra fact {name}'
             row = self.rows[self.position]
             self.position += 1
-            assert request == {key: row[key] for key in request}, (self.position, request, row)
+            assert_same(request, {key: row[key] for key in request}, f'fact {self.position}: {name}')
             if 'error' in row:
                 raise_recorded(row['error'])
             return unpacked(row['result'])

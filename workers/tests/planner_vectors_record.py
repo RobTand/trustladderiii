@@ -334,7 +334,10 @@ def generate(selection=None):
         def pytest_collection_modifyitems(self, items):
             items[:] = [item for item in items if item.path.stem != 'test_workers' or
                         any(word in item.name for word in ('generated', 'freeze', 'freezes', 'memories'))]
-    status = pytest.main(['-q', *paths, *(['-k', selection] if selection else [])], plugins=[recorder, Selection()])
+    # Fixture commits are facts too; fix their timestamps before setup creates them.
+    dates = dict.fromkeys(('GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE'), '2000-01-01T00:00:00+00:00')
+    with patch.dict(os.environ, dates):
+        status = pytest.main(['-q', *paths, *(['-k', selection] if selection else [])], plugins=[recorder, Selection()])
     extra_cases(recorder)
     recorder.source, recorder.node, recorder.ordinal = 'recall', 'extra/recall', 0
     citation = recorder.pure('recall.check_citations', modules()['recall'].check_citations)
