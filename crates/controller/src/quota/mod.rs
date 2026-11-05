@@ -183,6 +183,22 @@ mod tests {
             "Python quota vectors drifted; regenerate the corpus"
         );
         assert!(rows.len() > 100);
+        let pivot = rows
+            .iter()
+            .find(|row| {
+                row["facts"]["now"] == "1000.0"
+                    && row["facts"]["links"][0]["response_status"] == 429
+                    && row["facts"]["links"][0]["headers"]["retry-after"]
+                        == "Wednesday, 01-Jan-69 00:16:48 GMT"
+            })
+            .expect("Python year-69 witness");
+        assert_eq!(pivot["expected"], serde_json::json!(1120000));
+        let facts: Facts = serde_json::from_value(pivot["facts"].clone()).unwrap();
+        assert_eq!(
+            serde_json::json!(decide(&facts)),
+            pivot["expected"],
+            "{pivot}"
+        );
         for row in rows {
             let facts: Facts = serde_json::from_value(row["facts"].clone()).unwrap();
             assert_eq!(serde_json::json!(decide(&facts)), row["expected"], "{row}");

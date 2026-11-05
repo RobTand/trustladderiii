@@ -1,4 +1,5 @@
-"""Run the frozen and extracted main against the same clock and runtime schedule."""
+"""Frozen/current main and quota decisions through both real durable writers."""
+from contextlib import ExitStack
 import io
 import json
 from pathlib import Path
@@ -13,98 +14,85 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from worker_process import _EntryOs, request_doc  # noqa: E402
 import main_reference  # noqa: E402
 import quota_reference  # noqa: E402
-from tl3_workers import __main__ as current, facts, quota, runtime  # noqa: E402
+from durable_io import Crash, Disk  # noqa: E402
+from tl3_workers import __main__ as current, facts, memory, quota, runtime, tracing  # noqa: E402
 from tl3_workers.reply_check import run_check  # noqa: E402
 
 
-def execute(module, legacy, schedule, root):
-    output, errors = io.BytesIO(), io.StringIO()
-    calls, persisted = [], {}
-    request = request_doc.__wrapped__(root)
-    stdin = io.TextIOWrapper(io.BytesIO(json.dumps(request).encode()))
-    response = httpx.Response(429, headers={"x-ratelimit-reset": schedule["reset"]},
-                              request=httpx.Request("POST", "http://proxy.invalid"))
-    error = openai.APIStatusError("private", response=response, body=None)
+def execute(module, legacy, schedule, crash=0):
+    with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+        root = Path(directory)
+        output = root / 'evidence'
+        output.mkdir()
+        disk = Disk(output, crash).install(stack)
+        wire, errors = io.BytesIO(), io.StringIO()
+        request = request_doc.__wrapped__(root)
+        request['mlflow'] = None
+        request['trace'] = {'completion': str(output / 'completion.json'), 'release': 'fixture'}
+        request['memory'] = {'summary_file': str(output / 'summary.json'), 'repo': 'fixture',
+                             'issue': 1, 'request': 'fixture', 'epoch': 0}
+        stdin = io.TextIOWrapper(io.BytesIO(json.dumps(request).encode()))
+        response = httpx.Response(429, headers={'x-ratelimit-reset': schedule['reset']},
+                                  request=httpx.Request('POST', 'http://proxy.invalid'))
+        error = openai.APIStatusError('private', response=response, body=None)
+        ticks = iter([1_000_000_000_000, 1_000_500_000_000])
+        samples = iter([schedule['sample'], schedule['sample'] + schedule['transport_ms'] / 1000])
 
-    class Os(_EntryOs):
-        def chdir(self, path):
-            calls.append("chdir")
+        class Os(_EntryOs):
+            def chdir(self, path):
+                disk.note('chdir')
 
-    def sampled():
-        calls.append("clock")
-        return schedule["sample"]
+        def clock_ns():
+            disk.note('clock-ns')
+            return next(ticks)
 
-    def run(request, emit):
-        calls.append("runtime")
-        persisted["memory"] = b'{"status":"failed"}'
-        raise error
+        def sampled():
+            disk.note('quota-clock')
+            return next(samples)
 
-    event = quota_reference.event if legacy else quota.event
-    with patch.object(module, "os", Os(output)), patch.object(module.time, "time", sampled), \
-         patch.object(runtime, "run", run), patch.object(quota, "event", event), \
-         patch.object(sys, "argv", ["tl3_workers", "run"]), patch.object(sys, "stdin", stdin), \
-         patch.object(sys, "stderr", errors), patch.object(sys, "stdout", errors):
-        status = module.main()
-    events = [json.loads(line) for line in output.getvalue().splitlines()]
-    for document in events:
-        if "facts" in document:
-            facts = document.pop("facts")
-            document["reset_ms"] = run_check(["check-quota"], {"kind": "ending", "facts": facts})["reset_ms"]
-    return status, calls, persisted, events, errors.getvalue()
+        def body(request, emit):
+            disk.note('runtime-body')
+            raise error
 
-
-class Crash(BaseException):
-    pass
-
-
-def completion(legacy, schedule, crash):
-    calls, persisted = [], {}
-    ticks = iter([1_000_000_000_000, 1_000_500_000_000])
-    writes = 0
-
-    class Capture:
-        def __init__(self, request):
-            pass
-
-        def save(self, outcome, finished=None, failure=None):
-            nonlocal writes
-            calls.append(('save', outcome))
-            persisted['completion'] = json.dumps([outcome, finished, failure], sort_keys=True).encode()
-            writes += 1
-            if writes == crash:
-                raise Crash()
-
-    def clock_ns():
-        calls.append('clock-ns')
-        return next(ticks)
-
-    def sampled():
-        calls.append('quota-clock')
-        return schedule['sample']
-
-    request = {'role': 'maker', 'model': {'base_url': 'http://proxy.invalid'}}
-    response = httpx.Response(429, headers={'x-ratelimit-reset': schedule['reset']},
-                              request=httpx.Request('POST', 'http://proxy.invalid'))
-    error = openai.APIStatusError('private', response=response, body=None)
-    ending = quota_reference.ending_ms if legacy else quota.ending_ms
-    with patch.object(facts, 'Facts', Capture), patch.object(facts.time, 'time_ns', clock_ns), \
-         patch.object(facts.time, 'time', sampled), patch.object(quota, 'ending_ms', ending):
+        stack.enter_context(patch.object(module, 'os', Os(wire)))
+        stack.enter_context(patch.object(facts.time, 'time_ns', clock_ns))
+        stack.enter_context(patch.object(facts.time, 'time', sampled))
+        # Only the external body is inert: runtime.run, Summary and Facts stay real.
+        stack.enter_context(patch.object(runtime, '_run', body))
+        stack.enter_context(patch.object(quota, 'event', quota_reference.event if legacy else quota.event))
+        stack.enter_context(patch.object(quota, 'ending_ms', quota_reference.ending_ms if legacy else quota.ending_ms))
+        stack.enter_context(patch.object(sys, 'argv', ['tl3_workers', 'run']))
+        stack.enter_context(patch.object(sys, 'stdin', stdin))
+        stack.enter_context(patch.object(sys, 'stderr', errors))
+        stack.enter_context(patch.object(sys, 'stdout', errors))
+        variables = [memory.current, facts.current, tracing.active, tracing.model_key,
+                     runtime.run_prompt, runtime.run_test_cpus]
+        tokens = [(var, var.set(None)) for var in variables]
         try:
-            with facts.observe(request):
-                calls.append('body')
-                raise error
-        except BaseException as caught:
-            outcome = type(caught).__name__
-    return calls, persisted, outcome
+            status = module.main()
+        except Crash:
+            status = 'Crash'
+        finally:
+            for var, token in reversed(tokens):
+                var.reset(token)
+        events = [json.loads(line) for line in wire.getvalue().splitlines()]
+        for document in events:
+            if 'facts' in document:
+                raw = document.pop('facts')
+                document['reset_ms'] = run_check(['check-quota'], {'kind': 'ending', 'facts': raw})['reset_ms']
+        calls, persisted = disk.result()
+        return status, calls, persisted, events, errors.getvalue(), disk.points
 
 
 for schedule in json.load(sys.stdin):
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        before = execute(main_reference, True, schedule, root)
-        after = execute(current, False, schedule, root)
-        assert before == after, (schedule, before, after)
-        assert after[1].count("clock") == 1
-    for crash in range(3):
-        assert completion(True, schedule, crash) == completion(False, schedule, crash), (schedule, crash)
-print("quota schedules preserve the original sample and stale-reset boundary")
+    before = execute(main_reference, True, schedule)
+    after = execute(current, False, schedule)
+    assert before == after, (schedule, before, after)
+    assert after[1].count(('quota-clock',)) == 2
+    assert set(after[2]) == {'summary.json', 'completion.json'}
+    assert json.loads(after[2]['completion.json'])['outcome'] == 'quota'
+    for crash in range(1, before[5] + 1):
+        before = execute(main_reference, True, schedule, crash)
+        after = execute(current, False, schedule, crash)
+        assert before == after, (schedule, crash, before, after)
+print('quota schedules preserve actual persisted bytes and the stale-reset boundary')

@@ -19,6 +19,13 @@ def rows():
               "  +1.25e1  ", "1e309", "0.0000000001", "1000.125", "18446744073709552",
               "Thu, 01 Jan 1970 00:16:48 GMT", "Thursday, 01-Jan-70 00:16:48 GMT",
               "Thu Jan  1 00:16:48 1970", "Thu, 01 Jan 1970 01:16:48 +0100"]
+    # Python email._parseaddr maps 00..68 to 2000..2068 and 69..99 to 1969..1999.
+    for year in ['68', '69', '70', '99', '00']:
+        values += [f'Wednesday, 01-Jan-{year} 00:16:48 GMT',
+                   f'Wed, 01 Jan {year} 00:16:48 +0000',
+                   f'Wed, 01 Jan {year} 01:16 +0100',
+                   f'Wed Jan  1 00:16:48 {year}',
+                   f'Wed Jan  1 00:16 {year}']
     for now in [1000.0, 1000.125, 1000.25, 1000.5]:
         for status in [400, 404, 429, 503, 500]:
             for name in ["retry-after", "x-ratelimit-reset"]:
