@@ -5,6 +5,7 @@ use tl3_kernel::{NodeId, EffectKind};
 use tl3_worktrees::CommitId;
 use io::{Store, Worktrees};
 use criteria::criteria;
+use tl3_controller_core::review_inputs::{bounds, history, selection};
 use tl3_store::Snapshot;
 const SCOPE_RULE: &str = "request-scope";
 const REPORT_RULE: &str = "test-report-integrity";

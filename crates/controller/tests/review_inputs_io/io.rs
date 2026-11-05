@@ -68,5 +68,12 @@ pub fn run(s: &Schedule, current: bool) -> Run {
     Run {trace,result}
 }
 pub fn compare(s: &Schedule) -> Run {
-    let old=run(s,false); let new=run(s,true); assert_eq!(old,new,"schedule {s:?}"); old
+    let old = run(s, false);
+    let new = run(s, true);
+    if old != new {
+        let dir = std::env::var("TEST_UNDECLARED_OUTPUTS_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+        std::fs::write(Path::new(&dir).join("review-inputs-failure.txt"), format!("schedule={s:?}\nold={old:?}\nnew={new:?}\n")).unwrap();
+        panic!("review inputs or I/O differ; full schedule persisted to writable test output");
+    }
+    old
 }
