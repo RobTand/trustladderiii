@@ -117,11 +117,46 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
-        # ctrl-core B2: enqueue_refused_sticky; real body and constructive/composed witnesses.
-        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 1)]:
+        # ctrl-core B2: selectors are inventoried by the required mergify proof_map test.
+        # Each decide contract has one owner; shared bodies and generated Clone
+        # obligations have one owner across all roots. New families append entries.
+        enqueue_groups = {
+            "refused_sticky": ("refused_sticky", "enqueue#decide", 1),
+            "refused_sticky_witness": ("refused_sticky", "witness", 1),
+            # Write-ahead partitions exhaust Write: Label, Command and Rerun.
+            "write_ahead_label": ("write_ahead_label", "enqueue#decide", 1),
+            "write_ahead_label_witness": ("write_ahead_label", "witness", 2),
+            "write_ahead_command": ("write_ahead_command", "enqueue#decide", 1),
+            "write_ahead_command_witness": ("write_ahead_command", "witness", 1),
+            "write_ahead_rerun": ("write_ahead_rerun", "enqueue#decide", 1),
+            "write_ahead_rerun_witness": ("write_ahead_rerun", "witness", 1),
+            "recovery_grace": ("recovery_grace", "enqueue#decide", 1),
+            "recovery_grace_witness": ("recovery_grace", "witness", 2),
+            "command_completion": ("refused_sticky", "enqueue#command_completion", 1),
+            "reconcile_issue": ("refused_sticky", "enqueue#reconcile_issue", 1),
+            "grace_ms": ("recovery_grace", "enqueue#GRACE_MS", 1),
+            "clone_requeue": ("refused_sticky", "enqueue#Requeue::clone", 1),
+            "clone_command": ("refused_sticky", "enqueue#Command::clone", 1),
+            "clone_recovery": ("refused_sticky", "enqueue#Recovery::clone", 1),
+            "clone_intent": ("refused_sticky", "enqueue#Intent::clone", 1),
+            "clone_rerun": ("refused_sticky", "enqueue#Rerun::clone", 1),
+            "clone_enqueue_state": ("refused_sticky", "enqueue#EnqueueState::clone", 1),
+            "clone_issue_read": ("refused_sticky", "enqueue#IssueRead::clone", 1),
+            "clone_queue_read": ("refused_sticky", "enqueue#QueueRead::clone", 1),
+            "clone_need": ("refused_sticky", "enqueue#Need::clone", 1),
+            "clone_failure": ("refused_sticky", "enqueue#Failure::clone", 1),
+            "clone_complete": ("refused_sticky", "enqueue#Complete::clone", 1),
+            "clone_write": ("refused_sticky", "enqueue#Write::clone", 1),
+            "clone_command_result": ("refused_sticky", "enqueue#CommandResult::clone", 1),
+            "clone_rerun_result": ("refused_sticky", "enqueue#RerunResult::clone", 1),
+            "clone_command_read": ("refused_sticky", "enqueue#CommandRead::clone", 1),
+            "clone_queue_event": ("refused_sticky", "enqueue#QueueEvent::clone", 1),
+            "clone_effect": ("refused_sticky", "enqueue#Effect::clone", 1),
+        }
+        for name, (root, module, count) in enqueue_groups.items():
             verus_test(
-                name = "verus_enqueue_refused_sticky" + suffix,
-                src = "proofs/enqueue_refused_sticky.rs",
+                name = "verus_enqueue_" + name,
+                src = "proofs/enqueue_" + root + ".rs",
                 srcs = [
                     "src/decide/enqueue.rs",
                     "src/decide/check.rs",
@@ -130,62 +165,8 @@ def verus_proofs():
                 ],
                 specs = [
                     "proofs/enqueue_helpers.rs",
-                    "proofs/enqueue_refused_sticky_spec.rs",
-                    "proofs/enqueue_refused_sticky_witness.rs",
-                ],
-                module = module,
-                expected_obligations = count,
-                tags = ["rust", "verus"],
-                size = "small",
-                timeout = "short",
-                target_compatible_with = ["@platforms//cpu:x86_64"],
-                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-            )
-
-        # ctrl-core B2: write_ahead = Prepare/Label + Command ordering + Rerun ordering.
-        # The three write variants exhaust Write; every original assertion and cover remains.
-        for part, witnesses in [("label", 2), ("command", 1), ("rerun", 1)]:
-            for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", witnesses)]:
-                verus_test(
-                    name = "verus_enqueue_write_ahead_" + part + suffix,
-                    src = "proofs/enqueue_write_ahead_" + part + ".rs",
-                    srcs = [
-                        "src/decide/enqueue.rs",
-                        "src/decide/check.rs",
-                        "src/decide/observe.rs",
-                        "src/decide/verification.rs",
-                    ],
-                    specs = [
-                        "proofs/enqueue_helpers.rs",
-                        "proofs/enqueue_write_ahead_" + part + "_spec.rs",
-                        "proofs/enqueue_write_ahead_" + part + "_witness.rs",
-                    ],
-                    module = module,
-                    expected_obligations = count,
-                    tags = ["rust", "verus"],
-                    size = "small",
-                    timeout = "short",
-                    target_compatible_with = ["@platforms//cpu:x86_64"],
-                    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                    exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-                )
-
-        # ctrl-core B2: enqueue_recovery_grace; real body and constructive/composed witnesses.
-        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 2)]:
-            verus_test(
-                name = "verus_enqueue_recovery_grace" + suffix,
-                src = "proofs/enqueue_recovery_grace.rs",
-                srcs = [
-                    "src/decide/enqueue.rs",
-                    "src/decide/check.rs",
-                    "src/decide/observe.rs",
-                    "src/decide/verification.rs",
-                ],
-                specs = [
-                    "proofs/enqueue_helpers.rs",
-                    "proofs/enqueue_recovery_grace_spec.rs",
-                    "proofs/enqueue_recovery_grace_witness.rs",
+                    "proofs/enqueue_" + root + "_spec.rs",
+                    "proofs/enqueue_" + root + "_witness.rs",
                 ],
                 module = module,
                 expected_obligations = count,

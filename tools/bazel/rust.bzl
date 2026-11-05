@@ -388,8 +388,10 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
         sources = [source]
     compile_data = options["compile_data"]
-    if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
+    if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
+        if native.package_name() == "crates/mergify":
+            sources = sources + native.glob(["proofs/enqueue_*.rs"])
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":

@@ -266,3 +266,71 @@ fn replay_red_unconfirmed_rerun() {
     };
     assert_eq!(decide(state, event), reference::decide(state, event));
 }
+
+// Frozen rust-fv 4a7fa87a source, Git blob c6d3fc41e97e74f41afa282d81445eb67331e42b, not a new implementation.
+const BASE: &str = include_str!("enqueue_base.rs.txt");
+const REFERENCE: &str = include_str!("enqueue_reference.rs.txt");
+
+fn sha256(source: &str) -> String {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    // Use the executor's coreutils instead of adding a cryptography dependency.
+    let mut child = Command::new("sha256sum")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("sha256sum is required for frozen-reference fidelity");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(result.status.success());
+    String::from_utf8(result.stdout)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .into()
+}
+
+fn original_function<'a>(source: &'a str, name: &str) -> &'a str {
+    let start = source
+        .find(&format!("fn {name}("))
+        .expect("missing original function");
+    let body = start + source[start..].find('{').unwrap();
+    let mut depth = 0;
+    for (offset, byte) in source.as_bytes()[body..].iter().enumerate() {
+        if *byte == b'{' {
+            depth += 1;
+        }
+        if *byte == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return &source[start..=body + offset];
+            }
+        }
+    }
+    panic!("unclosed original function");
+}
+
+#[test]
+fn reference_is_pinned_and_matches_original_rust_fv_source() {
+    assert_eq!(
+        sha256(REFERENCE),
+        "6ddc0fc592d5e34373f316c4031ddae65e7a49ac67a0f02cfa5eedf67dac1121"
+    );
+    assert_eq!(
+        sha256(BASE),
+        "522ef8320a2210882c79bf978db461de8430307802b186a4fa48b4a5606a813a"
+    );
+    for name in ["command_completion", "reconcile_issue", "decide"] {
+        assert_eq!(
+            original_function(REFERENCE, name),
+            original_function(BASE, name),
+            "frozen {name} differs from rust-fv 4a7fa87a"
+        );
+    }
+}
