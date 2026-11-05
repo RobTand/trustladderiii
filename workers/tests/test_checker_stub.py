@@ -248,7 +248,6 @@ def test_concurrent_checker_processes_consume_each_step_once(tmp_path, monkeypat
     # #823: child workers share the cursor, beyond the parent's threading lock.
     import multiprocessing
     import time
-    from pathlib import Path
 
     context = multiprocessing.get_context('fork')
     truncated = context.Event()
