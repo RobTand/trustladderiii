@@ -171,3 +171,31 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    # CC-T: real Queue translation/intake functions and separate property witnesses.
+    if native.package_name() == "crates/controller":
+        queue_groups = {
+            "core": ("translate", 9),
+            "closed": ("root#translate_closed", 1),
+            "head_ci": ("root#head_ci_consume", 1),
+            "q52": ("root#q52_no_kernel", 1),
+            "classify": ("root#ci_classify", 1),
+            "intake": ("root#intake_once", 1),
+            "incidents": ("root#incident_pairing", 1),
+        }
+        for name, (module, count) in queue_groups.items():
+            verus_test(
+                name = "verus_queue_" + name,
+                src = "tests/queue_translate_schedule/proof.rs",
+                srcs = ["//crates/mergify:src/decide/translate.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+    if native.package_name() == "crates/mergify":
+        native.exports_files(["src/decide/translate.rs"])

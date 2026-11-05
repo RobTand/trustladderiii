@@ -117,23 +117,31 @@ pub mod looks {
     pub fn missing_check_incident_id(
         node: NodeId,
         head: &str,
-        required: &adapters::mergify::RequiredCheck,
+        required: &crate::adapters::mergify::RequiredCheck,
     ) -> String {
+        use sha2::{Digest, Sha256};
+        let gap = serde_json::to_string(&(head, required)).expect("serializable check");
         format!(
-            "missing:{}:{head}:{}",
+            "missing-check:{}:{:x}",
             node.0,
-            serde_json::to_string(required).unwrap()
+            Sha256::digest(gap.as_bytes())
         )
     }
+
     pub fn queue_blocked_incident_id(node: NodeId, head: &str, conditions: &[String]) -> String {
+        use sha2::{Digest, Sha256};
+        let gap = serde_json::to_string(&(head, conditions)).expect("serializable conditions");
         format!(
-            "blocked:{}:{head}:{}",
+            "queue-blocked:{}:{:x}",
             node.0,
-            serde_json::to_string(conditions).unwrap()
+            Sha256::digest(gap.as_bytes())
         )
     }
+
     pub fn check_setup_incident_id(node: NodeId, permission: &str) -> String {
-        format!("setup:{}:{permission}", node.0)
+        use sha2::{Digest, Sha256};
+        let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
+        format!("required-checks:{}:{gap}", node.0)
     }
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct Incident {

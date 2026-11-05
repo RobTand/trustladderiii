@@ -2,7 +2,12 @@
 //! unreadable checks) only opens or clears incidents; it never becomes a
 //! kernel fact, so it never counts a failure or charges credit.
 
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
 /// The request's node, as the translation reads it.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Phase {
@@ -12,6 +17,8 @@ pub enum Phase {
     Other,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct NodeView {
@@ -24,12 +31,17 @@ pub struct NodeView {
 
 impl NodeView {
     /// Publishing with an enqueue still pending.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == (self.phase == Phase::Publishing && self.enqueue_pending),
+    ))]
     fn enqueuing(self) -> bool {
         self.phase == Phase::Publishing && self.enqueue_pending
     }
 }
 
 /// A queue fact's evidence, without its payload.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Kind {
@@ -48,6 +60,9 @@ pub enum Kind {
 
 impl Kind {
     /// Setup evidence is deduplicated against incidents, not observation receipts.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == matches!(self, Kind::ChecksUnavailable | Kind::CheckMissing | Kind::CheckReported | Kind::QueueBlocked),
+    ))]
     pub fn setup(self) -> bool {
         matches!(
             self,
@@ -57,6 +72,9 @@ impl Kind {
 
     /// Evidence about a queue attempt on one head, which matters only while
     /// that head is the node's head.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == matches!(self, Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand),
+    ))]
     pub fn names_attempt_head(self) -> bool {
         matches!(
             self,
@@ -68,6 +86,11 @@ impl Kind {
 /// Whether the node takes the fact at all. A closed node takes only a merge
 /// it has not recorded. A head-check failure waits for a node that is queued
 /// or still enqueuing, so a later active enqueue can consume it.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == ((node.phase != Phase::Closed || (matches!(kind, Kind::Merged { .. }) && !node.merged))
+            && (!matches!(kind, Kind::CiFailed { head_check: true, .. })
+                || node.phase == Phase::Queued || (node.phase == Phase::Publishing && node.enqueue_pending))),
+    ))]
 pub fn admit(kind: Kind, node: NodeView) -> bool {
     if node.phase == Phase::Closed && (!matches!(kind, Kind::Merged { .. }) || node.merged) {
         return false;
@@ -82,6 +105,8 @@ pub fn admit(kind: Kind, node: NodeView) -> bool {
 }
 
 /// Why a queue CI failure is or is not infrastructure.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
     /// A test that failed in an earlier infrastructure failure on this head
@@ -103,8 +128,13 @@ impl Decision {
     }
 }
 
+/// Q50/Q58: classify a queue CI failure. Total over all Boolean inputs.
 /// Classify a queue CI failure. A repeated test is never infrastructure; a
 /// failure outside the change is, unless repeated; otherwise `upstream` stands.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out.0 == (if outside || repeated { outside && !repeated } else { upstream }),
+        out.1 == (if repeated { Decision::RepeatedTest } else if outside { Decision::OutsideChange } else { Decision::UpstreamClassification }),
+    ))]
 pub fn classify_ci(upstream: bool, outside: bool, repeated: bool) -> (bool, Decision) {
     let infra = if outside || repeated {
         outside && !repeated
@@ -122,6 +152,8 @@ pub fn classify_ci(upstream: bool, outside: bool, repeated: bool) -> (bool, Deci
 }
 
 /// The kernel fact a queue fact becomes.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KernelFact {
     PrMerged { checks_passed: bool },
@@ -133,6 +165,8 @@ pub enum KernelFact {
 }
 
 /// What the controller does with an admitted queue fact.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route {
     /// Record the fact as observed; nothing else.
@@ -153,6 +187,22 @@ pub enum Route {
 
 /// `head_current`: an attempt's head is the node's head. `approved_head`: a
 /// Q52 or #447 fact names the node's approved head.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == (if matches!(kind, Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand) && !head_current {
+            Route::Record
+        } else { match kind {
+            Kind::ChecksUnavailable => Route::SetupIncident,
+            Kind::CheckMissing => if node.phase == Phase::Publishing && node.enqueue_pending && approved_head { Route::MissingIncident } else { Route::Skip },
+            Kind::QueueBlocked => if (node.phase == Phase::Queued || (node.phase == Phase::Publishing && node.enqueue_pending)) && approved_head { Route::BlockedIncident } else { Route::Skip },
+            Kind::CheckReported => Route::ClearIncident,
+            Kind::Merged { checks_passed } => Route::Kernel(KernelFact::PrMerged { checks_passed }),
+            Kind::CiFailed { infra, .. } => Route::Kernel(KernelFact::CiFailed { infra }),
+            Kind::Conflict => Route::Kernel(KernelFact::Conflict),
+            Kind::DequeuedByCommand | Kind::DequeuedByPerson => Route::Kernel(KernelFact::PrDequeuedByPerson),
+            Kind::ClosedByPerson => Route::Kernel(KernelFact::PrClosedByPerson),
+            Kind::PushByOther => Route::Kernel(KernelFact::PushByOther),
+        } }),
+    ))]
 pub fn route(kind: Kind, node: NodeView, head_current: bool, approved_head: bool) -> Route {
     if kind.names_attempt_head() && !head_current {
         return Route::Record;
@@ -179,16 +229,28 @@ pub fn route(kind: Kind, node: NodeView, head_current: bool, approved_head: bool
 }
 
 /// #373/Q52 intake: a recorded or inboxed identity is consumed once.
-pub fn intake_duplicate(_recorded: bool, _inboxed: bool) -> bool {
-    todo!("CC-T intake extraction")
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == (recorded || inboxed),
+    ))]
+pub fn intake_duplicate(recorded: bool, inboxed: bool) -> bool {
+    recorded || inboxed
 }
 
 /// Q52: setup receipt identities are scoped to a snapshot revision.
-pub fn intake_revision(_setup: bool, _revision: i64) -> Option<i64> {
-    todo!("CC-T setup receipt extraction")
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == (if setup { Some(revision) } else { None }),
+    ))]
+pub fn intake_revision(setup: bool, revision: i64) -> Option<i64> {
+    if setup { Some(revision) } else { None }
 }
 
 /// Q52/#447: incident openings record evidence; a report only clears.
-pub fn record_incident(_route: Route) -> bool {
-    todo!("CC-T incident extraction")
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == matches!(route, Route::SetupIncident | Route::MissingIncident | Route::BlockedIncident),
+    ))]
+pub fn record_incident(route: Route) -> bool {
+    matches!(
+        route,
+        Route::SetupIncident | Route::MissingIncident | Route::BlockedIncident
+    )
 }

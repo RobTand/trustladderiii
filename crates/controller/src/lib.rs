@@ -960,10 +960,13 @@ impl Controller {
         }
         // Setup gaps describe current health. A fresh read after a clear must
         // not be suppressed by the receipt for an earlier observation.
-        let key = if matches!(&observation, Observation::Queue(fact) if fact.setup()) {
-            format!("{key}:{}", snapshot.revision.get())
-        } else {
-            key.to_owned()
+        let revision = tl3_mergify::decide::translate::intake_revision(
+            matches!(&observation, Observation::Queue(fact) if fact.setup()),
+            snapshot.revision.get(),
+        );
+        let key = match revision {
+            Some(revision) => format!("{key}:{revision}"),
+            None => key.to_owned(),
         };
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
         commit
@@ -997,7 +1000,11 @@ impl Controller {
                 return Ok(());
             }
             let id = inbox_key(
-                &format!("{key}:{}", snapshot.revision.get()),
+                &format!(
+                    "{key}:{}",
+                    tl3_mergify::decide::translate::intake_revision(true, snapshot.revision.get())
+                        .expect("setup intake has a revision")
+                ),
                 index,
                 observation,
             )?;
@@ -1011,18 +1018,19 @@ impl Controller {
             format!("external:look:{key}:{index}:{}", evidence_key(observation)?),
         ];
         let value = json!(observation);
-        if snapshot
+        let inboxed = snapshot
             .rows
             .iter()
-            .any(|row| row.table == "inbox" && aliases.contains(&row.id) && row.value == value)
-            || self.store.event_matches(
+            .any(|row| row.table == "inbox" && aliases.contains(&row.id) && row.value == value);
+        let recorded = !inboxed
+            && self.store.event_matches(
                 &aliases
                     .iter()
                     .map(|id| format!("consume:{id}"))
                     .collect::<Vec<_>>(),
                 &value,
-            )?
-        {
+            )?;
+        if tl3_mergify::decide::translate::intake_duplicate(recorded, inboxed) {
             return Ok(());
         }
         commit.rows.push(put("inbox", id, value));
@@ -2927,74 +2935,68 @@ impl Controller {
                     }
                     _ => false,
                 };
-                let kernel =
-                    match queue::route(fact.evidence.kind(), view, head_current, approved_head) {
-                        Route::Record => {
-                            commit.rows.push(put("queue_facts", identity, value));
-                            return Ok(None);
-                        }
-                        Route::Skip => return Ok(None),
-                        Route::Kernel(kernel) => kernel,
-                        // Setup rows (Q52, #447): none reaches the kernel, so no
-                        // failure or credit is charged.
-                        Route::SetupIncident
-                        | Route::MissingIncident
-                        | Route::BlockedIncident
-                        | Route::ClearIncident => {
-                            match fact.evidence {
-                                Evidence::ChecksUnavailable { permissions } => {
-                                    self.check_setup_incident(
-                                        snapshot,
-                                        commit,
-                                        node,
-                                        &permissions,
-                                    )?;
-                                    commit.rows.push(put("queue_facts", identity, value));
-                                }
-                                Evidence::CheckMissing { head, required } => {
-                                    self.missing_check_incident(
-                                        snapshot, commit, node, &head, &required,
-                                    )?;
-                                    commit.rows.push(put("queue_facts", identity, value));
-                                }
-                                Evidence::QueueBlocked {
-                                    head,
-                                    conditions,
-                                    failed,
-                                } => {
-                                    self.queue_blocked_incident(
-                                        snapshot,
-                                        commit,
-                                        node,
-                                        &head,
-                                        &conditions,
-                                        &failed,
-                                    )?;
-                                    commit.rows.push(put("queue_facts", identity, value));
-                                }
-                                Evidence::CheckReported { head, required } => {
-                                    let id =
-                                        looks::missing_check_incident_id(node, &head, &required);
-                                    if let Some(row) = snapshot.rows.iter().find(|row| {
-                                        row.table == "incidents"
-                                            && row.id == id
-                                            && row.value["open"] == true
-                                    }) {
-                                        let mut incident: looks::Incident =
-                                            decode_stored(row.value.clone())?;
-                                        incident.open = false;
-                                        commit.rows.push(put("incidents", id, json!(incident)));
-                                    }
-                                }
-                                _ => {
-                                    return Err(Error::Invalid(
-                                        "only setup evidence routes to an incident",
-                                    ));
+                let route = queue::route(fact.evidence.kind(), view, head_current, approved_head);
+                let kernel = match route {
+                    Route::Record => {
+                        commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
+                    Route::Skip => return Ok(None),
+                    Route::Kernel(kernel) => kernel,
+                    // Setup rows (Q52, #447): none reaches the kernel, so no
+                    // failure or credit is charged.
+                    Route::SetupIncident
+                    | Route::MissingIncident
+                    | Route::BlockedIncident
+                    | Route::ClearIncident => {
+                        match fact.evidence {
+                            Evidence::ChecksUnavailable { permissions } => {
+                                self.check_setup_incident(snapshot, commit, node, &permissions)?;
+                            }
+                            Evidence::CheckMissing { head, required } => {
+                                self.missing_check_incident(
+                                    snapshot, commit, node, &head, &required,
+                                )?;
+                            }
+                            Evidence::QueueBlocked {
+                                head,
+                                conditions,
+                                failed,
+                            } => {
+                                self.queue_blocked_incident(
+                                    snapshot,
+                                    commit,
+                                    node,
+                                    &head,
+                                    &conditions,
+                                    &failed,
+                                )?;
+                            }
+                            Evidence::CheckReported { head, required } => {
+                                let id = looks::missing_check_incident_id(node, &head, &required);
+                                if let Some(row) = snapshot.rows.iter().find(|row| {
+                                    row.table == "incidents"
+                                        && row.id == id
+                                        && row.value["open"] == true
+                                }) {
+                                    let mut incident: looks::Incident =
+                                        decode_stored(row.value.clone())?;
+                                    incident.open = false;
+                                    commit.rows.push(put("incidents", id, json!(incident)));
                                 }
                             }
-                            return Ok(None);
+                            _ => {
+                                return Err(Error::Invalid(
+                                    "only setup evidence routes to an incident",
+                                ));
+                            }
                         }
-                    };
+                        if queue::record_incident(route) {
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
+                };
                 let fact = match (kernel, fact.evidence) {
                     (KernelFact::PrMerged { checks_passed }, Evidence::Merged { head, .. }) => {
                         Fact::PrMerged {
