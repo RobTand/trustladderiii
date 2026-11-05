@@ -46,6 +46,7 @@ impl Shell<'_> {
                 role,
                 mut reply,
                 model,
+                plan_check,
             } => {
                 use tl3_controller_core::translate_worker as worker;
                 let n = world
@@ -77,7 +78,11 @@ impl Shell<'_> {
                     _ => worker::Role::Unknown,
                 };
                 let valid_role = worker::valid_role(phase, worker_role);
-                let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                let mut mapped = match adapters::workers::protocol::map_reply_with_plan_check(
+                    &role,
+                    &reply,
+                    plan_check.as_ref(),
+                ) {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         return Ok(Some(Event::Reply {
@@ -93,7 +98,7 @@ impl Shell<'_> {
                 {
                     mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
                 }
-                if role == "planner" && reply["kind"] == "leaf" {
+                if role == "planner" && reply["kind"] == "leaf" && plan_check.is_none() {
                     let checks = reply["checks"]
                         .as_array()
                         .unwrap()
@@ -293,9 +298,11 @@ impl Shell<'_> {
                     }
                 }
                 if let Some(document) = document {
-                    commit
-                        .rows
-                        .push(put(document, node.0.to_string(), reply.clone()));
+                    let mut stored = reply.clone();
+                    if let Some(provenance) = plan_check {
+                        stored["plan_check"] = serde_json::to_value(provenance)?;
+                    }
+                    commit.rows.push(put(document, node.0.to_string(), stored));
                 }
                 if role == "ingest" && reply["kind"] == "brief" {
                     self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)?;
@@ -450,7 +457,10 @@ pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Obse
 mod adapters {
     pub use super::super::adapters::{prismabuild, results};
     pub mod workers {
-        pub use super::super::super::adapters::workers::{protocol, review};
+        pub use super::super::super::adapters::workers::review;
+        pub mod protocol {
+            include!("protocol-current.rs");
+        }
         pub mod reproducing {
             include!("reproducing-current.rs");
         }

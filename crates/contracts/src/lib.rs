@@ -51,6 +51,7 @@ pub fn generated() -> Vec<Generated> {
             text,
         }),
     );
+    files.push(roles::reviewer_input::generated().unwrap_or_else(|error| panic!("{error}")));
     files.push(Generated {
         path: format!("{SCHEMA_DIRECTORY}/plan-check-provenance.json"),
         text: render(

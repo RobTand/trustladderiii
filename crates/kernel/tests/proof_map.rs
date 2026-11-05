@@ -56,8 +56,8 @@ const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
 // #806: these names retain their event/phase coverage after Kani retirement.
 const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     // #832: new semantic replies are covered by Verus; Kani stays frozen.
-    ("apply_plan_check_rejected", "plan_check"),
-    ("apply_plan_check_needs_split", "plan_check"),
+    ("apply_plan_check_rejected", "plan_check_witness"),
+    ("apply_plan_check_needs_split", "plan_check_witness"),
     ("apply_incident_cleared", "facts_incident_cleared"),
     ("apply_pr_dequeued", "facts_pr_dequeued"),
     (
@@ -149,7 +149,19 @@ fn every_event_and_phase_has_a_proof() {
         );
         proven.insert(retired.to_string());
     }
-    assert!(VERUS_GROUPS.contains("\"retirement\": (\"kernel::retirement\","));
+    for function in [
+        "merge_input_distance",
+        "node_frame",
+        "fact_preserves_node",
+        "fact_preserves_world",
+        "verify_selected_apply",
+        "infrastructure_frame",
+        "infrastructure_result",
+    ] {
+        assert!(VERUS_GROUPS.contains(&format!(
+            "\"retirement_{function}\": (\"kernel::retirement#{function}\", 1)"
+        )));
+    }
     assert!(VERUS_GROUPS.contains("\"retirement_witness\": (\"kernel::retirement_witness\","));
     let missing: Vec<_> = mapped.difference(&proven).collect();
     let unmapped: Vec<_> = proven.difference(&mapped).collect();

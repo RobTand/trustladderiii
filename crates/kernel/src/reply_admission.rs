@@ -254,8 +254,8 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
-        Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
-            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan(w, i, reply, out),
+        Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
+        Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
         _ => reply_work(w, i, reply, out),
     }
 }
