@@ -1,0 +1,2 @@
+# Proptest regressions for enqueue_equivalence.rs. The fixed seed is 0x751760b2.
+# Preserve minimized seeds here if a future Verus syntax change finds a mismatch.
