@@ -380,7 +380,7 @@ def _run(request, emit):
                 if latest_error is not None or guards or malformed or reply['kind'] in {'cant_meet', 'split'}:
                     unavailable = (draft_error.unavailable_reason or control.repair_unavailable
                                    or 'format_allowance_consumed')
-                    reply, plan_check = terminal(draft_error, latest_error or draft_error, reply, candidate,
+                    reply, plan_check = terminal(draft_error, latest_error, reply, candidate,
                         attempted=attempted, unavailable=unavailable, malformed=malformed)
         else:
             reply = role.run(model, request, worktree, emit)

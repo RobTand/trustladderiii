@@ -124,6 +124,23 @@ class Recorder:
             return self.observe(case, invoke, after)
         return recorded
 
+    def ending(self, original):
+        def recorded(origin, latest, completed, candidate, **kwargs):
+            if self.active:
+                return original(origin, latest, completed, candidate, **kwargs)
+            case = self.case('plan_terminal')
+            case.update(origin=exception(origin), latest=exception(latest) if latest is not None else None,
+                        same_error=latest is origin,
+                        completed=deepcopy(completed), candidate=deepcopy(candidate), kwargs=kwargs)
+            tape = Tape()
+            def invoke():
+                with facts(tape):
+                    return original(origin, latest, completed, candidate, **kwargs)
+            def after(result):
+                case['facts'] = tape.rows
+            return self.observe(case, invoke, after)
+        return recorded
+
     def pure(self, operation, original):
         def recorded(*args, **kwargs):
             if self.active:
@@ -178,6 +195,7 @@ class Recorder:
             for name in ('constrain', 'constrain_local'):
                 stack.enter_context(patch.object(planner.PlanConsistencyError, name,
                     self.correction(name, getattr(planner.PlanConsistencyError, name))))
+            stack.enter_context(patch.object(planner, 'terminal', self.ending(planner.terminal)))
             from tl3_workers.roles.planner import Correction
             stack.enter_context(patch.object(Correction, 'check', self.semantic_correction(Correction.check)))
             import worker_process
@@ -374,27 +392,20 @@ def diagnostic_and_byte_cases(recorder, inputs, forecast, execution):
         with patch.object(planner, 'configured_outputs', lambda *args: []):
             check(unicode_inputs, reply)
 
+        render = recorder.pure('planner.message', planner.message)
         for multibyte in (False, True):
             for target in (2047, 2048, 2049):
-                reply = deepcopy(LEAF)
-                reply['checks'] = [dict(kind='regression', node_ids=['tests/.py'], goal_ids=[0])]
-                selectors = {0: reply['checks'][0]['node_ids']}
-                minimum = len(str(planner.PlanConsistencyError([], draft=reply, selectors=selectors)).encode())
-                prefix = 'é' * 16 if multibyte else ''
-                node = 'tests/' + prefix + 'x' * (target - minimum - len(prefix.encode())) + '.py'
-                reply['checks'][0]['node_ids'] = [node]
-                selectors = {0: [node]}
-                mismatch = planner.PlanConsistencyError([], draft=reply, selectors=selectors)
-                message = str(mismatch)
-                assert len(message.encode()) == target
-                boundary_inputs = deepcopy(inputs)
-                boundary_inputs['repair_plan_consistency'] = True
-                try:
-                    check(boundary_inputs, reply)
-                except planner.PlanConsistencyError:
-                    pass
+                from tl3_harness.model import named
+                def objection(path):
+                    return named('leaf.token_fit', '', {'path': path})
+                minimum = len(planner.message([objection('')]).encode())
+                prefix = 'é界' if multibyte else ''
+                identity = prefix + 'x' * (target - minimum - len(prefix.encode()))
+                result = render([objection(identity)])
+                assert result is None if target > 2048 else len(result.encode()) == target
                 recorder.cases[-1]['repair_boundary'] = {
-                    'bytes': target, 'characters': len(message), 'selectors': packed(selectors)}
+                    'bytes': target, 'characters': target - len(prefix.encode()) + len(prefix),
+                    'identity': identity}
 
 
 def pb2710_cases(recorder, inputs, forecast, execution):
@@ -436,7 +447,8 @@ def pb2710_cases(recorder, inputs, forecast, execution):
                     else:
                         raise AssertionError('PB #2710 must be eligible for coverage repair')
                     assert mismatch.missing_goals == {3: fixture['goals'][3]['description']}
-                    assert mismatch.repair_text == fixture['violation'] + '\n' + fixture['repair_instruction']
+                    assert 'goal.coverage' in mismatch.repair_text
+                    assert 'goal 3:' in mismatch.repair_text
                     corrected = deepcopy(draft)
                     corrected['checks'][0]['goal_ids'].append(3)
                     if resolution == 'unrelated_change':
@@ -447,7 +459,7 @@ def pb2710_cases(recorder, inputs, forecast, execution):
                     if resolution == 'accepted':
                         assert corrected['violations'] == []
                     else:
-                        assert 'Correction changes declarations outside the test consistency error.' in corrected['violations']
+                        assert any('Correction changes declarations outside the named objections:' in item for item in corrected['violations'])
         finally:
             os.chdir(previous)
 

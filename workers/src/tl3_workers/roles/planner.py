@@ -479,16 +479,19 @@ class Correction:
 
 def terminal(origin, latest, completed, candidate, *, attempted, unavailable, malformed=False):
     """Preserve the rejection when correction ends, including malformed corrections."""
-    reply = deepcopy(completed if completed is not None else latest.completed_reply)
-    remaining = list(latest.objections)
+    reply = deepcopy(completed if completed is not None else origin.completed_reply)
+    remaining = list(latest.objections) if latest is not None else []
+    if not remaining and reply['kind'] == 'split':
+        remaining = list(origin.objections)
     guards = []
     if attempted:
         if malformed:
             guards = [named('guard.variant', 'Planner correction failed reply validation.', {'field': 'reply'})]
         else:
             guards = origin.contract.check(candidate)
-        if reply['kind'] == 'cant_meet' or guards:
-            remaining = [*origin.objections, *remaining, *guards]
+        if reply['kind'] == 'cant_meet':
+            remaining = [*origin.objections, *remaining]
+        remaining.extend(guards)
     if not remaining:
         return reply, None
     # Original and final diagnostics remain complete even when the prompt clips
@@ -496,7 +499,7 @@ def terminal(origin, latest, completed, candidate, *, attempted, unavailable, ma
     reply['violations'] = list(dict.fromkeys([
         *(str(item) for item in origin.objections), *reply.get('violations', []),
         *(str(item) for item in guards)]))
-    if origin.missing_goals or latest.missing_goals:
+    if origin.missing_goals or latest is not None and latest.missing_goals:
         reply['violations'] = [item for item in reply['violations']
                                if not item.startswith('Planner coverage correction attempts:')]
         reply['violations'].append(f'Planner coverage correction attempts: {int(attempted)}.')
@@ -507,7 +510,7 @@ def terminal(origin, latest, completed, candidate, *, attempted, unavailable, ma
     if not attempted and unavailable == 'input_allowance':
         reply['violations'].append('Planner correction unavailable: the existing input allowance has no room for a correction turn.')
     evidence = {'first_objections': [wire(item) for item in origin.objections],
-                'final_objections': [wire(item) for item in latest.objections] if latest is not origin else [wire(item) for item in remaining],
+                'final_objections': [wire(item) for item in latest.objections] if latest is not None and not malformed else [],
                 'constraint_failures': [wire(item) for item in guards],
                 'attempts': int(attempted), 'unavailable_reason': None if attempted else unavailable,
                 'binding': {'base_sha': origin.contract.inputs.get('base_sha')}}

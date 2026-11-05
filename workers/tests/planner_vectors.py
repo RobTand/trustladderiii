@@ -97,6 +97,8 @@ def exception(error, *, observation=False):
             result['semantic'] = {'raw': deepcopy(error.raw_draft), 'completed': deepcopy(error.completed_reply),
                                   'objections': packed(error.objections), 'inputs': deepcopy(error.contract.inputs),
                                   'base_nodes': sorted(error.contract.base_nodes), 'base_sources': dict(error.contract.base_sources)}
+        if hasattr(error, 'contract') and hasattr(error.contract, 'manifest'):
+            result['manifest'] = deepcopy(error.contract.manifest)
         if hasattr(error, 'repair_text'):
             result['repair_text'] = error.repair_text
     if hasattr(error, 'result'):
@@ -308,6 +310,8 @@ def mismatch_from(value):
         error.base_sources = dict(semantic.get('base_sources', {}))
         error = planner.PlanConsistencyError.semantic(semantic['raw'], semantic['completed'],
             unpacked(semantic['objections']), semantic['inputs'], error)
+    if 'manifest' in value:
+        error.contract.manifest = deepcopy(value['manifest'])
     return error
 
 
@@ -329,7 +333,7 @@ def correction_case(case, mismatch=None, function=None):
 
 
 PURE = {
-    'planner': ('base_definition', 'proof_omissions', 'planner_schema_reply', 'proof_for_validation', 'execution_budget_details', 'edit_violations',
+    'planner': ('message', 'base_definition', 'proof_omissions', 'planner_schema_reply', 'proof_for_validation', 'execution_budget_details', 'edit_violations',
                 'mentions', 'asks_to_edit', 'valid_forcing', 'function'),
     'evidence': ('preflight', 'proof_applicability', 'subject_covers', 'branch_satisfies',
                  'branch_objections', 'forcing_capabilities', 'forcing_guidance'),
@@ -371,6 +375,15 @@ def pure_case(case, function=None, defined=None):
 def replay(case):
     if case['operation'] == 'check_reply':
         check_case(case)
+    elif case['operation'] == 'plan_terminal':
+        tape = Tape(case['facts'])
+        origin = mismatch_from(case['origin'])
+        latest = origin if case['same_error'] else mismatch_from(case['latest']) if case['latest'] is not None else None
+        with facts(tape):
+            result = outcome(lambda: planner.terminal(origin, latest,
+                deepcopy(case['completed']), deepcopy(case['candidate']), **case['kwargs']))
+        assert_same(result, case['outcome'], case['id'])
+        tape.exhausted()
     elif case['operation'] in ('constrain', 'constrain_local', 'repair_contract'):
         correction_case(case)
     else:
@@ -401,6 +414,7 @@ def strings(document):
                 for item in value:
                     diagnostics(item)
         diagnostics(result.get('reply', {}))
+        diagnostics(unpacked(result.get('return')))
         diagnostics(unpacked(result.get('args')))
         diagnostics(unpacked(result.get('kwargs')))
         error = result.get('error', {})
