@@ -346,3 +346,5 @@ fn mandatory_postmortem_model_and_reply() {
         }
     );
 }
+
+include!("quota_position_red.rs");
