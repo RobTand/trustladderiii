@@ -265,10 +265,12 @@ fn replay_bodies_are_the_production_bodies() {
     assert_eq!(count, 19);
 }
 
-/// Once by action key: every before/after-write crash restarts using only durable
-/// bytes and the upstream's surviving authenticated record, never a cached result.
+/// Conditional publication safety under reader_linearizability: every crash
+/// restarts using durable bytes and a fake that returns non-Absent for a
+/// publication present throughout the read. The real reader lacks this guarantee;
+/// branch t730-cc-pb-reader-race records the counterexample.
 #[test]
-fn publication_is_once_across_every_crash() {
+fn publication_is_not_repeated_with_reader_linearizability() {
     let state = initial(&[0], false, false, false);
     let uninterrupted = replay(false, state.clone(), 0, 0);
     assert!(

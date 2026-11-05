@@ -345,6 +345,10 @@ impl Client {
         if n == 254 {
             return Err(tl3_prismabuild::Error::Tool { code: Some(1) });
         }
+        // This fake encodes decide.rs's reader_linearizability precondition:
+        // a publication present throughout a read must return non-Absent.
+        // queue.rs does not establish it today: two claim/rollback cycles can
+        // miss both ready/claimed probe pairs. See t730-cc-pb-reader-race.
         let published = IO.with(|io| io.borrow().persisted.contains_key(&format!("pb:{key}")));
         let state = match n % 8 {
             0 if !published => return Ok(RecordRead::Absent),

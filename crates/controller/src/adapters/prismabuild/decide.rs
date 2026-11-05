@@ -70,7 +70,8 @@ pub fn fence(epoch: i64, accepted: i64) -> Option<Fence> {
     }
 }
 
-/// Submit a PrismaBuild job: Once by action key. Unbounded; no retry counter.
+/// Submit publication guard by action key. Unbounded; no retry counter.
+/// Supports the state-table Once rule only under reader_linearizability below.
 /// A capability is returned to the caller only after the shell's fence fsync.
 #[cfg_attr(verus_keep_ghost, verus_spec(out => ensures
     out == (matches!(record, Record::Absent) && fence_valid(fence)),
@@ -167,17 +168,28 @@ pub fn write_wait(equal: bool) -> bool {
 
 #[cfg(verus_keep_ghost)]
 verus! {
-    /// Submit Once: one restart step. PB's authentic durable record survives
-    /// publication and the durable Job binding retains its original action key.
-    /// Reapplying this step covers an unbounded number of crashes.
-    fn once_after_crash(record: Record, fenced: Fence)
-        requires !matches!(record, Record::Absent)
+    /// Named precondition: the reader returns non-Absent for a publication that
+    /// exists throughout the read. This predicate is its required result for
+    /// one such read; it does not prove that the reader meets that obligation.
+    /// NOT established for queue.rs today: two claim/rollback cycles can hide
+    /// ready at both ready probes and claimed at both claimed probes, returning
+    /// Absent despite continuous existence (CC-P review-r1-analysis.md).
+    /// Branch t730-cc-pb-reader-race records the real-reader counterexample.
+    spec fn reader_linearizability(record: Record) -> bool {
+        !matches!(record, Record::Absent)
+    }
+    /// Conditional Submit Once, assuming reader_linearizability and a durable
+    /// Job binding retaining its action key. One restart step composes across
+    /// an unbounded number of crashes only while that precondition holds.
+    fn publication_after_crash_with_reader_linearizability(record: Record, fenced: Fence)
+        requires reader_linearizability(record)
     {
         let again = publish(record, fenced);
         assert(!again);
     }
-    /// Once anti-vacuity: absent can publish and every surviving state blocks it.
-    fn once_witness() {
+    /// Conditional publication witness: absent allows publication; each possible
+    /// non-Absent result under reader_linearizability blocks publication.
+    fn publication_witness_with_reader_linearizability() {
         let token = fence(1,1).unwrap();
         let absent = publish(Record::Absent, token);
         let moving = publish(Record::Moving, token);
