@@ -48,5 +48,8 @@ pub mod completion;
 pub mod recovery;
 pub mod required;
 
+pub mod heal;
+pub mod plan;
+
 #[cfg(test)]
 mod observe_witness;

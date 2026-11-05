@@ -1139,6 +1139,98 @@ filegroup(
 )
 
 py_binary(
+    name = "pb_evidence_vectors",
+    srcs = ["pb_evidence_vectors.py"],
+    data = glob(["pb-evidence-vectors/*.json"]),  # keep
+    visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "//workers/src",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_evidence_vectors",
+    srcs = ["test_pb_evidence_vectors.py"],
+    deps = [
+        ":conftest",
+        ":pb_evidence_vectors",
+    ],
+)
+
+py_binary(
+    name = "prompt_identity_vectors",
+    srcs = ["prompt_identity_vectors.py"],
+    data = ["prompt-identity-vectors.json"],  # keep: --check reads its baseline beside __file__
+    visibility = ["//visibility:public"],
+    deps = ["//workers/src"],
+)
+
+tl3_py_test(
+    name = "test_prompt_identity",
+    srcs = ["test_prompt_identity.py"],
+    deps = [
+        ":conftest",
+        ":prompt_identity_vectors",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_schema_identity",
+    srcs = ["test_schema_identity.py"],
+    deps = [
+        ":conftest",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_library(
+    name = "planner_vectors",
+    srcs = ["planner_vectors.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+    ],
+)
+
+tl3_py_test(
+    name = "test_planner_vectors",
+    srcs = ["test_planner_vectors.py"],
+    deps = [
+        ":conftest",
+        ":planner_vectors",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_binary(
+    name = "planner_vectors_record",
+    testonly = True,
+    srcs = ["planner_vectors_record.py"],
+    data = glob([
+        "*.py",
+        "*.json.gz",
+    ]) + [
+        "//harness:project_files",
+        "//workers:runtime_files",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":checker_stub",
+        ":planner_fixtures",
+        ":planner_vectors",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_binary(
     name = "harness_io_schedule",
     srcs = ["harness_io_schedule.py"],
     visibility = ["//visibility:public"],

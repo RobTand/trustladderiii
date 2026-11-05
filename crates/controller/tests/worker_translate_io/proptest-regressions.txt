@@ -1,0 +1,2 @@
+# Persisted replay. Fixed seeds: 0x7602b2026, 0x7602b2027, 0x7602b2028.
+cc 959f10fd4ad2bdb6ae9daa679888f59d6862c2daa2b267dc5430908fb205fc60 # Base worker-arms replay.

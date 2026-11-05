@@ -11,9 +11,21 @@ pub(super) enum Entry {
     Alive(bool),
     Probe,
     Stall,
+    Progress(u8),
+    Quota(u8),
 }
 #[derive(Clone, Debug, Default)]
 pub(super) struct Schedule {
+    pub d2: bool,
+    pub announced: Option<u64>,
+    pub since: Option<u64>,
+    pub noticed: bool,
+    pub waiting: bool,
+    pub wait_ended: bool,
+    pub held: bool,
+    pub checks: bool,
+    pub not_found: bool,
+    pub recent_progress: bool,
     pub frames: Vec<(u8, u32)>,
     pub overrides: Vec<(String, usize, u8)>,
     pub writes: Vec<u8>,
@@ -174,10 +186,11 @@ impl Store {
             epoch: tl3_store::Epoch::try_from(1).unwrap(),
             kind: "mergify".into(),
             payload: json!(delivery(key)),
-            state: if word & 1 != 0 {
-                EffectState::Confirmed
-            } else {
-                EffectState::Uncertain
+            state: match word % 4 {
+                1 => EffectState::Confirmed,
+                2 => EffectState::Cancelling,
+                3 => EffectState::Failed,
+                _ => EffectState::Uncertain,
             },
             created_revision: tl3_store::Revision::ZERO,
             updated_revision: tl3_store::Revision::ZERO,
@@ -251,7 +264,7 @@ impl Adapter {
         Ok(read("probe", json!(d.key))? & 1 == 0)
     }
     pub fn look(&self, d: &Delivery) -> Result<Look> {
-        Ok(match read("look", json!(d.key))? % 7 {
+        Ok(match read("look", json!(d.key))? % 14 {
             0 => Look::Pending,
             1 => Look::Healthy,
             2 => Look::Alive {
@@ -262,45 +275,106 @@ impl Adapter {
                 reset_ms: now().saturating_add(1000),
             },
             5 => Look::Found(Box::new(completion(0))),
-            _ => Look::Alive {
+            6 => Look::Alive {
                 progress: adapters::mergify::REQUEUE_PROGRESS_PREFIX.into(),
             },
+            7 | 8 => Look::Waiting {
+                wait: tl3_store::ExternalWait {
+                    upstream: if with(|r| r.schedule.worker) {
+                        "prismabuild"
+                    } else {
+                        "other"
+                    }
+                    .into(),
+                    key: "outside-job".into(),
+                },
+                checkout: "checkout".into(),
+            },
+            9 => Look::Found(Box::new(completion(1))),
+            10 => Look::Found(Box::new(completion(2))),
+            11 => Look::Found(Box::new(completion(3))),
+            12 => Look::Found(Box::new(queue_completion(true))),
+            _ => Look::Found(Box::new(queue_completion(false))),
         })
     }
     pub fn stop_stalled(&self, d: &Delivery) -> Result<Completion> {
         let word = read("stop_stalled", json!(d.key))?;
-        Ok(completion(word))
+        Ok(completion((word % 4) ^ 2))
     }
     pub fn app_login(&self, installation: u64) -> Option<String> {
         let _ = read("app_login", json!(installation));
         Some("factory[bot]".into())
     }
-    pub fn quota_resume_ms(&self, _: &Delivery, announced: u64, _: u64) -> Result<u64> {
-        read("quota_resume", json!(announced))?;
-        Ok(announced)
+    pub fn quota_resume_ms(&self, _: &Delivery, announced: u64, now: u64) -> Result<u64> {
+        let word = read("quota_resume", json!(announced))?;
+        Ok(match word % 3 {
+            1 => now,
+            2 => now.saturating_add(120_000),
+            _ => announced,
+        })
     }
     pub fn resume_after_quota(&self, _: &Delivery) -> Result<Option<Completion>> {
         let word = read("resume_quota", Value::Null)?;
-        Ok(Some(completion(word)))
+        Ok((word % 4 != 1).then(|| completion(word % 4)))
     }
-    pub fn watch_wait(&self, _: &Delivery, _: Option<&tl3_store::ExternalWait>) -> Result<()> {
-        read("watch_wait", Value::Null)?;
-        Ok(())
+    pub fn watch_wait(&self, d: &Delivery, wait: Option<&tl3_store::ExternalWait>) -> Result<()> {
+        read("watch_wait.read", json!(wait))?;
+        write("watch_wait", json!([d.key, wait]), |r| {
+            r.files
+                .insert("external-watch".into(), serde_json::to_vec(&wait).unwrap());
+        })
     }
     pub fn wait_record(&self, _: &str, _: &std::path::Path) -> Result<executor::WaitRecord> {
-        read("wait_record", Value::Null)?;
-        Ok(executor::WaitRecord::Ended)
+        let word = read("wait_record", Value::Null)?;
+        Ok(if word & 1 != 0 {
+            executor::WaitRecord::Alive
+        } else {
+            executor::WaitRecord::Ended
+        })
     }
 }
+fn queue_completion(setup: bool) -> Completion {
+    use tl3_controller::adapters::mergify::{Evidence, QueueFact};
+    Completion::confirmed(vec![Observation::Queue(QueueFact {
+        repository: repository(),
+        number: 100,
+        evidence: if setup {
+            Evidence::ChecksUnavailable {
+                permissions: vec!["checks".into()],
+            }
+        } else {
+            Evidence::Merged {
+                head: "head".into(),
+                checks_passed: true,
+            }
+        },
+    })])
+}
 fn completion(code: u8) -> Completion {
-    Completion::confirmed(if code & 1 == 0 {
+    let mut c = Completion::confirmed(if code >= 2 {
         vec![Observation::Kernel(Event::Fact {
             node: NodeId(0),
             fact: Fact::UpstreamStalled,
         })]
     } else {
         vec![]
-    })
+    });
+    if code & 1 != 0 {
+        c.progress = Some(executor::ProgressToken::Mergify(
+            tl3_controller::adapters::mergify::Progress {
+                merged_at: Some("checkpoint".into()),
+                merge_commit_sha: None,
+                queue_check: None,
+            },
+        ));
+    }
+    c
+}
+pub(super) fn held() -> bool {
+    with(|r| r.schedule.held)
+}
+pub(super) fn checks() -> bool {
+    with(|r| r.schedule.checks)
 }
 pub(super) fn world() -> World {
     with(|r| r.world.clone())
@@ -360,9 +434,23 @@ fn initial(s: &Schedule) -> AllowanceState {
     if s.incident {
         a.incident = Some("1.read".into());
     }
-    if s.quota {
-        a.quota_ms = Some(1);
+    a.quota_ms = s.announced.or(s.quota.then_some(1));
+    a.unserved_since_ms = s.since;
+    a.ladder_out_noticed = s.noticed;
+    a.wait_ended = s.wait_ended;
+    if s.waiting {
+        a.external_wait = Some(tl3_store::ExternalWait {
+            upstream: "prismabuild".into(),
+            key: "outside-job".into(),
+        });
     }
+    if s.not_found {
+        a.failure = Some("not_found".into());
+    }
+    if s.recent_progress {
+        a.progress_ms = 1_000_000;
+    }
+
     if s.progress {
         a.progress = Some(adapters::mergify::REQUEUE_PROGRESS_PREFIX.into());
     }
@@ -397,6 +485,14 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     node.incident_needs_rob = node.waiting_incident && s.needs_rob;
     world.nodes.push(node);
     let mut files = BTreeMap::new();
+    files.insert(
+        "allowances/effect-1".into(),
+        serde_json::to_vec(&state).unwrap(),
+    );
+    files.insert(
+        "watches/effect-1".into(),
+        serde_json::to_vec(&json!({"key":"effect-1"})).unwrap(),
+    );
     let node = &world.nodes[0];
     files.insert("kernel-state".into(), serde_json::to_vec(&json!({"phase":node.phase,"waiting_incident":node.waiting_incident,"run_incidents":node.run_incidents,"needs_rob":node.incident_needs_rob})).unwrap());
     if s.incident {
