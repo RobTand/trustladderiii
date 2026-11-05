@@ -62,7 +62,7 @@ pub(super) struct Controller {
 }
 pub(super) struct Store;
 impl Store {
-    fn comment_retired(&mut self, id: &str) -> Result<bool> {
+    pub(super) fn comment_retired(&mut self, id: &str) -> Result<bool> {
         let reply = with(|r| {
             let v = r.tape.get(r.run.reads).copied().unwrap_or(0) % 4;
             r.run.reads += 1;
