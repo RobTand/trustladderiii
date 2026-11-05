@@ -39,10 +39,12 @@ def checker_state_directory(tmp_path_factory):
 
     # Keep real fsync/rename for the cursor, without shared-disk durability waits
     # for ephemeral test coordination. Executables stay in pytest scratch.
-    memory = Path("/dev/shm")
-    directory = memory if memory.is_dir() else tmp_path_factory.getbasetemp()
-    with tempfile.TemporaryDirectory(prefix="tl3-checker-", dir=directory) as state:
-        yield Path(state)
+    try:
+        state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir="/dev/shm")
+    except OSError:
+        state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir=tmp_path_factory.getbasetemp())
+    with state as directory:
+        yield Path(directory)
 
 
 @pytest.fixture(autouse=True)

@@ -33,7 +33,8 @@ def test_checker_state_falls_back_to_pytest_scratch(tmp_path_factory, monkeypatc
 
     def allocate_state(*args, **kwargs):
         if Path(kwargs["dir"]) == memory:
-            raise OSError(unavailable, "injected unavailable shared memory")
+            raise OSError(errno.ENOENT if unavailable == "absent" else unavailable,
+                          "injected unavailable shared memory")
         return allocate(*args, **kwargs)
 
     monkeypatch.setattr(Path, "is_dir", memory_exists)
