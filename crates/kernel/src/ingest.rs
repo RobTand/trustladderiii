@@ -8,11 +8,13 @@ pub(super) fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option
     -> (result: ()) [
     requires i < old(w).nodes@.len(),
         node_headroom(old(w).nodes@[i as int]),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Ingesting
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, 0, 0),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(reply_bounds);] {
+] proof [reveal(distance); reveal(reply_bounds);] {
     kernel_snapshot! { before_ingest = *w }
     finish_ingest_node(&mut w.nodes[i], size, early_end);
     w.withhold_dependency_credit(i);
@@ -59,11 +61,13 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(distance); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);

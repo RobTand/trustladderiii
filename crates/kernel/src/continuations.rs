@@ -14,7 +14,11 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         old(w).nodes@[i as int].credit.withheld ==> q.cost == 0,
         old(w).nodes@[i as int].credit.added as int + 255 <= u64::MAX as int,
         old(w).nodes@[i as int].credit.spent < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).nodes@[i as int].phase == Phase::AwaitingRob
+            && old(w).nodes@[i as int].question == Some(q) && !old(w).nodes@[i as int].paused
+            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -36,7 +40,7 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] {
+] proof [reveal(distance);] {
     let m = &mut w.nodes[i];
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;

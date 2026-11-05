@@ -11,7 +11,10 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (fact_progress_input(*old(w), i as int, fact)
+            ==> progress_measure(*final(w)) < progress_measure(*old(w))
+                && dependencies::edges_indexable(*final(w))),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -42,6 +45,10 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             && match fact { Fact::Dependency { target, .. } =>
                 dependencies::delivery_changed(*old(w), *final(w), i as int, target), _ => false }),
 ] proof [reveal(dependencies::dependency_frame);] {
+    kernel_snapshot! { before_fact = *w }
+    kernel_proof! {
+        if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
+    }
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
@@ -50,6 +57,15 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             checks_passed,
         } => pr_merged(w, i, head, checks_passed, out),
         _ => fact_transition(w, i, fact, out),
+    }
+    kernel_proof! {
+        if fact_progress_input(before_fact@, i as int, fact) {
+            if !(fact is Dependency) {
+                assert(w.nodes@ =~= before_fact@.nodes@.update(i as int, w.nodes@[i as int]));
+                progress::lift_node_progress(before_fact@, *w, i as int);
+                dependencies::indexability_frame(before_fact@, *w);
+            }
+        }
     }
 }
 }
@@ -65,7 +81,12 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (fact == Fact::IncidentCleared { by_rob: true }
+            && old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && !(old(w).nodes@[i as int].phase is Closed)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -87,7 +108,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+] proof [reveal(distance); reveal(retry_bounds);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
@@ -192,7 +213,12 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && old(w).nodes@[i as int].phase == Phase::Queued && !old(w).nodes@[i as int].paused
+            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+            && old(w).nodes@[i as int].question.is_none()
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -217,7 +243,7 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
             <= old(w).nodes@[i as int].credit.earned as int + 1,
 
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
+] proof [reveal(distance);] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
         return;

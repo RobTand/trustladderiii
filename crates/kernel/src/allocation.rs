@@ -67,7 +67,15 @@ pub(super) fn abandon_operation(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// #771: successful completion resets failures and preserves allocation counters.
 pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures *final(m) == (Node { run: None, job: None, pool: false,
+        run_failures: 0, run_incidents: 0,
+        effect: match old(m).effect {
+            Some(e) => Some(InFlight { cancelling: e.cancelling
+                || matches!(e.kind, EffectKind::StartRun(_)
+                    | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
+            None => None,
+        }, ..*old(m) }),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
         final(m).run_failures == 0, final(m).run_incidents == 0,
@@ -92,7 +100,10 @@ kernel_fn! {
 pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures (!old(m).paused && !old(m).waiting_incident && old(m).effect.is_none()
+            && !(old(m).phase is Closed || old(m).phase is Stopping)
+            ==> distance(*final(m)) < distance(*old(m))),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int == old(m).generation as int
             + if old(m).phase is Closed || old(m).phase is Stopping { 0int } else { 1int },
@@ -110,7 +121,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
-] {
+] proof [reveal(distance);] {
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {

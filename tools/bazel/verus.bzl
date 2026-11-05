@@ -78,7 +78,7 @@ def verus_proofs():
         # Every body called by step is checked in one of these groups. Module
         # filters bound solver context; exact counts refuse empty selections.
         groups = {
-            "kernel": ("kernel", 107),
+            "kernel": ("kernel", 112),
             "events": ("kernel::events", 1),
             "allocation": ("kernel::allocation", 10),
             "reply_admission": ("kernel::reply_admission", 4),
@@ -92,8 +92,9 @@ def verus_proofs():
             "command_helpers": ("kernel::command_helpers", 2),
             "continuations": ("kernel::continuations", 1),
             "checking": ("kernel::checking", 15),
-            "dependencies": ("kernel::dependencies", 32),
-            "progress": ("kernel::progress", 7),
+            "dependencies": ("kernel::dependencies", 35),
+            "progress": ("kernel::progress", 10),
+            "progress_global": ("kernel::progress_global", 9),
             "ranks": ("kernel::ranks", 30),
             "footprint": ("kernel::footprint", 21),
             "ids": ("kernel::ids", 6),

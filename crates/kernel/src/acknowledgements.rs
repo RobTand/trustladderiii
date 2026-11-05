@@ -9,7 +9,12 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
+                Some(e) => e.seq == seq, None => false,
+            }) ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
             ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
@@ -30,7 +35,7 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
+] proof [reveal(distance);] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
         return;
@@ -56,7 +61,14 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+            ==> distance(*final(m)) == distance(*old(m))),
+        (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
+            && (!old(m).paused || old(m).phase is Stopping)
+            && (current_item(*old(m)) == Some(Item::Do(kind))
+                || current_item(*old(m)) == Some(Item::Teardown(kind)))
+            ==> distance(*final(m)) + 2 <= distance(*old(m))),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m))
             && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
             ==> settle_shape(*final(m))),
@@ -66,7 +78,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).question == old(m).question,
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
         final(m).last_cmd == old(m).last_cmd,
-] {
+] proof [reveal(distance);] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -91,7 +103,14 @@ kernel_fn! {
 fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
         kind == EffectKind::StopRun ==> !old(m).pool,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+            ==> distance(*final(m)) == distance(*old(m))),
+        (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
+            && (!old(m).paused || old(m).phase is Stopping)
+            && (current_item(*old(m)) == Some(Item::Do(kind))
+                || current_item(*old(m)) == Some(Item::Teardown(kind)))
+            ==> distance(*final(m)) + 2 <= distance(*old(m))),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m))
             && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
             ==> settle_shape(*final(m))),
@@ -102,7 +121,7 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).fx_failures == old(m).fx_failures,
         final(m).fx_incidents == old(m).fx_incidents,
         final(m).last_cmd == old(m).last_cmd,
-] {
+] proof [reveal(distance);] {
     if !kind.starts_operation() {
         if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
             if k == kind {

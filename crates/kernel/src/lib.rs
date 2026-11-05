@@ -63,6 +63,13 @@ mod dependencies;
 pub use dependencies::Dependency;
 #[cfg(verus_keep_ghost)]
 mod progress;
+#[cfg(verus_keep_ghost)]
+use progress::progress_measure;
+#[cfg(verus_keep_ghost)]
+mod progress_global;
+include!("progress_specs.rs");
+#[cfg(verus_keep_ghost)]
+use progress_global::*;
 mod footprint;
 include!("headroom.rs");
 mod ids;
@@ -1431,12 +1438,33 @@ impl World {
         total
     }
 
+    kernel_fn! {
     /// One outside event that moves the world closer to done: a successful
     /// reply, a confirmation, a fact, or one of Rob's answers. Kani proves it
     /// always exists while a node is open, and that it lowers `measure`.
-    pub fn witness(&self) -> Option<Event> {
-        for (i, n) in self.nodes.iter().enumerate() {
+    /// #771: the same witness branches, verified against their exact event keys.
+    /// Node::next_command_id and the controller's checked steering constructors
+    /// enforce the fresh-command scope. Raw kernel command exhaustion remains
+    /// characterized by tests/progress_limits.rs, outside this theorem's scope.
+    pub fn witness(&self) -> (result: Option<Event>) [
+        requires world_checked(*self), fresh_commands(*self),
+        ensures witness_selection(*self, result),
+    ] proof [reveal(world_checked); reveal(fresh_commands); reveal(witness_selection);] {
+        let mut i = 0usize;
+        kernel_while! { (i < self.nodes.len()) [
+            invariant i <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
+                world_checked(*self),
+                forall|j: int| 0 <= j < self.nodes@.len() ==> self.nodes@[j].last_cmd < u64::MAX,
+                forall|j: int| 0 <= j < i ==> !outside_available(*self, j),
+            decreases self.nodes.len() - i,
+        ] {
+            let n = &self.nodes[i];
+            kernel_proof! {
+                reveal(world_checked);
+                dependencies::prerequisite_definition(*self, NodeId(i as u64));
+            }
             if n.phase.is_closed() {
+                i += 1;
                 continue;
             }
             let node = NodeId(i as u64);
@@ -1479,13 +1507,7 @@ impl World {
                 });
             }
             if n.phase == Phase::Unplanned && !self.dependencies_delivered(node) {
-                let dependency = self
-                    .dependencies
-                    .iter()
-                    .find(|d| {
-                        d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
-                    })
-                    .unwrap();
+                let dependency = self.first_undelivered(node).unwrap();
                 if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
                     return Some(Event::Command {
                         node,
@@ -1530,7 +1552,7 @@ impl World {
                         Phase::Rebasing => Reply::RebaseClean {
                             head: n.head.unwrap_or(HeadId(0)),
                         },
-                        _ => continue,
+                        _ => { i += 1; continue; },
                     };
                     return Some(Event::Reply {
                         node,
@@ -1547,10 +1569,12 @@ impl World {
                     return Some(Event::Fact { node, fact });
                 }
                 // Waiting on the gate or the pool: another node holds what it needs.
-                _ => continue,
+                _ => {},
             }
-        }
+            i += 1;
+        } }
         None
+    }
     }
 
     /// Everything the kernel promises about a world at rest: consistent and settled.
@@ -1696,6 +1720,7 @@ kernel_fn! {
 pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
     requires world_checked(world), world_headroom(world), storage_ordered(world),
     ensures step_budget(world, result.0),
+        (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_proof! { reveal(storage_ordered); checked_reserves(world); }
     let (world, out, _) = step_with_passes(world, event);
@@ -1719,10 +1744,11 @@ kernel_fn! {
 pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
     requires step_scope(world),
     ensures step_budget(world, result.0),
+        (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_snapshot! { before_step = world }
     let mut outbox = Outbox::new();
-    kernel_proof! { reveal(step_scope); reveal(empty_outbox); }
+    kernel_proof! { reveal(step_scope); reveal(empty_outbox); reveal(progress_input); }
     apply(&mut world, event, &mut outbox);
     kernel_proof! {
         reveal(world_headroom);
@@ -1744,6 +1770,9 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     let passes = settle(&mut world, &mut out, None);
     kernel_proof! {
         reveal(step_budget);
+        if progress_input(before_step@, event) {
+            progress::settle_measure(after_apply@, world);
+        }
         assert forall|j: int| 0 <= j < before_step@.nodes@.len() implies
             world.nodes@[j].generation as int <= before_step@.nodes@[j].generation as int + GENERATION_STEP_BUDGET
                 && world.nodes@[j].next_seq as int <= before_step@.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
@@ -1823,6 +1852,10 @@ spec fn node_checked(w: World, n: Node) -> bool {
             && (n.pos == items(n.phase).len() ==> n.phase == Phase::Publishing || n.phase is Stopping))
         && (holding(n.phase) ==> n.holds)
         && (n.holds ==> holding(n.phase) || (n.phase is Stopping && n.pos <= RELEASE_STEP))
+        && (n.phase == Phase::Queued ==> n.pr_open)
+        && (n.pr_open ==> n.had_pr)
+        && (n.merged.is_some() ==> n.phase == Phase::Stopping(Outcome::Merged)
+            || n.phase == Phase::Closed(Outcome::Merged))
         && (n.pool ==> n.run.is_some() && n.phase != Phase::Rebasing)
         && (match n.run {
             Some(g) => (current_item(n) == Some(Item::Await) && g == n.generation
@@ -1873,9 +1906,11 @@ spec fn node_checked(w: World, n: Node) -> bool {
 }
 
 /// #771: immutable file storage is normalized by the executable interner.
+#[verifier::opaque]
 pub closed spec fn storage_ordered(w: World) -> bool { footprint::ordered_table(w) }
 
 /// #771: progress facts obtained by running the production consistency checker.
+#[verifier::opaque]
 pub closed spec fn world_checked(w: World) -> bool {
     w.gates@.len() > 0 && w.pool_capacity > 0
         && (forall|j: int| 0 <= j < w.gates@.len() ==> w.gates@[j].w > 0)
@@ -1883,11 +1918,31 @@ pub closed spec fn world_checked(w: World) -> bool {
         && dependencies::dependencies_checked(w)
 }
 
+/// #805: the production checker projection, exposed to its proof modules.
+proof fn world_checked_definition(w: World)
+    ensures world_checked(w) == (w.gates@.len() > 0 && w.pool_capacity > 0
+        && (forall|j: int| 0 <= j < w.gates@.len() ==> w.gates@[j].w > 0)
+        && (forall|j: int| 0 <= j < w.nodes@.len() ==> node_checked(w, w.nodes@[j]))
+        && dependencies::dependencies_checked(w)),
+{
+    reveal(world_checked);
+}
+
+
 /// Q30/Q39 / #771: obstruction proof needs no sufficient internal move. The
 /// real is_settled and settle bodies both establish this predicate.
+#[verifier::opaque]
 pub closed spec fn settled_world(w: World) -> bool {
     forall|i: int| 0 <= i < w.nodes@.len() ==> !movable(w, i)
 }
+
+/// #805: the production checker projection, exposed to its proof modules.
+proof fn settled_world_definition(w: World)
+    ensures settled_world(w) == (forall|i: int| 0 <= i < w.nodes@.len() ==> !movable(w, i)),
+{
+    reveal(settled_world);
+}
+
 
 /// #771: the production checker and enforced reserves supply the step scope.
 proof fn checked_reserves(w: World)

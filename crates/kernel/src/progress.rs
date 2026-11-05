@@ -114,4 +114,51 @@ pub(super) proof fn delivery_rank_delta(before: World, after: World, i: int, k: 
     assert(edge_weight(after.nodes@, after.dependencies@[k]) == 0);
     reveal(progress_measure);
 }
+
+/// #805: closure can remove prerequisite debt, and cannot create any.
+proof fn edge_total_compare(before: Seq<Node>, after: Seq<Node>, edges: Seq<Dependency>, end: nat)
+    requires end <= edges.len(), forall|j: int| 0 <= j < end
+        ==> edge_weight(after, edges[j]) <= edge_weight(before, edges[j]),
+    ensures edge_total(after, edges, end) <= edge_total(before, edges, end),
+    decreases end,
+{
+    reveal(edge_total);
+    if end > 0 { edge_total_compare(before, after, edges, (end - 1) as nat); }
+}
+
+/// #805: lift one actual node decrease with the untouched prerequisite table.
+pub(super) proof fn lift_node_progress(before: World, after: World, i: int)
+    requires 0 <= i < before.nodes@.len(),
+        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
+        after.dependencies@ == before.dependencies@, dependencies::edges_indexable(before),
+        (before.nodes@[i].phase is Closed ==> after.nodes@[i].phase is Closed),
+        distance(after.nodes@[i]) < distance(before.nodes@[i]),
+    ensures progress_measure(after) < progress_measure(before),
+{
+    reveal(progress_measure);
+    reveal(edge_weight);
+    dependencies::indexable_definition(before);
+    sum_update(before.nodes@, i, after.nodes@[i]);
+    assert forall|j: int| 0 <= j < before.dependencies@.len() implies
+        edge_weight(after.nodes@, before.dependencies@[j]) <= edge_weight(before.nodes@, before.dependencies@[j]) by {
+        let owner = before.dependencies@[j].node.0 as int;
+        if owner != i { assert(after.nodes@[owner] == before.nodes@[owner]); }
+    }
+    edge_total_compare(before.nodes@, after.nodes@, before.dependencies@, before.dependencies@.len());
+}
+
+/// #805: the real settle relation preserves rows and never reopens an owner.
+pub(super) proof fn settle_measure(before: World, after: World)
+    requires settle_chain(before, after), dependencies::edges_indexable(before),
+        forall|j: int| 0 <= j < before.nodes@.len()
+            ==> (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed),
+    ensures progress_measure(after) <= progress_measure(before),
+{
+    reveal(progress_measure);
+    reveal(edge_weight);
+    dependencies::indexable_definition(before);
+    assert forall|j: int| 0 <= j < before.dependencies@.len() implies
+        edge_weight(after.nodes@, before.dependencies@[j]) <= edge_weight(before.nodes@, before.dependencies@[j]) by {}
+    edge_total_compare(before.nodes@, after.nodes@, before.dependencies@, before.dependencies@.len());
+}
 }
