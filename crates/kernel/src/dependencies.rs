@@ -242,7 +242,7 @@ fn update_allowed(previous: DependencyStatus, rejected: bool, incoming: Dependen
     !rejected && match previous {
         DependencyStatus::Pending => true,
         DependencyStatus::Delivered => false,
-        DependencyStatus::Abandoned => incoming == DependencyStatus::Delivered,
+        DependencyStatus::Abandoned => false,
     }
 }
 }

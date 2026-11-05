@@ -63,8 +63,9 @@ impl PrerequisiteEvidence {
 }
 
 /// Rob, 2026-11-05, #839 (Q27): truly closed prerequisites satisfy admission.
-fn kernel_status(_kind: PrerequisiteKind, status: DependencyStatus) -> DependencyStatus {
+fn kernel_status(kind: PrerequisiteKind, status: DependencyStatus) -> DependencyStatus {
     match status {
+        DependencyStatus::Abandoned if kind == PrerequisiteKind::PullRequest => DependencyStatus::Pending,
         DependencyStatus::Abandoned => DependencyStatus::Delivered,
         other => other,
     }
