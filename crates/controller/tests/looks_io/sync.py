@@ -6,7 +6,8 @@ ROOT = Path(__file__).resolve().parents[4]
 HERE = Path(__file__).resolve().parent
 BASE = 'cdacce8f99c28ca8dba8f5f76831b77b4dfcd836'
 METHODS = ['look_state', 'look_alive', 'finish_stall', 'rearm', 'look_failed',
-           'look_observations', 'probe_passed', 'save_allowance', 'allowance_row', 'record_progress']
+           'look_observations', 'probe_passed', 'save_allowance', 'allowance_row', 'record_progress',
+           'progress_allowance', 'quota_allowance', 'expire_model_quotas']
 FUNCTIONS = ['incident_needs_rob', 'incident_id', 'incident_note', 'failure_class',
              'incident_summary', 'queue_command_detail']
 
@@ -28,6 +29,8 @@ def main():
         if name == 'current':
             text += function(source, 'incident_view', False)
             text += function(source, 'stall_upstream', False)
+            text += function(source, 'look_kind', False)
+            text += function(source, 'wait_status', False)
         (HERE / (name + '.rs')).write_text(text)
     types = base[base.index('#[derive(Clone, Debug, Serialize, Deserialize)]'):base.index('pub(crate) fn resolve_effect_incidents')]
     # The signature's serde boundary remains real; AttachedIncident is unused here.
