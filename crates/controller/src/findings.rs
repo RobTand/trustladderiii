@@ -1,6 +1,22 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// #838 / Q7: the store boundary guarantees an array of finding objects.
+/// Keep the remaining fields as JSON: older evidence may contain nulls,
+/// extensions and number representations that narrowing would rewrite.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReviewFixes {
+    pub findings: Vec<serde_json::Map<String, Value>>,
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, Value>,
+}
+
+impl ReviewFixes {
+    pub fn parse(value: Value) -> crate::Result<Self> {
+        serde_json::from_value(value).map_err(|_| crate::Error::ReviewFixes)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FailedTest {
     pub test: String,

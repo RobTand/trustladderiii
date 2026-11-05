@@ -1051,12 +1051,31 @@ fn malformed_review_fixes(mut record: serde_json::Value) {
     );
     // Let the existing adapter record its single posting attempt.
     assert!(c.drive_once().unwrap());
-    c.observe("same-corrupt-plan", observation).unwrap();
+    c.observe("same-corrupt-plan", observation.clone()).unwrap();
     assert!(c.drive_once().unwrap());
     assert_eq!(
         incidents(&mut c).len(),
         1,
         "identical evidence must deduplicate"
+    );
+    let mut changed_plan = observation;
+    if let Observation::CheckPlan { sha, .. } = &mut changed_plan {
+        *sha = "c".repeat(40);
+    }
+    c.observe("changed-plan-same-corruption", changed_plan)
+        .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        incidents(&mut c).len(),
+        1,
+        "deduplication belongs to this request's record"
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "check_plans" && r.id == format!("0:{}", "a".repeat(40)))
     );
     c.observe(
         "other-progress",

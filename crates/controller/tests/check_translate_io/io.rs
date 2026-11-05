@@ -120,7 +120,7 @@ impl Feedback {
     }
 }
 #[derive(Clone, Copy, Debug)]
-struct Cut {
+pub(super) struct Cut {
     write: usize,
     after: bool,
 }
@@ -346,7 +346,7 @@ fn snapshot(step: &Step) -> Snapshot {
             .unwrap_or_default(),
     }
 }
-fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
+pub(super) fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
     static HOOK: std::sync::Once = std::sync::Once::new();
     HOOK.call_once(|| {
         let old = std::panic::take_hook();
@@ -484,14 +484,22 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
     }
     ACTIVE.with(|r| r.borrow_mut().take().unwrap().run)
 }
+fn same_bytes(old: &Run, new: &Run) {
+    assert_eq!(serde_json::to_vec(&old.staged_rows).unwrap(), serde_json::to_vec(&new.staged_rows).unwrap());
+    assert_eq!(serde_json::to_vec(&old.persisted_rows.iter().collect::<Vec<_>>()).unwrap(), serde_json::to_vec(&new.persisted_rows.iter().collect::<Vec<_>>()).unwrap());
+}
 pub(super) fn compare(s: &Schedule) -> Run {
     let old = run(s, false, None);
-    assert_eq!(old, run(s, true, None), "schedule {s:?}");
+    let new = run(s, true, None);
+    same_bytes(&old, &new);
+    assert_eq!(old, new, "schedule {s:?}");
     for write in 0..old.writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
             let old_cut = run(s, false, cut);
-            assert_eq!(old_cut, run(s, true, cut), "cut {cut:?}; schedule {s:?}");
+            let new_cut = run(s, true, cut);
+            same_bytes(&old_cut, &new_cut);
+            assert_eq!(old_cut, new_cut, "cut {cut:?}; schedule {s:?}");
             assert_eq!(old_cut.results.last().unwrap(), &json!({"crash":true}));
         }
     }

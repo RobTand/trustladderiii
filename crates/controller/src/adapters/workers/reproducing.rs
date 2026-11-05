@@ -181,3 +181,40 @@ mod reply_defects {
         );
     }
 }
+
+#[cfg(test)]
+mod stored_evidence_tests {
+    use super::*;
+    use crate::findings::ReviewFixes;
+
+    /// #838: every producer branch survives the store boundary byte for byte.
+    #[test]
+    fn producer_evidence_round_trips_without_rewriting_bytes() {
+        let head = "a".repeat(40);
+        let proof = json!({"subjects":[], "observer_support":[], "red_message":"empty greeting"});
+        for mappings in [
+            json!([]),
+            json!([{"finding_id":"f", "reason":"文書の訂正"}]),
+            json!([{"finding_id":"f", "reason":null}]),
+            json!([{"finding_id":"f", "tests":["test_greeting.py::test_empty"], "proof":proof}]),
+            json!([{"finding_id":"f", "tests":["test_greeting.py::test_empty"], "proof":proof}, {"finding_id":"g", "reason":"documentation"}]),
+        ] {
+            let feedback = Value::Array(mappings.as_array().unwrap().iter().map(|m| {
+                json!({"kind":"review_finding", "id":m["finding_id"], "reviewed_sha":head, "report":"fix 🦀"})
+            }).collect());
+            let reply = json!({"reproductions":mappings});
+            let current = crate::findings::current_review(&feedback, 1, Some(&head));
+            let mut value = check(&reply, current).unwrap().evidence;
+            for stored in [false, true] {
+                if stored {
+                    value["head_sha"] = json!(head);
+                }
+                let typed = ReviewFixes::parse(value.clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&json!(typed)).unwrap(),
+                    serde_json::to_vec(&value).unwrap()
+                );
+            }
+        }
+    }
+}

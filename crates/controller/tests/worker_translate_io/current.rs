@@ -96,7 +96,7 @@ impl Shell<'_> {
                 if role == "planner" && reply["kind"] == "leaf" {
                     let checks = reply["checks"]
                         .as_array()
-                        .unwrap()
+                        .ok_or(Error::Invalid("planner checks must be an array"))?
                         .iter()
                         .enumerate()
                         .map(|(index, check)| {
@@ -120,7 +120,7 @@ impl Shell<'_> {
                             Error::Invalid(message) => {
                                 reply["violations"]
                                     .as_array_mut()
-                                    .unwrap()
+                                    .ok_or(Error::Invalid("planner violations must be an array"))?
                                     .push(json!(message));
                                 mapped = adapters::workers::protocol::MappedReply::Kernel(
                                     Reply::PlanCantMeet,
@@ -343,7 +343,8 @@ impl Shell<'_> {
                         if !worker::maker_self_check(same_goals, same_count, handover_valid) {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
-                            if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
+                            let mut evidence = findings::ReviewFixes::parse(fixes.evidence)?;
+                            if !evidence.findings.is_empty() {
                                 let mut run = check_run(snapshot, node, Some(&sha))?
                                     .or(check_run(snapshot, node, previous)?)
                                     .ok_or(Error::Invalid(
@@ -368,11 +369,12 @@ impl Shell<'_> {
                                     format!("{}:{sha}", node.0),
                                     json!(run),
                                 ));
-                                let mut evidence = fixes.evidence;
-                                evidence["head_sha"] = json!(sha);
-                                commit
-                                    .rows
-                                    .push(put("review_fixes", node.0.to_string(), evidence));
+                                evidence.fields.insert("head_sha".into(), json!(sha));
+                                commit.rows.push(put(
+                                    "review_fixes",
+                                    node.0.to_string(),
+                                    json!(evidence),
+                                ));
                             }
                             Reply::MakerDone {
                                 head: self.head(node, &sha)?,

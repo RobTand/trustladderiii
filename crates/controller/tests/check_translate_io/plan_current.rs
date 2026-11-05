@@ -17,33 +17,35 @@ impl Shell<'_> {
                 request(snapshot, node)?;
                 if let Some(n) = world.nodes.get(node.0 as usize)
                     && n.phase == tl3_kernel::Phase::Rebasing
-                    && let Some(mut fixes) = self
+                    && let Some(fixes) = self
                         .store
                         .worker_document(&node.0.to_string(), "review_fixes")?
-                    && let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
+                {
+                    let mut fixes = findings::ReviewFixes::parse(fixes)?;
+                    if let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
                         set_reviewed,
                         replace_tests,
                     } = tl3_controller_core::translate_checks::plan_update(
-                        fixes["head_sha"].as_str() == commit_sha(snapshot, n.head),
+                        fixes.fields.get("head_sha").and_then(Value::as_str)
+                            == commit_sha(snapshot, n.head),
                         run.reviewed_sha.is_some(),
                         run.reproducing_unavailable.is_some(),
-                    )
-                {
-                    fixes["head_sha"] = json!(sha);
-                    if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
-                        fixes["reviewed_sha"] = json!(reviewed);
-                    }
-                    if replace_tests && let Some(reason) = &run.reproducing_unavailable {
-                        for finding in fixes["findings"].as_array_mut().unwrap() {
-                            if finding.get("tests").is_some() {
-                                finding.as_object_mut().unwrap().remove("tests");
-                                finding["reason"] = json!(reason);
+                    ) {
+                        fixes.fields.insert("head_sha".into(), json!(sha));
+                        if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
+                            fixes.fields.insert("reviewed_sha".into(), json!(reviewed));
+                        }
+                        if replace_tests && let Some(reason) = &run.reproducing_unavailable {
+                            for finding in &mut fixes.findings {
+                                if finding.remove("tests").is_some() {
+                                    finding.insert("reason".into(), json!(reason));
+                                }
                             }
                         }
+                        commit
+                            .rows
+                            .push(put("review_fixes", node.0.to_string(), json!(fixes)));
                     }
-                    commit
-                        .rows
-                        .push(put("review_fixes", node.0.to_string(), fixes));
                 }
                 commit
                     .rows

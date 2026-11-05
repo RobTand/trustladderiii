@@ -87,6 +87,8 @@ pub enum Error {
     Config(#[from] tl3_config::Error),
     #[error("invalid controller data: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("stored review_fixes must contain an array of finding objects")]
+    ReviewFixes,
     #[error("invalid stored controller data: {0}")]
     StoredJson(#[source] serde_json::Error),
     #[error("controller I/O failed")]
@@ -1182,7 +1184,14 @@ impl Controller {
                         input_errors::observation_context(&snapshot, &observation)?;
                     self.input_failed(
                         &snapshot,
-                        &format!("observation:{}", crate::evidence_key(&observation)?),
+                        &if matches!(error, Error::ReviewFixes) {
+                            format!(
+                                "review_fixes:{}",
+                                node.ok_or(Error::Invalid("review fixes need a request"))?.0
+                            )
+                        } else {
+                            format!("observation:{}", crate::evidence_key(&observation)?)
+                        },
                         target,
                         &title,
                         node,
@@ -3233,33 +3242,35 @@ impl Controller {
                 request(snapshot, node)?;
                 if let Some(n) = world.nodes.get(node.0 as usize)
                     && n.phase == tl3_kernel::Phase::Rebasing
-                    && let Some(mut fixes) = self
+                    && let Some(fixes) = self
                         .store
                         .worker_document(&node.0.to_string(), "review_fixes")?
-                    && let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
+                {
+                    let mut fixes = findings::ReviewFixes::parse(fixes)?;
+                    if let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
                         set_reviewed,
                         replace_tests,
                     } = tl3_controller_core::translate_checks::plan_update(
-                        fixes["head_sha"].as_str() == commit_sha(snapshot, n.head),
+                        fixes.fields.get("head_sha").and_then(Value::as_str)
+                            == commit_sha(snapshot, n.head),
                         run.reviewed_sha.is_some(),
                         run.reproducing_unavailable.is_some(),
-                    )
-                {
-                    fixes["head_sha"] = json!(sha);
-                    if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
-                        fixes["reviewed_sha"] = json!(reviewed);
-                    }
-                    if replace_tests && let Some(reason) = &run.reproducing_unavailable {
-                        for finding in fixes["findings"].as_array_mut().unwrap() {
-                            if finding.get("tests").is_some() {
-                                finding.as_object_mut().unwrap().remove("tests");
-                                finding["reason"] = json!(reason);
+                    ) {
+                        fixes.fields.insert("head_sha".into(), json!(sha));
+                        if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
+                            fixes.fields.insert("reviewed_sha".into(), json!(reviewed));
+                        }
+                        if replace_tests && let Some(reason) = &run.reproducing_unavailable {
+                            for finding in &mut fixes.findings {
+                                if finding.remove("tests").is_some() {
+                                    finding.insert("reason".into(), json!(reason));
+                                }
                             }
                         }
+                        commit
+                            .rows
+                            .push(put("review_fixes", node.0.to_string(), json!(fixes)));
                     }
-                    commit
-                        .rows
-                        .push(put("review_fixes", node.0.to_string(), fixes));
                 }
                 commit
                     .rows
@@ -3446,7 +3457,7 @@ impl Controller {
                 if role == "planner" && reply["kind"] == "leaf" {
                     let checks = reply["checks"]
                         .as_array()
-                        .unwrap()
+                        .ok_or(Error::Invalid("planner checks must be an array"))?
                         .iter()
                         .enumerate()
                         .map(|(index, check)| {
@@ -3470,7 +3481,7 @@ impl Controller {
                             Error::Invalid(message) => {
                                 reply["violations"]
                                     .as_array_mut()
-                                    .unwrap()
+                                    .ok_or(Error::Invalid("planner violations must be an array"))?
                                     .push(json!(message));
                                 mapped = adapters::workers::protocol::MappedReply::Kernel(
                                     Reply::PlanCantMeet,
@@ -3693,7 +3704,8 @@ impl Controller {
                         if !worker::maker_self_check(same_goals, same_count, handover_valid) {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
-                            if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
+                            let mut evidence = findings::ReviewFixes::parse(fixes.evidence)?;
+                            if !evidence.findings.is_empty() {
                                 let mut run = check_run(snapshot, node, Some(&sha))?
                                     .or(check_run(snapshot, node, previous)?)
                                     .ok_or(Error::Invalid(
@@ -3718,11 +3730,12 @@ impl Controller {
                                     format!("{}:{sha}", node.0),
                                     json!(run),
                                 ));
-                                let mut evidence = fixes.evidence;
-                                evidence["head_sha"] = json!(sha);
-                                commit
-                                    .rows
-                                    .push(put("review_fixes", node.0.to_string(), evidence));
+                                evidence.fields.insert("head_sha".into(), json!(sha));
+                                commit.rows.push(put(
+                                    "review_fixes",
+                                    node.0.to_string(),
+                                    json!(evidence),
+                                ));
                             }
                             Reply::MakerDone {
                                 head: self.head(node, &sha)?,

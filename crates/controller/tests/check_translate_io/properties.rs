@@ -336,8 +336,8 @@ fn mandatory_check_plan_read_gate_and_matching_heads() {
     }
     for read in [
         Ok(None),
-        Ok(Some(json!({"head_sha":OTHER}))),
-        Ok(Some(json!({}))),
+        Ok(Some(json!({"head_sha":OTHER,"findings":[]}))),
+        Ok(Some(json!({"findings":[]}))),
     ] {
         let r = compare(&schedule(plan_step(), vec![read]));
         assert_eq!(r.staged_rows.len(), 1);
@@ -402,9 +402,14 @@ fn mandatory_check_plan_errors_and_existing_malformed_findings_panic() {
         f["head_sha"] = json!(SHA);
         let mut step = plan_step();
         step.run.reproducing_unavailable = Some("wording".into());
-        let r = compare(&schedule(step, vec![Ok(Some(f))]));
-        assert!(r.results[0]["panic"].is_string());
-        assert!(r.staged_rows.is_empty());
+        let s = schedule(step, vec![Ok(Some(f))]);
+        let old = io::run(&s, false, None);
+        assert!(old.results[0]["panic"].is_string());
+        let new = io::run(&s, true, None);
+        assert!(error(&new).contains("stored review_fixes"));
+        assert_eq!(old.calls, new.calls);
+        assert!(new.staged_rows.is_empty());
+        assert_eq!(old.persisted_rows, new.persisted_rows);
     }
 }
 #[test]
@@ -730,6 +735,12 @@ fn fixed_seed_varying_reads_errors_sequences_and_every_write_crash() {
                     6 => Ok(Some(json!({"head_sha":OTHER,"findings":[]}))),
                     _ => Ok(Some(json!({}))),
                 })
+                .map(|read| read.map(|value| value.map(|mut value| {
+                    if let Some(fields) = value.as_object_mut() {
+                        fields.entry("findings").or_insert_with(|| json!([]));
+                    }
+                    value
+                })))
                 .collect();
             compare(&Schedule {
                 steps,
@@ -788,4 +799,53 @@ fn fixed_seed_reachable_check_sequences() {
         )
         .unwrap();
     eprintln!("G2a2: 128 reachable check sequences; seed 0x472e2026");
+}
+
+fn arbitrary_json() -> impl Strategy<Value = Value> {
+    prop_oneof![
+        Just(Value::Null), any::<bool>().prop_map(Value::Bool),
+        any::<i64>().prop_map(|n| json!(n)), any::<u64>().prop_map(|n| json!(n)),
+        any::<f64>().prop_filter("finite JSON number", |n| n.is_finite()).prop_map(|n| json!(n)),
+        ".{0,30}".prop_map(Value::String),
+    ].prop_recursive(3, 24, 5, |inner| prop_oneof![
+        prop::collection::vec(inner.clone(), 0..5).prop_map(Value::Array),
+        prop::collection::btree_map(".{0,12}", inner, 0..5).prop_map(|m| Value::Object(m.into_iter().collect())),
+    ])
+}
+
+/// #838 / Q7: parsing retains extension fields, nulls and numeric forms.
+#[test]
+fn review_fix_record_round_trip_and_retarget_io_schedules() {
+    let strategy = (
+        prop::collection::btree_map(".{0,12}", arbitrary_json(), 0..5),
+        prop::collection::vec(prop::collection::btree_map(".{0,12}", arbitrary_json(), 0..5), 0..6),
+        any::<bool>(), any::<bool>(),
+    );
+    let mut runner = TestRunner::new(Config {
+        cases: 256,
+        rng_seed: RngSeed::Fixed(0x838_2026),
+        failure_persistence: None,
+        ..Config::default()
+    });
+    runner.run(&strategy, |(extensions, findings, reviewed, unavailable)| {
+        let mut record = Value::Object(extensions.into_iter().collect());
+        record["head_sha"] = json!(SHA);
+        record["findings"] = json!(findings);
+        let typed = findings::ReviewFixes::parse(record.clone()).unwrap();
+        prop_assert_eq!(serde_json::to_vec(&json!(typed)).unwrap(), serde_json::to_vec(&record).unwrap());
+        let mut step = plan_step();
+        step.sha = OTHER.into();
+        step.run.reviewed_sha = reviewed.then(|| tl3_worktrees::CommitId::new(OTHER).unwrap());
+        step.run.reproducing_unavailable = unavailable.then(|| "before tree unavailable 🦀".into());
+        // The tape changes at every read. Both arms must consume it identically,
+        // with a crash immediately before and after every write and final commit.
+        compare(&Schedule {
+            steps: vec![step.clone(), step],
+            reads: vec![Ok(Some(record.clone())), Ok(Some(json!({"head_sha":OTHER, "findings":[]})))],
+            initial_rows: BTreeMap::from([(("review_fixes".into(), "0".into()), record)]),
+            ..Schedule::default()
+        });
+        Ok(())
+    }).unwrap();
+    eprintln!("#838: 256 byte round-trips and changing-read schedules, all write/crash cuts, seed 0x8382026");
 }
