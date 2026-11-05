@@ -3036,6 +3036,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tl3-config",
+ "tl3-controller-core",
  "tl3-github",
  "tl3-kernel",
  "tl3-mergify",
@@ -3045,6 +3046,13 @@ dependencies = [
  "tokio",
  "ts-rs",
  "wiremock",
+]
+
+[[package]]
+name = "tl3-controller-core"
+version = "0.1.0"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]
