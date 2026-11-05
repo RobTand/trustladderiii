@@ -530,6 +530,29 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
+    if native.package_name() == "crates/controller-core":
+        # H17: real reviewer-input decisions; no wire mirror in the core.
+        review_inputs_groups = {
+            "bounds": ("review_inputs::bounds", 2),
+            "history": ("review_inputs::history", 2),
+            "selection": ("review_inputs::selection", 5),
+            "witnesses": ("review_inputs_witnesses", 3),
+        }
+        for name, (module, count) in review_inputs_groups.items():
+            verus_test(
+                name = "verus_review_inputs_" + name,
+                src = "verus/review_inputs.rs",
+                srcs = ["src/review_inputs.rs"],
+                specs = ["verus/review_inputs_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
     # #819: selected-release prompt identity and cache-control policy.
     if native.package_name() == "crates/controller":
         verus_test(
