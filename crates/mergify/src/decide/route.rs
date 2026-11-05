@@ -188,7 +188,7 @@ pub mod webhook {
         let queue = merged(true,true,true); assert(!queue);
         let unbound = merged(false,true,false); assert(!unbound);
         let done = merged(true,false,false); assert(!done);
-        let tracked = pull(false,true); assert(tracked);
+        let selected = pull(false,true); assert(selected);
         let internal = pull(true,true); assert(!internal);
         let absent = pull(false,false); assert(!absent);
     }
@@ -223,6 +223,21 @@ pub mod webhook {
 pub mod projection {
     #[cfg(verus_keep_ghost)]
     use super::*;
+    /// Preserved existing behaviour (no rule): PR-number matching is exact, including catch-up labels.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (left == right),))]
+    pub fn number(left: u64, right: u64) -> bool {
+        left == right
+    }
+    /// Q52 docs/state-table.md:543: stale-head missing-check facts skip node/incident lookup.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == same_head,))]
+    pub fn missing_head(same_head: bool) -> bool {
+        same_head
+    }
+    /// Preserved existing behaviour (no rule): only merged non-queue PRs are considered for catch-up bindings.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (merged && !queue_pr),))]
+    pub fn catch_merged(merged: bool, queue_pr: bool) -> bool {
+        merged && !queue_pr
+    }
     /// Preserved existing behaviour (no rule): check routing includes closed unmerged nodes, while ordinary tracking excludes closed nodes.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (!closed || include_closed && !merged),))]
     pub fn phase(closed: bool, include_closed: bool, merged: bool) -> bool {
