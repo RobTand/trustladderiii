@@ -9,6 +9,7 @@ from functools import cache
 import gzip
 import json
 import hashlib
+import lzma
 import os
 import tempfile
 from pathlib import Path
@@ -84,6 +85,8 @@ def record(case, temporary, monkeypatch):
 
 
 def main():
+    if sys.argv[1:2] in (["--p5-route"], ["--p5-check"], ["--p5-vectors"]):
+        return p5_main()
     if len(sys.argv) >= 4 and sys.argv[1] == "--record":
         with tempfile.TemporaryDirectory(prefix="tl3-checker-recordings-") as directory:
             environment = {**os.environ, "TL3_BINARY": str(Path(sys.argv[2]).resolve()),
@@ -117,6 +120,115 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
         return
     raise RuntimeError("usage: checker_stub.py --check/--generate <oracle> or --replay <case> <cursor> <command>")
+
+
+# P5 input and quota scripts use a separate cursor from reply/budget scripts.
+P5_VECTORS = Path(__file__).with_name("p5-checker-vectors.json.xz")
+P5_COMMANDS = {"check-inputs", "check-quota"}
+
+
+@cache
+def p5_cases():
+    if not P5_VECTORS.exists():
+        return {}
+    with lzma.open(P5_VECTORS, "rt", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def p5_replay(case, cursor, command, document):
+    script = p5_cases().get(case, [])
+    index = int(cursor.read_text()) if cursor.exists() else 0
+    if index >= len(script) or script[index]["command"] != command:
+        raise RuntimeError(f"unrecorded P5 checker call in {case}: {command}")
+    row = script[index]
+    if row["document"].get("kind") != document.get("kind"):
+        raise RuntimeError(f"out-of-order P5 operation in {case}")
+    cursor.write_text(str(index + 1))
+    return deepcopy(row["response"])
+
+
+def p5_install(request, temporary, monkeypatch):
+    real = os.environ.get("TEST_REAL_CHECKER") == "1"
+    recording = os.environ.get("TEST_RECORD_P5_DIR")
+    if real and not recording:
+        yield
+        return
+    delegate = os.environ["TL3_BINARY"]
+    oracle = os.environ.get("TEST_P5_BINARY", delegate)
+    case = request.node.nodeid
+    cursor = temporary / "p5-cursor"
+    capture = temporary / "p5-records.jsonl"
+    router = temporary / "p5-checker"
+    router.write_text(
+        f"#!{sys.executable}\nimport runpy, sys\n"
+        f"sys.argv[1:1] = ['--p5-route', {case!r}, {str(cursor)!r}, {delegate!r}, {oracle!r}, {str(capture) if recording else ''!r}]\n"
+        f"runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')\n")
+    router.chmod(0o755)
+    monkeypatch.setenv("TL3_BINARY", str(router))
+    original = subprocess.run
+
+    def run(command, *args, **kwargs):
+        if isinstance(command, (list, tuple)) and command and command[0] == str(router):
+            if command[1] not in P5_COMMANDS:
+                return original([delegate, *command[1:]], *args, **kwargs)
+            if recording:
+                result = original([oracle, *command[1:]], *args, **kwargs)
+                if result.returncode == 0:
+                    with capture.open('a') as handle:
+                        handle.write(json.dumps({'command': list(command[1:]),
+                            'document': json.loads(kwargs['input']),
+                            'response': json.loads(result.stdout)}) + '\n')
+                return result
+            try:
+                result = p5_replay(case, cursor, list(command[1:]), json.loads(kwargs["input"]))
+                code, stdout, stderr = 0, json.dumps(result), ""
+            except RuntimeError as error:
+                code, stdout, stderr = 1, "", str(error)
+            if not (kwargs.get("text") or kwargs.get("encoding")):
+                stdout, stderr = stdout.encode(), stderr.encode()
+            if code and kwargs.get("check"):
+                raise subprocess.CalledProcessError(code, command, output=stdout, stderr=stderr)
+            return subprocess.CompletedProcess(command, code, stdout=stdout, stderr=stderr)
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    yield
+    if recording:
+        rows = [json.loads(line) for line in capture.read_text().splitlines()] if capture.exists() else []
+        import hashlib
+        Path(recording, hashlib.sha256(case.encode()).hexdigest() + ".json").write_text(json.dumps({case: rows}))
+    else:
+        consumed = int(cursor.read_text()) if cursor.exists() else 0
+        assert consumed == len(p5_cases().get(case, [])), f"unconsumed P5 checker calls in {case}"
+
+
+def p5_main():
+    if sys.argv[1:2] == ["--p5-route"]:
+        case, cursor, delegate, oracle, capture, *command = sys.argv[2:]
+        data = sys.stdin.buffer.read()
+        if command[0] in P5_COMMANDS and not capture:
+            print(json.dumps(p5_replay(case, Path(cursor), command, json.loads(data))))
+            return
+        binary = oracle if command[0] in P5_COMMANDS else delegate
+        result = subprocess.run([binary, *command], input=data, capture_output=True)
+        if capture and command[0] in P5_COMMANDS and result.returncode == 0:
+            with Path(capture).open("a") as handle:
+                handle.write(json.dumps({"command": command, "document": json.loads(data),
+                                         "response": json.loads(result.stdout)}) + "\n")
+        sys.stdout.buffer.write(result.stdout)
+        sys.stderr.buffer.write(result.stderr)
+        raise SystemExit(result.returncode)
+    if sys.argv[1:] == ["--p5-vectors"]:
+        print(json.dumps([row for rows in p5_cases().values() for row in rows]))
+        return
+    if sys.argv[1:2] == ["--p5-check"]:
+        rows = [row for script in p5_cases().values() for row in script]
+        assert rows, "P5 checker recordings are empty"
+        result = subprocess.run([sys.argv[2]], input=json.dumps(rows),
+                                text=True, capture_output=True, check=True)
+        assert json.loads(result.stdout) == rows, "P5 Rust checker recordings drifted"
+        return
+    raise RuntimeError("usage: p5_stub.py --p5-check <tl3> or --p5-vectors")
 
 
 if __name__ == "__main__":

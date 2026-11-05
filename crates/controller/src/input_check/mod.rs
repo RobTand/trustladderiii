@@ -1,12 +1,133 @@
 //! P5: semantic maker inputs and schema checks at their original worker boundaries.
 use serde_json::Value;
 
-pub fn maker(_inputs: &Value) -> crate::Result<Vec<String>> {
-    Ok(vec!["P5 maker stub".into()])
+mod schema;
+use serde::Deserialize;
+use std::collections::BTreeSet;
+
+#[derive(Deserialize)]
+struct Goal {
+    id: String,
+    #[serde(default)]
+    stage: Option<String>,
+}
+#[derive(Deserialize)]
+struct Check {
+    goal_ids: Vec<String>,
+}
+#[derive(Deserialize)]
+struct Plan {
+    files: Vec<String>,
+    checks: Vec<Check>,
+}
+#[derive(Deserialize)]
+struct Maker {
+    goals: Vec<Goal>,
+    plan: Plan,
+    #[serde(default)]
+    feedback: Vec<Check>,
 }
 
-pub fn request(_request: &Value) -> crate::Result<Vec<String>> {
-    Ok(vec!["P5 request stub".into()])
+pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
+    let inputs: Maker = serde_json::from_value(inputs.clone())?;
+    let goals: BTreeSet<_> = inputs.goals.iter().map(|goal| goal.id.as_str()).collect();
+    let violation = if goals.len() != inputs.goals.len() {
+        Some("goal ids must be unique")
+    } else if let Some(message) = inputs
+        .plan
+        .files
+        .iter()
+        .find_map(|path| declared_file(path).err())
+    {
+        Some(message)
+    } else if inputs
+        .plan
+        .checks
+        .iter()
+        .chain(&inputs.feedback)
+        .any(|check| check.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
+    {
+        Some("unknown goal id")
+    } else {
+        let covered: BTreeSet<_> = inputs
+            .plan
+            .checks
+            .iter()
+            .flat_map(|check| check.goal_ids.iter())
+            .collect();
+        inputs
+            .goals
+            .iter()
+            .any(|goal| goal.stage.as_deref() != Some("publishing") && !covered.contains(&goal.id))
+            .then_some("checks must cover every maker and checking goal")
+    };
+    Ok(violation.into_iter().map(str::to_owned).collect())
+}
+
+fn declared_file(path: &str) -> Result<(), &'static str> {
+    if path.is_empty() || path.contains(['\\', '\0']) || path.starts_with('/') {
+        return Err("Use a relative worktree path");
+    }
+    if path.split('/').any(|part| part == "..") {
+        return Err("Parent traversal is forbidden");
+    }
+    let parts: Vec<_> = path
+        .split('/')
+        .filter(|part| !matches!(*part, "" | "."))
+        .collect();
+    if parts.contains(&".git") {
+        return Err("Git metadata paths are forbidden");
+    }
+    if path.len() > 3072 || parts.iter().any(|part| part.len() > 255) {
+        return Err("Path is too long");
+    }
+    if parts.is_empty() {
+        return Err("expected a declared file");
+    }
+    Ok(())
+}
+
+pub fn request(request: &Value) -> crate::Result<Vec<String>> {
+    if !schema::valid("request", request)? {
+        return Ok(vec!["worker request breaks schema".into()]);
+    }
+    let Some(
+        role @ ("ingest" | "audit" | "planner" | "maker" | "reviewer" | "classifier" | "writer"
+        | "postmortem"),
+    ) = request["role"].as_str()
+    else {
+        return Ok(vec!["unsupported worker role".into()]);
+    };
+    Ok(
+        if schema::valid(&format!("{role}-input"), &request["inputs"])? {
+            vec![]
+        } else {
+            vec!["worker inputs break role schema".into()]
+        },
+    )
+}
+
+/// Standalone worker entrypoint checks stay before chdir and all runtime writes.
+pub fn check(role: Option<&str>) -> crate::Result<()> {
+    use std::io::{Read, Write};
+    let mut bytes = Vec::new();
+    std::io::stdin().read_to_end(&mut bytes)?;
+    let value = crate::adapters::workers::json::parse(&bytes)?;
+    let violations = match role {
+        Some("maker") => maker(&value)?,
+        Some("request") => request(&value)?,
+        _ => {
+            return Err(crate::Error::Invalid(
+                "usage: tl3 check-inputs <request|maker>",
+            ));
+        }
+    };
+    serde_json::to_writer(
+        std::io::stdout().lock(),
+        &serde_json::json!({"violations": violations}),
+    )?;
+    std::io::stdout().write_all(b"\n")?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -68,5 +189,42 @@ print(json.dumps(rows))
             request(&json!({})).unwrap(),
             vec!["worker request breaks schema"]
         );
+    }
+}
+
+#[cfg(test)]
+mod io_schedules {
+    use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
+    #[test]
+    fn maker_extraction_preserves_real_runtime_schedules() {
+        let mut runner = TestRunner::deterministic();
+        let strategy = (0u8..3, any::<bool>());
+        let mut rows = Vec::new();
+        for _ in 0..24 {
+            let (crash, read_failure) = strategy.new_tree(&mut runner).unwrap().current();
+            rows.push(serde_json::json!({"crash": crash, "read_failure": read_failure}));
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        use std::io::Write;
+        let mut child = std::process::Command::new(root.join("workers/.venv/bin/python"))
+            .arg(root.join("workers/tests/p5/schedules.py"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(serde_json::to_string(&rows).unwrap().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("persisted bytes"));
     }
 }

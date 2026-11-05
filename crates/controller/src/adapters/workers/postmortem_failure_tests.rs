@@ -285,7 +285,9 @@ attempt = Path(sys.argv[-1])
 request = json.loads((attempt / "request.json").read_text())
 if attempt.name.endswith("00000000"):
     event = {{"event": "quota", "role": "postmortem",
-             "reset_ms": int(time.time() * 1000) + 900000,
+             "facts": {{"now": str(time.time()), "role": "postmortem", "links": [{{
+                 "response_status": None, "headers": {{}}, "api_status": None, "api_code": None,
+                 "judge": True, "judge_status": 400, "judge_code": "model_not_found", "grade_judge": True}}]}},
              "model": request["inputs"]["grade_model"]}}
 else:
     event = {{"event": "reply", "role": "postmortem",

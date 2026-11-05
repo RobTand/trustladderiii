@@ -1,6 +1,8 @@
 load("@rules_python//python:defs.bzl", "py_binary")
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
+# gazelle:exclude p5
+
 py_library(
     name = "worker_process",
     srcs = ["worker_process.py"],
@@ -1140,6 +1142,18 @@ filegroup(
 
 filegroup(
     name = "p5_references",
-    srcs = glob(["p5/*.py"]),
+    srcs = glob([
+        "p5/*.py",
+        "p5/*.json",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "p5_recordings",
+    srcs = [
+        "checker_stub.py",
+        "p5-checker-vectors.json.xz",
+    ],
     visibility = ["//visibility:public"],
 )

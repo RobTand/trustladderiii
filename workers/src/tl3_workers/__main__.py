@@ -7,8 +7,8 @@ from pathlib import Path
 import sys
 import time
 
-from tl3_workers.contracts import read_json, validate
-from tl3_workers.roles import ROLES
+from tl3_workers.contracts import read_json
+from tl3_workers.reply_check import check_inputs
 
 
 def main():
@@ -34,8 +34,7 @@ def main():
     phase = "request"
     try:
         request = read_json(sys.stdin.buffer.read().decode("utf-8"))
-        validate("request", request)
-        validate(ROLES[request["role"]].input_schema, request["inputs"])
+        check_inputs("request", request)
         if not Path(request["worktree"]).is_absolute():
             raise ValueError("worktree must be absolute")
         os.chdir(request["worktree"])
@@ -45,7 +44,11 @@ def main():
         return 0
     except Exception as error:
         from tl3_workers.quota import event
-        ending = event(error, time.time(), request) if phase == "run" else None
+        from tl3_workers.reply_check import ReplyCheckInfrastructureError
+        try:
+            ending = event(error, time.time(), request, raw=True) if phase == "run" else None
+        except ReplyCheckInfrastructureError:
+            ending = None
         if ending is not None:
             emit(ending)
             return 0

@@ -9,6 +9,7 @@ tl3_crate(
     build_script = True,
     local_deps = [
         "//crates/config:tl3_config",
+        "//crates/controller-core:tl3_controller_core",
         "//crates/github:tl3_github",
         "//crates/kernel:tl3_kernel",
         "//crates/mergify:tl3_mergify",
@@ -24,6 +25,7 @@ tl3_crate(
     ],
     examples = {
         "checker-vectors": "examples/checker-vectors.rs",
+        "p5-vectors": "examples/p5-vectors.rs",
         "pb_trial": "examples/pb_trial.rs",
         "tl3-deploy": "//deploy/dl380g10:helper.rs",
     },

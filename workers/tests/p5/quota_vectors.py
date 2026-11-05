@@ -1,11 +1,16 @@
 """Shared quota vectors from the unmodified Python reference at cdacce8f99."""
 import json
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import httpx
 import openai
 
-from quota_reference import ending_ms
+from quota_reference import ending_ms, event
+from tl3_workers.quota import facts
+from tl3_workers.judges import FailureClass, JudgeFailure
+from tl3_workers.tracing import WorkerStageError
 
 
 def rows():
@@ -23,14 +28,44 @@ def rows():
                                               request=httpx.Request("POST", "http://proxy.invalid"))
                     error = openai.APIStatusError("private", response=response,
                                                   body={"code": "model_not_found"})
-                    link = {"response_status": status, "headers": headers,
-                            "api_status": status, "api_code": "model_not_found",
-                            "judge": False, "judge_status": None, "judge_code": None,
-                            "grade_judge": False}
-                    facts = {"now": str(now), "role": "maker", "links": [link]}
-                    vectors.append({"facts": facts, "expected": ending_ms(error, now, "maker")})
+                    vectors.append({"facts": facts(error, now, "maker"), "expected": ending_ms(error, now, "maker")})
+    def add(error, role="maker"):
+        document = facts(error, 1000.0, role)
+        request = {"role": role, "inputs": {"grade_model": "grade"}}
+        old_event = event(error, 1000.0, request)
+        vectors.append({"facts": document, "expected": ending_ms(error, 1000.0, role),
+                        "grade": old_event is not None and "model" in old_event})
+    for status in [400, 404, 429, 503, 401, 403, 409, 422, 500, 502]:
+        for code in [None, "invalid_value", "model_not_found"]:
+            reply = httpx.Response(status, request=httpx.Request("POST", "http://proxy.invalid"))
+            error = openai.APIStatusError("private", response=reply, body={"code": code})
+            add(error)
+            for stage in ["grade", "postmortem"]:
+                judged = WorkerStageError(f"{stage} judge failure", judge_failure=JudgeFailure(FailureClass.HTTP, status, code))
+                add(judged, "postmortem")
+                add(judged, "maker")
+    for headers in [{"retry-after": "bad", "x-ratelimit-reset": "1008"},
+                    {"retry-after": "0", "x-ratelimit-reset": "1008"},
+                    {"x-ratelimit-reset": "1000.125"}]:
+        add(SimpleNamespace(response=SimpleNamespace(status_code=429, headers=headers),
+                            __cause__=None, __context__=None, __suppress_context__=False))
+    for depth in range(1, 11):
+        reply = httpx.Response(429, headers={"retry-after": "5"}, request=httpx.Request("POST", "http://proxy.invalid"))
+        error = openai.APIStatusError("private", response=reply, body=None)
+        for _ in range(depth):
+            wrapper = RuntimeError("private wrapper")
+            wrapper.__cause__ = error
+            error = wrapper
+        add(error)
+    error = RuntimeError("cycle")
+    error.__cause__ = error
+    add(error)
     return vectors
 
 
 if __name__ == "__main__":
-    print(json.dumps(rows(), allow_nan=False))
+    generated = json.dumps(rows(), allow_nan=False, separators=(",", ":")) + "\n"
+    if sys.argv[1:] == ["--check"]:
+        assert Path(__file__).with_name("quota-vectors.json").read_text() == generated
+    else:
+        print(generated, end="")

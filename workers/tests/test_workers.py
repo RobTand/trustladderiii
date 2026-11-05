@@ -298,7 +298,9 @@ def test_announced_quota_ends_without_counting_a_failed_run(tmp_path, request_do
     assert len(result.events) == 1
     assert result.events[0]["event"] == "quota"
     assert result.events[0]["role"] == request_doc["role"]
-    assert result.events[0]["reset_ms"] >= before + 600_000
+    facts = result.events[0]["facts"]
+    assert float(facts["now"]) * 1000 >= before
+    assert facts["links"][0]["headers"]["retry-after"] == "600"
     assert "secret provider text" not in result.stderr
 
 

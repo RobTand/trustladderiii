@@ -855,11 +855,17 @@ def test_judge_turn_counts_and_limits_reach_spans_and_summary(tmp_path, monkeypa
 
 @pytest.fixture
 def fake_reply_checker(tmp_path, monkeypatch):
+    import os
     import sys
 
+    delegate = os.environ['TL3_BINARY']
+
     def install(body):
-        checker = tmp_path / 'fake-tl3'
-        checker.write_text(f'#!{sys.executable}\n' + body)
+        checker = tmp_path / 'fake-reply-tl3'
+        checker.write_text(
+            f'#!{sys.executable}\nimport os, sys\n'
+            "if sys.argv[1:2] in (['check-inputs'], ['check-quota']):\n"
+            f' os.execv({delegate!r}, [{delegate!r}, *sys.argv[1:]])\n' + body)
         checker.chmod(0o755)
         monkeypatch.setenv('TL3_BINARY', str(checker))
         return checker

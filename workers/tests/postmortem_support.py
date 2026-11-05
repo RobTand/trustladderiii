@@ -1,5 +1,6 @@
 """Shared postmortem judge fixtures and worker-run helpers."""
 
+import os
 import sys
 
 import pytest
@@ -52,10 +53,15 @@ def judge_environment(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def release(tmp_path, monkeypatch):
+def release(tmp_path, monkeypatch, p5_binary):
     """The files of the release the postmortem judges, as its recommendations target."""
     checker = tmp_path / "fake-tl3"
-    checker.write_text(f"#!{sys.executable}\n" + 'print(\'{"violations": []}\')\n')
+    delegate = os.environ["TL3_BINARY"]
+    checker.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        "if sys.argv[1:2] in (['check-inputs'], ['check-quota']):\n"
+        f" os.execv({delegate!r}, [{delegate!r}, *sys.argv[1:]])\n"
+        'print(\'{"violations": []}\')\n')
     checker.chmod(0o755)
     monkeypatch.setenv("TL3_BINARY", str(checker))
     root = tmp_path / "release"

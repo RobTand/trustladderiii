@@ -63,3 +63,18 @@ def check_reply(role, inputs, reply):
         raise ReplyCheckInfrastructureError("reply validator returned invalid output")
     if violations:
         raise ReplyViolation(violations[0])
+
+
+class MakerInputViolation(ValueError):
+    """A maker invariant retains the legacy ValueError failure classification."""
+
+
+def check_inputs(kind, inputs):
+    result = run_check(["check-inputs", kind], inputs, name="input")
+    violations = result.get("violations") if isinstance(result, dict) else None
+    if not isinstance(violations, list) or any(not isinstance(item, str) for item in violations):
+        raise ReplyCheckInfrastructureError("input validator returned invalid output")
+    if violations:
+        if kind == "maker":
+            raise MakerInputViolation(violations[0])
+        raise ValueError(violations[0])

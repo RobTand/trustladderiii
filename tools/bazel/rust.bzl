@@ -39,7 +39,34 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {}
+_RUNTIME = {"crates/harness-core": ["//harness:core_vectors"]}
+
+# Wave B entry points in crates/harness-core (#818). Each port replaces or removes only its
+# own entry, so parallel ports never share a hunk. Keep the comment line above each entry.
+_WAVE_B_STUB = {
+    "srcs": ["wave_b/entry.rs"],
+    "crate_root": "wave_b/entry.rs",
+    "tags": ["manual", "wave-b-entry-point"],
+}
+
+_WAVE_B_ENTRIES = {
+    # judge (#822)
+    "judge": _WAVE_B_STUB,
+    # phase-fold (#822)
+    "phase-fold": _WAVE_B_STUB,
+    # finish-teardown (#822)
+    "finish-teardown": _WAVE_B_STUB,
+    # summary-bound (#823)
+    "summary-bound": _WAVE_B_STUB,
+    # selector-identity (#823)
+    "selector-identity": _WAVE_B_STUB,
+    # node-id (#824)
+    "node-id": _WAVE_B_STUB,
+    # limits (S4)
+    "limits": _WAVE_B_STUB,
+    # red-match (S4)
+    "red-match": _WAVE_B_STUB,
+}
 
 # rust_gate.py runs the controller's github binary as two timed groups.
 _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
@@ -60,6 +87,7 @@ _SCENARIO_SHARDS = {
 _LIBTEST_SHARDS = {
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
+    "tl3-controller/p5_checker": 14,
     "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 8,
     "tl3-controller/redaction_generated": 8,
@@ -88,6 +116,7 @@ _CONTROLLER_WORKERS = [
     "test_test_budget_parity",
     "test_test_worker_checker",
     "test_test_worker_budget_orchestration",
+    "test_test_p5_checker",
 ]
 _CONTROLLER_BINARIES = {
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
@@ -103,6 +132,7 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_p5_checker": ["//workers/tests:p5_recordings", "//workers/tests:p5_references", ":example_p5-vectors"],
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
@@ -134,6 +164,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "src/lib.rs": ["tests/worker_events_io/**"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
@@ -242,6 +273,20 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     """
     directory = native.package_name()
     verus_proofs()
+    if directory == "crates/harness-core":
+        # Wave B entry points are deliberately outside Cargo discovery and Gate selection.
+        # Exact node-ID grammar still runs in the controller until S3 removes that dependency.
+        for kind, spec in _WAVE_B_ENTRIES.items():
+            rust_test(
+                name = "wave_b_" + kind.replace("-", "_"),
+                srcs = spec["srcs"],
+                crate_root = spec.get("crate_root"),
+                deps = spec.get("deps", []),
+                data = spec.get("data", []),
+                edition = "2024",
+                rustc_env = {"WAVE_B_KIND": kind},
+                tags = spec["tags"],
+            )
     native.exports_files(["Cargo.toml", "BUILD.bazel"])
     native.filegroup(
         name = "sources",

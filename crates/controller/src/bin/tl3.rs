@@ -12,6 +12,10 @@ fn main() {
     }
     let result = if std::env::args().nth(1).as_deref() == Some("check-budget") {
         tl3_controller::budget::check()
+    } else if std::env::args().nth(1).as_deref() == Some("check-inputs") {
+        tl3_controller::input_check::check(std::env::args().nth(2).as_deref())
+    } else if std::env::args().nth(1).as_deref() == Some("check-quota") {
+        tl3_controller::quota::check()
     } else if std::env::args().nth(1).as_deref() == Some("check-reply") {
         tl3_controller::classifier::check_reply(std::env::args().nth(2).as_deref())
     } else if std::env::args().nth(1).as_deref() == Some("replay-check") {
