@@ -1,4 +1,4 @@
-load("@rules_python//python:defs.bzl", "py_binary", native_py_test = "py_test")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 
 # gazelle:resolve py _pytest.assertion.rewrite @tl3_pip//pytest
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
