@@ -35,3 +35,43 @@ def test_unrecorded_calls_fail_closed_in_process_and_in_child(tmp_path):
     assert "unrecorded Rust checker call" in stderr
     with pytest.raises(ReplyCheckInfrastructureError, match="process failed"):
         reply_check.run_check(["check-budget"], request)
+
+
+def test_concurrent_checker_processes_consume_each_step_once(tmp_path, monkeypatch):
+    # #823: child workers share the cursor, beyond the parent's threading lock.
+    import multiprocessing
+    import time
+    from pathlib import Path
+
+    context = multiprocessing.get_context('fork')
+    truncated = context.Event()
+    cursor = tmp_path / 'concurrent-cursor'
+    command, document = ['check-harness', 'identity'], {'kind': 'identity', 'selectors': []}
+    row = {'command': command, 'document': document, 'response': {'result': True}}
+    monkeypatch.setattr(checker_stub, 'cases', lambda: {'concurrent': [row, row]})
+    original = Path.write_text
+
+    def delayed_write(path, value, *args, **kwargs):
+        if path != cursor:
+            return original(path, value, *args, **kwargs)
+        with path.open('w') as stream:
+            truncated.set()
+            time.sleep(0.2)
+            return stream.write(value)
+
+    monkeypatch.setattr(Path, 'write_text', delayed_write)
+    processes = [context.Process(target=checker_stub.replay,
+                                args=('concurrent', cursor, command, document)) for _ in range(2)]
+    try:
+        processes[0].start()
+        assert truncated.wait(5), 'first checker never reached its cursor write'
+        processes[1].start()
+        for process in processes:
+            process.join(5)
+        assert [process.exitcode for process in processes] == [0, 0]
+        assert cursor.read_text() == '2'
+    finally:
+        for process in processes:
+            if process.pid is not None and process.is_alive():
+                process.terminate()
+                process.join(5)
