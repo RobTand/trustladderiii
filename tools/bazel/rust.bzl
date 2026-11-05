@@ -65,7 +65,7 @@ _WAVE_B_ENTRIES = {
     "node-id": _WAVE_B_STUB,
     # limits (S4)
     "limits": {
-        "srcs": ["tests/limits.rs"],
+        "srcs": ["tests/limits.rs", "tests/fixtures/limits/delay.json"],
         "crate_root": "tests/limits.rs",
         "deps": [":tl3_harness_core", "@crates//:serde_json"],
         "data": ["//harness:core_vectors"],

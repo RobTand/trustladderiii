@@ -4,10 +4,15 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const MAX_REPORT_LINE_BYTES: u64 = 4_194_304;
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const MAX_RESULT_BYTES: u64 = 8_388_608;
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const COST_CAP: u64 = MAX_RESULT_BYTES + 1;
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const INITIAL_RESULT_BYTES: u64 = 305_538;
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const PHASE_RUN_BYTES: u64 = 7_600;
 
 pub mod arithmetic {

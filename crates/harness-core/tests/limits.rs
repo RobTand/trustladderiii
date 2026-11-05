@@ -88,6 +88,11 @@ fn regression(count: usize) -> bool {
 fn fifteen_plan_rows_and_explicit_coverage_partition() {
     let root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/test-vectors/core/limits.json");
+    if !root.is_file() {
+        root = Path::new(&std::env::var("TEST_SRCDIR").unwrap())
+            .join(std::env::var("TEST_WORKSPACE").unwrap())
+            .join("harness/test-vectors/core/limits.json");
+    }
     let corpus: Value = serde_json::from_slice(&std::fs::read(root).unwrap()).unwrap();
     let (mut plans, mut options, mut forcing) = (0, 0, 0);
     for row in corpus["cases"].as_array().unwrap() {
