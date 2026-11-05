@@ -212,18 +212,37 @@ fn at<'a>(v: &'a V, path: &[PathPart]) -> &'a V {
         },
     })
 }
+// Reconstruction visits arbitrary metadata keys too; those stay Python code points.
+#[derive(Clone)]
+enum ReferencePart {
+    Key(PythonText),
+    Index(usize),
+}
+fn path_matches(path: &[ReferencePart], removal: &[PathPart]) -> bool {
+    path.len() == removal.len()
+        && path
+            .iter()
+            .zip(removal)
+            .all(|(left, right)| match (left, right) {
+                (ReferencePart::Key(key), PathPart::Field(field)) => {
+                    key == &PythonText::from(field.as_str())
+                }
+                (ReferencePart::Index(a), PathPart::Index(b)) => a == b,
+                _ => false,
+            })
+}
 // A generic immutable JSON reconstruction, independent of production's walker.
-fn candidate(v: &V, path: &mut Vec<PathPart>, removed: &[Atom]) -> V {
+fn candidate(v: &V, path: &mut Vec<ReferencePart>, removed: &[Atom]) -> V {
     let mut result = match v {
         V::Array(items) => V::Array(
             items
                 .iter()
                 .enumerate()
                 .filter_map(|(i, item)| {
-                    path.push(PathPart::Index(i));
-                    let dropped = removed
-                        .iter()
-                        .any(|a| a.kind != DroppedKind::SelectorCompaction && a.path == *path);
+                    path.push(ReferencePart::Index(i));
+                    let dropped = removed.iter().any(|a| {
+                        a.kind != DroppedKind::SelectorCompaction && path_matches(path, &a.path)
+                    });
                     let next = if dropped {
                         None
                     } else {
@@ -238,12 +257,7 @@ fn candidate(v: &V, path: &mut Vec<PathPart>, removed: &[Atom]) -> V {
             fields
                 .iter()
                 .map(|(key, item)| {
-                    let name = key
-                        .codepoints()
-                        .iter()
-                        .map(|p| char::from_u32(*p).unwrap())
-                        .collect::<String>();
-                    path.push(PathPart::Field(name));
+                    path.push(ReferencePart::Key(key.clone()));
                     let next = candidate(item, path, removed);
                     path.pop();
                     (key.clone(), next)
@@ -254,7 +268,7 @@ fn candidate(v: &V, path: &mut Vec<PathPart>, removed: &[Atom]) -> V {
     };
     if removed
         .iter()
-        .any(|a| a.kind == DroppedKind::SelectorCompaction && a.path == *path)
+        .any(|a| a.kind == DroppedKind::SelectorCompaction && path_matches(path, &a.path))
     {
         compact(&mut result);
     }
@@ -435,7 +449,10 @@ proptest! {
 fn incident_documents_match_the_verified_reduction() {
     let corpus = super::fixture("core/summary-bound");
     for case in corpus["cases"].as_array().unwrap() {
-        if let Some(input) = case["input"].get("result") {
+        if let Some(input) = case["input"]
+            .get("result")
+            .or_else(|| case["expected"].get("result"))
+        {
             conform(
                 super::vector_value(input),
                 case["input"]["limit"].as_u64().unwrap_or(14_336) as usize,
@@ -475,6 +492,46 @@ fn production_contract_boundaries_match_the_verified_document_reference() {
 /// #823 review-r2: Python surrogate keys are supported throughout proof metadata.
 #[test]
 fn complete_surrogate_key_summary_matches_the_reference() {
-    let input = value(r#"{"status":"completed","tests":[{"test":"t.py::red","outcome":"failed","message":"\udfff"}],"totals":{"failed":1},"proof":{"mode":"head-observer","observer_sha256":{"\ud800":"\udc00"}},"receipts":[{"\udfff":"\ud800"}],"note":"","origin":"test_run"}"#);
+    let input = value(
+        r#"{"status":"completed","tests":[{"test":"t.py::red","outcome":"failed","message":"\udfff"}],"totals":{"failed":1},"proof":{"mode":"head-observer","observer_sha256":{"\ud800":"\udc00"}},"receipts":[{"\udfff":"\ud800"}],"note":"","origin":"test_run"}"#,
+    );
     conform(input.clone(), size(&input) as usize);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    /// #823 review-r2: complete surrogate-bearing documents straddle exact full,
+    /// core, diagnostic and ordered-candidate sizes, including receipt pressure.
+    #[test]
+    fn surrogate_documents_conform_at_measured_boundaries(
+        high in 0xd800u32..0xe000,
+        points in proptest::collection::vec(0u32..0x110000, 0..8),
+        width in 0usize..180, proof_width in 0usize..1200,
+        receipt_width in 0usize..1000, prefix in 0usize..8,
+    ) {
+        let key = PythonText::try_from([vec![high], points.clone()].concat()).unwrap();
+        let payload = V::String(PythonText::try_from([vec![high; width], points].concat()).unwrap());
+        let mut input = node(1, &[2, 0, 1, 3], width, proof_width, 4);
+        let mut proof = input.field("proof").unwrap().clone();
+        set(&mut proof, "observer_sha256", V::Object(vec![(key.clone(), payload.clone())]));
+        set(&mut proof, "surrogate_metadata", V::Object(vec![(key.clone(), payload.clone())]));
+        set(&mut input, "proof", proof);
+        let mut tests = entries(&input, "tests");
+        set(&mut tests[0], "test", V::String(key.clone()));
+        set(&mut tests[0], "message", payload.clone());
+        set(&mut input, "tests", V::Array(tests));
+        set(&mut input, "receipts", V::Array(vec![V::Object(vec![
+            (key, payload), ("payload".into(), text(&"r".repeat(receipt_width)))
+        ])]));
+        let core = mandatory(&input);
+        let mut marked = input.clone(); notices(&mut marked);
+        let mut order = vec![]; atoms(&input, vec![], &mut order);
+        order.sort_by_key(|a| (a.rank, a.order));
+        let candidate = candidate(&marked, &mut vec![], &order[..prefix.min(order.len())]);
+        for measured in [size(&input), size(&core), size(&diagnostic(&input)), size(&candidate)] {
+            for limit in [measured.saturating_sub(1), measured, measured + 1] {
+                conform(input.clone(), limit as usize);
+            }
+        }
+    }
 }

@@ -35,25 +35,57 @@ class Crash(BaseException):
     pass
 
 
+
+class RecordedCalls(list):
+    stopped = False
+
+    def append(self, call):
+        if not self.stopped:
+            super().append(call)
+
+
+class Recording:
+    """Freeze the visible filesystem and trace at the cut, before stack unwind."""
+    def __init__(self, crash, snapshot):
+        self.trace = RecordedCalls()
+        self.mutation = 0
+        self.crash = crash
+        self.snapshot = snapshot
+        self.cut = None
+
+    def boundary(self):
+        position = self.mutation
+        self.mutation += 1
+        if self.crash == position:
+            self.trace.stopped = True
+            self.cut = (list(self.trace), self.snapshot(), self.mutation)
+            raise Crash()
+
+    def change(self, call, perform):
+        if self.trace.stopped:
+            # Context managers may clean up real handles after the frozen cut.
+            return perform()
+        self.trace.append(call)
+        self.boundary()
+        result = perform()
+        self.trace.append(('after', call))
+        self.boundary()
+        return result
+
+    def finish(self, result):
+        if self.cut is not None:
+            trace, state, mutation = self.cut
+            return trace, ('crash',), state, mutation
+        return self.trace, result, self.snapshot(), self.mutation
+
+
 def action(module, directory, schedule):
     for path in directory.glob('progress*'):
         path.unlink()
     progress = directory / 'progress.json'
     progress.write_text(json.dumps({'token': 'fixture', 'units_completed': schedule['initial']}))
-    trace, mutation = [], 0
-
-    def change(call, perform):
-        nonlocal mutation
-        trace.append(call)
-        position, mutation = mutation, mutation + 1
-        if schedule['crash'] == position:
-            raise Crash()
-        result = perform()
-        trace.append(('after', call))
-        position, mutation = mutation, mutation + 1
-        if schedule['crash'] == position:
-            raise Crash()
-        return result
+    recording = Recording(schedule['crash'], lambda: snapshot())
+    trace, change = recording.trace, recording.change
 
     class File:
         def __init__(self, stream):
@@ -64,7 +96,12 @@ def action(module, directory, schedule):
             return self
 
         def __exit__(self, *args):
-            return self.stream.__exit__(*args)
+            try:
+                if self.stream.writable():
+                    self.flush()  # Record the close's implicit buffered flush.
+                return change(('close',), lambda: self.stream.__exit__(*args))
+            finally:
+                self.stream.close()
 
         def read(self, *args, **kwargs):
             return self.stream.read(*args, **kwargs)
@@ -79,6 +116,16 @@ def action(module, directory, schedule):
             return self.stream.fileno()
 
     class Selection(io.BytesIO):
+        def __exit__(self, *args):
+            try:
+                self.flush()
+                return change(('selection-close',), lambda: super(Selection, self).__exit__(*args))
+            finally:
+                super().close()
+
+        def flush(self):
+            return change(('selection-flush',), lambda: super(Selection, self).flush())
+
         def read(self, *args, **kwargs):
             trace.append(('selection-read',))
             return super().read(*args, **kwargs)
@@ -134,14 +181,23 @@ def action(module, directory, schedule):
     original_exists, original_is_file = Path.exists, Path.is_file
     existence = iter(schedule.get('selector_reads', [1]))
     output = io.StringIO()
+    published = ['']
     proof_reads = 0
+
+    def snapshot():
+        state = {}
+        for path in sorted(directory.glob('progress*')):
+            with original_open(path, 'rb') as stream:
+                state[path.name] = stream.read().hex()
+        state['stdout'] = published[0]
+        return state
 
     class Output:
         def write(self, text):
             return change(('stdout-write', text), lambda: output.write(text))
 
         def flush(self):
-            return change(('stdout-flush',), lambda: None)
+            return change(('stdout-flush',), lambda: published.__setitem__(0, output.getvalue()))
 
     def exists(path):
         if path.name in ('t.py', 'other.py'):
@@ -194,7 +250,7 @@ def action(module, directory, schedule):
         patch.setattr(module, 'require_admission', lambda: trace.append(('admission',)))
         patch.setattr(module, 'container_command', lambda *args: ['fake-container'])
         patch.setattr(module, 'Supervised', Process)
-        patch.setattr(module.tempfile, 'TemporaryFile', Selection)
+        patch.setattr(module.tempfile, 'TemporaryFile', lambda: change(('selection-open',), Selection))
         patch.setattr(execution.time, 'time', clock)
         patch.setattr(execution.os, 'getpid', lambda: 823)
         patch.setattr(execution.os, 'fsync', lambda fd: change(('fsync',), lambda: None))
@@ -219,9 +275,7 @@ def action(module, directory, schedule):
                 result = ('result', module.run_current(directory, None, selected))
         except Crash:
             result = ('crash',)
-    state = {path.name: path.read_bytes().hex() for path in sorted(directory.glob('progress*'))}
-    state['stdout'] = output.getvalue()
-    return trace, result, state, mutation
+    return recording.finish(result)
 
 
 def worker(module, schedule, facts=None):
@@ -282,7 +336,8 @@ def lifecycle(module, directory, schedule):
     source, staged = directory / 'source', directory / 'stage'
     source.mkdir(); staged.mkdir()
     (source / 't.py').write_text('def test_ok(): pass\n')
-    trace, mutation = [], 0
+    recording = Recording(schedule['crash'], lambda: snapshot())
+    trace, change = recording.trace, recording.change
     original_open, original_mkdir = Path.open, Path.mkdir
     original_read_bytes, original_read_text = Path.read_bytes, Path.read_text
     original_replace = Path.replace
@@ -296,23 +351,16 @@ def lifecycle(module, directory, schedule):
             return str(path.relative_to(directory))
         return path.name
 
-    def change(call, perform):
-        nonlocal mutation
-        trace.append(call)
-        position, mutation = mutation, mutation + 1
-        if schedule['crash'] == position:
-            raise Crash()
-        result = perform()
-        trace.append(('after', call))
-        position, mutation = mutation, mutation + 1
-        if schedule['crash'] == position:
-            raise Crash()
-        return result
-
     class File:
-        def __init__(self, stream, path): self.stream, self.path = stream, name(path)
+        def __init__(self, stream, path):
+            self.stream, self.path = stream, name(path) if isinstance(path, Path) else path
         def __enter__(self): self.stream.__enter__(); return self
-        def __exit__(self, *args): return self.stream.__exit__(*args)
+        def __exit__(self, *args):
+            try:
+                if self.stream.writable(): self.flush()
+                return change(('stage-file-close', self.path), lambda: self.stream.__exit__(*args))
+            finally:
+                self.stream.close()
         def fileno(self): return self.stream.fileno()
         @property
         def buffer(self): return File(self.stream.buffer, self.path)
@@ -327,7 +375,7 @@ def lifecycle(module, directory, schedule):
     class Temporary:
         def __init__(self, **kwargs): trace.append(('stage-temporary', kwargs))
         def __enter__(self): return str(staged)
-        def __exit__(self, *args): trace.append(('stage-close',))
+        def __exit__(self, *args): return change(('stage-close',), lambda: None)
 
     def opened(path, mode='r', *args, **kwargs):
         if path.is_relative_to(directory):
@@ -379,8 +427,7 @@ def lifecycle(module, directory, schedule):
         if 'pbrun.py' in argv[1]:
             # Paths and Python executable are boundary inputs; compare stable paths.
             args = [str(value).replace(str(directory), '<root>') for value in argv]
-            trace.append(('submit', args))
-            return 0, {'schema':'prismabuild.submission.v1', 'action_key':key}
+            return change(('submit', args), lambda: (0, {'schema':'prismabuild.submission.v1', 'action_key':key}))
         complete = bool(next(waits, True))
         trace.append(('upstream-wait', key, complete))
         value = deepcopy(ending)
@@ -388,6 +435,9 @@ def lifecycle(module, directory, schedule):
         return 0, {'schema':'prismabuild.endings.v1', 'complete':complete, 'endings':[value]}
 
     class Log(io.BytesIO):
+        def __exit__(self, *args):
+            return change(('verified-log-close',), lambda: super(Log, self).__exit__(*args))
+
         def read(self, size=-1):
             trace.append(('verified-log-read', size))
             return super().read(size)
@@ -398,6 +448,14 @@ def lifecycle(module, directory, schedule):
             trace.append(('verified-log-open', mode))
             return Log(raw)
         return original_builtin(path, mode, *args, **kwargs)
+
+    def snapshot():
+        state = {}
+        for path in sorted(staged.rglob('*')):
+            if path.is_file():
+                with original_open(path, 'rb') as stream:
+                    state[str(path.relative_to(directory))] = (stream.read().hex(), path.stat().st_mode & 0o777)
+        return state
 
     with Worktree(source) as tree, pytest.MonkeyPatch.context() as patch:
         patch.setattr(Path, 'open', opened); patch.setattr(Path, 'mkdir', mkdir)
@@ -415,7 +473,9 @@ def lifecycle(module, directory, schedule):
         @contextmanager
         def source_file(path):
             trace.append(('source-file', path))
-            with original_file(path) as stream: yield File(stream, source / path)
+            with original_file(path) as stream:
+                with File(stream, source / path) as recorded:
+                    yield recorded
         patch.setattr(tree, '_directory', source_directory)
         patch.setattr(tree, '_walk', source_walk)
         patch.setattr(tree, '_file', source_file)
@@ -455,9 +515,7 @@ def lifecycle(module, directory, schedule):
             result = ('result', module.make_test_tool(tree, settings, emit=emit)(['t.py'], base=schedule.get('base', False), repeat=2))
         except Crash:
             result = ('crash',)
-    state = {str(path.relative_to(directory)):(path.read_bytes().hex(), path.stat().st_mode & 0o777)
-        for path in sorted(staged.rglob('*')) if path.is_file()}
-    return trace, result, state, mutation
+    return recording.finish(result)
 
 
 REFUSALS_CHECKED = False
@@ -496,10 +554,15 @@ def verify_crash_cut(schedule):
     for function, module, write in [(action, test_tool, 'write'), (lifecycle, pb_tests, 'stage-write')]:
         with tempfile.TemporaryDirectory(prefix='harness-cut-') as name:
             complete = function(module, Path(name), example)
+        if function is action:
+            for index, call in enumerate(complete[0]):
+                if call == ('fsync',):
+                    assert complete[0][index - 1] == ('after', ('flush',)), 'progress fsync without preceding flush'
         index = next(i for i, call in enumerate(complete[0]) if call[0] == write)
         cut = 2 * sum(call[0] == 'after' for call in complete[0][:index]) + 1
         with tempfile.TemporaryDirectory(prefix='harness-cut-') as name:
             crashed = function(module, Path(name), {**example, 'crash':cut})
+        assert crashed[0][-1] == ('after', complete[0][index]), 'cleanup entered the captured crash trace'
         path = 'progress.json.823.tmp' if write == 'write' else complete[0][index][1]
         persisted = crashed[2][path]
         if write == 'stage-write': persisted = persisted[0]
