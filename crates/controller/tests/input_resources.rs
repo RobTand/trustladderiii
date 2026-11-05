@@ -10,6 +10,54 @@ use tl3_github::message::Policy;
 use tl3_kernel::Phase;
 use tl3_store::{Commit, RowChange, Store};
 
+/// #817(d)/Q7/#833: a blocking TL3-side kind mismatch is authoritative coverage.
+#[test]
+fn blocking_prerequisite_kind_mismatch_classifies_as_an_incident() {
+    let mut w = World::new();
+    w.reply("pull_request", 2713);
+    w.reply("pull_request", 2713);
+    let incidents = w.incidents();
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(
+        incidents[0]["signature"]["class"],
+        "prerequisite_kind_mismatch"
+    );
+    assert_eq!(incidents[0]["cause"], "tl3");
+    assert_eq!(incidents[0]["blocking"], true);
+    assert!(w.controller.world().unwrap().nodes[0].waiting_incident);
+    assert_eq!(
+        w.controller.dispatch_status(tl3_kernel::NodeId(0)).unwrap(),
+        tl3_controller::dispatch_liveness::DispatchStatus::Incident
+    );
+}
+
+/// #817(d)/Q7/#833: typed not_found input failures cover the awaited node too.
+#[test]
+fn typed_input_resource_not_found_classifies_as_an_incident() {
+    use tl3_controller::input_resources::{Failure, Problem, Resource};
+    let mut w = World::new();
+    w.reply("issue", 4040);
+    let incidents = w.incidents();
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(incidents[0]["signature"]["class"], "not_found");
+    let failure: Failure =
+        serde_json::from_value(incidents[0]["input_failure"]["resource_failure"].clone()).unwrap();
+    assert_eq!(
+        failure,
+        Failure {
+            requested: Resource::GithubIssue {
+                repository: "owner/sandbox".into(),
+                number: 4040,
+            },
+            problem: Problem::NotFound,
+        }
+    );
+    assert_eq!(
+        w.controller.dispatch_status(tl3_kernel::NodeId(0)).unwrap(),
+        tl3_controller::dispatch_liveness::DispatchStatus::Incident
+    );
+}
+
 /// Q59/#833: an issue number must never be read as a PR merely because ingest says so.
 #[test]
 fn mismatch_is_validated_before_the_pull_endpoint_and_uses_bounded_run_failures() {
