@@ -161,3 +161,98 @@ proptest! {
         prop_assert_eq!(serde_json::from_str::<Value>(&rendered).unwrap(), original);
     }
 }
+
+fn contexts() -> BoxedStrategy<tl3_controller::contracts::decision_context::DecisionContext> {
+    use tl3_controller::contracts::{
+        bounded::{List, Natural, Text},
+        decision_context::{Decision, DecisionContext, SchemaVersion},
+    };
+    let nonempty = ".{1,20}".prop_map(|s| Text::new(s).unwrap());
+    let scope = proptest::collection::vec(nonempty.clone(), 0..4)
+        .prop_map(|values| List::new(values).unwrap());
+    let question = proptest::collection::btree_map("[a-z]{1,8}", json_values(), 0..4)
+        .prop_map(|map| map.into_iter().collect());
+    let decision = (
+        nonempty.clone(),
+        proptest::option::of(".{0,20}"),
+        question,
+        nonempty.clone(),
+        scope.clone(),
+        scope,
+        any::<u64>(),
+        proptest::option::of(".{0,20}"),
+        proptest::option::of(nonempty),
+    )
+        .prop_map(
+            |(
+                id,
+                source_comment,
+                question,
+                answer,
+                allowed_scope,
+                restrictions,
+                version,
+                superseded_by,
+                supersession_reason,
+            )| Decision {
+                id,
+                source_comment,
+                question,
+                answer,
+                allowed_scope,
+                restrictions,
+                origin_request_version: Natural::new(version).unwrap(),
+                superseded_by,
+                supersession_reason,
+            },
+        );
+    (any::<u64>(), proptest::collection::vec(decision, 0..5))
+        .prop_map(|(version, decisions)| DecisionContext {
+            schema_version: SchemaVersion::default(),
+            request_version: Natural::new(version).unwrap(),
+            decisions: List::new(decisions).unwrap(),
+        })
+        .boxed()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+    /// P-schema-sound (#819, #717): constructed contexts validate and round-trip.
+    #[test]
+    fn typed_decision_contexts_satisfy_the_schema_and_round_trip(context in contexts()) {
+        use tl3_controller::contracts::decision_context::{self,DecisionContext};
+        static VALIDATOR: std::sync::OnceLock<jsonschema::Validator> = std::sync::OnceLock::new();
+        let validator = VALIDATOR.get_or_init(|| jsonschema::validator_for(&decision_context::schema()).unwrap());
+        let json = serde_json::to_value(&context).unwrap();
+        prop_assert!(validator.is_valid(&json), "{:?}", validator.iter_errors(&json).map(|e|e.to_string()).collect::<Vec<_>>());
+        prop_assert_eq!(serde_json::from_value::<DecisionContext>(json).unwrap(), context);
+    }
+}
+
+#[test]
+fn decision_context_presence_and_numeric_spelling_match_the_schema() {
+    use tl3_controller::contracts::decision_context::DecisionContext;
+    let value = json!({"schema_version":1.0,"request_version":0.0,"decisions":[{
+        "id":"decision", "source_comment":null,"question":{},"answer":"yes",
+        "allowed_scope":[],"restrictions":[],"origin_request_version":2.0,"superseded_by":null
+    }]});
+    let parsed: DecisionContext = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+    for field in ["source_comment", "superseded_by"] {
+        let mut invalid = value.clone();
+        invalid["decisions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            serde_json::from_value::<DecisionContext>(invalid).is_err(),
+            "missing {field}"
+        );
+    }
+    let mut invalid = value.clone();
+    invalid["decisions"][0]["supersession_reason"] = Value::Null;
+    assert!(serde_json::from_value::<DecisionContext>(invalid).is_err());
+    let mut extra = value;
+    extra["unexpected"] = true.into();
+    assert!(serde_json::from_value::<DecisionContext>(extra).is_err());
+}

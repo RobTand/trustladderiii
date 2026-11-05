@@ -811,3 +811,45 @@ impl<K: Ord + JsonSchema, V: JsonSchema, const MAX: usize> JsonSchema for Object
         schema
     }
 }
+
+/// A JSON integer at least `MIN`, with no schema-imposed upper bound. Keep the original
+/// number so JSON's integral floating-point spelling also round-trips (#819).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Natural<const MIN: u64>(serde_json::Number);
+
+impl<const MIN: u64> Natural<MIN> {
+    pub fn new(value: u64) -> Result<Self, String> {
+        Self::from_number(value.into())
+    }
+
+    fn from_number(number: serde_json::Number) -> Result<Self, String> {
+        let in_range = integral(&number).is_some_and(|value| value >= i128::from(MIN))
+            || number
+                .as_f64()
+                .is_some_and(|value| value.fract() == 0.0 && value >= 18_446_744_073_709_551_616.0);
+        if in_range {
+            Ok(Self(number))
+        } else {
+            Err(format!("expected an integer at least {MIN}"))
+        }
+    }
+}
+
+impl<'de, const MIN: u64> Deserialize<'de> for Natural<MIN> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_number(serde_json::Number::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+impl<const MIN: u64> JsonSchema for Natural<MIN> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("Natural_{MIN}").into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "integer", "minimum": MIN})
+    }
+}
