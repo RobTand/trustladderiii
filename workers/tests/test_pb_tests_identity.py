@@ -46,6 +46,7 @@ def test_completed_parametrized_file_keeps_digest_identity(submission, monkeypat
     monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
     monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(root / 'progress.json'))
     monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+    monkeypatch.setattr(execution.time, 'time', lambda: 1000.0)
     monkeypatch.setattr(test_tool, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(Path(execution.__file__).with_name('runner.py')), '-', str(tree)])
     response = test_tool.run(root, execution.Container(IMAGE), ('test_many.py',))
