@@ -85,7 +85,9 @@ fn check_witness() {
     assert(actual_24);
     let actual_25 = check_changed(CheckComparison::BothPresent { fields: [true, true, true, true, true, true, true, true, true, true] });
     assert(!actual_25);
-    let actual_26 = check_changed(CheckComparison::BothPresent { fields: [false, false, false, false, false, false, false, false, false, false] });
+    let bad = [false, false, false, false, false, false, false, false, false, false];
+    let actual_26 = check_changed(CheckComparison::BothPresent { fields: bad });
+    assert(!bad[0]);
     assert(actual_26);
 }
 }

@@ -14,6 +14,15 @@ macro_rules! completion_while {
     };
 }
 
+#[cfg(not(verus_keep_ghost))]
+macro_rules! completion_proof {
+    ($($body:tt)*) => {};
+}
+#[cfg(verus_keep_ghost)]
+macro_rules! completion_proof {
+    ($($body:tt)*) => { vstd::prelude::verus_exec_expr! { proof { $($body)* } } };
+}
+
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -341,6 +350,11 @@ pub fn check_changed(comparison: CheckComparison) -> bool {
                 decreases 10 - i,
             ] {
                 if !fields[i] {
+                    completion_proof! {
+                        assert(exists|j: int| 0 <= j < 10 && !fields[j]) by {
+                            assert(!fields[i as int]);
+                        }
+                    }
                     return true;
                 }
                 i += 1;
