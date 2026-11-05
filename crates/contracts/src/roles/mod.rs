@@ -7,3 +7,5 @@ pub mod classifier_reply;
 pub mod ingest_reply;
 pub mod maker_reply;
 pub mod writer_reply;
+
+pub mod reviewer_input;
