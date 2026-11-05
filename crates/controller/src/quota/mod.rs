@@ -332,20 +332,31 @@ mod io_schedules {
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("stale-reset boundary"));
     }
-    #[test]
-    fn quota_worker_clock_schedules_0() {
-        quota_schedules(0);
+    // Each generated schedule retains every write/flush/fsync/rename cut.
+    macro_rules! schedules {
+        ($($name:ident => $partition:literal),* $(,)?) => {
+            $(#[test] fn $name() { quota_schedules($partition); })*
+        };
     }
-    #[test]
-    fn quota_worker_clock_schedules_1() {
-        quota_schedules(1);
-    }
-    #[test]
-    fn quota_worker_clock_schedules_2() {
-        quota_schedules(2);
-    }
-    #[test]
-    fn quota_worker_clock_schedules_3() {
-        quota_schedules(3);
-    }
+    schedules!(
+        quota_worker_clock_schedules_0 => 0,
+        quota_worker_clock_schedules_1 => 1,
+        quota_worker_clock_schedules_2 => 2,
+        quota_worker_clock_schedules_3 => 3,
+        quota_worker_clock_schedules_4 => 4,
+        quota_worker_clock_schedules_5 => 5,
+        quota_worker_clock_schedules_6 => 6,
+        quota_worker_clock_schedules_7 => 7,
+        quota_worker_clock_schedules_8 => 8,
+        quota_worker_clock_schedules_9 => 9,
+        quota_worker_clock_schedules_10 => 10,
+        quota_worker_clock_schedules_11 => 11,
+        quota_worker_clock_schedules_12 => 12,
+        quota_worker_clock_schedules_13 => 13,
+        quota_worker_clock_schedules_14 => 14,
+        quota_worker_clock_schedules_15 => 15,
+        quota_worker_clock_schedules_16 => 16,
+        quota_worker_clock_schedules_17 => 17,
+        quota_worker_clock_schedules_18 => 18,
+    );
 }

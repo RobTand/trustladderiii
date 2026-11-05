@@ -85,7 +85,7 @@ def execute(module, legacy, schedule, crash=0):
 
 
 for index, schedule in enumerate(json.load(sys.stdin)):
-    if sys.argv[1:] and index % 4 != int(sys.argv[1]):
+    if sys.argv[1:] and index % 19 != int(sys.argv[1]):
         continue
     before = execute(main_reference, True, schedule)
     after = execute(current, False, schedule)
