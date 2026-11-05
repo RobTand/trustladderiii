@@ -372,6 +372,7 @@ class Reporter:
         self.collection_errors = []
         self.reported = set()
         self.started = False
+        self.finished = None
         # Keep journals outside the checkout and pytest's writable scratch tree.
         # Explicit /tmp also avoids TMPDIR values supplied by the served repository.
         self.accounting_owner = os.getpid()
@@ -617,9 +618,12 @@ class Reporter:
         self.emit(event="result", test=report.nodeid, outcome=outcome, **extra,
                   message=message[:1000], truncated=len(message) > 1000 or any(p[3] for p in failures))
 
+    # First, so the finish record precedes xdist stopping its workers in this hook (#799).
+    @pytest.hookimpl(tryfirst=True)
     def pytest_sessionfinish(self, exitstatus):
         self.emit_collection_errors()
         self.emit(event="finish", exit_code=int(exitstatus))
+        self.finished = int(exitstatus)
         if self.accounting_directory is not None and os.getpid() == self.accounting_owner:
             shutil.rmtree(self.accounting_directory)
 
@@ -681,8 +685,15 @@ def main():
             # Pytest owns the short plugin name "runner". Use the mounted package's name.
             os.environ['PYTHONPATH'] = str(harness.parent)
             worker_plugin = ['-p', f'{harness.name}.runner']
-        return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
-                                "--", *(tests or ["."])], plugins=[reporter]))
+        try:
+            return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
+                                    "--", *(tests or ["."])], plugins=[reporter]))
+        except Exception:
+            # Stopping xdist workers needs a new thread. Code under test that exhausts
+            # the container's pid limit makes that fail after every result (#799).
+            if reporter.finished is None:
+                raise
+            return reporter.finished
     if summary:
         return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[reporter]))
     files = sorted({test.split("::")[0] for test in tests if Path(test.split("::")[0]).is_file()})
