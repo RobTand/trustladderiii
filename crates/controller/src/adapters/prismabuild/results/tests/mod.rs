@@ -123,6 +123,21 @@ fn controller_rejects_false_negative_and_wrong_pre_existing() {
     assert!(evaluate(&job, &correct).1);
 }
 
+/// #822/execution.py:681: changed-test refusal replaces even an infrastructure verdict.
+#[test]
+fn changed_test_refusal_preserves_its_failure_over_no_report() {
+    let (mut job, mut report) = fixture("no-report", "passed", false, false);
+    report["results"][0]["verdict"] = json!("fail");
+    job.changed_paths = vec!["tests/test_x.py".into()];
+    let (reported, passed, results, failed, class) = evaluate(&job, &report);
+    assert!(reported && !passed && !results.is_empty() && !failed.is_empty());
+    assert_eq!(class, None);
+
+    // Without the changed-path fact, infrastructure cannot silently become a test failure.
+    job.changed_paths.clear();
+    assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
+}
+
 fn phases(call_status: &str, assertion: bool) -> Value {
     json!({"test": "tests/test_x.py::test_x", "setup": {"outcome": "passed", "assertion": false, "exception": ""},
         "call": {"outcome": call_status, "assertion": assertion, "exception": ""},
