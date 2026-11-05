@@ -6,6 +6,7 @@ use vstd::prelude::*;
     verus_keep_ghost,
     vstd::prelude::verus_spec(out => ensures
         out == ((tokens as int) * 20 >= (context as int) * 17),
+        out == ((tokens as int) * 100 >= (context as int) * 85),
     )
 )]
 pub fn cutoff(tokens: u64, context: u64) -> bool {
