@@ -26,7 +26,8 @@ transaction effect. There is no new production timing or polling. The fake
 remote deduplicates POST operations by their actual operation UUID. This is an
 explicit remote contract; the pure proof does not claim to prove server code.
 
-Three entries run 96 generated schedules each with fixed seed 0x18_0776_2026,
+Three entries run 96 generated schedules each, plus a 92-case generated HTTP
+outcome matrix that forces every outcome before a generated response suffix, with fixed seed 0x18_0776_2026,
 plus the committed replay seed. Failures and minimized seeds persist in the
 writable TEST_UNDECLARED_OUTPUTS_DIR, never the read-only source tree. Mandatory
 cases cover every changed decision, nonempty flags/conventions, absent and

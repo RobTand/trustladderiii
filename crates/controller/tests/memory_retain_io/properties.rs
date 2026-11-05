@@ -71,7 +71,7 @@ fn check(entry: Entry) {
         ::std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
             .unwrap_or_else(|| ::std::env::var_os("TMPDIR").unwrap_or_else(|| ".".into())),
     );
-    let regressions = output.join("memory-retain-proptest-regressions.txt");
+    let regressions = output.join(format!("memory-retain-{entry:?}-proptest-regressions.txt"));
     ::std::fs::write(&regressions, include_str!("proptest-regressions.txt")).unwrap();
     let path = regressions.to_string_lossy().into_owned();
     let mut runner = TestRunner::new(Config {
@@ -508,4 +508,54 @@ fn mandatory_batches_holds_empty_wakes_and_crash_rows() {
     assert_eq!(before.remote, after.remote);
     assert_eq!(before.result, "crash");
     assert_eq!(after.result, "crash");
+}
+
+#[test]
+fn generated_http_outcome_matrix() {
+    let output = ::std::path::PathBuf::from(
+        ::std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+            .unwrap_or_else(|| ::std::env::var_os("TMPDIR").unwrap_or_else(|| ".".into())),
+    );
+    let mut comparisons = 0;
+    for mode in 0..23u8 {
+        let regression = output.join(format!("memory-http-{mode}-regressions.txt"));
+        ::std::fs::write(&regression, include_str!("proptest-regressions.txt")).unwrap();
+        let mut runner = TestRunner::new(Config {
+            cases: 4,
+            max_shrink_iters: 512,
+            rng_seed: RngSeed::Fixed(0x18_0776_2026),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(Box::leak(
+                regression.to_string_lossy().into_owned().into_boxed_str(),
+            )))),
+            ..Config::default()
+        });
+        let strategy = (1u8..5, prop::collection::vec(0u8..23, 0..8), any::<bool>());
+        runner
+            .run(&strategy, |(rows, tail, repeat)| {
+                let mut http = vec![mode];
+                http.extend(tail);
+                let schedule = Schedule {
+                    rows,
+                    http,
+                    repeat,
+                    ..Schedule::default()
+                };
+                match io::compare(&schedule, Entry::Flush) {
+                    Ok(n) => {
+                        comparisons += n;
+                        Ok(())
+                    }
+                    Err(error) => {
+                        ::std::fs::write(
+                            output.join("memory-http-minimized-failure.json"),
+                            serde_json::to_vec_pretty(&schedule).unwrap(),
+                        )
+                        .unwrap();
+                        Err(TestCaseError::fail(error))
+                    }
+                }
+            })
+            .unwrap();
+    }
+    eprintln!("HTTP matrix: 92 fixed-seed schedules, {comparisons} complete/crash comparisons");
 }

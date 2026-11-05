@@ -308,7 +308,7 @@ pub(super) fn compare(s: &Schedule, entry: Entry) -> ::std::result::Result<usize
     Ok(1 + 2 * expected.writes)
 }
 
-pub(super) struct Store;
+pub struct Store;
 impl Store {
     pub fn load(&mut self) -> Result<bool> {
         let mode = sample("store.load", Value::Null)?;
@@ -441,7 +441,8 @@ impl Store {
     }
     pub fn forget_memory(&mut self, id: &str) -> Result<()> {
         mutate("store.forget_memory", json!(id), |r| {
-            r.run.rows.retain(|_, v| v["id"] != id)
+            r.run.rows.retain(|_, v| v["id"] != id);
+            r.run.rows.remove("health");
         })
     }
     pub fn park_memory(&mut self, id: &str, status: u16) -> Result<()> {

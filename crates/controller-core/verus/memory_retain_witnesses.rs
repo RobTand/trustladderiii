@@ -24,7 +24,9 @@ pub fn identity(high: u64, low: u64) {
     let replay = identity_bits(high, low);
     assert(first == replay);
     let zero = identity_bits(0,0);
+    assert(((0u64 & 0xffffffffffff0fffu64) | 0x5000u64) == 0x5000u64) by(bit_vector);
     assert(zero.0 == 0x5000u64);
+    assert(((0u64 & 0x3fffffffffffffffu64) | 0x8000000000000000u64) == 0x8000000000000000u64) by(bit_vector);
     assert(zero.1 == 0x8000000000000000u64);
 }
 /// Preserved f5b0ba2f memory.rs:266-274,319-324. Exact byte boundary and
