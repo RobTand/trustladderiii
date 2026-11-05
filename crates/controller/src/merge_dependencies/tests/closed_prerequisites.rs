@@ -44,6 +44,7 @@ fn live_closed_roots_release_nine_and_four_waiter_chains_in_order() {
     let (repo, mut c, repository, settings) = fixture_with_capacity(&mut db, "t839_chains", 32, 32);
     for (root, count) in [(2763, 9), (2773, 4), (2779, 1), (2781, 1)] {
         set_issue(&repo, root, "open", None);
+        let root_node = intake(&mut c, &repository, root);
         let mut waiters = Vec::new();
         for number in root + 1..=root + count {
             set_issue(&repo, number, "open", None);
@@ -51,6 +52,21 @@ fn live_closed_roots_release_nine_and_four_waiter_chains_in_order() {
             ingest(&mut c, node, &[number - 1]);
             waiters.push(node);
         }
+        reply(
+            &mut c,
+            root_node,
+            Reply::IngestEarlyEnd(EarlyEnd::NotActionable),
+        );
+        reply(&mut c, root_node, Reply::AuditAgrees);
+        assert_eq!(
+            c.world().unwrap().nodes[root_node.0 as usize].phase,
+            Phase::Closed(Outcome::NotActionable)
+        );
+        assert!(
+            waiters
+                .iter()
+                .all(|node| c.world().unwrap().nodes[node.0 as usize].phase == Phase::Unplanned)
+        );
         for (index, &node) in waiters.iter().enumerate() {
             let predecessor = root + index as u64;
             set_issue(&repo, predecessor, "closed", Some("not_planned"));

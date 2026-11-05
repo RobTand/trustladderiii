@@ -177,7 +177,7 @@ pub fn issue_status(issue: &tl3_github::Issue) -> DependencyStatus {
 pub(crate) fn dependency_note(notice: tl3_kernel::Notice) -> Option<String> {
     match notice {
         tl3_kernel::Notice::Note(NoteKind::DependencyAbandoned { number }) => Some(format!(
-            "Prerequisite #{number} was closed as not planned. This request will wait until you change or stop it."
+            "Prerequisite #{number} closed without merging. Closed prerequisites satisfy the dependency; planning checks whether the missing code is needed."
         )),
         tl3_kernel::Notice::Note(NoteKind::DependencyCycle { number }) => Some(format!(
             "Waiting for #{number} would create a cycle. This request will wait until you change or stop it."

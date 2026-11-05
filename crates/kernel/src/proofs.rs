@@ -854,6 +854,14 @@ fn check_dependency_abandoned() {
     let delivered = status == DependencyStatus::Delivered;
     assert_eq!(advance(&mut world, 0, &mut out), delivered);
     assert_eq!(
+        world.nodes[0].phase,
+        if delivered {
+            Phase::Planning { must_split: false }
+        } else {
+            Phase::Unplanned
+        }
+    );
+    assert_eq!(
         world.dependencies[0].status,
         if delivered {
             DependencyStatus::Delivered
@@ -864,7 +872,7 @@ fn check_dependency_abandoned() {
     require_consistent(&world);
     kani::cover!(
         world.nodes[0].waiting_prerequisite.is_some(),
-        "abandonment keeps the root blocked"
+        "undelivered abandonment keeps the root blocked"
     );
 }
 
