@@ -3,6 +3,10 @@ name = "tl3-pb-evidence"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+test = false
+doctest = false
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "float_roundtrip"] }
@@ -11,9 +15,6 @@ sha2 = "0.10"
 base64 = "0.22"
 regex = "1"
 tl3-contracts = { path = "../contracts" }
-
-[dev-dependencies]
-proptest = { version = "1", default-features = false, features = ["std"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }

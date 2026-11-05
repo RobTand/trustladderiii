@@ -89,7 +89,7 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
-    "tl3-controller/pb_evidence": 14,
+    "tl3-controller/worker_checker": 19,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/operations_quota": 4,
@@ -106,7 +106,7 @@ _CONTROLLER_TEST_DATA = [
     "//crates/store:sources",
 ]
 _CONTROLLER_TEST_COMPILE_DATA = {
-    "tests/pb_evidence.rs": ["//crates/pb-evidence:sources"],
+    "tests/worker_checker.rs": ["//crates/pb-evidence:sources"],
     "tests/writer_blocker.rs": ["//workers/tests:fixtures"],
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
@@ -121,7 +121,6 @@ _CONTROLLER_WORKERS = [
     "test_test_writer_references",
     "test_test_budget_parity",
     "test_test_worker_checker",
-    "test_test_pb_evidence",
     "test_test_worker_budget_orchestration",
 ]
 _CONTROLLER_BINARIES = {
@@ -139,8 +138,7 @@ _CONTROLLER_BINARIES = {
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
-    "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
-    "test_test_pb_evidence": ["//workers/tests:checker_recordings", "//workers/tests:pb_evidence_vectors"],
+    "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors", "//workers/tests:pb_evidence_vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
@@ -271,7 +269,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         timeout = "eternal" if binary_id == "tl3-controller/workers" else "long",
     )
 
-def tl3_crate(package, crate, local_deps = [], features = [], build_script = False,
+def tl3_crate(package, crate, local_deps = [], features = [], build_script = False, lib_test = True,
               bins = [], examples = {}, declared_tests = {}):
     """Build one workspace crate and every test target `cargo test --all-targets` runs.
 
@@ -373,7 +371,8 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         crate_features = features,
         deps = test_deps,
     )
-    _crate_test("lib", package, crate, "src/lib.rs", True, options)
+    if lib_test:
+        _crate_test("lib", package, crate, "src/lib.rs", True, options)
     for name in bins:
         binary_options = dict(options)
         if name == "verus-runner" and directory == "crates/mergify":

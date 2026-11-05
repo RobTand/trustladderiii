@@ -52,6 +52,13 @@ class RustBuildsTests(unittest.TestCase):
         self.assertIn('"outside": "//deploy:helper.rs"', text)
         self.assertIn('build_script = True', text)
 
+    def test_library_test_false_is_kept_from_cargo(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            builds = self.render(root, [crate(root, 'tl3-demo', [
+                ('lib', 'tl3_demo', 'src/lib.rs')], '[lib]\ntest = false\n')])
+        self.assertIn('lib_test = False', builds['crates/tl3-demo/BUILD.bazel'])
+
     def test_features_are_unified_across_workspace_dependents(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

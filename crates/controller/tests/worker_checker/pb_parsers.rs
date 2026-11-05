@@ -1,4 +1,4 @@
-//! #821: parser round-trips; full six-kind parity runs in controller::pb_evidence,
+//! #821: parser round-trips; full six-kind parity runs in controller::worker_checker,
 //! where the unchanged Python bounding and I/O shell can also execute.
 use proptest::prelude::*;
 use serde_json::{Value, json};

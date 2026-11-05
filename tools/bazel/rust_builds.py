@@ -87,8 +87,10 @@ def render(package, directory, features):
               ('local_deps', local), ('features', sorted(features)), ('bins', sorted(bins)),
               ('examples', dict(sorted(examples.items()))),
               ('declared_tests', dict(sorted(declared.items())))]
+    if manifest.get('lib', {}).get('test') is False:
+        fields.append(('lib_test', False))
     body = ''.join(f'    {key} = {block(value)},\n' for key, value in fields
-                   if value or key in ('package', 'crate'))
+                   if value or key in ('package', 'crate', 'lib_test'))
     return (f'{HEADER}load("//tools/bazel:rust.bzl", "tl3_crate")\n\n'
             f'package(default_visibility = ["//visibility:public"])\n\ntl3_crate(\n{body})\n')
 

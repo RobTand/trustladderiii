@@ -17,6 +17,6 @@
   "crate:tl3-pb-evidence": {
     "reason": "planner-contracts #730/#821: Rust PB result decisions (tl3-pb-evidence) linked by tl3-controller's tl3 CLI for check-pb",
     "sources": 14,
-    "max_fanout": 73
+    "max_fanout": 78
   }
 }

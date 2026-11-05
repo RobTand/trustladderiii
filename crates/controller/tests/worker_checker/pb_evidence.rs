@@ -143,7 +143,9 @@ fn corpus(kind: &str, part: usize, parts: usize) {
         drive(
             include_str!("pb_evidence/vector_parity.py"),
             &[
-                root.join("tests/pb_evidence").display().to_string(),
+                root.join("tests/worker_checker/pb_evidence")
+                    .display()
+                    .to_string(),
                 kind.into(),
                 part.to_string(),
                 parts.to_string()
@@ -203,7 +205,7 @@ fn generated_serializers_match_python_bytes() {
 fn pb_evidence_wire_schema_matches_rust_types() {
     assert_eq!(
         serde_json::to_string_pretty(&schemars::schema_for!(tl3_pb_evidence::Request)).unwrap(),
-        include_str!("../../pb-evidence/tests/request-schema.json")
+        include_str!("../../../pb-evidence/tests/request-schema.json")
     );
 }
 

@@ -68,3 +68,6 @@ print('recorded-verdict mutant rejected')
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("recorded-verdict mutant rejected"));
 }
+
+mod pb_evidence;
+mod pb_parsers;
