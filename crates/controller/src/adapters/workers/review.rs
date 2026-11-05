@@ -222,6 +222,7 @@ pub(super) fn inputs(
         inputs["generation_evidence"] = receipt.clone();
     }
     super::protocol::validate_inputs("reviewer", &inputs)?;
+    inputs.as_object_mut().unwrap().remove("standing_rules");
     Ok(inputs)
 }
 

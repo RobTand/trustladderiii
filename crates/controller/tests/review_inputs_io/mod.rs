@@ -36,10 +36,14 @@ mod findings {
     include!("clipped.rs");
 }
 
+#[path = "failure.rs"]
+mod worker_inputs;
+
 mod protocol {
     use super::*;
-    // Unchanged validator is a recorded leaf. Retained worker targets run its real schema.
+    include!("validation.rs");
     pub fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
-        io::read("validate_inputs", json!([role, inputs])).map(|_| ())
+        io::read("validate_inputs", json!([role, inputs]))?;
+        validate_real(role, inputs)
     }
 }

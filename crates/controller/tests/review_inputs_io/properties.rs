@@ -193,7 +193,14 @@ fn expected() -> Value {
 }
 fn assert_wire(s: &Schedule, v: Value, expected_ops: &[&str]) -> io::Run {
     let r = compare(s);
-    assert_eq!(r.result.as_ref().unwrap(), &serde_json::to_vec(&v).unwrap());
+    assert_eq!(r.trace.last().unwrap()["args"], json!(["reviewer", v]));
+    match protocol::validate_real("reviewer", &v) {
+        Ok(()) => assert_eq!(r.result.as_ref().unwrap(), &serde_json::to_vec(&v).unwrap()),
+        Err(error) => {
+            assert_eq!(r.result, Err(error.to_string()));
+            assert_eq!(r.error_variant, Some(format!("{:?}", std::mem::discriminant(&error))));
+        }
+    }
     assert_eq!(ops(&r), expected_ops);
     // Check all arguments and responses against the schedule, not just op names.
     let mut counts = BTreeMap::<&str, usize>::new();
@@ -882,8 +889,7 @@ fn mandatory_head_tree_changes_between_the_two_reply_reads() {
 }
 
 /// #819/H17: successful real producer fixtures retain sorted `json!` wire bytes.
-/// The recorded-leaf schedules above also deliberately pass malformed opaque receipt
-/// shapes through a stub validator, so this check uses its schema-valid fixture.
+/// Malformed receipt schedules now stop at the real schema boundary.
 #[test]
 fn reviewer_type_preserves_producer_value_bytes_but_direct_serialization_differs() {
     let run = compare(&fixture());
@@ -892,4 +898,91 @@ fn reviewer_type_preserves_producer_value_bytes_but_direct_serialization_differs
     let typed: tl3_contracts::roles::reviewer_input::ReviewerInput = serde_json::from_value(value).unwrap();
     assert_eq!(serde_json::to_vec(&serde_json::to_value(&typed).unwrap()).unwrap(), original);
     assert_ne!(serde_json::to_vec(&typed).unwrap(), original);
+}
+
+
+#[test]
+fn validation_sources_match_production() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(root.join("src/adapters/workers/protocol.rs")).unwrap();
+    let parts = [
+        ("fn validators()", "/// A reply checked"),
+        ("pub(super) fn validate_inputs(", "fn forecast("),
+        ("fn schemas_from(", "pub(crate) fn reply_field"),
+    ];
+    let body: String = parts.iter().map(|(a,b)| &source[source.find(a).unwrap()..source.find(b).unwrap()]).collect();
+    assert_eq!(include_str!("validation.rs"), format!("use super::*;\nuse std::sync::OnceLock;\ninclude!(concat!(env!(\"OUT_DIR\"), \"/worker_schemas.rs\"));\n{}", body.replace("pub(super) fn validate_inputs(", "pub fn validate_real(")));
+    let failure = std::fs::read_to_string(root.join("src/worker_inputs.rs")).unwrap();
+    let body = &failure[failure.find("#[derive(Clone, Debug, Deserialize").unwrap()..failure.find("pub(crate) fn of(").unwrap()];
+    assert!(include_str!("failure.rs").contains(body));
+}
+
+fn typed_optionals(bits: u8) -> (Schedule, Value) {
+    let mut s = fixture();
+    let mut v = expected();
+    let optional: Value = serde_json::from_str(include_str!("typed-optionals.json")).unwrap();
+    if bits & 1 != 0 {
+        s.tapes.get_mut("worker_document").unwrap()[0] = Read::Value(json!({"head_sha":HEAD, "reviewed_sha":REVIEWED,"findings":optional["review_fixes"]["findings"]}));
+        v["review_fixes"] = optional["review_fixes"].clone();
+    }
+    if bits & 2 != 0 {
+        s.tapes.get_mut("worker_document").unwrap()[1] = Read::Value(json!({"head":HEAD,"test_evidence":optional["test_evidence"]}));
+        v["test_evidence"] = optional["test_evidence"].clone();
+    }
+    if bits & 4 != 0 {
+        s.tapes.get_mut("worker_document").unwrap()[2] = Read::Value(json!({"head":HEAD,"generation_evidence":optional["generation_evidence"]}));
+        v["generation_evidence"] = optional["generation_evidence"].clone();
+    }
+    if bits & 8 != 0 {
+        let rule = json!({"id":"custom","description":"Preserve this rule"});
+        s.tapes.get_mut("worker_materials").unwrap()[0] = Read::Value(json!({"standing_rules":[rule]}));
+        v["standing_rules"].as_array_mut().unwrap().insert(0, rule);
+    }
+    if bits & 16 != 0 {
+        let report: Value = serde_json::from_str(include_str!("base-harness-report.json")).unwrap();
+        let mut results = report["results"].clone();
+        // Older reports omit message. Omission must survive the typed wire.
+        results[0]["tests"][0].as_object_mut().unwrap().remove("message");
+        s.snapshot.rows[1].value["results"] = results.clone();
+        v["checks"] = results;
+    }
+    (s,v)
+}
+
+/// H17b preserves existing behavior, including every optional the shell emits.
+#[test]
+fn mandatory_schema_valid_optional_fields_reach_the_real_shell() {
+    for bits in [0,1,2,4,8,16,31] {
+        let (s,v) = typed_optionals(bits);
+        protocol::validate_real("reviewer", &v).unwrap();
+        let r = compare(&s);
+        assert_eq!(r.result.unwrap(), serde_json::to_vec(&v).unwrap());
+    }
+}
+
+proptest! {
+    #![proptest_config(Config {cases:64,rng_seed:RngSeed::Fixed(0x17_b0730_2026),failure_persistence:persistence(),..Config::default()})]
+    #[test]
+    fn generated_schema_valid_optional_combinations(bits in 0u8..32, text in "[a-zé界]{0,80}") {
+        let (mut s,mut v) = typed_optionals(bits);
+        s.tapes.get_mut("diff").unwrap()[0] = Read::Value(json!(text.as_bytes()));
+        v["diff"] = json!(text);
+        protocol::validate_real("reviewer", &v).unwrap();
+        assert_eq!(compare(&s).result.unwrap(), serde_json::to_vec(&v).unwrap());
+    }
+}
+
+/// Recall is attached by the caller after inputs returns, so these fields cannot
+/// be reached inside inputs. Check the actual caller wire names against the type.
+#[test]
+fn mandatory_memories_and_unavailable_note_preserve_typed_wire() {
+    for fields in [json!({"memories":[{"id":"m1","kind":"lesson","repo":"o/r","content":"Keep evidence"}]}), json!({"memories":[],"memory_note":"Recall unavailable"})] {
+        let mut wire = value(&compare(&fixture()));
+        assert!(wire.get("memories").is_none());
+        assert!(wire.get("memory_note").is_none());
+        wire.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+        protocol::validate_real("reviewer", &wire).unwrap();
+        let typed: tl3_contracts::roles::reviewer_input::ReviewerInput = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_vec(&serde_json::to_value(&typed).unwrap()).unwrap(), serde_json::to_vec(&wire).unwrap());
+    }
 }
