@@ -637,6 +637,7 @@ mod properties {
                     "dequeue_pending",
                     "snapshot",
                     "fence",
+                    "check_changed",
                 ],
             ),
             (
@@ -847,3 +848,71 @@ mod properties {
 }
 
 mod a1;
+
+mod a1_schedules {
+    use super::*;
+    use io::{Entry, Frame, Profile, Schedule};
+    use proptest::{
+        prelude::*,
+        test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
+    };
+
+    /// #608/#760: exercise completion directly across every retained profile,
+    /// changing each leaf read and crashing at every attempted durable write.
+    #[test]
+    fn mandatory_a1_completion_schedules() {
+        let mut runner = TestRunner::new(Config {
+            cases: 128,
+            rng_seed: RngSeed::Fixed(0x0075_1760_2026),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/mergify_io/proptest-regressions.txt"
+            )))),
+            ..Config::default()
+        });
+        let runs = ::std::cell::Cell::new(0);
+        runner
+            .run(
+                &(
+                    any::<u8>(),
+                    prop::collection::vec((any::<u16>(), 0u32..300_002), 0..128),
+                ),
+                |(initial, tape)| {
+                    for profile in [
+                        Profile::Plain,
+                        Profile::Flip,
+                        Profile::Body,
+                        Profile::Active,
+                        Profile::Terminal,
+                        Profile::Merged,
+                        Profile::MergeFalse,
+                        Profile::Refusal,
+                    ] {
+                        let schedule = Schedule {
+                            profile,
+                            initial,
+                            frames: tape
+                                .iter()
+                                .map(|&(word, elapsed_ms)| Frame { word, elapsed_ms })
+                                .collect(),
+                            appears_at: usize::MAX,
+                            write_results: vec![],
+                            overrides: vec![],
+                            file_results: vec![],
+                        };
+                        runs.set(
+                            runs.get()
+                                + io::compare(&schedule, Entry::Completion)
+                                    .map_err(TestCaseError::fail)?,
+                        );
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        eprintln!(
+            "Completion: 1024 schedules; {} complete/crash comparisons",
+            runs.get()
+        );
+    }
+}
