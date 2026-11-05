@@ -214,6 +214,7 @@ def _named_run(planner_request, monkeypatch, draft, candidate=None):
     from planner_fixtures import planner_model
     from tl3_workers import runtime
 
+    monkeypatch.chdir(planner_request['worktree'])
     planner_request['inputs']['repair_plan_consistency'] = True
     model = planner_model(monkeypatch, draft, candidate if candidate is not None else draft)
     events = []
@@ -267,6 +268,7 @@ def test_t832_every_objection_repairs_or_records_unavailability(planner_request,
         draft['lands_on_its_own'] = False
     from planner_fixtures import planner_model
     from tl3_workers import runtime
+    monkeypatch.chdir(planner_request['worktree'])
     planner_request['inputs']['repair_plan_consistency'] = available
     model = planner_model(monkeypatch, draft, draft)
     events = []
@@ -286,6 +288,7 @@ def test_t832_format_consumes_the_semantic_repair_allowance(planner_request, mon
     from planner_fixtures import planner_model
     from tl3_workers import runtime
     planner_request['inputs']['must_split'] = True
+    monkeypatch.chdir(planner_request['worktree'])
     planner_request['inputs']['repair_plan_consistency'] = True
     model = planner_model(monkeypatch, {'kind': 'invalid'}, LEAF, CANT_MEET)
     events = []
