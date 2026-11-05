@@ -1426,7 +1426,9 @@ impl World {
             kernel_proof! {
                 potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
             }
+            kernel_snapshot! { before_probe = w }
             if advance(&mut w, i, &mut out) { return false; }
+            kernel_proof! { movable_frame(*self, before_probe@, i as int); }
             i += 1;
         } }
         true
@@ -2943,18 +2945,39 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds);] {
     kernel_snapshot! { before_ingest = *w }
-    let m = &mut w.nodes[i];
+    finish_ingest_node(&mut w.nodes[i], size, early_end);
+    w.withhold_dependency_credit(i);
+    kernel_proof! {
+        assert forall|j: int| 0 <= j < before_ingest@.nodes@.len() && j != i implies
+            w.nodes@[j] == before_ingest@.nodes@[j] by {}
+    }
+}
+}
+
+
+kernel_fn! {
+/// Ingest reply rows / #771: the unchanged one-node initialization before
+/// dependency credit reconciliation. All non-credit counters retain their frame.
+fn finish_ingest_node(m: &mut Node, size: u8, early_end: Option<EarlyEnd>) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+    ensures *final(m) == (Node {
+        credit: Credit { ready: true,
+            start: if old(m).credit.ready { old(m).credit.start } else { size as u32 + RESERVE },
+            ..old(m).credit },
+        early_end, phase: Phase::Auditing, pos: 0, ticket: None,
+        generation: (old(m).generation + 1) as u64,
+        effect: match old(m).effect {
+            Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+        },
+        ..*old(m)
+    }),
+] {
     if !m.credit.ready {
         m.credit.ready = true;
         m.credit.start = size as u32 + RESERVE;
     }
     m.early_end = early_end;
     set_phase(m, Phase::Auditing);
-    w.withhold_dependency_credit(i);
-    kernel_proof! {
-        assert forall|j: int| 0 <= j < before_ingest@.nodes@.len() && j != i implies
-            w.nodes@[j] == before_ingest@.nodes@[j] by {}
-    }
 }
 }
 
@@ -4306,6 +4329,16 @@ spec fn movable(w: World, i: int) -> bool {
     })
 }
 
+/// Q30/Q39 / #771: scheduling depends on these storage views, not Vec identity.
+proof fn movable_frame(before: World, after: World, i: int)
+    requires before.nodes@ == after.nodes@, before.gates@ == after.gates@,
+        before.pool_capacity == after.pool_capacity,
+        before.dependencies@ == after.dependencies@,
+    ensures movable(before, i) == movable(after, i),
+{
+    assert(oldest_waiter(before, i) == oldest_waiter(after, i));
+}
+
 /// #771: conserved allocations and frames across the real settle loop.
 spec fn settle_chain(before: World, after: World) -> bool {
     after.nodes@.len() == before.nodes@.len()
@@ -4374,7 +4407,10 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
                 reveal(advance_post);
                 if !changed && !moved {
                     assert(w.nodes@ == before_node@.nodes@);
-                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {}
+                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {
+                        movable_frame(before_node@, *w, j);
+                        if j < i { assert(!movable(before_node@, j)); }
+                    }
                 }
                 assert forall|j: int| 0 <= j < w.nodes@.len() implies
                     w.nodes@[j].generation as int + generation_capacity(w.nodes@[j])
@@ -4521,6 +4557,8 @@ kernel_fn! {
             result == old(m).ticket.is_some()
                 && *final(m) == (Node { ticket: None, ..*old(m) })
         },
+        final(m).last_cmd == old(m).last_cmd,
+        final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
     ] {
         if m.phase.holding() {
             if let Some(r) = m.phase.resume() {
