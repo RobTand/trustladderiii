@@ -1,6 +1,7 @@
 """Generate #749 parity data by calling the current Python harness, never a mirror."""
 import argparse
 import ast
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from itertools import product
@@ -9,17 +10,89 @@ from pathlib import Path
 import sys
 import tempfile
 from types import SimpleNamespace
+from unittest.mock import patch
 
 if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from _pytest.assertion.rewrite import rewrite_asserts
-from tl3_harness import limits, model, node_ids, red_message, runner, test_tool
+from tl3_harness import limits, model, node_ids, red_message, report, runner, test_tool
+from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.selector_identity import selection_matches, selector_identity
 
 ROOT = Path(__file__).resolve().parents[1] / 'test-vectors'
-KINDS = ('node-id', 'selector-identity', 'summary-bound', 'red-match', 'limits', 'judge', 'phase-fold')
+KINDS = ('node-id', 'selector-identity', 'summary-bound', 'red-match', 'limits', 'judge', 'phase-fold',
+         'finish-teardown')
 NODE = 'tests/test_value.py::test_value'
+DIVERGENCES = {
+    'grouped-base-48-checks': {
+        'reason': 'The fallback retains all receipts and itself exceeds the 16 KiB envelope.',
+        'property': 'serialized_size_le_envelope_for_any_group_count',
+    },
+    'demonstrating-red-before-unplanned-errors': {
+        'reason': 'bounded removes the demonstrating RED entry before unplanned errors.',
+        'property': 'red_survives_whenever_any_entry_survives_with_proof_and_totals_kept',
+    },
+}
+
+
+def teardown_error(scenario):
+    """Real exception tracebacks, with independently varied frame, path, type and message."""
+    class ThreadError(RuntimeError):
+        pass
+
+    filename, frame, error = 'xdist/workermanage.py', 'teardown_nodes', RuntimeError("can't start new thread")
+    if scenario == 'wrong-file':
+        filename = 'checkout/workermanage.py'
+    elif scenario == 'wrong-frame':
+        frame = 'pytest_sessionfinish'
+    elif scenario == 'wrong-type':
+        error = ValueError("can't start new thread")
+    elif scenario == 'subclass':
+        error = ThreadError("can't start new thread")
+    elif scenario == 'wrong-message':
+        error = RuntimeError('checkout hook')
+    elif scenario == 'system-exit':
+        error = SystemExit(1)
+    else:
+        assert scenario == 'xdist-thread'
+    namespace = {'error': error}
+    exec(compile(f'def {frame}():\n    raise error\n', filename, 'exec'), namespace)
+    try:
+        namespace[frame]()
+    except BaseException as caught:
+        return caught
+    raise AssertionError('traceback fixture must raise')
+
+
+def grouped_base(count, *, errors=0):
+    """pb_tests.run_tests' grouped base shape, built from real Summary outputs."""
+    groups = []
+    for index in range(count):
+        summary = test_tool.Summary()
+        demonstrating = index == 0
+        for number in range(errors if not demonstrating else 1):
+            summary.add(NODE if demonstrating else f'tests/test_other.py::test_error[{number}]',
+                        'failed' if demonstrating else 'error',
+                        'expected RED' if demonstrating else 'checkout recovery failure ' * 8)
+        key = f'{index:064x}'
+        summary.result.update(
+            check='demonstrating observer' if demonstrating else f'planned check {index}',
+            proof={'rule': 'subject-observer-v1', 'mode': 'head-observer', 'declaration': None,
+                   'source_base_tree_sha256': 'a' * 64, 'base_tree_sha256': 'b' * 64,
+                   'head_tree_sha256': 'c' * 64},
+            action_key=key,
+            receipts=[{'action_key': key, 'status': 'executed', 'exit_code': 0,
+                       'receipt_sha256': 'd' * 64, 'log_sha256': 'e' * 64,
+                       'attempt': 1, 'generation': 'f' * 64}])
+        groups.append(summary.result)
+    if errors:
+        groups[-1]['check'] = 'unplanned base tests'
+    return {'status': 'completed', 'groups': groups,
+            'tests': [deepcopy(test) for group in groups for test in group['tests']],
+            'receipts': [receipt for group in groups for receipt in group['receipts']],
+            'totals': {state: sum(group['totals'][state] for group in groups) for state in test_tool.OUTCOMES},
+            'note': 'Each group runs with its own declared source partition and execution settings.'}
 
 
 def wire(value):
@@ -101,6 +174,11 @@ def cases(kind):
                                                    'receipts': ['receipt'], 'action_key': 'b' * 64}}
         yield 'run-failures', {'op': 'envelope', 'limit': 400,
                               'result': {'tests': [], 'totals': {}, 'runs': [{'failed': ['x' * 800, 'y' * 800]}]}}
+        yield 'grouped-base-48-checks', {'op': 'envelope', 'limit': test_tool.SUMMARY_BYTES,
+                                       'result': grouped_base(48)}
+        yield 'demonstrating-red-before-unplanned-errors', {
+            'op': 'envelope', 'limit': test_tool.SUMMARY_BYTES, 'red_test': NODE,
+            'red_check': 'demonstrating observer', 'result': grouped_base(2, errors=70)}
     elif kind == 'red-match':
         long_message = 'é😀' * 501
         for name, message in [('long-explicit-message', long_message),
@@ -165,9 +243,81 @@ def cases(kind):
                                               ['teardown', 'passed', '', False, False]]}
         yield 'worker-crash', {'phases': [['???', 'failed', 'worker crashed', False, False]], 'parallel': True,
                                'when': '???'}
+    elif kind == 'finish-teardown':
+        for mode, finished in product(('checking', 'summary'), (None, 0, 1, 2, 3, 4, 5)):
+            for code in range(6):
+                yield f'{mode}-finish-{finished}-return-{code}', {
+                    'op': 'run-pytest', 'mode': mode, 'finished': finished,
+                    'raised': False, 'worker_teardown_exhausted': False, 'return_code': code}
+            for scenario in ('xdist-thread', 'wrong-file', 'wrong-frame', 'wrong-type',
+                             'subclass', 'wrong-message', 'system-exit'):
+                classified = runner.worker_teardown_exhausted(teardown_error(scenario))
+                yield f'{mode}-finish-{finished}-{scenario}', {
+                    'op': 'run-pytest', 'mode': mode, 'finished': finished, 'raised': True,
+                    'worker_teardown_exhausted': classified, 'exception_fixture': scenario}
+        for mode, code, finish in product(('checking', 'summary'), range(6), ('matching', 'missing', 'mismatched')):
+            yield f'{mode}-parse-{code}-{finish}', {
+                'op': 'parse', 'mode': mode, 'exit_code': code, 'finish': finish}
+
+
+def finish_records(data):
+    """Valid passing/failing/collection facts isolate finish/exit consistency."""
+    code = data['exit_code']
+    records = [{'event': 'start', 'schema': 1}]
+    if data['mode'] == 'checking':
+        records.append({'event': 'collection', 'tests': [NODE] if code in (0, 1, 3) else []})
+        if code in (0, 1, 3):
+            for when in ('setup', 'call', 'teardown'):
+                failed = when == 'call' and code != 0
+                records.append({'event': 'phase', 'test': NODE, 'when': when,
+                                'outcome': 'failed' if failed else 'passed',
+                                'assertion': failed, 'missing': None})
+        elif code == 2:
+            records.append({'event': 'collection-error', 'message': 'collection fixture'})
+    elif code in (0, 1, 3):
+        records.append({'event': 'result', 'test': NODE, 'outcome': 'passed' if code == 0 else 'failed',
+                        'message': '', 'truncated': False})
+    elif code == 2:
+        records.append({'event': 'collection-error', 'test': NODE, 'message': 'collection fixture',
+                        'truncated': False})
+    if data['finish'] != 'missing':
+        records.append({'event': 'finish', 'exit_code': code if data['finish'] == 'matching' else (code + 1) % 6})
+    return records
+
+
+def evaluate_finish(data):
+    if data['op'] == 'run-pytest':
+        reporter = runner.Reporter([NODE], -1, summary=data['mode'] == 'summary')
+        reporter.finished = data['finished']
+        if data['raised']:
+            error = teardown_error(data['exception_fixture'])
+            assert runner.worker_teardown_exhausted(error) == data['worker_teardown_exhausted']
+            with patch.object(runner.pytest, 'main', side_effect=error):
+                return runner.run_pytest(reporter, [])
+        with patch.object(runner.pytest, 'main', return_value=data['return_code']):
+            return runner.run_pytest(reporter, [])
+    records = finish_records(data)
+    if data['mode'] == 'checking':
+        return outcome(report.parse, records, (NODE,), set(), data['exit_code'])
+    # Supply transport facts, not a second parser. _run_current owns summary consistency.
+    process = SimpleNamespace(
+        records=lambda: iter(json.dumps(record).encode() for record in records),
+        exit_code=data['exit_code'], report_started=True,
+        incomplete=lambda: ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'incomplete_report'))
+    with tempfile.TemporaryDirectory() as directory:
+        tree = Path(directory)
+        (tree / 'tests').mkdir()
+        (tree / NODE.split('::')[0]).touch()
+        with (patch.object(test_tool, 'require_admission'),
+              patch.object(test_tool, 'container_command', return_value=[]),
+              patch.object(test_tool, 'Progress', return_value=SimpleNamespace(commit=lambda test: None)),
+              patch.object(test_tool, 'Supervised', return_value=nullcontext(process))):
+            return test_tool._run_current(tree, None, (NODE,))
 
 
 def evaluate(kind, data):
+    if kind == 'finish-teardown':
+        return evaluate_finish(data)
     if kind == 'node-id':
         if data['op'] == 'always-tests':
             return outcome(node_ids.validate_always_tests, data['tests'])
@@ -284,6 +434,8 @@ def accepts_check(node, selected=False):
 
 def vectors(kind):
     return {'kind': kind, 'cases': [{'id': name, 'input': wire(data), 'expected': wire(evaluate(kind, data))}
+                                   | ({'divergence': DIVERGENCES[name]}
+                                      if kind == 'summary-bound' and name in DIVERGENCES else {})
                                    for name, data in cases(kind)]}
 
 
@@ -308,13 +460,20 @@ def main():
     parser.add_argument('--check', action='store_true', help='fail on drift, naming the kind and case')
     parser.add_argument('--output', type=Path, default=ROOT / 'core')
     args = parser.parse_args()
+    failures = []
     for kind in KINDS:
         if args.check:
-            check(kind, args.output)
+            try:
+                check(kind, args.output)
+            except AssertionError as error:
+                failures.append(str(error))
+                continue
         else:
             args.output.mkdir(parents=True, exist_ok=True)
             (args.output / f'{kind}.json').write_text(json.dumps(vectors(kind), indent=1, sort_keys=True) + '\n')
         print(kind, len(list(cases(kind))), 'checked' if args.check else 'generated')
+    if failures:
+        parser.exit(1, '\n'.join(failures) + '\n')
 
 
 if __name__ == '__main__':
