@@ -10,7 +10,7 @@ sha2 = "0.10"
 schemars = "1"
 
 [dev-dependencies]
-proptest = "1"
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }
