@@ -70,7 +70,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn database(config: &tl3_config::Config) -> Result<tl3_store::Store> {
+fn database(config: &tl3_config::Config) -> Result<()> {
     let settings = &config.store;
     if settings.database != "tl3" || settings.user != "tl3" {
         return Err("deployment initializes only database and user tl3".into());
@@ -98,16 +98,16 @@ fn database(config: &tl3_config::Config) -> Result<tl3_store::Store> {
             .batch_execute("CREATE DATABASE tl3 OWNER tl3")
             .map_err(|_| "database creation failed; reconcile before retrying")?;
     }
-    let mut ownership = tl3_store::Ownership::claim(tl3_store::Store::connect(settings)?)?;
-    ownership.migrate()?;
-    let store = ownership.release()?;
-    println!("Postgres: database exists, fsync on, migrations applied");
+    tl3_store::Store::connect(settings)?;
+    println!(
+        "Postgres: database exists, fsync on; tl3d applies migrations after claiming ownership"
+    );
     // This runs on every tl3-postgres start, which tl3d and the status page
     // require. A console fault must never stop the database.
     if let Err(error) = console_role(config) {
         println!("Postgres: console login not granted: {error}");
     }
-    Ok(store)
+    Ok(())
 }
 
 /// The console reads through its own login, which may read every table,
@@ -744,9 +744,9 @@ mod database_tests {
         postgres.stop();
     }
 
-    /// #785 / batch 10: deploy hands off before its backend has exited.
+    /// #799 / #785: database preparation leaves ownership for tl3d startup.
     #[test]
-    fn database_initialization_releases_before_controller_start() {
+    fn database_preparation_allows_controller_start() {
         let mut postgres = database_support::Database::start();
         let admin = postgres.create("deploy_handoff");
         let mut client = postgres::Config::new()
@@ -770,15 +770,19 @@ mod database_tests {
             ..admin
         };
         config.console = None;
-        let mut deploy_session = database(&config).unwrap();
+        database(&config).unwrap();
+        let mut deploy_session = tl3_store::Store::connect(&config.store).unwrap();
+        let mut ownership =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).unwrap();
+        ownership.migrate().unwrap();
         let scratch = tempfile::tempdir().unwrap();
         let mut controller = tl3_controller::Controller::open(
-            tl3_store::Store::open(&config.store).unwrap(),
+            ownership.into_store(),
             tl3_controller::adapters::simulation(scratch.path()).unwrap(),
             tl3_controller::Bootstrap::from_config(&config).unwrap(),
         )
         .unwrap();
-        // The old deployment connection remains usable throughout admission.
+        // An unclaimed auxiliary connection remains usable throughout admission.
         deploy_session.load().unwrap();
         controller.world().unwrap();
         drop((controller, deploy_session, client));
@@ -824,6 +828,10 @@ mod database_tests {
                 "the explicit grant still fails for {password:?}"
             );
         }
+        assert!(tables(&mut connection(&config.store)).is_empty());
+        let mut ownership =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).unwrap();
+        ownership.migrate().unwrap();
         tl3_store::Reader::open(&config.store).unwrap();
         postgres.stop();
     }
