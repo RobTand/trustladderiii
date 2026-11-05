@@ -69,6 +69,11 @@ class MakerInputViolation(ValueError):
     """A maker invariant retains the legacy ValueError failure classification."""
 
 
+def failure_class(error):
+    """Preserve the pre-extraction class in every durable failure record."""
+    return "ValueError" if isinstance(error, MakerInputViolation) else type(error).__name__
+
+
 def check_inputs(kind, inputs):
     result = run_check(["check-inputs", kind], inputs, name="input")
     violations = result.get("violations") if isinstance(result, dict) else None

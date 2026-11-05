@@ -32,18 +32,54 @@ pub(super) fn python_float(text: &str) -> Option<f64> {
 }
 
 fn date(text: &str) -> Option<f64> {
-    if let Ok(date) = DateTime::parse_from_rfc2822(text) {
+    // email._parseaddr ignores weekdays, accepts RFC 850 and asctime order,
+    // and expands every numeric year below 100 before interpreting the date.
+    // Normalize first: Chrono's own two-digit pivot and weekday check differ.
+    let mut fields: Vec<_> = text.split_whitespace().collect();
+    let first = *fields.first()?;
+    if first.ends_with(',')
+        || ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+            .contains(&first.to_ascii_lowercase().as_str())
+    {
+        fields.remove(0);
+    } else if let Some((_, rest)) = first.rsplit_once(',') {
+        fields[0] = rest;
+    }
+    if fields.len() == 3 {
+        let date: Vec<_> = fields[0].split('-').collect();
+        if date.len() == 3 {
+            fields.splice(0..1, date);
+        }
+    }
+    if fields.len() == 4 {
+        fields.push("GMT");
+    }
+    if fields.len() < 5 {
+        return None;
+    }
+    // asctime puts the month first and the year after the time.
+    if fields[0].parse::<u32>().is_err() {
+        fields.swap(0, 1);
+    }
+    if fields[2].contains(':') {
+        fields.swap(2, 3);
+    }
+    let year: i32 = fields[2].trim_end_matches(',').parse().ok()?;
+    let year = if year < 100 {
+        year + if year < 69 { 2000 } else { 1900 }
+    } else {
+        year
+    };
+    let normalized = format!(
+        "{} {} {year:04} {} {}",
+        fields[0], fields[1], fields[3], fields[4]
+    );
+    if let Ok(date) = DateTime::parse_from_rfc2822(&normalized) {
         return Some(date.timestamp() as f64);
     }
-    // Python's email parser accepts obsolete HTTP dates and ignores the weekday.
-    let text = text.split_once(',').map_or(text, |(_, rest)| rest).trim();
-    for format in [
-        "%d-%b-%y %H:%M:%S GMT",
-        "%d %b %Y %H:%M:%S GMT",
-        "%a %b %e %H:%M:%S %Y",
-        "%d %b %Y %H:%M:%S",
-    ] {
-        if let Ok(date) = NaiveDateTime::parse_from_str(text, format) {
+    // A missing zone is UTC in the worker runtime, as for legacy asctime dates.
+    for format in ["%d %b %Y %H:%M:%S GMT", "%d %b %Y %H:%M GMT"] {
+        if let Ok(date) = NaiveDateTime::parse_from_str(&normalized, format) {
             return Some(Utc.from_utc_datetime(&date).timestamp() as f64);
         }
     }

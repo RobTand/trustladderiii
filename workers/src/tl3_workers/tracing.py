@@ -1201,9 +1201,9 @@ def input_failure(request):
 
 
 def failure_tags(error):
-    from tl3_workers.reply_check import MakerInputViolation
+    from tl3_workers.reply_check import MakerInputViolation, failure_class
     if isinstance(error, MakerInputViolation):
-        return {"failure_class": "ValueError", "failure_message": "invalid worker data"}
+        return {"failure_class": failure_class(error), "failure_message": "invalid worker data"}
     if type(error) is InputSchemaFailure:
         return {"failure_class": "worker_input_schema", "failure_message": error.message}
     from tl3_workers.prerequisites import MergePrerequisiteError
