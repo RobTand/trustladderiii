@@ -87,7 +87,18 @@ impl Shell<'_> {
                         }));
                     }
                 };
-                self.clear_model_quota(snapshot, model.as_deref(), commit);
+                // Legacy quota rows have no ordering identity. Preserve their
+                // once-only reply consumption until fresh quota facts replace them.
+                if let Some(row) = snapshot.rows.iter().find(|row| {
+                    row.table == "model_quotas"
+                        && Some(row.id.as_str()) == model.as_deref()
+                        && row.value["finished_ms"].is_null()
+                }) {
+                    commit.rows.push(RowChange::Delete {
+                        table: row.table.clone(),
+                        id: row.id.clone(),
+                    });
+                }
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {
@@ -292,15 +303,45 @@ impl Shell<'_> {
                             });
                     }
                 }
+                let checkpoint = commit.rows.len();
                 if let Some(document) = document {
                     commit
                         .rows
                         .push(put(document, node.0.to_string(), reply.clone()));
                 }
-                if role == "ingest" && reply["kind"] == "brief" {
-                    self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)?;
+                if role == "ingest"
+                    && reply["kind"] == "brief"
+                    && let Err(error) =
+                        self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)
+                {
+                    if let Some(failure) = input_resources::of(&error)
+                        && matches!(
+                            failure.problem,
+                            input_resources::Problem::KindMismatch { .. }
+                        )
+                    {
+                        // Q7/Q51: invalid ingest output uses the existing bounded run-failure path.
+                        // Discard partial declarations from this reply, atomically with its rejection.
+                        commit.rows.truncate(checkpoint);
+                        input_resources::record(commit, node, generation, failure);
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                    return Err(error);
                 }
                 if role == "ingest" {
+                    // Q7/#833: accepting the reply retires feedback atomically with its brief.
+                    if snapshot.rows.iter().any(|row| {
+                        row.table == "input_resource_contexts" && row.id == node.0.to_string()
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: "input_resource_contexts".into(),
+                            id: node.0.to_string(),
+                        });
+                    }
                     commit.rows.push(put(
                         "goals",
                         node.0.to_string(),
@@ -446,9 +487,15 @@ pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Obse
 // The current arm resolves `adapters::workers::reproducing` to the current
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared
-// shim spans the changed leaf. Every other adapter module is shared, unchanged.
+// shim spans the changed leaf. The plan-size leaf likewise has a separate current copy (#835).
 mod adapters {
-    pub use super::super::adapters::{prismabuild, results};
+    pub use super::super::adapters::results;
+    pub mod prismabuild {
+        use super::super::super::*;
+        pub use tl3_controller::adapters::prismabuild::*;
+        const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+        include!("plan-size-current.rs");
+    }
     pub mod workers {
         pub use super::super::super::adapters::workers::{protocol, review};
         pub mod reproducing {

@@ -490,8 +490,42 @@ fn pending_success(settings: &tl3_config::Store) -> (Fixture, Observation) {
     assert!(
         matches!(&ending, Observation::WorkerReply { model: Some(model), .. } if model == "default-model")
     );
-    put_quota(&mut f, "default-model", real_now() + 600_000);
     put_quota(&mut f, "unrelated-model", real_now() + 600_000);
+    // Q53 / #828: these success-clear scenarios require a known older quota,
+    // not the unknown legacy rows that must now wait for reset/operator clear.
+    // Stage the pre-ingress world, then redeliver the real immutable ending.
+    // Replace the adapter's queued reply and availability watermark above,
+    // rather than leaving a duplicate inbox entry ahead of the next scenario input.
+    let success = f
+        .store
+        .latest_worker_success("0", "default-model")
+        .unwrap()
+        .unwrap();
+    let family = success
+        .family
+        .as_deref()
+        .expect("real dispatch family is retained");
+    let snapshot = f.controller.snapshot().unwrap();
+    let mut commit = Commit::new("fixture:before-success-evidence", json!({}), &snapshot);
+    for row in snapshot.rows.iter().filter(|row| {
+        row.table == "model_successes" || row.table == "inbox" && row.value == json!(&ending)
+    }) {
+        commit.rows.push(RowChange::Delete {
+            table: row.table.clone(),
+            id: row.id.clone(),
+        });
+    }
+    commit.rows.push(RowChange::Put {
+        table: "model_quotas".into(),
+        id: "default-model".into(),
+        value: json!({"reset_ms":real_now()+600_000,"family":family,
+            "finished_ms":success.facts.finished_ms.unwrap()-1}),
+    });
+    f.store.commit(&commit).unwrap();
+    assert!(f.model_quota("default-model").is_some());
+    f.controller
+        .observe("fixture:real-success-ingress", ending.clone())
+        .unwrap();
     (f, ending)
 }
 

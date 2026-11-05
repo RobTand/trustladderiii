@@ -16,16 +16,30 @@ fn arm(source: &str) -> &str {
 }
 #[test]
 fn production_and_reference_sources_are_pinned() {
+    let resource = include_str!("resource.rs")
+        .split_once("// #833: verbatim resource persistence below.\n")
+        .unwrap()
+        .1;
+    assert!(include_str!("../../src/input_resources.rs").contains(resource.trim_end()));
     let pins: Value = serde_json::from_str(include_str!("pins.json")).unwrap();
     let base = include_str!("base-arms.rs.txt");
     assert_eq!(
         format!("{:x}", Sha256::digest(base)),
         pins["blobs"]["arms"]["sha256"]
     );
+    // Q53 / #828: preserve the historical extraction comparison, including its
+    // obsolete legacy clear. The real-store upgrade test asserts the new rule.
+    let legacy = include_str!("legacy-quota-clear.rs.txt");
+    assert_eq!(format!("{:x}", Sha256::digest(legacy)), pins["legacy_quota_clear"]["sha256"]);
     let source = include_str!("../../src/lib.rs");
+    let historical_current = include_str!("current.rs");
+    let normalized = historical_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n");
+    let normalized_arm = arm(&normalized);
+    let normalized_end = normalized_arm.find("        };\n        *detail").unwrap();
+    assert_eq!(&normalized_arm[..normalized_end], arm(source));
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
-        (include_str!("current.rs"), arm(source)),
+        (include_str!("current.rs"), arm(historical_current).split("        };\n        *detail").next().unwrap()),
     ] {
         let a = copy
             .find("            Observation::WorkerFailed {")
@@ -58,7 +72,14 @@ fn production_and_reference_sources_are_pinned() {
         let changed = current.exists();
         if changed {
             let copy = std::fs::read_to_string(&current).unwrap();
-            let body = production.split("#[cfg(test)]").next().unwrap();
+            let body = if name == "plan-size" {
+                let start = production.find("pub(crate) fn validate_plan_size(").unwrap();
+                let helper = production[start..].find("fn ascii_json_bytes(").unwrap() + start;
+                let end = production[helper..].find("\n}\n").unwrap() + helper + 3;
+                &production[start..end]
+            } else {
+                production.split("#[cfg(test)]").next().unwrap()
+            };
             assert_eq!(copy.trim_end(), body.trim_end(), "current leaf drift: {name}");
         }
         for part in pin["parts"].as_array().unwrap() {

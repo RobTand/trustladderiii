@@ -45,6 +45,22 @@ verus_test = rule(
 
 def verus_proofs():
     """Proof inventory in existing crate packages; generated BUILD files stay Cargo-only."""
+    if native.package_name() == "crates/harness-core":
+        for name, count in [("summary_size", 7), ("summary_reduction", 8), ("identity", 2)]:
+            verus_test(
+                name = "verus_" + name,
+                src = "verus/" + name + ".rs",
+                srcs = ["tests/summary_bound/reference.rs" if name == "summary_reduction" else
+                        "src/summary.rs" if name == "summary_size" else "src/identity.rs"],
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/mergify":
         verus_test(
             name = "verus_delivery",
@@ -183,6 +199,19 @@ def verus_proofs():
 
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
+        verus_test(
+            name = "verus_quota_wake",
+            src = "proofs/quota_wake.rs",
+            srcs = ["src/quota_wake.rs"],
+            specs = ["proofs/quota_wake_spec.rs"],
+            expected_obligations = 3,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         verus_test(
             name = "verus_budget_cutoff",
             src = "proofs/budget_cutoff.rs",
@@ -388,6 +417,22 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
+        # #835: independent groups over the real limits source, with witnesses.
+        for group, count in [("arithmetic", 5), ("line", 3), ("accumulation", 8), ("delay", 2)]:
+            verus_test(
+                name = "verus_limits_" + group,
+                src = "verus/limits_" + group + ".rs",
+                srcs = ["src/limits.rs"],
+                module = "limits::" + group,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
 
     if native.package_name() == "crates/controller-core":
         # Group G2a: current-generation rebase replies, over the real core.

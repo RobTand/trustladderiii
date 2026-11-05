@@ -15,6 +15,7 @@ mod blocked;
 pub mod board;
 mod branches;
 pub mod budget;
+pub mod check_harness;
 pub mod classifier;
 pub mod cli;
 pub mod clock;
@@ -29,6 +30,7 @@ mod goals;
 mod http;
 pub mod ingress;
 pub mod input_errors;
+pub mod input_resources;
 mod kernel_boundary;
 pub mod looks;
 #[cfg(all(test, loom))]
@@ -40,6 +42,7 @@ mod narrowing;
 mod notices;
 pub mod postmortem_reply;
 mod postmortems;
+mod quota_wake;
 #[cfg(all(test, loom))]
 #[path = "../tests/support/ownership.rs"]
 mod startup_ownership;
@@ -117,7 +120,7 @@ pub enum Error {
         name: String,
         installation: u64,
     },
-    #[error("upstream permanently failed: {class}")]
+    #[error("upstream permanently failed: {class}{diagnostic}", diagnostic = input_resources::catch_up_diagnostic(self))]
     Permanent {
         class: &'static str,
         #[source]
@@ -340,6 +343,7 @@ pub struct Controller {
     #[cfg(test)]
     refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
     allowances: tl3_config::Allowances,
+    quota_horizon_ms: u64,
     /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
     postmortems: Option<PostmortemPace>,
     /// The revision tl3d started at: failed postmortem runs before it never
@@ -439,6 +443,7 @@ impl Controller {
             #[cfg(test)]
             refusal_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
+            quota_horizon_ms: 6 * 3_600_000,
             postmortems: None,
             postmortem_since: 0,
             priority_reserve: BTreeMap::new(),
@@ -449,6 +454,7 @@ impl Controller {
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
         controller.reconcile_worker_waits()?;
+        controller.migrate_model_quota_deadlines()?;
         Ok(controller)
     }
 
@@ -967,6 +973,7 @@ impl Controller {
             key.to_owned()
         };
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
+        self.model_success_evidence(&snapshot, &observation, &mut commit)?;
         commit
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
@@ -985,6 +992,20 @@ impl Controller {
         index: usize,
         observation: &Observation,
     ) -> Result<()> {
+        self.model_success_evidence(snapshot, observation, commit)?;
+        // Q53 / #828: two real quota attempts can announce exactly the same
+        // reset. Their durable attempt numbers distinguish endings from replays.
+        let quota_key = if let Observation::Quota {
+            key: held, model, ..
+        } = observation
+        {
+            self.store
+                .latest_worker_quota(held, model.as_deref())?
+                .map(|ending| format!("{key}:quota-attempt:{}", ending.attempt))
+        } else {
+            None
+        };
+        let key = quota_key.as_deref().unwrap_or(key);
         if let Observation::Queue(fact) = observation
             && fact.setup()
         {
@@ -1300,8 +1321,55 @@ impl Controller {
                     }
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
+                    if let Err(error) = &result
+                        && let Some(failure) = input_resources::of(error)
+                    {
+                        let snapshot = self.store.load()?;
+                        let mut commit = Commit::new(
+                            format!("input-resource:{}:{}", effect.key, snapshot.revision.get()),
+                            json!({"input_resource_failure":effect.key}),
+                            &snapshot,
+                        );
+                        input_resources::record(
+                            &mut commit,
+                            delivery.node(),
+                            delivery.generation,
+                            failure,
+                        );
+                        self.store.commit(&commit)?;
+                    }
                     match result {
                         Ok(completion) => {
+                            if matches!(
+                                delivery.output,
+                                DeliveryOutput::Effect {
+                                    kind: tl3_kernel::EffectKind::StartRun(_),
+                                    ..
+                                }
+                            ) && current.rows.iter().any(|row| {
+                                row.table == "input_resource_contexts"
+                                    && row.id == delivery.node().0.to_string()
+                            }) && !input_resources::awaiting_correction(
+                                &current,
+                                delivery.node(),
+                            )? {
+                                // Input read errors retire here; rejected declarations need feedback until corrected.
+                                let snapshot = self.store.load()?;
+                                let mut commit = Commit::new(
+                                    format!(
+                                        "input-resource-ready:{}:{}",
+                                        effect.key,
+                                        snapshot.revision.get()
+                                    ),
+                                    json!({"input_resource_ready":effect.key}),
+                                    &snapshot,
+                                );
+                                commit.rows.push(RowChange::Delete {
+                                    table: "input_resource_contexts".into(),
+                                    id: delivery.node().0.to_string(),
+                                });
+                                self.store.commit(&commit)?;
+                            }
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
@@ -1733,6 +1801,16 @@ impl Controller {
             json!(&completion),
             snapshot,
         );
+        let stopped_node = match delivery.output {
+            executor::Output::Effect {
+                node,
+                kind: tl3_kernel::EffectKind::StopRun,
+                ..
+            } if completion.ack == Ack::Confirmed => Some(node),
+            _ => None,
+        };
+        self.release_terminal_model_probes(snapshot, &mut commit, stopped_node)?;
+        self.retire_completed_model_attempts(snapshot, &mut commit)?;
         if let Some(diagnostic) = &completion.diagnostic {
             eprintln!("{}", diagnostic.render());
             commit
@@ -2387,6 +2465,19 @@ impl Controller {
                     source = executor::Upstream::Workers;
                     class = blocked::CLASS.into();
                 }
+                let resource_failure = input_resources::current(snapshot, commit, node)?;
+                if let Some(failure) = &resource_failure {
+                    match failure.problem {
+                        input_resources::Problem::KindMismatch { .. } => {
+                            source = executor::Upstream::Workers;
+                            class = input_resources::MISMATCH.into();
+                        }
+                        input_resources::Problem::NotFound => {
+                            source = executor::Upstream::GitHub;
+                            class = "not_found".into();
+                        }
+                    }
+                }
                 let signature = looks::IncidentSignature {
                     upstream: source,
                     class: class.clone(),
@@ -2404,6 +2495,7 @@ impl Controller {
                     app_login.as_deref(),
                 );
                 worker_inputs::append(&mut summary, input_failure.as_ref());
+                worker_inputs::append(&mut summary, resource_failure.as_ref());
                 let occurrences = 1 + snapshot
                     .rows
                     .iter()
@@ -2488,7 +2580,18 @@ impl Controller {
                     json!(looks::Incident {
                         id: id.clone(),
                         node: Some(node),
-                        input_failure: None,
+                        input_failure: resource_failure.clone().map(|failure| {
+                            input_errors::InputFailure::resource(
+                                input_errors::IssueTarget {
+                                    repository: delivery.repository.clone(),
+                                    issue: request.issue,
+                                },
+                                &request.title,
+                                node,
+                                &class,
+                                failure,
+                            )
+                        }),
                         open: true,
                         needs_rob,
                         blocking: n.waiting_incident,
@@ -2507,7 +2610,7 @@ impl Controller {
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
                         delivery.repository.owner, delivery.repository.name, delivery.issue),
-                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences,"worker_input_failure":input_failure}));
+                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences,"worker_input_failure":input_failure,"input_resource_failure":resource_failure}));
                 if let Some(operations) = &self.bootstrap.operations {
                     delivery.repository = Repository {
                         owner: operations.owner.clone(),
@@ -3437,7 +3540,9 @@ impl Controller {
                         }));
                     }
                 };
-                self.clear_model_quota(snapshot, model.as_deref(), commit);
+                // Q53 / #828: unknown legacy identity/order is not success evidence.
+                // Only model_success_evidence can clear ordered quota; reset and
+                // operator clear remain available for pre-upgrade holds.
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {
@@ -3642,15 +3747,45 @@ impl Controller {
                             });
                     }
                 }
+                let checkpoint = commit.rows.len();
                 if let Some(document) = document {
                     commit
                         .rows
                         .push(put(document, node.0.to_string(), reply.clone()));
                 }
-                if role == "ingest" && reply["kind"] == "brief" {
-                    self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)?;
+                if role == "ingest"
+                    && reply["kind"] == "brief"
+                    && let Err(error) =
+                        self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)
+                {
+                    if let Some(failure) = input_resources::of(&error)
+                        && matches!(
+                            failure.problem,
+                            input_resources::Problem::KindMismatch { .. }
+                        )
+                    {
+                        // Q7/Q51: invalid ingest output uses the existing bounded run-failure path.
+                        // Discard partial declarations from this reply, atomically with its rejection.
+                        commit.rows.truncate(checkpoint);
+                        input_resources::record(commit, node, generation, failure);
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                    return Err(error);
                 }
                 if role == "ingest" {
+                    // Q7/#833: accepting the reply retires feedback atomically with its brief.
+                    if snapshot.rows.iter().any(|row| {
+                        row.table == "input_resource_contexts" && row.id == node.0.to_string()
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: "input_resource_contexts".into(),
+                            id: node.0.to_string(),
+                        });
+                    }
                     commit.rows.push(put(
                         "goals",
                         node.0.to_string(),
