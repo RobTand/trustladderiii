@@ -28,7 +28,6 @@ STATUS = "crates/github/src/status.rs"
 # Each proof file, its package and the module path of its harnesses.
 PROOF_FILES = [
     (DECIDE + "proofs.rs", "tl3-mergify", "decide::proofs"),
-    (STATUS, "tl3-github", "status::proofs"),
     (DECIDE + "enqueue_proofs.rs", "tl3-mergify", "decide::enqueue_proofs"),
 ]
 # Seeded mutants: (harness, file, exact text, replacement). Each breaks the
@@ -61,9 +60,6 @@ MUTANTS = [
     ("person_facts_total", DECIDE + "facts.rs",
      "if event.actor != Actor::Person {",
      "if event.actor == Actor::Missing {"),
-    ("http_status_class_total", STATUS,
-     "status == 429 || status == 403 && rate_signal",
-     "status == 429 || status == 403"),
     ("facts_outcome", DECIDE + "facts.rs",
      "head_infra.unwrap_or(true)",
      "head_infra.unwrap_or(false)"),

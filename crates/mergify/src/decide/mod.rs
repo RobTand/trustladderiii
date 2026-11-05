@@ -44,7 +44,8 @@ pub const MERGIFY_APP_SLUG: &str = "mergify";
 pub const QUEUE_LABEL: &str = "tl3-queue";
 
 pub mod completion;
-#[cfg(test)]
-mod observe_witness;
 
 pub mod required;
+
+#[cfg(test)]
+mod observe_witness;
