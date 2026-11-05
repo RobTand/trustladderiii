@@ -327,6 +327,9 @@ pub struct Controller {
     github_translators: Vec<ingress::Translation>,
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
+    /// Persisted inputs are treated as already reported on startup. Diagnostics
+    /// stay bounded by the pending queue and cannot repeat after a restart.
+    contention_notices: BTreeSet<(String, String)>,
     #[cfg(test)]
     refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
     allowances: tl3_config::Allowances,
@@ -420,6 +423,12 @@ impl Controller {
             github_translators: Vec::new(),
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
+            contention_notices: snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == "inbox" || r.table == input_errors::PENDING_KERNEL)
+                .map(|r| (r.table.clone(), r.id.clone()))
+                .collect(),
             #[cfg(test)]
             refusal_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
@@ -635,8 +644,8 @@ impl Controller {
     /// which sets its credit reserve (#416).
     pub fn issue_changed(&mut self, change: &IssueChange) -> Result<()> {
         let snapshot = self.store.load()?;
-        // A halted intake has no request row yet. Only the ordinary, unhalted
-        // path may discard an edit to an issue TL3 does not track.
+        // A retained intake has no request row yet. Only the path without a
+        // backlog or halt may discard an edit to an issue TL3 does not track.
         if !input_errors::kernel_backlog(&snapshot)
             && !snapshot.rows.iter().any(|r| {
                 r.table == "incidents"
@@ -1150,7 +1159,7 @@ impl Controller {
                         let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                         hook(Boundary::AfterReconcile, &delivery.key);
                         if let Ok(Reconciliation::Found(completion)) = reconciled {
-                            self.complete(&effect.key, *completion)?;
+                            self.complete_queue_prerequisite(row, &effect.key, *completion)?;
                             return Ok(true);
                         }
                         waiting_for_queue = true;

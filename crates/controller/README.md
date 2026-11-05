@@ -1737,3 +1737,5 @@ before recording the counter incident separately. Only successful input commit
 consumes the queued row. Direct intake, edits, completions and cancellations use
 the same queue. Filesystem wait-subscription removal follows committed
 `retiring_waits` intents, so translation cannot delete a subscription on refusal.
+
+Serialization failures (`40001`) and deadlocks (`40P01`) retain the head input, so later edits and direct inputs wait their turn. Replay uses fresh evidence without timers; continued contention may starve the head (Q39). The diagnostic is logged at most once per input; persisted inputs are treated as already reported at startup. A head queue fact still reconciles its own missing enqueue acknowledgment first, as required by the existing queue ordering.

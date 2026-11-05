@@ -37,16 +37,13 @@ pub(crate) enum PendingKernelInput {
     },
 }
 
-/// After a halt, direct producers join the retained queue until it drains.
+/// Direct producers join any older queued input until it drains, including
+/// serialization/deadlock retention without a counter incident.
 pub(crate) fn kernel_backlog(snapshot: &Snapshot) -> bool {
     snapshot
         .rows
         .iter()
-        .any(|row| row.table == "incidents" && row.value["signature"]["class"] == COUNTER_HEADROOM)
-        && snapshot
-            .rows
-            .iter()
-            .any(|row| row.table == "inbox" || row.table == PENDING_KERNEL)
+        .any(|row| row.table == "inbox" || row.table == PENDING_KERNEL)
 }
 
 fn counter_incident(row: &tl3_store::WorldRow) -> bool {
@@ -263,15 +260,35 @@ impl Controller {
             self.held_effects = holds;
             self.postmortem_since = postmortem_since;
         }
-        // A committed concurrent arrival can advance the shared allocator after
-        // this repeatable-read snapshot. Rollback has retained the input; the
-        // controller's next pass retries on that new evidence, without an incident.
+        // Q39 accepts contention starvation. Rollback has retained the input;
+        // the next pass uses fresh evidence, without an incident or retry timer.
         if let Err(Error::Store(tl3_store::Error::Database(error))) = &result
-            && error.code().is_some_and(|code| code.code() == "40001")
+            && let Some(code) = error.code()
+            && matches!(code.code(), "40001" | "40P01")
         {
+            let input = (row.table.clone(), row.id.clone());
+            let pending: std::collections::BTreeSet<_> = snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == "inbox" || r.table == PENDING_KERNEL)
+                .map(|r| (r.table.clone(), r.id.clone()))
+                .collect();
+            self.contention_notices.retain(|key| pending.contains(key));
+            if self.contention_notices.insert(input) {
+                eprintln!(
+                    "KERNEL_INPUT_CONTENTION {}:{} PostgreSQL {}; retained for fresh-evidence replay; continued contention may starve this input (Q39)",
+                    row.table,
+                    row.id,
+                    code.code()
+                );
+            }
             return Ok(false);
         }
         let (accepted, attempted) = result?;
+        if accepted && !self.contention_notices.is_empty() {
+            self.contention_notices
+                .remove(&(row.table.clone(), row.id.clone()));
+        }
         if !accepted {
             let current = self.store.load()?;
             let mut incident = Commit::new(
@@ -479,6 +496,75 @@ impl Controller {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    /// State-table "Counter headroom" / Ack rows: the current queue fact first reconciles its
+    /// own missing acknowledgment. This is work required by that FIFO head,
+    /// not admission for an independent newer producer. Both the completion
+    /// and a refused completion still use the atomic queued-input transaction.
+    pub(crate) fn complete_queue_prerequisite(
+        &mut self,
+        head: &tl3_store::WorldRow,
+        key: &str,
+        completion: crate::executor::Completion,
+    ) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let first = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "inbox" || r.table == PENDING_KERNEL)
+            .min_by_key(|r| r.arrival)
+            .ok_or(Error::Invalid("queue prerequisite has no head input"))?;
+        if first.table != "inbox" || first.table != head.table || first.id != head.id {
+            return Err(Error::Invalid(
+                "queue prerequisite is not for the head input",
+            ));
+        }
+        let Observation::Queue(fact) = crate::decode_stored(first.value.clone())? else {
+            return Err(Error::Invalid("queue prerequisite has no queue fact"));
+        };
+        let effect = snapshot
+            .pending_effects
+            .iter()
+            .find(|e| e.key == key)
+            .ok_or(Error::Invalid("queue prerequisite has no pending effect"))?;
+        let delivery = crate::hydrate(effect, &snapshot)?;
+        if !fact.needs_queue_ack()
+            || fact.node(&snapshot)? != Some(delivery.node())
+            || !matches!(
+                delivery.output,
+                crate::executor::Output::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
+            || !matches!(
+                effect.state,
+                tl3_store::EffectState::Sent | tl3_store::EffectState::Uncertain
+            )
+        {
+            return Err(Error::Invalid(
+                "completion is not the head queue fact's enqueue prerequisite",
+            ));
+        }
+        let id = format!("completion:{key}:{}", effect.updated_revision.get());
+        self.submit_kernel_input(
+            id.clone(),
+            PendingKernelInput::Completion {
+                key: key.into(),
+                completion,
+            },
+        )?;
+        let current = self.store.load()?;
+        if !current.rows.iter().any(counter_incident)
+            && let Some(row) = current
+                .rows
+                .iter()
+                .find(|r| r.table == PENDING_KERNEL && r.id == id)
+        {
+            self.replay_kernel_input(&current, row)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn kernel_headroom(

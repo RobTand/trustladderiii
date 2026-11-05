@@ -1723,12 +1723,22 @@ fn contention_outcome(c: &mut Controller) -> Value {
         .iter()
         .map(|e| json!({"key":e.key,"kind":e.kind,"state":e.state,"payload":e.payload}))
         .collect();
+    let interned: Vec<_> = snapshot
+        .interned
+        .iter()
+        .map(|i| json!({"id":i.id,"kind":format!("{:?}",i.kind),"scope":i.scope,"value":i.value}))
+        .collect();
+    let credit: Vec<_> = snapshot
+        .credit
+        .iter()
+        .map(|c| json!({"node":c.entry.node,"root":c.entry.root,"reason":c.entry.reason,"amount":c.entry.amount}))
+        .collect();
     let mut reader = c.store.reader().unwrap();
     let mut tx = reader.transaction().unwrap();
     let keys: Vec<String> = tx
         .query("SELECT event_key FROM tl3_events WHERE event_key IN ('github:contention-42', 'consume:github-issue:contention-edit', 'github:contention-2772') ORDER BY revision", &[])
         .unwrap().into_iter().map(|r| r.get(0)).collect();
-    json!({"rows":rows,"effects":effects,"applied_inputs":keys})
+    json!({"rows":rows,"effects":effects,"interned":interned,"credit":credit,"epoch":snapshot.epoch.get(),"applied_inputs":keys})
 }
 
 fn serialization_backlog_case(edit: bool) {
@@ -1894,7 +1904,15 @@ fn deadlock_retains_input_and_replays_without_incident() {
         .or_default()
         .insert("retained-probe".into(), "unchanged".into());
     let holds = c.held_effects.clone();
-    for _ in 0..2 {
+    for attempt in 0..3 {
+        if attempt == 2 {
+            // The persisted FIFO head is treated as already reported after a
+            // restart, without adding a durable write to the refused input.
+            drop(c);
+            c = open_case(&settings, &repo, &bootstrap);
+            c.postmortem_since = 77;
+            c.held_effects = holds.clone();
+        }
         let (ready_tx, ready_rx) = mpsc::channel();
         let (locked_tx, locked_rx) = mpsc::channel();
         let mut blocker = contention_sql(&settings);
