@@ -45,28 +45,12 @@ fn check_result(
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let [
-        verifier,
-        z3,
-        rustc,
-        source,
-        expected,
-        label,
-        module,
-        threads,
-    ] = args.as_slice()
-    else {
-        return Err(
-            "usage: verus-runner VERUS Z3 RUSTC SOURCE EXPECTED LABEL MODULE THREADS".into(),
-        );
+    let [verifier, z3, rustc, source, expected, label, module] = args.as_slice() else {
+        return Err("usage: verus-runner VERUS Z3 RUSTC SOURCE EXPECTED LABEL MODULE".into());
     };
     let expected = expected.parse::<u64>()?;
     if expected == 0 {
         return Err("expected obligations must be positive".into());
-    }
-    let threads = threads.parse::<u8>()?;
-    if !(1..=4).contains(&threads) {
-        return Err("Verus threads must be between one and four".into());
     }
     let verifier = Path::new(verifier).canonicalize()?;
     let z3 = Path::new(z3).canonicalize()?;
@@ -82,7 +66,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .arg(verifier)
         .args([
             "--num-threads",
-            &threads.to_string(),
+            "1",
             "--rlimit",
             "30",
             "--multiple-errors",
@@ -94,7 +78,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .arg(sysroot)
         .arg(source)
         .args(["--edition", "2024"]);
-    if !module.is_empty() {
+    if module == "root" {
+        process.arg("--verify-root");
+    } else if !module.is_empty() {
         process.args(["--verify-only-module", module]);
     }
     let result = process
@@ -115,7 +101,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let verified = check_result(result.status.code(), &output, expected, !module.is_empty())?;
     let receipt = serde_json::json!({"proofs": {label: {
         "kind": "verus", "expected_obligations": expected, "verified": verified,
-        "module": module, "threads": threads,
+        "module": module, "threads": 1,
         "seconds": started.elapsed().as_secs_f64(),
     }}});
     if let Some(directory) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {

@@ -12,7 +12,7 @@ def _verus_test_impl(ctx):
     ctx.actions.write(launcher, """#!/bin/bash
 set -euo pipefail
 cd "${RUNFILES_DIR:-$0.runfiles}/%s"
-exec "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
+exec "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
 """ % (
         ctx.workspace_name,
         ctx.executable._runner.short_path,
@@ -23,7 +23,6 @@ exec "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
         ctx.attr.expected_obligations,
         ctx.label,
         ctx.attr.module,
-        ctx.attr.threads,
     ), is_executable = True)
     runfiles = ctx.runfiles(files = [ctx.file.src, ctx.executable._runner] + ctx.files.srcs + ctx.files.specs,
                            transitive_files = toolchain.files)
@@ -39,7 +38,6 @@ verus_test = rule(
         "specs": attr.label_list(allow_files = [".rs"]),
         "expected_obligations": attr.int(mandatory = True),
         "module": attr.string(),
-        "threads": attr.int(default = 1, values = [1, 2, 3, 4]),
         "toolchain": attr.label(default = "@verus_linux_amd64//:toolchain", providers = [VerusToolchainInfo]),
         "_runner": attr.label(default = "//crates/mergify:verus-runner", executable = True, cfg = "exec"),
     },
@@ -61,3 +59,42 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
+    if native.package_name() == "crates/controller":
+        native.exports_files(["src/kernel_boundary.rs"])
+    if native.package_name() == "crates/kernel":
+        # Every body called by step is checked in one of these groups. Module
+        # filters bound solver context; exact counts refuse empty selections.
+        groups = {
+            "kernel": ("kernel", 107),
+            "events": ("kernel::events", 1),
+            "allocation": ("kernel::allocation", 10),
+            "reply_admission": ("kernel::reply_admission", 4),
+            "ingest": ("kernel::ingest", 3),
+            "work_replies": ("kernel::work_replies", 3),
+            "retries": ("kernel::retries", 7),
+            "acknowledgements": ("kernel::acknowledgements", 4),
+            "facts": ("kernel::facts", 3),
+            "commands": ("kernel::commands", 5),
+            "checking": ("kernel::checking", 15),
+            "dependencies": ("kernel::dependencies", 30),
+            "ranks": ("kernel::ranks", 30),
+            "footprint": ("kernel::footprint", 21),
+            "ids": ("kernel::ids", 6),
+            "controller_boundary": ("controller_boundary", 2),
+            "command_headroom": ("root", 1),
+        }
+        for name, (module, count) in groups.items():
+            verus_test(
+                name = "verus_" + name,
+                src = "verus/progress.rs",
+                srcs = native.glob(["src/**/*.rs"]) + ["//crates/controller:src/kernel_boundary.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
