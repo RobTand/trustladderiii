@@ -60,9 +60,6 @@ mod adapters {
         pub mod reproducing {
             include!("reproducing.rs");
         }
-        pub mod production_reproducing {
-            include!("../../src/adapters/workers/reproducing.rs");
-        }
     }
 }
 #[derive(Clone, Debug)]

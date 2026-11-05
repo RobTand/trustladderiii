@@ -1,12 +1,3 @@
-// The reference retains its frozen producer. Current translation compiles the
-// production producer, including the harness node-ID parser adopted by #818.
-mod adapters {
-    pub use crate::adapters::*;
-    pub mod workers {
-        pub use crate::adapters::workers::*;
-        pub use crate::adapters::workers::production_reproducing as reproducing;
-    }
-}
 use super::*;
 struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> { type Target=Controller; fn deref(&self)->&Controller { self.0 } }
@@ -454,3 +445,16 @@ impl Shell<'_> {
     }
 }
 pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Observation, commit: &mut Commit) -> Result<(Option<Event>, bool)> { Shell(c).translate(s,w,o,commit) }
+// The current arm resolves `adapters::workers::reproducing` to the current
+// production body (#824 moved node-id parsing to tl3-harness-core). The
+// reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared
+// shim spans the changed leaf. Every other adapter module is shared, unchanged.
+mod adapters {
+    pub use super::super::adapters::{prismabuild, results};
+    pub mod workers {
+        pub use super::super::super::adapters::workers::{protocol, review};
+        pub mod reproducing {
+            include!("reproducing-current.rs");
+        }
+    }
+}
