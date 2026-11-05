@@ -108,12 +108,12 @@ pub mod accumulation {
     /// chosen by the caller. Header includes any echoed forcing/symptom data.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
         out as int == capped(header as int + 1
-            + match proof { Some(bytes) => 65536 + bytes as int, None => 0 }
-            + if symptom { 393216 } else { 0 }),
+            + (match proof_bytes { Some(bytes) => 65536 + bytes as int, None => 0 })
+            + (if symptom { 393216 } else { 0 })),
     ))]
-    pub fn check_cost(header: u64, proof: Option<u64>, symptom: bool) -> u64 {
+    pub fn check_cost(header: u64, proof_bytes: Option<u64>, symptom: bool) -> u64 {
         let mut cost = add_cost(header, 1);
-        if let Some(bytes) = proof {
+        if let Some(bytes) = proof_bytes {
             cost = add_cost(cost, add_cost(65536, bytes));
         }
         if symptom {

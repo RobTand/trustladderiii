@@ -1,5 +1,6 @@
 # #835: independent groups over the real production source, with witnesses.
 load("//tools/bazel:verus.bzl", "verus_test")
+load("@rules_python//python:defs.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -59,3 +60,13 @@ verus_test(
     exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
 )
 
+# One Python edge run, in-process across fixtures, while the action copy remains.
+py_test(
+    name = "test_limits_boundary",
+    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
+    main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
+    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
+    deps = ["//harness/src/tl3_harness"],
+    size = "small",
+    timeout = "short",
+)
