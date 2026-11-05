@@ -898,11 +898,138 @@ mod planner_reply {
                 }
             }
             // Pin the reviewed corpus selection so empty or truncated coverage fails.
-            assert_eq!((completed, corrections), (384, 117));
+            assert_eq!((completed, corrections), (388, 119));
             assert!(violations > 0 && cant_meet > 0 && accepted > 0 && rejected > 0);
             eprintln!(
                 "P2a mapper differential: completed={completed}, corrections={corrections}, total={}, violations={violations}, cant_meet={cant_meet}, accepted={accepted}, errors={rejected}",
                 completed + corrections
+            );
+        }
+
+        fn routed(
+            reply: &Value,
+            provenance: Option<&crate::contracts::plan_check::PlanCheckProvenance>,
+        ) -> Result<Reply> {
+            match super::super::map_reply_with_plan_check("planner", reply, provenance)? {
+                MappedReply::Kernel(reply) => Ok(reply),
+                _ => panic!("planner must map to a kernel reply"),
+            }
+        }
+
+        fn completed_leaf() -> Value {
+            json!({"kind":"leaf","files":[],"checks":[],
+                "no_design_questions":true,"lands_on_its_own":true,
+                "forecast":{"tokenizer":"o200k_base","brief_tokens":0,"file_tokens":{},
+                    "overhead_tokens":0,"tokens":0,"fit_tokens":100,"context_tokens":150,"fits":true},
+                "violations":[]})
+        }
+
+        fn provenance(
+            classes: &[crate::contracts::plan_check::ObjectionClass],
+        ) -> crate::contracts::plan_check::PlanCheckProvenance {
+            use crate::contracts::plan_check::{PlanCheckProvenance, PlanObjection, PlanRepair};
+            PlanCheckProvenance {
+                objections: classes
+                    .iter()
+                    .map(|&class| PlanObjection {
+                        class,
+                        rule: "fixture.rule".into(),
+                        items: vec!["goal 0".into()],
+                        diagnostic: "The named obligation remains unmet.".into(),
+                    })
+                    .collect(),
+                repair: PlanRepair::Attempted,
+            }
+        }
+
+        #[test]
+        fn planner_reply_provenance_precedes_typed_mapper() {
+            use crate::contracts::plan_check::ObjectionClass::{Other, SizeExecutionFit};
+            for (classes, expected) in [
+                (vec![SizeExecutionFit], Reply::PlanCheckNeedsSplit),
+                (vec![Other], Reply::PlanCheckRejected),
+                (vec![SizeExecutionFit, Other], Reply::PlanCheckRejected),
+                (vec![Other, SizeExecutionFit], Reply::PlanCheckRejected),
+            ] {
+                let metadata = provenance(&classes);
+                for violations in [Some(json!([])), Some(json!(["ordinary refusal"])), None] {
+                    let mut reply = completed_leaf();
+                    if let Some(violations) = violations {
+                        reply["violations"] = violations;
+                    } else {
+                        reply.as_object_mut().unwrap().remove("violations");
+                        assert_eq!(
+                            routed(&reply, None).unwrap_err().to_string(),
+                            Error::Invalid("planner violations missing").to_string(),
+                        );
+                    }
+                    assert_eq!(routed(&reply, Some(&metadata)).unwrap(), expected);
+                }
+            }
+            assert!(matches!(
+                routed(&completed_leaf(), None).unwrap(),
+                Reply::PlanLeaf { fits: true, .. }
+            ));
+        }
+
+        #[test]
+        fn planner_reply_channel_and_mapper_failure_precedence() {
+            use crate::contracts::plan_check::ObjectionClass::Other;
+            let valid = provenance(&[Other]);
+            let invalid = provenance(&[]);
+            let mut bad_schema = completed_leaf();
+            bad_schema["checks"] = json!(false);
+            let mut bad_forecast = completed_leaf();
+            bad_forecast.as_object_mut().unwrap().remove("forecast");
+            let mut bad_violations = completed_leaf();
+            bad_violations.as_object_mut().unwrap().remove("violations");
+            let mut inconsistent_forecast = completed_leaf();
+            inconsistent_forecast["forecast"]["tokens"] = json!(1);
+            inconsistent_forecast["violations"] = json!(["ordinary refusal"]);
+            for (reply, metadata, message) in [
+                (
+                    &bad_schema,
+                    Some(&invalid),
+                    "worker reply breaks role schema",
+                ),
+                (&bad_schema, Some(&valid), "worker reply breaks role schema"),
+                (
+                    &bad_forecast,
+                    Some(&invalid),
+                    "invalid plan-check provenance",
+                ),
+                (&bad_forecast, Some(&valid), "forecast missing"),
+                (&bad_forecast, None, "forecast missing"),
+                (
+                    &bad_violations,
+                    Some(&invalid),
+                    "invalid plan-check provenance",
+                ),
+                (&bad_violations, None, "planner violations missing"),
+                (
+                    &inconsistent_forecast,
+                    Some(&invalid),
+                    "invalid plan-check provenance",
+                ),
+                (
+                    &inconsistent_forecast,
+                    Some(&valid),
+                    "inconsistent forecast evidence",
+                ),
+                (
+                    &inconsistent_forecast,
+                    None,
+                    "inconsistent forecast evidence",
+                ),
+            ] {
+                assert_eq!(
+                    routed(reply, metadata).unwrap_err().to_string(),
+                    Error::Invalid(message).to_string()
+                );
+            }
+            assert_eq!(
+                routed(&bad_violations, Some(&valid)).unwrap(),
+                Reply::PlanCheckRejected
             );
         }
 
