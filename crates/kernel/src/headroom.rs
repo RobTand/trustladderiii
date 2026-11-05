@@ -41,7 +41,6 @@ pub(super) proof fn open_prefix_compare(before: Seq<Node>, after: Seq<Node>, end
 }
 
 /// #771: the exact per-node reserve checked at the controller boundary.
-#[verifier::inline]
 pub open spec fn node_headroom(node: Node) -> bool {
     node.generation as int + GENERATION_STEP_BUDGET <= u64::MAX as int
         && node.next_seq as int + EFFECT_STEP_BUDGET <= u64::MAX as int
@@ -67,7 +66,6 @@ pub closed spec fn world_headroom(world: World) -> bool {
 /// #771: arithmetic facts required by the existing consistency checks.
 /// This is not the full consistency invariant. In particular it says nothing
 /// about gate ownership, operation identity, footprints or dependencies.
-#[verifier::inline]
 pub open spec fn arithmetic_consistent(node: Node) -> bool {
     node.run_failures <= 1 && node.fx_failures <= 1
         && node.run_incidents <= 2 && node.fx_incidents <= 2

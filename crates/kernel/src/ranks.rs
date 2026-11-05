@@ -547,7 +547,6 @@ impl Node {
 verus! {
 /// #771: the subset of consistency needed to bound settle's scratch scans.
 /// Cleanup releases the pool at its first step and its slot at Release.
-#[verifier::inline]
 pub(super) open spec fn settle_shape(n: Node) -> bool {
     (n.phase is Closed ==> !n.pool && !n.holds)
         && (n.phase is Stopping && n.pos >= 1 ==> !n.pool)

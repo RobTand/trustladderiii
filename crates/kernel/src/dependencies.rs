@@ -18,14 +18,12 @@ pub struct Dependency {
 #[cfg(verus_keep_ghost)]
 verus! {
 /// State-table planning admission / #693 / #771: every prerequisite is delivered.
-#[verifier::opaque]
 pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> bool {
     forall|i: int| 0 <= i < dependencies.len() && dependencies[i].node == node
         ==> !dependencies[i].rejected && dependencies[i].status == DependencyStatus::Delivered
 }
 
 /// #771: public ghost view of the private executable prerequisite table.
-#[verifier::opaque]
 pub closed spec fn prerequisites_delivered(world: World, node: NodeId) -> bool {
     delivered(world.dependencies@, node)
 }
