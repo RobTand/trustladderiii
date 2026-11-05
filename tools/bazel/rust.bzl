@@ -88,7 +88,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/worker_budget_orchestration": 21,
-    "tl3-controller/tl3_controller": 8,
+    "tl3-controller/tl3_controller": 16,
     "tl3-controller/redaction_generated": 8,
 }
 
