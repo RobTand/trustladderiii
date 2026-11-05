@@ -863,3 +863,33 @@ fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
 
 #[derive(Serialize, Deserialize)]
 struct BodyHeal { head: String, reran: bool }
+
+// Separate trait per side: scheduled calls cannot resolve to a shared hold shim.
+trait ScheduledHold { fn unresolved_hold(&self, snapshot: &Snapshot) -> Result<bool>; }
+impl ScheduledHold for QueueFact {
+    fn unresolved_hold(&self, snapshot: &Snapshot) -> Result<bool> {
+        if !matches!(
+            self.evidence,
+            Evidence::DequeuedByPerson { .. }
+                | Evidence::ClosedByPerson { .. }
+                | Evidence::DequeuedByCommand { .. }
+        ) {
+            return Ok(false);
+        }
+        let Some(node) = self.node(snapshot)? else {
+            return Ok(true);
+        };
+        let observed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_facts" && row.id == self.identity());
+        let resumed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_resumes" && row.id == node.0.to_string());
+        Ok(!observed
+            .zip(resumed)
+            .is_some_and(|(observed, resumed)| resumed.version > observed.version))
+    }
+
+}
