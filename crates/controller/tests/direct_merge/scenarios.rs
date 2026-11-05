@@ -81,6 +81,9 @@ impl DirectFixture {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
         registry.register(Upstream::Mergify, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), self.adapter(settings), &[direct_repo()]));
         let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
+        let mut allowances = tl3_config::Allowances::default();
+        allowances.github_mergify.silence_secs = 1;
+        controller.set_allowances(allowances);
         controller.reconcile_repository_delivery(&[direct_repo()]).unwrap();
         controller.register_github_translator("mergify", direct_merge::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
         controller
