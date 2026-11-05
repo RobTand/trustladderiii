@@ -112,8 +112,6 @@ pub fn held(queue: QueueState, unresolved: Option<bool>) -> Option<bool> {
 /// None requests repaired_head; a baseline skips that projection entirely.
 /// #608/#760: baseline presence skips repaired_head before the issue-events read.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == if baseline { Some(true) } else { repaired },))]
-/// #373, docs/state-table.md:676-677 on cdacce8f: only person dequeue/close evidence carries a hold event.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match evidence { PersonEvidence::Dequeued(id) | PersonEvidence::Closed(id) => Some(id), PersonEvidence::Other => None },))]
 pub fn person_events(baseline: bool, repaired: Option<bool>) -> Option<bool> {
     if baseline { Some(true) } else { repaired }
 }
@@ -125,6 +123,8 @@ pub enum PersonEvidence {
     Other,
 }
 
+/// #373, docs/state-table.md:676-677 on cdacce8f: only person dequeue/close evidence carries a hold event.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match evidence { PersonEvidence::Dequeued(id) | PersonEvidence::Closed(id) => Some(id), PersonEvidence::Other => None },))]
 pub fn person_event(evidence: PersonEvidence) -> Option<u64> {
     match evidence {
         PersonEvidence::Dequeued(event) | PersonEvidence::Closed(event) => Some(event),
