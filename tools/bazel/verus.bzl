@@ -178,7 +178,7 @@ def verus_proofs():
             name = "verus_publication",
             src = "verus/publication.rs",
             srcs = ["src/publication.rs"],
-            expected_obligations = 22,
+            expected_obligations = 38,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
