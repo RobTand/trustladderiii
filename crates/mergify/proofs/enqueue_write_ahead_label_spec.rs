@@ -8,8 +8,11 @@ pub open spec fn command(old: EnqueueState, label: bool) -> bool {
     match old.intent { None => label, Some(i) => i.requeue.is_some() }
 }
 
-/// Publishing/Queued, docs/state-table.md:537-546,573-580; Q41/Q47/Q52;
-/// #608/#751/#760/#2705: saves precede final validation and every upstream write.
+/// TL3 #751 K-write-ahead requires recorded intent before every upstream write;
+/// #760 preserves SaveIntent/fence/final-read order. Q41 exact-head validation:
+/// docs/state-machine.md:132,487. Recovery context: docs/state-table.md:541,575.
+/// #608 records served incident RobTand/prismabuild#2705, not a new rule.
+/// Exact effect order and intent encoding: preserved existing behaviour (no rule).
 /// Quantification ranges over the real non-Kani Vec, without a slot bound.
 pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueState, effects: Effects) -> bool {
     (!refused(old) ==> match event {

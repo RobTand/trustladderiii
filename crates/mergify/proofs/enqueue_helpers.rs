@@ -13,8 +13,8 @@ pub open spec fn completion(command: Command) -> Complete {
     }
 }
 
-/// Publishing enqueue, docs/state-table.md:537-546; Q41, #608.
-/// The helper only requests another read or completes; it never writes.
+/// TL3 #751 K-write-ahead: helper calls must not hide unrecorded writes.
+/// Existing helper result class is preserved existing behaviour (no rule).
 pub open spec fn issue(intent: Option<Intent>, queue: QueueState, read: IssueRead, result: Effect) -> bool {
     !matches!(result, Effect::Write(_))
 }

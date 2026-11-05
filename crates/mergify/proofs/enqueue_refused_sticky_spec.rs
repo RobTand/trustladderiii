@@ -3,8 +3,12 @@ use crate::enqueue_helpers::*;
 use vstd::prelude::*;
 
 verus! {
-/// Publishing/Queued, docs/state-table.md:537-546,573-580; Q41/Q47;
-/// #608/#751/#760/#2705: terminal refusals survive every late recovery outcome.
+/// TL3 #751 K-refused-sticky: a refusal is never silently retried; #608
+/// retains existing refusal handling. Exact terminal receipt/timer values are
+/// preserved existing behaviour (no rule). Context: infrastructure recovery in
+/// docs/state-table.md:541,575; neither row defines terminal receipt encoding.
+/// #760 preserves the lifecycle; served incident RobTand/prismabuild#2705 is
+/// identified by #608, not a TL3 issue or an additional rule.
 /// Full typed domains; no loop, unwind bound, assumption, or external body.
 pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueState, effects: Effects) -> bool {
     (refused(old) ==> {

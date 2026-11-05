@@ -4,8 +4,11 @@ use crate::Head;
 use vstd::prelude::*;
 
 verus! {
-/// Publishing/Queued, docs/state-table.md:537-546,573-580; Q41/Q47/Q52;
-/// #608/#751/#760/#2705. The save immediately precedes every rerun write.
+/// TL3 #751 K-write-ahead requires recorded intent before every upstream write.
+/// Infrastructure rerun context: Q47, docs/state-machine.md:681-688 and
+/// docs/state-table.md:541,575; these do not define receipt ordering or encoding.
+/// #760 preserves the shell; #608 records served incident RobTand/prismabuild#2705.
+/// Immediate predecessor/receipt encoding: preserved existing behaviour (no rule).
 /// Full typed input domains and the actual Vec; no bound or trusted body.
 pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueState, effects: Effects) -> bool {
     ((!refused(old) && (match event { QueueEvent::RerunRead { head, status, writable, .. } =>
