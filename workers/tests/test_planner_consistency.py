@@ -258,7 +258,7 @@ def test_request162_correction_cannot_drop_mutant_coverage(planner_request, requ
     events = []
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    assert 'Every maker and checking goal must have a check.' in events[-1]['reply']['violations']
+    assert any('Required goals have no check coverage: goal 1:' in v for v in events[-1]['reply']['violations'])
 
 
 @pytest.mark.parametrize('resolution', ['base_node', 'cant_meet', 'still_invented', 'drop_tier_goal'])
@@ -287,7 +287,7 @@ def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request,
         runtime.run(planner_request, events.append)
         result = events[-1]['reply']
         if resolution == 'drop_tier_goal':
-            assert 'Every maker and checking goal must have a check.' in result['violations']
+            assert any('Required goals have no check coverage: goal 5:' in v for v in result['violations'])
         else:
             assert result['kind'] == fixed['kind']
             if resolution == 'base_node':
@@ -417,3 +417,338 @@ def test_missing_exploration_and_consistency_share_one_format_repair(
     assert [offered for _, offered in model.calls] == [True, False]
     assert 'required' in model.calls[1][0][-1].text
     assert 'estimated_exploration_turns' in model.calls[1][0][-1].text
+
+
+@pytest.fixture
+def coverage_case(planner_request, monkeypatch):
+    """PB #2710's saved goals/checks; only repository contents are synthetic."""
+    fixture = json.loads((Path(__file__).parent / 'fixtures/planner-pb2710.json').read_text())
+    root = Path(planner_request['worktree'])
+    path = 'tests/test_checkout_recovery_1465.py'
+    (root / path).write_text(
+        'def _git(): pass\n'
+        'def test_missing_or_conflicting_action_snapshot_and_ending_proof_keeps_original():\n'
+        '    assert True\n')
+    for file in fixture['files']:
+        if file != path:
+            (root / file).parent.mkdir(parents=True, exist_ok=True)
+            (root / file).write_text('')
+    monkeypatch.chdir(root)
+    planner_request['inputs']['repair_plan_consistency'] = True
+    planner_request['inputs']['ingest']['goals'] = fixture['goals']
+    draft = {**copy.deepcopy(LEAF), 'files': fixture['files'], 'checks': fixture['checks']}
+    fixed = copy.deepcopy(draft)
+    fixed['checks'][1]['goal_ids'].append(3)
+    return fixture, draft, fixed
+
+
+def test_pb2710_names_only_uncovered_required_goal(planner_request, coverage_case):
+    from tl3_workers.roles.planner import check_reply
+
+    fixture, draft, _ = coverage_case
+    planner_request['inputs']['repair_plan_consistency'] = False
+    check_reply(planner_request['inputs'], draft)
+    assert draft['violations'] == [fixture['violation'], 'Planner coverage correction attempts: 0.']
+    assert 'goal 6:' not in draft['violations'][0]
+
+
+@pytest.mark.parametrize('resolution', ['citation', 'cant_meet'])
+def test_pb2710_one_tool_free_coverage_correction(planner_request, coverage_case, monkeypatch, resolution):
+    from tl3_workers import runtime
+
+    fixture, draft, fixed = coverage_case
+    if resolution == 'cant_meet':
+        fixed = copy.deepcopy(CANT_MEET)
+    model = planner_model(monkeypatch, draft, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2, 'coverage must reach the existing single repair boundary'
+    history, tools = model.calls[1]
+    assert not tools and 'Tools are unavailable' in history[-1].text
+    assert fixture['violation'] in history[-1].text
+    assert fixture['repair_instruction'] in history[-1].text
+    assert sum(event['event'] == 'reply' for event in events) == 1
+    assert events[-1]['reply']['violations'] == []
+    assert events[-1]['reply']['kind'] == fixed['kind']
+    if resolution == 'citation':
+        assert events[-1]['reply']['checks'] == fixed['checks']
+
+
+def test_pb2710_format_and_coverage_share_one_repair(planner_request, coverage_case, monkeypatch):
+    from tl3_workers import runtime
+
+    _, draft, fixed = coverage_case
+    model = planner_model(monkeypatch, {'kind': 'invalid'}, draft, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert 'goal 3:' in '\n'.join(events[-1]['reply']['violations'])
+    assert 'Planner coverage correction attempts: 1.' in events[-1]['reply']['violations']
+
+
+@pytest.mark.parametrize('second_goal', [3, 2])
+def test_pb2710_exhaustion_keeps_both_named_goals(planner_request, coverage_case, monkeypatch, second_goal):
+    from tl3_workers import runtime
+
+    fixture, draft, fixed = coverage_case
+    if second_goal != 3:
+        fixed['checks'][1]['goal_ids'].remove(second_goal)
+    else:
+        fixed = copy.deepcopy(draft)
+    model = planner_model(monkeypatch, draft, fixed, LEAF)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    violations = events[-1]['reply']['violations']
+    assert 'Planner coverage correction attempts: 1.' in violations
+    assert fixture['violation'] in violations
+    assert f'goal {second_goal}:' in '\n'.join(violations)
+    assert planner_request['inputs']['ingest']['goals'][second_goal]['description'] in '\n'.join(violations)
+    assert sum(event['event'] == 'reply' for event in events) == 1
+
+
+@pytest.mark.parametrize('change', ['scope', 'selector', 'kind', 'subjects', 'observers', 'message',
+                                    'forcing', 'symptom', 'citations', 'other_goal', 'new_check',
+                                    'edits', 'estimate', 'evidence', 'goal_text'])
+def test_pb2710_correction_freezes_every_other_declaration(planner_request, coverage_case, monkeypatch, change):
+    from tl3_workers import runtime
+
+    _, draft, fixed = coverage_case
+    check = fixed['checks'][0]
+    if change == 'scope':
+        fixed['files'].append('other.py')
+    elif change == 'selector':
+        check['node_ids'].append('tests/test_checkout_recovery_1465.py::test_other')
+    elif change == 'kind':
+        fixed['checks'][1]['kind'] = 'behavior-preserving'
+    elif change in {'subjects', 'observers', 'message'}:
+        field = {'subjects': 'subjects', 'observers': 'observer_support', 'message': 'red_message'}[change]
+        check['proof'][field] = 'other assertion' if change == 'message' else ['tests/test_checkout_recovery_1465.py']
+    elif change == 'forcing':
+        check['forcing'] = {'symptom': 'Another condition.', 'environment': {},
+                            'patches': [{'target': 'shim.DELAY', 'value': 1}]}
+    elif change == 'symptom':
+        check.pop('proof')
+        check['declared_symptom'] = {'node': check['node_ids'][0], 'exception': 'builtins.RuntimeError',
+                                     'phase': 'call', 'repeat': 2, 'parallel': 0}
+    elif change == 'citations':
+        # Goal 1 remains covered elsewhere, so the full recheck alone cannot catch this.
+        check['goal_ids'].remove(1)
+    elif change == 'other_goal':
+        check['goal_ids'].append(2)
+    elif change == 'new_check':
+        fixed['checks'].append(copy.deepcopy(fixed['checks'][1]))
+    elif change == 'edits':
+        fixed['edits_tests'] = []
+    elif change == 'estimate':
+        fixed['estimated_tool_turns'] = 2
+    elif change == 'evidence':
+        fixed['evidence_contract'] = []
+    else:
+        from tl3_workers.roles.planner import PlanConsistencyError, check_reply
+        with pytest.raises(PlanConsistencyError) as caught:
+            check_reply(planner_request['inputs'], draft)
+        fixed['goals'] = [{'description': 'Weakened goal text.'}]
+        fixed['violations'] = []
+        caught.value.constrain(fixed)
+        assert fixed['violations']
+        return
+    model = planner_model(monkeypatch, draft, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert events[-1]['reply']['violations'], 'coverage repair must only add the missing citations'
+
+
+@pytest.mark.parametrize('obstacle', ['protected', 'budget', 'proof', 'disabled'])
+def test_pb2710_substantive_and_proof_refusals_stay_terminal(planner_request, coverage_case, monkeypatch, obstacle):
+    from tl3_workers import runtime
+
+    fixture, draft, fixed = coverage_case
+    if obstacle == 'protected':
+        draft['files'].append('conftest.py')
+    elif obstacle == 'budget':
+        draft['estimated_tool_turns'] = 1000
+    elif obstacle == 'proof':
+        from tl3_workers.roles.planner import check_reply
+        draft['checks'][0]['proof']['red_message'] = ''
+        check_reply(planner_request['inputs'], draft)
+        assert fixture['violation'] in draft['violations']
+        assert any('proof' in violation.lower() for violation in draft['violations'])
+        return
+    else:
+        planner_request['inputs']['repair_plan_consistency'] = False
+    model = planner_model(monkeypatch, draft, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    assert fixture['violation'] in events[-1]['reply']['violations']
+
+
+@pytest.mark.parametrize('omission', ['proof', 'subject', 'selector', 'edit'])
+def test_pb2710_coverage_composes_with_existing_defects(planner_request, coverage_case, monkeypatch, omission):
+    from tl3_workers import runtime
+
+    _, draft, fixed = coverage_case
+    if omission == 'proof':
+        draft['checks'][0]['proof'].pop('red_message')
+    elif omission == 'subject':
+        planner_request['inputs']['ingest']['goals'][0]['proof_obligation'] = {
+            'kind': 'assertion', 'observer': 'new',
+            'subjects': ['tests/test_checkout_recovery_1465.py::_git'],
+            'source': 'issue.body', 'quote': 'Keep assertion proof on the real _git helper.'}
+        draft['checks'][0]['proof']['subjects'] = []
+    elif omission == 'selector':
+        draft['checks'][1]['node_ids'] = ['tests/test_existing.py']
+    else:
+        node = draft['checks'][1]['node_ids'][0]
+        # It is an uncovered edit rather than a frozen regression selection.
+        draft['checks'].pop(1)
+        fixed = copy.deepcopy(draft)
+        draft['edits_tests'] = [node]
+        fixed['edits_tests'] = [node]
+        fixed['checks'][0]['node_ids'].append(node)
+        fixed['checks'][0]['goal_ids'] = list(range(6))
+    model = planner_model(monkeypatch, draft, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2, events[-1]['reply']['violations']
+    assert events[-1]['reply']['violations'] == []
+
+
+@pytest.mark.parametrize('too_many_ids', [False, True])
+def test_pb2710_message_clips_descriptions_never_ids(planner_request, coverage_case, monkeypatch, too_many_ids):
+    from tl3_workers import runtime
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
+    from tl3_workers.roles.planner import PlanConsistencyError, check_reply
+
+    _, draft, fixed = coverage_case
+    goals = planner_request['inputs']['ingest']['goals']
+    if too_many_ids:
+        goals.extend({'description': 'Uncovered review goal.', 'verification': 'review'} for _ in range(400))
+        model = planner_model(monkeypatch, draft, fixed)
+        events = []
+        runtime.run(planner_request, events.append)
+        assert len(model.calls) == 1
+        violations = events[-1]['reply']['violations']
+        assert 'Planner declarations exceed the existing correction message limit.' in violations
+        assert 'goal 406:' in '\n'.join(violations)
+    else:
+        goals[3]['description'] = 'é' * 3000
+        goals.append({'description': '界' * 3000, 'verification': 'review'})
+        with pytest.raises(PlanConsistencyError) as caught:
+            check_reply(planner_request['inputs'], draft)
+        error = caught.value
+        message = repair_message(error)
+        assert len(message.encode()) <= REPAIR_MESSAGE_BYTES
+        assert 'goal 3:' in message and 'goal 7:' in message
+        assert message == repair_message(error)
+        assert 'é' * 3000 in error.violations[0] and '界' * 3000 in error.violations[0]
+        assert ' [...]' in message
+        # Equal byte caps per description, rounded down to complete UTF-8 characters.
+        assert abs(message.count('é') * 2 - message.count('界') * 3) <= 2
+
+
+def test_pb2710_clipped_prompt_keeps_full_stop_evidence(planner_request, coverage_case, monkeypatch):
+    from tl3_workers import runtime
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, REPAIR
+
+    _, draft, _ = coverage_case
+    description = 'é' * 3000
+    planner_request['inputs']['ingest']['goals'][3]['description'] = description
+    model = planner_model(monkeypatch, draft, draft)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    prompt = model.calls[1][0][-1].text
+    assert len(prompt.encode()) <= REPAIR_MESSAGE_BYTES + len(REPAIR.format('').encode())
+    assert 'goal 3:' in prompt and description not in prompt
+    violations = events[-1]['reply']['violations']
+    assert description in '\n'.join(violations)
+    assert 'Planner coverage correction attempts: 1.' in violations
+
+
+def test_pb2710_no_allowance_records_zero_coverage_attempts(planner_request, coverage_case, monkeypatch):
+    from tl3_workers import runtime
+    from tl3_workers.turns import RepairUnavailable, TurnControl
+
+    fixture, draft, fixed = coverage_case
+    model = planner_model(monkeypatch, draft, fixed)
+
+    def no_room(self, history, error):
+        raise RepairUnavailable()
+
+    monkeypatch.setattr(TurnControl, 'repair', no_room)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    assert fixture['violation'] in events[-1]['reply']['violations']
+    assert 'Planner coverage correction attempts: 0.' in events[-1]['reply']['violations']
+    assert any('input allowance has no room' in v for v in events[-1]['reply']['violations'])
+
+
+@pytest.mark.parametrize('first', ['coverage', 'format'])
+def test_pb2710_second_substantive_refusal_records_one_attempt(planner_request, coverage_case, monkeypatch, first):
+    from tl3_workers import runtime
+
+    fixture, draft, fixed = coverage_case
+    second = copy.deepcopy(draft)
+    second['estimated_tool_turns'] = 1000
+    model = planner_model(monkeypatch, draft if first == 'coverage' else {'kind': 'invalid'}, second, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    violations = events[-1]['reply']['violations']
+    assert fixture['violation'] in violations
+    assert [v for v in violations if v.startswith('Planner coverage correction attempts:')] == [
+        'Planner coverage correction attempts: 1.']
+
+
+def test_pb2710_ids_fit_even_when_clipping_markers_do_not():
+    from tl3_workers.roles.planner import PlanConsistencyError
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
+
+    goals = dict.fromkeys(range(140), 'A required review goal. ' * 100)
+    error = PlanConsistencyError((), missing_goals=goals)
+    message = repair_message(error)
+    assert isinstance(message, str), 'descriptions must be omitted when the ids and instructions still fit'
+    assert len(message.encode()) <= REPAIR_MESSAGE_BYTES
+    assert all(f'goal {index}:' in message for index in goals)
+
+
+@pytest.mark.parametrize('defect', ['edit', 'missing_forced_selector'])
+@pytest.mark.parametrize('execution', ['runtime', 'without_rehearsals'])
+def test_pb2710_global_coverage_without_rehearsal_stays_terminal(
+        planner_request, coverage_case, monkeypatch, defect, execution):
+    from planner_fixtures import PID_FORCING
+    from tl3_workers import runtime
+    from tl3_workers.roles.planner import check_reply
+
+    fixture, draft, fixed = coverage_case
+    if defect == 'edit':
+        node = draft['checks'][1]['node_ids'][0]
+        draft['checks'].pop(1)
+        fixed = copy.deepcopy(draft)
+        draft['edits_tests'] = [node]
+        fixed['edits_tests'] = [node]
+        fixed['checks'][0]['node_ids'].append(node)
+        fixed['checks'][0]['goal_ids'] = list(range(6))
+    else:
+        # A forced check without subjects must select a test defined at the base.
+        draft['checks'][0]['proof']['subjects'] = []
+        fixed['checks'][0]['proof']['subjects'] = []
+        fixed['checks'][0]['node_ids'] = [draft['checks'][1]['node_ids'][0]]
+    for reply in (draft, fixed):
+        reply['checks'][0]['forcing'] = copy.deepcopy(PID_FORCING)
+    if execution == 'runtime':
+        model = planner_model(monkeypatch, draft, fixed)
+        events = []
+        runtime.run(planner_request, events.append)
+        assert len(model.calls) == 1, 'Q55 refusal must prevent the coverage correction turn'
+        violations = events[-1]['reply']['violations']
+    else:
+        check_reply(planner_request['inputs'], draft)
+        violations = draft['violations']
+    assert fixture['violation'].split('goal 3:')[1] in '\n'.join(violations)
+    assert any('Q55 check lacks a matching forcing rehearsal receipt' in item for item in violations)
+    assert 'Planner coverage correction attempts: 0.' in violations

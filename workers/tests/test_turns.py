@@ -598,3 +598,13 @@ def test_environment_evidence_survives_a_checkpoint_round_trip():
     # A later complete run of the same selectors still retires the restored entries.
     restored.test_result({"status": "completed"}, head)
     assert restored.detail({"action_key": key}) is None and restored.detail({"tool_error": error}) is None
+
+
+@pytest.mark.parametrize('message, expected', [
+    ('ordinary reviewer failure', 'ordinary reviewer failure'),
+    ('head-' + 'x' * 3000 + '-tail', 'head-' + 'x' * 1531 + ' [...] ' + 'x' * 495 + '-tail'),
+], ids=['short', 'truncated'])
+def test_non_planner_repair_message_is_byte_identical(message, expected):
+    from tl3_workers.turns import repair_message
+
+    assert repair_message(ValueError(message)).encode() == expected.encode()
