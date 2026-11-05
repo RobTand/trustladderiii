@@ -23,6 +23,18 @@ def recorded_case():
     return next((case, rows) for case, rows in checker_stub.cases().items() if len(rows) >= 2)
 
 
+def test_checker_cleanup_is_independent_of_generator_cleanup(tmp_path_factory, monkeypatch):
+    states = conftest.checker_state_directory.__wrapped__(tmp_path_factory)
+    state = next(states)
+
+    def generator_cleanup(directory):
+        raise RuntimeError("injected generator cleanup failure")
+
+    monkeypatch.setattr(tempfile.TemporaryDirectory, "cleanup", generator_cleanup)
+    states.close()
+    assert not state.exists()
+
+
 @pytest.mark.parametrize("unavailable", ["absent", errno.EROFS, errno.EACCES])
 def test_checker_state_falls_back_to_pytest_scratch(tmp_path_factory, monkeypatch, unavailable):
     memory = Path("/dev/shm")
