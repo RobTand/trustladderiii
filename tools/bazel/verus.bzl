@@ -226,6 +226,33 @@ def verus_proofs():
             )
 
 
+        # ctrl-core A4: enqueue_stale_head, independent full-domain contract and witnesses.
+        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 2)]:
+            verus_test(
+                name = "verus_enqueue_stale_head" + suffix,
+                src = "proofs/enqueue_stale_head.rs",
+                srcs = [
+                    "src/decide/enqueue.rs",
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                ],
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_stale_head_spec.rs",
+                    "proofs/enqueue_stale_head_witness.rs",
+                ],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(

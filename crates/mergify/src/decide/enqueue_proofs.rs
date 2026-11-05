@@ -8,7 +8,6 @@
 //! - `enqueue_dequeue_fresh`: #608, retain prior dequeue without reusing stale labels.
 //! - `enqueue_required_check`: Q47, distinguish code failures from runner failures.
 use super::enqueue::*;
-use super::{Head, QueueState};
 
 macro_rules! proof {
     ($name:ident, $body:block) => {
@@ -17,88 +16,6 @@ macro_rules! proof {
         fn $name() $body
     };
 }
-
-fn first(effects: &Effects) -> Effect {
-    effects.get(0).unwrap()
-}
-fn refused(state: EnqueueState) -> bool {
-    matches!(
-        state.intent,
-        Some(Intent {
-            requeue: Some(Requeue::Refused)
-        })
-    )
-}
-
-
-
-proof!(enqueue_stale_head, {
-    let state: EnqueueState = kani::any();
-    let event: QueueEvent = kani::any();
-    let stale = match event {
-        QueueEvent::Reconcile(read) => {
-            read.head == Head::Other && read.queue != QueueState::Merged && !state.confirmed
-        }
-        QueueEvent::LabelRead { head, .. } | QueueEvent::RerunRead { head, .. } => {
-            head == Head::Other
-        }
-        QueueEvent::DispatchCommand(read) => read.head == Head::Other,
-        _ => false,
-    };
-    let (_, effects) = decide(state, event);
-    for i in 0..effects.len() {
-        if stale {
-            assert!(
-                !matches!(effects.get(i), Some(Effect::Write(_))),
-                "stale head wrote upstream"
-            );
-            assert!(
-                !matches!(
-                    effects.get(i),
-                    Some(Effect::Complete(Complete::Confirmed { .. }))
-                ),
-                "stale head acknowledged"
-            );
-        }
-    }
-    if let QueueEvent::Reconcile(read) = event {
-        if stale
-            && !refused(state)
-            && !read.held
-            && read.reruns_pending == Some(false)
-            && (!matches!(
-                state.intent,
-                Some(Intent {
-                    requeue: Some(Requeue::Sending)
-                })
-            ) || read.refusal == Some(false))
-        {
-            assert_eq!(
-                first(&effects),
-                Effect::Complete(Complete::Retryable),
-                "stale head must retry"
-            );
-        }
-    }
-    kani::cover!(
-        stale && first(&effects) == Effect::Complete(Complete::Retryable),
-        "stale reconcile retries"
-    );
-    kani::cover!(
-        stale && first(&effects) == Effect::Complete(Complete::Pending),
-        "held stale head waits"
-    );
-    kani::cover!(
-        matches!(
-            event,
-            QueueEvent::DispatchCommand(CommandRead {
-                head: Head::Other,
-                ..
-            })
-        ) && !refused(state),
-        "stale command blocked"
-    );
-});
 
 proof!(enqueue_dequeue_fresh, {
     let retry: bool = kani::any();
