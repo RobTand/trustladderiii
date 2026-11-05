@@ -298,28 +298,28 @@ impl Shell<'_> {
                         .rows
                         .push(put(document, node.0.to_string(), reply.clone()));
                 }
-                if role == "ingest" && reply["kind"] == "brief" {
-                    if let Err(error) =
+                if role == "ingest"
+                    && reply["kind"] == "brief"
+                    && let Err(error) =
                         self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)
+                {
+                    if let Some(failure) = input_resources::of(&error)
+                        && matches!(
+                            failure.problem,
+                            input_resources::Problem::KindMismatch { .. }
+                        )
                     {
-                        if let Some(failure) = input_resources::of(&error)
-                            && matches!(
-                                failure.problem,
-                                input_resources::Problem::KindMismatch { .. }
-                            )
-                        {
-                            // Q7/Q51: invalid ingest output uses the existing bounded run-failure path.
-                            // Discard partial declarations from this reply, atomically with its rejection.
-                            commit.rows.truncate(checkpoint);
-                            input_resources::record(commit, node, generation, failure);
-                            return Ok(Some(Event::Reply {
-                                node,
-                                generation,
-                                reply: Reply::RunFailed,
-                            }));
-                        }
-                        return Err(error);
+                        // Q7/Q51: invalid ingest output uses the existing bounded run-failure path.
+                        // Discard partial declarations from this reply, atomically with its rejection.
+                        commit.rows.truncate(checkpoint);
+                        input_resources::record(commit, node, generation, failure);
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
                     }
+                    return Err(error);
                 }
                 if role == "ingest" {
                     commit.rows.push(put(
