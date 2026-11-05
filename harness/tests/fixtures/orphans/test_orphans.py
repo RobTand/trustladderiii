@@ -4,12 +4,15 @@ import os
 from pathlib import Path
 import select
 import threading
+import time
 
 import pytest
 
 
 def test_exited_orphans_leave_room_for_teardown():
     orphans = []
+    descriptors = set()
+    reaper = select.poll()
 
     def exhausted(error):
         states = []
@@ -25,13 +28,31 @@ def test_exited_orphans_leave_room_for_teardown():
         assert live == 0, f'LIVE orphan leak: {live} live, {zombies} zombies'
         pytest.fail(f'PID exhaustion after {len(orphans)} exited orphans: {zombies} zombies reparented to PID 1, {live} live')
 
-    for _ in range(160):
+    def wait_for_reap(deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            exhausted(errno.EAGAIN)
+        events = reaper.poll(int(remaining * 1000))
+        freed = False
+        for descriptor, event in events:
+            # POLLIN proves exit; only POLLHUP proves the PID slot was released.
+            if event & select.POLLHUP:
+                reaper.unregister(descriptor)
+                descriptors.remove(descriptor)
+                os.close(descriptor)
+                freed = True
+        if not freed:
+            exhausted(errno.EAGAIN)
+
+    def create_orphan():
         ready_read, ready_write = os.pipe()
         release_read, release_write = os.pipe()
         try:
             parent = os.fork()
-        except OSError as error:
-            exhausted(error.errno)
+        except OSError:
+            for descriptor in (ready_read, ready_write, release_read, release_write):
+                os.close(descriptor)
+            raise
         if parent == 0:
             os.close(ready_read)
             os.close(release_write)
@@ -52,19 +73,39 @@ def test_exited_orphans_leave_room_for_teardown():
             ready = os.read(ready_read, 64).decode()
             os.waitpid(parent, 0)
             if ready.startswith('error:'):
-                exhausted(int(ready.split(':')[1]))
+                error = int(ready.split(':')[1])
+                raise OSError(error, os.strerror(error))
             orphan = int(ready)
-            orphans.append(orphan)
             # The grandchild cannot exit until its parent has been reaped.
             descriptor = os.pidfd_open(orphan)
-            try:
-                os.write(release_write, b'x')
-                assert select.select([descriptor], [], [], 10)[0], 'orphan did not exit'
-            finally:
-                os.close(descriptor)
+            os.write(release_write, b'x')
+            return orphan, descriptor
         finally:
             os.close(ready_read)
             os.close(release_write)
+
+    try:
+        for _ in range(160):
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    orphan, descriptor = create_orphan()
+                except OSError as error:
+                    if error.errno != errno.EAGAIN:
+                        raise
+                    wait_for_reap(deadline)
+                    continue
+                orphans.append(orphan)
+                descriptors.add(descriptor)
+                reaper.register(descriptor, select.POLLHUP)
+                assert select.select([descriptor], [], [], 10)[0], 'orphan did not exit'
+                break
+        deadline = time.monotonic() + 10
+        while descriptors:
+            wait_for_reap(deadline)
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
 
     completed = []
     teardown = threading.Thread(target=lambda: completed.append(True))
