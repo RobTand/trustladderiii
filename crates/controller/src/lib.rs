@@ -42,6 +42,7 @@ mod narrowing;
 mod notices;
 pub mod postmortem_reply;
 mod postmortems;
+mod quota_wake;
 #[cfg(all(test, loom))]
 #[path = "../tests/support/ownership.rs"]
 mod startup_ownership;
@@ -342,6 +343,7 @@ pub struct Controller {
     #[cfg(test)]
     refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
     allowances: tl3_config::Allowances,
+    quota_horizon_ms: u64,
     /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
     postmortems: Option<PostmortemPace>,
     /// The revision tl3d started at: failed postmortem runs before it never
@@ -441,6 +443,7 @@ impl Controller {
             #[cfg(test)]
             refusal_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
+            quota_horizon_ms: 6 * 3_600_000,
             postmortems: None,
             postmortem_since: 0,
             priority_reserve: BTreeMap::new(),
@@ -971,6 +974,7 @@ impl Controller {
             key.to_owned()
         };
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
+        self.model_success_evidence(&snapshot, &observation, &mut commit)?;
         commit
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
@@ -989,6 +993,20 @@ impl Controller {
         index: usize,
         observation: &Observation,
     ) -> Result<()> {
+        self.model_success_evidence(snapshot, observation, commit)?;
+        // Q53 / #828: two real quota attempts can announce exactly the same
+        // reset. Their durable attempt numbers distinguish endings from replays.
+        let quota_key = if let Observation::Quota {
+            key: held, model, ..
+        } = observation
+        {
+            self.store
+                .latest_worker_quota(held, model.as_deref())?
+                .map(|ending| format!("{key}:quota-attempt:{}", ending.attempt))
+        } else {
+            None
+        };
+        let key = quota_key.as_deref().unwrap_or(key);
         if let Observation::Queue(fact) = observation
             && fact.setup()
         {
@@ -1784,6 +1802,16 @@ impl Controller {
             json!(&completion),
             snapshot,
         );
+        let stopped_node = match delivery.output {
+            executor::Output::Effect {
+                node,
+                kind: tl3_kernel::EffectKind::StopRun,
+                ..
+            } if completion.ack == Ack::Confirmed => Some(node),
+            _ => None,
+        };
+        self.release_terminal_model_probes(snapshot, &mut commit, stopped_node)?;
+        self.retire_completed_model_attempts(snapshot, &mut commit)?;
         if let Some(diagnostic) = &completion.diagnostic {
             eprintln!("{}", diagnostic.render());
             commit
@@ -3528,7 +3556,9 @@ impl Controller {
                         }));
                     }
                 };
-                self.clear_model_quota(snapshot, model.as_deref(), commit);
+                // Q53 / #828: unknown legacy identity/order is not success evidence.
+                // Only model_success_evidence can clear ordered quota; reset and
+                // operator clear remain available for pre-upgrade holds.
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {
