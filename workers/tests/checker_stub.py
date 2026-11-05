@@ -5,6 +5,7 @@ remain in the parity corpus so the controller's --check regenerates every reply
 from the real Rust functions. Unexpected commands and extra calls fail closed.
 """
 from copy import deepcopy
+import base64
 from functools import cache
 import gzip
 import json
@@ -31,6 +32,59 @@ def vectors():
     return [row for rows in cases().values() for row in rows]
 
 
+def rebound(response, recorded, current):
+    """Rebind copied facts in a recording, including JSON carried as log bytes.
+
+    Verdicts stay recorded. Only unambiguous input values copied into the Rust
+    response move with a fixture's temporary paths, receipts and tree hashes.
+    """
+    bindings = {}
+
+    def key(value):
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+    def pair(old, new):
+        if type(old) is not type(new):
+            return
+        if (isinstance(old, (dict, list)) and old) or (isinstance(old, str) and len(old) >= 16):
+            bindings.setdefault(key(old), {})[key(new)] = new
+        if isinstance(old, dict):
+            for name in old.keys() & new.keys():
+                pair(old[name], new[name])
+        elif isinstance(old, list):
+            for before, after in zip(old, new):
+                pair(before, after)
+
+    pair(recorded, current)
+    # The transport stores raw facts as base64. Decode fixture lines only to
+    # find copied values; this does not decide whether a record is acceptable.
+    for name in recorded.keys() & current.keys():
+        if name != 'raw' or not isinstance(recorded[name], str) or not isinstance(current[name], str):
+            continue
+        try:
+            before = base64.b64decode(recorded[name], validate=True).splitlines()
+            after = base64.b64decode(current[name], validate=True).splitlines()
+            for old, new in zip(before, after):
+                try:
+                    pair(json.loads(old[old.index(b'{'):]), json.loads(new[new.index(b'{'):]))
+                except (ValueError, UnicodeError):
+                    pass
+        except ValueError:
+            pass
+
+    def replace(value):
+        candidates = bindings.get(key(value), {})
+        if len(candidates) == 1:
+            return deepcopy(next(iter(candidates.values())))
+        if isinstance(value, dict):
+            return {name: replace(item) for name, item in value.items()}
+        if isinstance(value, list):
+            return [replace(item) for item in value]
+        return value
+
+    return replace(response)
+
+
 def replay(case, cursor, command, document):
     """A unit fake follows its script; Rust checks the original facts elsewhere."""
     with _LOCK:
@@ -42,7 +96,7 @@ def replay(case, cursor, command, document):
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
         cursor.write_text(str(position + 1))
-        return deepcopy(row["response"])
+        return rebound(row["response"], row["document"], document)
 
 
 def record(case, temporary, monkeypatch):

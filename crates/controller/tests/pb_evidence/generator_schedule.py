@@ -4,13 +4,11 @@ from contextlib import ExitStack
 from copy import deepcopy
 import hashlib
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from tl3_harness import generator
