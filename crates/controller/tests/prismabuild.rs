@@ -2817,17 +2817,18 @@ fn main() {
         "repository_demand_",
         "tool_errors_",
         "always_tests_",
+        "reproducing_check_",
     ]
     .map(|prefix| names.iter().filter(|name| name.starts_with(prefix)).count());
     assert_eq!(
         split_counts,
-        [4, 5, 2, 8],
+        [4, 5, 2, 8, 2],
         "independent table rows must be shardable"
     );
     assert_eq!(
         names.len(),
-        68,
-        "preserve the 49 unchanged scenarios and all 19 table rows"
+        69,
+        "preserve the 48 unchanged scenarios and all 21 table rows"
     );
     let weights = scenario_shard::weights_ms(
         &scenario_shard::measured("tl3-controller/prismabuild"),
