@@ -470,10 +470,15 @@ fn mandatory_a2_shell_heal_error_shapes() {
 /// Preserved existing behaviour (no rule): fresh attempts retain Ready when the independently read issue gains the queue label.
 #[test]
 fn mandatory_a2_shell_new_attempt_ready() {
-    let mut s = schedule(Profile::Plain);
-    over(&mut s, "github.issue", "", 1, 1);
+    let mut s = schedule(Profile::Command);
+    over(&mut s, "file.read", ".intent", 1, 1);
     let r = compare(&s, Entry::Execute, A2Config::default(), false);
-    assert_eq!(file(&r, ".intent").unwrap()["requeue"], "Sending", "{r:#}");
+    assert_eq!(
+        file(&r, ".intent").expect(&format!("{r:#}"))["requeue"],
+        "Ready",
+        "{r:#}"
+    );
+    assert_eq!(file(&r, ".intent").unwrap()["last_event"], 2);
     assert_eq!(count(&r, "github.command"), 1, "{r:#}");
     assert_eq!(count(&r, "github.add_label"), 0);
 }
