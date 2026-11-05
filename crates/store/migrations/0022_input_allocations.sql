@@ -1,12 +1,14 @@
 -- State-table "Counter headroom": a refused input also rolls back allocated IDs.
 -- Keep the old sequences as floors when upgrading an existing database. Reading
--- a sequence does not advance it. Table locks serialize all controller allocators;
+-- a sequence does not advance it. Transaction locks serialize all controller allocators;
 -- the inserted row, rather than nextval, owns the new ID until commit.
 CREATE FUNCTION tl3_transactional_id(relation regclass, column_name name, old_sequence regclass)
 RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE allocated bigint;
 BEGIN
-    EXECUTE format('LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE', relation);
+    -- Unlike a table-lock upgrade inside INSERT, this cannot deadlock with
+    -- another inserter's already-acquired RowExclusiveLock.
+    PERFORM pg_advisory_xact_lock((771::bigint << 32) | relation::oid::bigint);
     EXECUTE format('SELECT GREATEST(COALESCE((SELECT MAX(%I) FROM %s), 0) + 1,
         (SELECT last_value + is_called::integer FROM %s))', column_name, relation, old_sequence)
         INTO allocated;

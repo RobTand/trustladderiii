@@ -951,3 +951,130 @@ fn halted_intake_edit_sequences() {
         })
         .unwrap();
 }
+
+/// State-table "Counter headroom": a filesystem wait subscription survives
+/// refusal. Its deletion is retried from committed intent after incident repair.
+#[test]
+fn wait_subscription_is_removed_only_after_input_commit() {
+    use crate::executor::{Completion, Delivery, Executor, Reconciliation, Upstream};
+    use std::{cell::Cell, rc::Rc};
+    struct Waits {
+        path: std::path::PathBuf,
+        calls: Rc<Cell<usize>>,
+        fail: Rc<Cell<bool>>,
+    }
+    impl Executor for Waits {
+        fn execute(&mut self, _: &Delivery) -> crate::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> crate::Result<Reconciliation> {
+            unreachable!()
+        }
+        fn watch_wait(
+            &mut self,
+            _: &Delivery,
+            wait: Option<&tl3_store::ExternalWait>,
+        ) -> crate::Result<()> {
+            assert!(wait.is_none());
+            self.calls.set(self.calls.get() + 1);
+            if self.fail.get() {
+                return Err(Error::Invalid("subscription unavailable"));
+            }
+            std::fs::remove_file(&self.path)?;
+            Ok(())
+        }
+    }
+    let mut db = Database::start();
+    let (repo, mut c, repository) = fixture(&mut db, "atomic_wait");
+    intake(&mut c, &repository, 42);
+    let snapshot = c.snapshot().unwrap();
+    let allowance = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "allowances")
+        .unwrap();
+    let key = allowance.id.clone();
+    let mut value = allowance.value.clone();
+    value["external_wait"] = json!({"upstream":"prismabuild","key":"pending-check"});
+    let mut seed = Commit::new("seed-subscription", json!(null), &snapshot);
+    seed.rows.push(put("allowances", key.clone(), value));
+    c.store.commit(&seed).unwrap();
+    let path = repo.root.path().join("subscription");
+    std::fs::write(&path, "pending-check").unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let fail = Rc::new(Cell::new(true));
+    c.adapters.register(
+        Upstream::PrismaBuild,
+        Waits {
+            path: path.clone(),
+            calls: calls.clone(),
+            fail: fail.clone(),
+        },
+    );
+    c.observe(
+        "resumed",
+        Observation::Progress {
+            key,
+            checkpoint: "own-work".into(),
+        },
+    )
+    .unwrap();
+    let snapshot = c.snapshot().unwrap();
+    let row = snapshot.rows.iter().find(|r| r.table == "inbox").unwrap();
+    let before = business_bytes(&mut c);
+    *c.refusal_injection.borrow_mut() = crate::input_errors::RefusalInjection {
+        at: Some(0),
+        visited: 0,
+    };
+    assert!(!c.consume_kernel_input(&snapshot, row).unwrap());
+    assert_eq!(calls.get(), 0);
+    assert!(path.is_file());
+    assert_eq!(business_bytes(&mut c), before);
+    clear_injected_incident(&mut c);
+    *c.refusal_injection.borrow_mut() = Default::default();
+    let snapshot = c.snapshot().unwrap();
+    let row = snapshot.rows.iter().find(|r| r.table == "inbox").unwrap();
+    assert!(c.consume_kernel_input(&snapshot, row).unwrap());
+    assert_eq!(
+        calls.get(),
+        0,
+        "SQL publication precedes filesystem removal"
+    );
+    let snapshot = c.snapshot().unwrap();
+    assert!(c.retire_committed_waits(&snapshot).unwrap());
+    assert_eq!(calls.get(), 1);
+    let snapshot = c.snapshot().unwrap();
+    assert!(
+        !c.retire_committed_waits(&snapshot).unwrap(),
+        "an open incident prevents polling"
+    );
+    assert_eq!(calls.get(), 1);
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "retiring_waits")
+        .unwrap();
+    let incident = row.value["incident"].as_str().unwrap();
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "incidents" && r.id == incident)
+        .unwrap();
+    let mut value = row.value.clone();
+    value["open"] = json!(false);
+    let mut clear = Commit::new("repair-subscription", json!(null), &snapshot);
+    clear.rows.push(put("incidents", row.id.clone(), value));
+    c.store.commit(&clear).unwrap();
+    fail.set(false);
+    let snapshot = c.snapshot().unwrap();
+    assert!(c.retire_committed_waits(&snapshot).unwrap());
+    assert_eq!(calls.get(), 2);
+    assert!(!path.exists());
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "retiring_waits")
+    );
+}

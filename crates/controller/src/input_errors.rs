@@ -453,11 +453,10 @@ impl Controller {
                 .rows
                 .iter()
                 .find(|r| r.table == PENDING_KERNEL && r.id == id)
+            && let Err(error) = self.consume_kernel_input(&current, row)
         {
-            if let Err(error) = self.consume_kernel_input(&current, row) {
-                self.reject_kernel_input(&current, row, error)?;
-                return Ok(false);
-            }
+            self.reject_kernel_input(&current, row, error)?;
+            return Ok(false);
         }
         Ok(true)
     }

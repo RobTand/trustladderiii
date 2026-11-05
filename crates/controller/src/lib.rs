@@ -1638,7 +1638,7 @@ impl Controller {
         let mut commit = Commit::new(
             format!("cancel:{}:{}", effect.key, snapshot.revision.get()),
             json!({"cancelled_absent": effect.key}),
-            &snapshot,
+            snapshot,
         );
         commit.transitions.push(EffectTransition {
             key: effect.key.clone(),
@@ -1647,8 +1647,8 @@ impl Controller {
         });
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
-                &snapshot,
-                snapshot::decode(&snapshot)?,
+                snapshot,
+                snapshot::decode(snapshot)?,
                 Event::Ack {
                     node,
                     seq,
@@ -1660,7 +1660,7 @@ impl Controller {
         if approval_delivery::is_approval(delivery) {
             queue_retirement(&mut commit, delivery);
         }
-        looks::resolve_effect_incidents(&snapshot, &mut commit, |_, key| Ok(key == delivery.key))?;
+        looks::resolve_effect_incidents(snapshot, &mut commit, |_, key| Ok(key == delivery.key))?;
         Ok(commit)
     }
 
@@ -1706,7 +1706,7 @@ impl Controller {
         let mut commit = Commit::new(
             format!("completion:{key}:{}", effect.updated_revision.get()),
             json!(&completion),
-            &snapshot,
+            snapshot,
         );
         if let Some(diagnostic) = &completion.diagnostic {
             eprintln!("{}", diagnostic.render());
@@ -1717,7 +1717,7 @@ impl Controller {
         // A confirmed completion may still name its failure, such as a check
         // action whose trusted harness rejected TL3's own input.
         if let Some(class) = completion.failure_class.as_deref() {
-            self.failure_allowance(&snapshot, key, class, &mut commit)?;
+            self.failure_allowance(snapshot, key, class, &mut commit)?;
         }
         if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
             // A terminal failed attempt was found. Return to the sending state
@@ -1802,20 +1802,20 @@ impl Controller {
                 completion.ack
             };
             self.apply(
-                &snapshot,
-                snapshot::decode(&snapshot)?,
+                snapshot,
+                snapshot::decode(snapshot)?,
                 Event::Ack { node, seq, ack },
                 &mut commit,
             )?;
         }
         if completion.ack == Ack::Permanent && delivery.is_postmortem() {
             // #403: a postmortem never posts or raises an incident; it fails.
-            self.postmortem_failed(&snapshot, &delivery, "launch_failed", &mut commit)?;
+            self.postmortem_failed(snapshot, &delivery, "launch_failed", &mut commit)?;
         } else if completion.ack == Ack::Permanent
             && !matches!(delivery.output, DeliveryOutput::Effect { .. })
         {
             self.failed_notice(
-                &snapshot,
+                snapshot,
                 &delivery,
                 completion
                     .failure_class
@@ -1872,14 +1872,14 @@ impl Controller {
                     id: delivery.node().0.to_string(),
                 });
             }
-            looks::resolve_effect_incidents(&snapshot, &mut commit, |_, effect| Ok(effect == key))?;
+            looks::resolve_effect_incidents(snapshot, &mut commit, |_, effect| Ok(effect == key))?;
             if let Some(marker) = &delivery.marker_key {
                 commit.rows.push(RowChange::Delete {
                     table: "notice_incidents".into(),
                     id: marker.clone(),
                 });
             }
-            self.record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
+            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {
@@ -1889,7 +1889,7 @@ impl Controller {
             ) {
                 continue;
             }
-            self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
+            self.queue_observation(snapshot, &mut commit, key, index, observation)?;
         }
         if approval_delivery::is_approval(&delivery)
             && matches!(
@@ -1899,7 +1899,7 @@ impl Controller {
         {
             queue_retirement(&mut commit, &delivery);
         }
-        evidence::retire_delivered(&snapshot, &mut commit, &delivery, completion.ack);
+        evidence::retire_delivered(snapshot, &mut commit, &delivery, completion.ack);
         Ok(commit)
     }
 
