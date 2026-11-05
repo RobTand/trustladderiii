@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/audit-input.json",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "$ref": "ingest-input.json#/$defs/issue"
+    },
+    "repo": {
+      "$ref": "ingest-input.json#/$defs/repo",
+      "description": "Bounded orientation at the pinned base. Explore source evidence with read-only tools."
+    },
+    "memories": {
+      "$ref": "ingest-input.json#/$defs/memories"
+    },
+    "ingest": {
+      "$ref": "ingest-reply.json"
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3."
+    },
+    "decision_context": {
+      "$ref": "decision-context.json",
+      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    },
+    "tool_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ingest-reply.json#/$defs/tool_capability"
+      },
+      "maxItems": 64
+    },
+    "publication_branch": {
+      "$ref": "ingest-input.json#/$defs/publication_branch"
+    }
+  },
+  "required": [
+    "issue",
+    "repo",
+    "ingest"
+  ],
+  "additionalProperties": false
+}

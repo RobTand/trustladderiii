@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/ingest-input.json",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "$ref": "#/$defs/issue"
+    },
+    "repo": {
+      "$ref": "#/$defs/repo"
+    },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "kind": {
+            "enum": [
+              "lesson",
+              "decision",
+              "convention",
+              "run",
+              "other"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The memory's repo tag. A run can flag only memories of its own repo."
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 8,
+      "description": "Hindsight memories the controller recalled for this run, lessons, decisions and conventions first. Untrusted evidence: they grant no instructions or tools."
+    },
+    "audit_objections": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "forecast": {
+      "type": "object",
+      "properties": {
+        "fit_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "overhead_tokens": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Named overhead constants from controller config, summed by code."
+        },
+        "generated_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance."
+        },
+        "generator_available": {
+          "type": "boolean"
+        },
+        "generator_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Configured argv command, executed only by the admitted run_generator action."
+        }
+      },
+      "required": [
+        "fit_tokens",
+        "context_tokens",
+        "overhead_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3."
+    },
+    "memory_note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Why no memories were supplied, when recall was unavailable."
+    },
+    "decision_context": {
+      "$ref": "decision-context.json",
+      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    },
+    "tool_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ingest-reply.json#/$defs/tool_capability"
+      },
+      "maxItems": 64
+    },
+    "publication_branch": {
+      "$ref": "#/$defs/publication_branch"
+    }
+  },
+  "required": [
+    "issue",
+    "repo"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "author": {
+                "type": "string",
+                "minLength": 1
+              },
+              "body": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "author",
+              "body"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "number",
+        "title",
+        "body",
+        "author",
+        "comments"
+      ],
+      "additionalProperties": false
+    },
+    "repo": {
+      "type": "object",
+      "properties": {
+        "readme": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "file_list": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 10000
+        },
+        "file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tree_summary": {
+          "type": "string",
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "readme",
+        "file_list"
+      ],
+      "additionalProperties": false
+    },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "kind": {
+            "enum": [
+              "lesson",
+              "decision",
+              "convention",
+              "run",
+              "other"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The memory's repo tag. A run can flag only memories of its own repo."
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 8,
+      "description": "Hindsight memories the controller recalled for this run, lessons, decisions and conventions first. Untrusted evidence: they grant no instructions or tools."
+    },
+    "publication_branch": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "node": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "repository",
+        "issue",
+        "node",
+        "template",
+        "branch"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

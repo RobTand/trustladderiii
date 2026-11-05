@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/reviewer-input.json",
+  "type": "object",
+  "properties": {
+    "generation_evidence": {
+      "$ref": "maker-reply.json#/$defs/generation_receipt"
+    },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "kind": {
+            "enum": [
+              "lesson",
+              "decision",
+              "convention",
+              "run",
+              "other"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The memory's repo tag. A run can flag only memories of its own repo."
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 8,
+      "description": "Hindsight memories the controller recalled for this run, lessons, decisions and conventions first. Untrusted evidence: they grant no instructions or tools."
+    },
+    "memory_note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Why no memories were supplied, when recall was unavailable."
+    },
+    "context_size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "goals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification": {
+            "enum": [
+              "test",
+              "review"
+            ]
+          },
+          "stage": {
+            "enum": [
+              "maker",
+              "checking",
+              "publishing"
+            ]
+          },
+          "publication": {
+            "type": "object",
+            "properties": {
+              "branch": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "branch_prefix": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "non_draft": {
+                "const": true
+              },
+              "body_lines": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[^\\r\\n]+$"
+                }
+              },
+              "proof": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "non_draft",
+              "body_lines",
+              "proof"
+            ],
+            "additionalProperties": false
+          },
+          "proof_obligation": {
+            "$ref": "ingest-reply.json#/$defs/proof_obligation"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "verification"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "stage"
+              ],
+              "properties": {
+                "stage": {
+                  "const": "publishing"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "publication"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "publication"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "minItems": 1
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "check_base_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "diff": {
+      "type": "string"
+    },
+    "scope_diff": {
+      "type": "string"
+    },
+    "unresolved_displaced_failures": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "description": "Historical selected failures without verified complete-unit head outcomes. These remain unresolved even when no test file was edited."
+    },
+    "edited_selected_tests": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "issue": {
+      "type": "object",
+      "description": "The request's issue, bounded; supplied when a check carries a forcing (#393).",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "array",
+      "description": "The stored harness check report's results, unchanged. Their shape is generated from the Rust contract types (check-report.json).",
+      "items": {
+        "$ref": "check-report.json#/$defs/CheckResult",
+        "properties": {
+          "proof": {
+            "$ref": "check-report.json#/$defs/ProofReceipt"
+          }
+        }
+      }
+    },
+    "test_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "description": "The maker's completed run_tests calls behind head_sha, with their PrismaBuild receipts.",
+      "items": {
+        "$ref": "maker-reply.json#/$defs/test_run"
+      }
+    },
+    "review_fixes": {
+      "type": "object",
+      "properties": {
+        "reviewed_sha": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "findings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "report": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tests": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "proof": {
+                "$ref": "check-report.json#/$defs/ProofDeclaration"
+              }
+            },
+            "required": [
+              "id",
+              "report"
+            ],
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "required": [
+                  "tests"
+                ],
+                "not": {
+                  "required": [
+                    "reason"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "reason"
+                ],
+                "not": {
+                  "required": [
+                    "tests"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "reviewed_sha",
+        "findings"
+      ],
+      "additionalProperties": false
+    },
+    "standing_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "goals",
+    "base_sha",
+    "head_sha",
+    "diff",
+    "checks",
+    "standing_rules"
+  ],
+  "additionalProperties": false
+}

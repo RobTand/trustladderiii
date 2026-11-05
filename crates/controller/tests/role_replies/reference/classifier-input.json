@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/classifier-input.json",
+  "type": "object",
+  "properties": {
+    "comment": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "type": "string"
+        },
+        "delegated_by": {"type": "string", "minLength": 1, "maxLength": 1000}
+      },
+      "required": [
+        "author",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "restartable": {
+          "type": "boolean"
+        },
+        "open_question": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "enum": [
+                    "audit_disagreement",
+                    "needs_splitting",
+                    "cant_meet",
+                    "out_of_credit",
+                    "effect_failed",
+                    "cleanup_cant_finish",
+                    "unclear_answer"
+                  ]
+                },
+                "answers": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "continue",
+                      "change_request",
+                      "stop",
+                      "try_again",
+                      "add_credit",
+                      "retry",
+                      "mark_handled"
+                    ]
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "answers"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "phase",
+        "closed"
+      ],
+      "additionalProperties": false
+    },
+    "conversation": {
+      "type": "object",
+      "properties": {
+        "comment_id": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "comment_id",
+        "comment",
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "decision_context": {
+      "$ref": "decision-context.json",
+      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    },
+    "question_context": {
+      "type": "object",
+      "description": "The complete current question and findings whose option Rob is answering."
+    },
+    "selected_answer": {
+      "$ref": "classifier-reply.json",
+      "description": "A typed console choice. Copy these fields exactly; assess only its decision details and supersedes."
+    },
+    "reconcile_issue": {
+      "type": "object",
+      "description": "Fresh GitHub issue, frozen before restart intake. Its current title and body override contradictory restored decisions.",
+      "required": [
+        "number",
+        "title",
+        "body",
+        "updated_at"
+      ],
+      "properties": {
+        "number": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "required": [
+    "comment",
+    "state"
+  ],
+  "additionalProperties": false
+}

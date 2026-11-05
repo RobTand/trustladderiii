@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/request.json",
+  "type": "object",
+  "properties": {
+    "mlflow": {"type": ["object", "null"]},
+    "trace": {"type": "object"},
+    "protocol": {
+      "const": 1,
+      "type": "integer"
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "node",
+        "generation",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "role": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "pattern": "^https?://[^/\\s]+(?:/[^\\s]*)?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "budget_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "base_url",
+        "name",
+        "effort",
+        "budget_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "hindsight_key_file": {"type": ["string", "null"], "pattern": "^/"},
+    "key_file": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "test_cpus": {"type": "integer", "minimum": 1},
+    "silence_secs": {"type": "integer", "minimum": 1, "description": "The agent worker silence allowance in seconds; the maker retro stays inside half of it."},
+    "no_progress_secs": {"type": "integer", "minimum": 1, "description": "The agent worker no-progress allowance in seconds; the maker retro stays inside half of it."},
+    "inputs": {
+      "type": "object"
+    },
+    "worktree": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "session_file": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "last_accepted_generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "resume_session": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "minLength": 1}
+      },
+      "required": ["version", "text"],
+      "additionalProperties": false
+    },
+    "memory": {
+      "type": "object",
+      "properties": {
+        "summary_file": {"type": "string", "pattern": "^/"},
+        "repo": {"type": "string"},
+        "issue": {"type": "integer", "minimum": 1},
+        "request": {"type": "string"},
+        "epoch": {"type": "integer", "minimum": 0}
+      },
+      "required": ["summary_file", "repo", "issue", "request", "epoch"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "protocol",
+    "operation",
+    "role",
+    "model",
+    "key_file",
+    "inputs",
+    "worktree"
+  ],
+  "additionalProperties": false
+}
