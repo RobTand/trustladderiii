@@ -78,3 +78,14 @@ fn render(schema: &Value) -> String {
     text.push('\n');
     text
 }
+
+// P1b: role replies.
+pub mod roles {
+    pub mod audit_reply;
+    pub mod classifier_reply;
+    pub mod ingest_reply;
+    pub mod maker_reply;
+    pub mod postmortem_reply;
+    pub mod reviewer_reply;
+    pub mod writer_reply;
+}
