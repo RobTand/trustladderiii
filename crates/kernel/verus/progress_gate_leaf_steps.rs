@@ -97,6 +97,18 @@ pub(super) proof fn stopped_command_result(before: Node, after: Node, id: u64)
     reveal(stopped_command);
 }
 
+/// Stop row / #806: a real teardown item fixes its phase and agenda position.
+pub(super) proof fn teardown_item(n: Node, kind: EffectKind)
+    requires current_item(n) == Some(Item::Teardown(kind)),
+    ensures n.phase is Stopping, n.pos < 5,
+        (n.pos == 0 ==> kind == EffectKind::StopRun),
+        (n.pos == 1 ==> kind == EffectKind::WithdrawJob),
+        (n.pos == 2 ==> kind == EffectKind::ClosePr),
+        (n.pos == 4 ==> kind == EffectKind::RemoveWorktree),
+        n.pos != 3,
+{
+}
+
 /// #806: unrelated states satisfy the conditional step detail vacuously.
 pub(super) proof fn inactive_details(n: Node, after: Node, before_ticket: u64, after_ticket: u64)
     requires !(teardown_shape(n) && n.effect.is_none()),

@@ -443,6 +443,7 @@ pub(super) proof fn settle_reserve_totals(nodes: Seq<Node>)
     potential_bound(nodes, nodes.len(), |n: Node| ticket_capacity(n), 2);
     potential_bound(nodes, nodes.len(), |n: Node| merge_capacity(n), 1);
 }
+
 }
 
 impl Node {
@@ -854,7 +855,7 @@ kernel_fn! {
             }
             return false; // waiting for Rob
         }
-        kernel_proof! { assert(n.phase is Stopping); }
+        kernel_proof! { progress_gate_leaf_steps::teardown_item(n, kind); }
         let gone = match kind {
             EffectKind::StopRun => n.run.is_none(),
             EffectKind::WithdrawJob => n.job.is_none(),
@@ -870,18 +871,14 @@ kernel_fn! {
             m.pos += 1;
             kernel_proof! {
                 progress_gate_leaf_steps::skipped_rank(n, *node, kind, *_next_ticket);
-                if progress_gate_leaf_steps::teardown_shape(n) {
-                    progress_gate_leaf_steps::skipped_details(n, *node, kind, *_next_ticket);
-                } else { progress_gate_leaf_steps::inactive_details(n, *node, *_next_ticket, *_next_ticket); }
+                progress_gate_leaf_steps::skipped_details(n, *node, kind, *_next_ticket);
             }
             return true;
         }
         emit_node(node, context.node, kind, out);
         kernel_proof! {
             progress_gate_leaf_steps::emitted_rank(n, *node, kind, *_next_ticket);
-            if progress_gate_leaf_steps::teardown_shape(n) {
-                progress_gate_leaf_steps::emitted_details(n, *node, kind, *_next_ticket);
-            } else { progress_gate_leaf_steps::inactive_details(n, *node, *_next_ticket, *_next_ticket); }
+            progress_gate_leaf_steps::emitted_details(n, *node, kind, *_next_ticket);
         }
         true
     }

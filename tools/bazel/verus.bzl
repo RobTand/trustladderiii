@@ -205,7 +205,7 @@ def verus_proofs():
             "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
-            "progress_gate_leaf_steps": ("kernel::progress_gate_leaf_steps", 8),
+            "progress_gate_leaf_steps": ("kernel::progress_gate_leaf_steps", 9),
             "progress_gate_leaf": ("kernel::progress_gate_leaf", 3),
             "progress_gate_leaf_state": ("kernel::progress_gate_leaf_state", 2),
             "progress_gate_leaf_teardown": ("kernel::progress_gate_leaf_teardown", 6),
