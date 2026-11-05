@@ -308,7 +308,7 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
             continue;
         }
         kernel_proof! { assert(!oldest_waiter(*w, i as int)); }
-        if false { return false; }
+        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
         if theirs >= first_runnable || !slot_free(w, index) { continue; }
         if !older_overlap(w, index, theirs) { first_runnable = theirs; }
     } }

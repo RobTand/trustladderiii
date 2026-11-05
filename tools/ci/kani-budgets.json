@@ -483,24 +483,6 @@
    "seconds": 155.6,
    "tier": "pr"
   },
-  "gate_leaf_progress_w2": {
-   "invocation": "https://app.buildbuddy.io/invocation/99a6b7b3-79ad-437c-9771-4cfab4439118",
-   "lower_bound": true,
-   "note": "Still running alone at 3301s when the free-tier hour killed the runner; no verdict. Peak not observed; 34 GB is the conservative estimate the run reserved.",
-   "peak_gb": 34.0,
-   "pending": "#806",
-   "seconds": 3301.0,
-   "tier": "nightly"
-  },
-  "gate_leaf_progress_w3": {
-   "invocation": "https://app.buildbuddy.io/invocation/589d2aaf-e9c6-4dfa-84fe-89229f8eca74",
-   "lower_bound": true,
-   "note": "Still running alone at 3301s when the free-tier hour killed the runner; no verdict. Peak not observed; 34 GB is the conservative estimate the run reserved.",
-   "peak_gb": 34.0,
-   "pending": "#806",
-   "seconds": 3301.0,
-   "tier": "nightly"
-  },
   "gate_maker_progress_w2": {
    "cpu_seconds": 191.7,
    "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
