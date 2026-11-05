@@ -166,6 +166,16 @@ def outcome(function):
         return {'error': exception(error)}
 
 
+
+def assert_same(actual, expected, case_id):
+    # Python equality conflates True, 1 and 1.0; the JSON wire does not.
+    left = json.dumps(actual, ensure_ascii=False, separators=(',', ':'))
+    right = json.dumps(expected, ensure_ascii=False, separators=(',', ':'))
+    if left != right:
+        offset = next((i for i, (a, b) in enumerate(zip(left, right)) if a != b), min(len(left), len(right)))
+        raise AssertionError(f'{case_id} at byte/character {offset}: actual={left[max(0, offset-60):offset+200]!r}; '
+                             f'expected={right[max(0, offset-60):offset+200]!r}')
+
 def check_case(case, function=None, rehearsals=None):
     inputs, reply = deepcopy(case['inputs']), deepcopy(case['reply'])
     tape = Tape(case.get('facts'))
@@ -176,7 +186,7 @@ def check_case(case, function=None, rehearsals=None):
     if tape.recording:
         case['facts'], case['outcome'] = tape.rows, result
     else:
-        assert result == case['outcome'], case['id']
+        assert_same(result, case['outcome'], case['id'])
         tape.exhausted()
     return result
 
@@ -196,13 +206,13 @@ def correction_case(case, mismatch=None, function=None):
     if tape.recording:
         case['facts'], case['outcome'] = tape.rows, result
     else:
-        assert result == case['outcome'], case['id']
+        assert_same(result, case['outcome'], case['id'])
         tape.exhausted()
     return result
 
 
 PURE = {
-    'planner': ('proof_omissions', 'planner_schema_reply', 'execution_budget_details', 'edit_violations',
+    'planner': ('proof_omissions', 'planner_schema_reply', 'proof_for_validation', 'execution_budget_details', 'edit_violations',
                 'mentions', 'asks_to_edit', 'valid_forcing', 'function'),
     'evidence': ('preflight', 'proof_applicability', 'subject_covers', 'branch_satisfies',
                  'branch_objections', 'forcing_capabilities', 'forcing_guidance'),
@@ -210,6 +220,7 @@ PURE = {
                         'check_ingest_generation_scope', 'audit_generation_scope'),
     'prerequisites': ('check_prerequisites',),
     'recall': ('check_citations',),
+    'contracts': ('validate',),
 }
 
 
@@ -235,7 +246,7 @@ def pure_case(case, function=None, defined=None):
     if tape.recording:
         case['facts'], case['outcome'] = tape.rows, result
     else:
-        assert result == case['outcome'], case['id']
+        assert_same(result, case['outcome'], case['id'])
         tape.exhausted()
     return result
 
@@ -260,14 +271,94 @@ def strings(document):
     table = {}
     for case in document['cases']:
         result = case['outcome']
-        values = result.get('reply', {}).get('violations', [])[:]
+        values = []
+        def diagnostics(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key in ('violations', 'evidence_errors', 'objections'):
+                        if isinstance(item, list):
+                            values.extend(value for value in item if isinstance(value, str))
+                    else:
+                        diagnostics(item)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    diagnostics(item)
+        diagnostics(result.get('reply', {}))
+        diagnostics(unpacked(result.get('args')))
+        diagnostics(unpacked(result.get('kwargs')))
         error = result.get('error', {})
         values.extend(error.get('violations', []))
         if error:
             values.append(error['message'])
         returned = unpacked(result.get('return'))
-        if case['operation'] == 'constrain_local' and returned:
+        if isinstance(returned, list) and all(isinstance(item, str) for item in returned):
             values.extend(returned)
+        if case['operation'] == 'planner.edit_violations' and returned:
+            values.extend(returned[0])
         for value in values:
             table.setdefault(value, []).append(case['id'])
     return dict(sorted(table.items()))
+
+
+def diagnostic_rules():
+    """Derive diagnostic templates from source; keep branch coverage reviewable."""
+    import ast
+    import re
+
+    def pattern(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return re.escape(node.value), len(node.value)
+        if isinstance(node, ast.JoinedStr):
+            parts = [pattern(value) for value in node.values]
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            parts = [pattern(node.left), pattern(node.right)]
+        elif isinstance(node, (ast.ListComp, ast.GeneratorExp)):
+            return pattern(node.elt)
+        elif isinstance(node, ast.List) and len(node.elts) == 1:
+            return pattern(node.elts[0])
+        else:
+            return '.*', 0
+        return ''.join(text for text, _ in parts), sum(size for _, size in parts)
+
+    rules = {}
+    for module_name, module in modules().items():
+        if module_name == 'contracts':
+            continue
+        tree = ast.parse(Path(module.__file__).read_text())
+        if module_name == 'recall':
+            tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'check_citations']
+        for node in ast.walk(tree):
+            candidates = []
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                target = ast.unparse(node.func.value)
+                if node.func.attr in ('append', 'extend') and target in ('errors', 'violations', 'self.violations'):
+                    candidates.extend(node.args[:1])
+            if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
+                candidates.extend(node.exc.args[:1])
+            if isinstance(node, ast.Assign) and any(ast.unparse(target) in ('violations', 'self.violations') for target in node.targets):
+                value = node.value
+                candidates.append(value.body if isinstance(value, ast.IfExp) else value)
+            for candidate in candidates:
+                regex, size = pattern(candidate)
+                if size >= 12:
+                    key = f'{module_name}:{candidate.lineno}: {ast.unparse(candidate)}'
+                    rules[key] = regex
+    return rules
+
+
+def rule_coverage(document):
+    import re
+    table = strings(document)
+    result = {}
+    for rule, regex in diagnostic_rules().items():
+        if '.*' not in regex:
+            literal = re.sub(r'\\(.)', r'\1', regex)
+            result[rule] = sorted(set(table.get(literal, [])))
+            continue
+        fragments = [re.sub(r'\\(.)', r'\1', fragment) for fragment in regex.split('.*') if fragment]
+        longest = max(fragments, key=len)
+        result[rule] = sorted({case for message, ids in table.items()
+                               if '\n' not in message and len(message) <= 8192
+                               and longest in message and re.fullmatch(regex, message, re.S)
+                               for case in ids})
+    return result
