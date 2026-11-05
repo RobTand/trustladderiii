@@ -12,6 +12,8 @@ pub enum Action {
 }
 
 pub mod qualification {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:202.
     /// #422 describes retaining useful run evidence, not this exact conjunction.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
@@ -39,6 +41,8 @@ pub mod qualification {
 pub use qualification::{head_eligible, review_eligible, run_succeeded};
 
 pub mod bounds {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:266-274.
     /// Postgres remains authoritative after the shell's JSONB size estimate.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
@@ -52,6 +56,8 @@ pub use bounds::record_fits;
 
 pub mod completion {
     use super::Action;
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:319-324.
     /// Acknowledgement binds the same operation and bank, and exactly one item.
     /// Repeated HTTP requests keep their operation identity; remote deduplication
@@ -110,6 +116,8 @@ pub use completion::{acknowledged, made_progress, retain_action};
 
 pub mod classification {
     use super::Action;
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:1149-1161.
     /// #776 records holding failures for an external retry signal. There is no
     /// numeric backoff here. All u16 values are classified, including non-HTTP ones.
@@ -134,6 +142,8 @@ pub mod classification {
 pub use classification::http_action;
 
 pub mod identity {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:394-406.
     /// The same SHA-256 prefix always selects the same UUID, including replays
     /// after an acknowledged row was deleted. SHA-256 collision resistance and
