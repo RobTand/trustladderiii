@@ -262,7 +262,11 @@ fn step_strategy() -> impl Strategy<Value = Step> {
                 present,
                 phase,
                 current,
-                observed: if observed % 2 == 0 { current } else { observed },
+                observed: if observed.is_multiple_of(2) {
+                    current
+                } else {
+                    observed
+                },
                 node: match node {
                     0..=2 => 0,
                     3 => 1,
@@ -289,7 +293,7 @@ fn fixed_seed_differential_schedules_and_sequences() {
     );
     let mut runner = TestRunner::new(Config {
         cases: 512,
-        rng_seed: RngSeed::Fixed(0x47_2a_2026),
+        rng_seed: RngSeed::Fixed(0x472a_2026),
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/rebase_translate_io/proptest-regressions.txt"
@@ -358,7 +362,7 @@ fn fixed_seed_accepted_sequences_preserve_intern_state_across_transactions() {
     );
     let mut runner = TestRunner::new(Config {
         cases: 128,
-        rng_seed: RngSeed::Fixed(0x47_2b_2026),
+        rng_seed: RngSeed::Fixed(0x472b_2026),
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/rebase_translate_io/proptest-regressions.txt"
