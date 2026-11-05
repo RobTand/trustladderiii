@@ -1206,9 +1206,13 @@ fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize
     drop(c);
     let baseline_settings = copy_database(&settings, &format!("{name}_baseline"));
     let mut baseline = open_case(&baseline_settings, &repo, &bootstrap);
+    // #839: controller open queues bounded prerequisite recovery in the store.
+    let baseline_snapshot = baseline.snapshot().unwrap();
     baseline.refusal_injection.borrow_mut().visited = 0;
     assert!(
-        baseline.consume_kernel_input(&original, &row).unwrap(),
+        baseline
+            .consume_kernel_input(&baseline_snapshot, &row)
+            .unwrap(),
         "case {case:?} must have a successful baseline"
     );
     let reached = baseline.snapshot().unwrap();
@@ -1226,13 +1230,14 @@ fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize
     for checkpoint in 0..checkpoints {
         let trial_settings = copy_database(&settings, &format!("{name}_at_{checkpoint}"));
         let mut trial = open_case(&trial_settings, &repo, &bootstrap);
+        let trial_snapshot = trial.snapshot().unwrap();
         let before = business_bytes(&mut trial);
         *trial.refusal_injection.borrow_mut() = crate::input_errors::RefusalInjection {
             at: Some(checkpoint),
             visited: 0,
         };
         assert!(
-            !trial.consume_kernel_input(&original, &row).unwrap(),
+            !trial.consume_kernel_input(&trial_snapshot, &row).unwrap(),
             "case {case:?}, checkpoint {checkpoint}"
         );
         assert_eq!(
