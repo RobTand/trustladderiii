@@ -31,6 +31,10 @@ def checker(command, document, **kwargs):
 
 for name in ('_stage', '_git'):
     assert ast.dump(ast.parse(inspect.getsource(getattr(old, name)))) == ast.dump(ast.parse(inspect.getsource(getattr(new, name)))), name
+# The S2 transport validates the generated schema. Load it before the schedule
+# replaces file reads with action facts; the cached schema is not action I/O.
+for kind in ('bounded', 'identity', 'matches'):
+    pb_evidence._harness_validator(kind)
 pb_evidence.run_check = checker
 key = 'a' * 64
 image = 'sha256:' + 'b' * 64

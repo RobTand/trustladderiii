@@ -35,6 +35,10 @@ def checker(command, document, **kwargs):
     return json.loads(sys.stdin.readline())
 
 
+# The S2 transport validates the generated schema. Load it before the schedule
+# replaces file reads with action facts; the cached schema is not action I/O.
+for kind in ('bounded', 'identity', 'matches'):
+    pb_evidence._harness_validator(kind)
 pb_evidence.run_check = checker
 KEY = 'a' * 64
 IMAGE = 'sha256:' + 'b' * 64
