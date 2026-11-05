@@ -264,11 +264,41 @@ def pytest_runtest_logreport(report):
             os._exit(1)
 ''')
     result = test_tool.run(fixture, CONTAINER, ("test_value.py",), repeat=2, parallel=2)
+    assert_incomplete_contention(result)
+
+
+def assert_incomplete_contention(result):
     assert result["status"] == "infrastructure_error", result
     assert result["execution"]["outcome"] == "unknown_incomplete"
     assert result["execution"]["termination_reason"] == "incomplete_report"
     assert result["message"].startswith("Run 1 of 2:")
     assert result["runs"] == []
+
+
+CONTROLLER_HOOK = '''
+import pytest
+
+CONTROLLER = []
+
+def pytest_configure(config):
+    if not hasattr(config, "workerinput"):
+        CONTROLLER.append(config)
+'''
+
+
+@pytest.mark.parametrize("hook", [
+    # After the finish record: only xdist's own worker teardown may fail there.
+    'def pytest_sessionfinish():\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
+    'def pytest_sessionfinish():\n    if CONTROLLER:\n        raise RuntimeError("can\'t start new thread")\n',
+    'def pytest_unconfigure():\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
+    # Before the finish record.
+    '@pytest.hookimpl(tryfirst=True)\ndef pytest_sessionfinish():\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
+    'def pytest_runtest_logreport(report):\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
+], ids=["after-finish", "after-finish-thread-message", "unconfigure", "before-finish", "controller-logreport"])
+def test_contention_run_with_failing_checkout_hook_stays_incomplete(fixture, hook):
+    (fixture / "conftest.py").write_text(CONTROLLER_HOOK + "\n\n" + hook)
+    result = test_tool.run(fixture, CONTAINER, ("test_value.py",), repeat=2, parallel=2)
+    assert_incomplete_contention(result)
 
 
 def test_parallel_without_xdist_is_named_not_available(fixture, monkeypatch):
