@@ -650,6 +650,8 @@ impl Supervisor {
                 .unwrap_or(json!([]));
         }
         protocol::validate_inputs(role, &inputs)?;
+        #[cfg(test)]
+        input_contract_tests::assert_typed_input(role, &inputs);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -1085,6 +1087,14 @@ impl Supervisor {
         match result {
             Reconciliation::Found(completion) => {
                 if !resume_quota
+                    || snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "allowances" && row.id == delivery.key)
+                        .and_then(|row| row.value["last_quota_attempt"].as_i64())
+                        .is_some_and(|held| {
+                            previous.as_ref().is_some_and(|(number, _)| *number > held)
+                        })
                     || !matches!(
                         completion.observations.as_slice(),
                         [Observation::Quota { .. }]
@@ -1123,6 +1133,45 @@ impl Supervisor {
 
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         request["prompt"] = crate::prompts::for_run(&mut store, &delivery.key, role)?;
+        // Q53 / #828: family belongs to this dispatched attempt, even if config
+        // changes before its completion arrives. Persist before launching it.
+        if let Some(name) = request["model"]["name"].as_str() {
+            let models = [
+                &self.models.ingest,
+                &self.models.audit,
+                &self.models.planner,
+                &self.models.maker,
+                &self.models.reviewer,
+                &self.models.rebaser,
+                &self.models.comment_classifier,
+                &self.models.writer,
+                &self.models.postmortem,
+            ];
+            let families: std::collections::BTreeMap<_, _> = models
+                .iter()
+                .flat_map(|models| models.iter())
+                .map(|model| (model.name.clone(), model.family.to_ascii_lowercase()))
+                .collect();
+            if let Some(model) = models
+                .into_iter()
+                .flatten()
+                .find(|model| model.name == name)
+            {
+                let snapshot = store.load()?;
+                let id = serde_json::to_string(&(&delivery.key, attempt_number))?;
+                let mut commit = tl3_store::Commit::new(
+                    format!("model-attempt:{id}"),
+                    json!({"model_attempt": id}),
+                    &snapshot,
+                );
+                commit.rows.push(crate::put(
+                    "model_attempts",
+                    id,
+                    json!({"model": name, "family": model.family.to_ascii_lowercase(), "families": families}),
+                ));
+                store.commit(&commit)?;
+            }
+        }
         store.claim_worker(
             &delivery.key,
             &delivery.node().0.to_string(),
@@ -1256,15 +1305,26 @@ impl Executor for Supervisor {
         self.launch(delivery, true).map(Some)
     }
 
-    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+    fn quota_candidates(&mut self, delivery: &Delivery) -> Result<Vec<crate::looks::QuotaModel>> {
         let role =
             protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
         let mut store = Store::open(&self.store)?;
         let snapshot = store.load()?;
+        let candidates = self.candidates(delivery, role, &mut store, &snapshot)?;
+        Ok(candidates
+            .into_iter()
+            .map(|model| crate::looks::QuotaModel {
+                model: model.name.clone(),
+                family: model.family.to_ascii_lowercase(),
+            })
+            .collect())
+    }
+
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
         Ok(self
-            .candidates(delivery, role, &mut store, &snapshot)?
+            .quota_candidates(delivery)?
             .iter()
-            .any(|candidate| candidate.name == model))
+            .any(|candidate| candidate.model == model))
     }
 
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
@@ -1276,7 +1336,12 @@ impl Executor for Supervisor {
         // Waits recorded before Q53 name their model only in the attempt itself.
         // A recorded model whose reset covers the ending is the one it charged,
         // such as a postmortem's grade model (#759).
-        if !resets.values().any(|reset| *reset >= announced)
+        if snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "allowances" && row.id == delivery.key)
+            .is_none_or(|row| row.value["last_quota_model"].is_null())
+            && !resets.values().any(|reset| *reset >= announced)
             && let Some((_, attempt)) = latest(&self.root(&delivery.key))?
             && let Some(request) = read(&attempt.join("request.json"))?
             && let Some(model) = request["model"]["name"].as_str()
