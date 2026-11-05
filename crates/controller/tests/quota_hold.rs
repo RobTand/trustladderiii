@@ -1066,6 +1066,18 @@ fn stopping_either_held_destination_does_not_strand_the_other() {
             )
             .unwrap();
         f.drain();
+        if stop_owner {
+            let snapshot = f.controller.snapshot().unwrap();
+            let wait = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "allowances" && row.id == *other_key)
+                .unwrap();
+            assert!(
+                wait.value["due_ms"].is_u64(),
+                "stopping the probe owner must arm the other held key"
+            );
+        }
         let mut f = f.restart();
         fs::write(f.root.path().join("restored"), "yes").unwrap();
         fs::write(f.root.path().join("probe-release"), "yes").unwrap();
