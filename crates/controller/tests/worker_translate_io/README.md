@@ -29,7 +29,7 @@ INSERT, including failed writes. Compare call traces, events/errors, buffered
 rows, pending intern state, persisted intern state, committed rows and world
 footprint changes. This does not run the real DB transaction writer.
 
-Fixed seeds are `0x7602b2026` and `0x7602b2027`, with persisted replay seeds.
+Fixed seeds are `0x7602b2026`, `0x7602b2027` and `0x7602b2028`, with persisted replay seeds.
 Mandatory shell cases cover all admitted roles, rejected non-kernel roles,
 stale generations, schema/role/criteria errors, findings exhaustion, maker
 self-check success and each failure, eager plan reads, reproduction evidence,
@@ -39,3 +39,10 @@ in the controller-core Verus targets. The pinned old arms provide the reference
 for conformance of the shell's boundary projections and I/O schedule.
 
 Run `//crates/controller:test_test_worker_translate_io` alone on BuildBuddy.
+
+Reviewer verdict and head presence are generated independently. The successful
+findings property varies nonempty blocker counts/text, existing feedback and
+material/document tapes, and asserts a committed populated maker_findings row.
+It feeds those exact rows into a maker reply and replays both sides of its intern
+write. Mandatory shell witnesses assert RunFailed and the expected call/row
+trace for invalid maker paths and known request-scope citations without a quote.

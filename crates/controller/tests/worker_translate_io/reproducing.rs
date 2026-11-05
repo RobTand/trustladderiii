@@ -98,4 +98,3 @@ fn exact_pytest_node_id(test: &str) -> bool {
         && !path.contains('\\')
         && !test.contains('\0')
 }
-

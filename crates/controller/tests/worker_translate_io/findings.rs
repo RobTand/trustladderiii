@@ -82,4 +82,3 @@ pub(crate) fn current_review<'a>(
         .collect();
     CurrentReview { head, findings }
 }
-

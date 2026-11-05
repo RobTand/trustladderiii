@@ -47,4 +47,3 @@ pub(crate) struct BlockingFinding {
 pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<BlockingFinding>> {
     crate::reviewer::validate_findings(inputs, reply)
 }
-

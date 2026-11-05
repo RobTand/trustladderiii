@@ -285,7 +285,7 @@ fn fixed_seed_changing_reads_and_optional_fields() {
         ))),
         ..Config::default()
     };
-    TestRunner::new(config).run(&(0usize..5,0u8..16,prop::collection::vec(0u8..8,0..12),prop::collection::vec(any::<bool>(),0..8)),|(role,bits,tape,failures)|{
+    TestRunner::new(config).run(&(0usize..5,0u8..16,any::<bool>(),prop::collection::vec(0u8..8,0..12),prop::collection::vec(any::<bool>(),0..8)),|(role,bits,review_changes,tape,failures)|{
         let role=["ingest","audit","planner","maker","reviewer"][role];
         let mut s=schedule(role,reply(role));s.intern_failures=failures;
         s.documents=tape.iter().map(|v|match v {0=>Read::Store,1=>Read::Json,2=>Read::Value(Some(json!({}))),3=>Read::Value(Some(json!([{"kind":"review_finding","id":"f","reviewed_sha":OLD_HEAD,"report":"fix","goal_ids":["goal-1"]}]))),_=>Read::Value(None)}).collect();
@@ -294,7 +294,7 @@ fn fixed_seed_changing_reads_and_optional_fields() {
         if bits&4!=0{s.run=None;}
         if let Observation::WorkerReply{reply,model,..}=&mut s.observation {
             if bits&8!=0 {*model=None;}
-            if role=="reviewer"&&bits&1!=0 {*reply=json!({"verdict":"changes","blocking_findings":blockers(1+tape.len(),1+usize::from(bits)*200),"findings":[]});}
+            if role=="reviewer"&&review_changes {*reply=json!({"verdict":"changes","blocking_findings":blockers(1+tape.len(),1+usize::from(bits)*200),"findings":[]});}
         }
         compare(&s);Ok(())
     }).unwrap();
@@ -526,4 +526,78 @@ fn mandatory_all_reply_outcomes_and_plan_budget() {
         }
         assert!(routed(&s).result.to_string().contains("PlanCantMeet"));
     }
+}
+
+#[test]
+fn mandatory_invalid_maker_paths_and_unquoted_scope_citations() {
+    let failed = json!({"event":Event::Reply {node:NodeId(0),generation:7,reply:Reply::RunFailed},"detailed_review":false});
+    for path in ["../outside.rs", "/absolute.rs", "dir/../outside.rs", ".git/config", "dir\\file.rs"] {
+        let s = schedule("maker", json!({"kind":"needs_files","files":[{"path":path,"why":"Need this file"}],"fits":true}));
+        let r = compare(&s);
+        assert_eq!(r.result, failed, "invalid maker path {path}");
+        assert!(r.calls.is_empty(), "path validation precedes every I/O call");
+        assert!(r.rows.is_empty());
+        assert_eq!(r.writes, 0);
+    }
+    let s = schedule("reviewer", json!({"verdict":"changes","blocking_findings":[{"citation":{"kind":"standing_rule","id":"request-scope"},"problem":"Unrelated edit","evidence":"No changed-hunk quote"}],"findings":[]}));
+    let r = compare(&s);
+    assert_eq!(r.result, failed);
+    assert_eq!(r.calls.iter().map(|call|call["op"].as_str().unwrap()).collect::<Vec<_>>(), ["row.push", "protected_reply", "worker_materials"]);
+    assert_eq!(r.rows, vec![json!({"Delete":{"table":"model_quotas","id":"model"}})]);
+    assert_eq!(r.calls[1]["args"]["role"], "reviewer");
+    assert_eq!(r.calls[2]["args"]["args"], json!(["0"]));
+    assert_eq!(r.writes, 0);
+    assert!(r.rows.iter().all(|row|row["Put"]["table"]!="maker_findings"));
+}
+
+#[test]
+fn fixed_seed_successful_findings_persistence_and_intern_crashes() {
+    let config = Config {
+        cases: 128,
+        rng_seed: RngSeed::Fixed(0x7602b2028),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+            "crates/controller/tests/worker_translate_io/proptest-regressions.txt",
+        ))),
+        ..Config::default()
+    };
+    let reached = std::cell::RefCell::new(BTreeSet::new());
+    TestRunner::new(config).run(&(1usize..21,1usize..3501,any::<bool>(),prop::collection::vec(0u8..4,0..4)), |(count,size,first_plan,tail)| {
+        for existing in [None, Some(json!([])), Some(json!(["Prior report"]))] {
+            let mut s=schedule("reviewer",json!({"verdict":"changes","blocking_findings":blockers(count,size),"findings":[]}));
+            // Valid first entries reach persistence. Later independently varying
+            // entries detect accidental extra reads through the trace comparison.
+            s.documents=vec![Read::Value(existing.clone())];
+            s.materials=vec![Read::Value(Some(json!({"standing_rules":[{"id":format!("rule-{size}")}]})))];
+            for item in &tail {
+                let read=match item {0=>Read::Store,1=>Read::Json,2=>Read::Value(None),_=>Read::Value(Some(json!({"unexpected":size})))};
+                s.documents.push(read.clone());s.materials.push(read);
+            }
+            let r=compare(&s);
+            assert_eq!(r.result,json!({"event":Event::Reply{node:NodeId(0),generation:7,reply:Reply::ChangesRequested},"detailed_review":true}));
+            assert_eq!(r.calls.iter().map(|c|c["op"].as_str().unwrap()).collect::<Vec<_>>(),["row.push","protected_reply","worker_materials","row.push","worker_document","row.push","row.push","row.push"]);
+            let feedback=r.rows.iter().find(|r|r["Put"]["table"]=="maker_findings").unwrap()["Put"]["value"].clone();
+            let reports:Vec<_>=feedback.as_array().unwrap().iter().filter(|f|f["kind"]=="review_finding").collect();
+            assert!(!reports.is_empty());
+            assert!(reports.iter().all(|f|f["reviewed_sha"]==OLD_HEAD));
+            assert!(reports.iter().map(|f|f["report"].as_str().unwrap().chars().count()).sum::<usize>()<=findings::MAX_REPORT_CHARS);
+            assert!(r.committed.iter().any(|row|row["Put"]["table"]=="maker_findings"));
+            reached.borrow_mut().insert((count,size,existing.is_some(),tail.clone()));
+
+            // Reviewer changes have no intern writes. Feed their actual persisted
+            // findings into the next maker reply, where compare replays a crash
+            // before and after the commit intern INSERT.
+            let mut maker=schedule("maker",reply("maker"));maker.round=1;
+            maker.documents=vec![Read::Value(Some(feedback.clone()))];
+            maker.plans=vec![Read::Value(first_plan.then(||plan("first"))),Read::Value(Some(plan("second")))];
+            if let Observation::WorkerReply{reply,..}=&mut maker.observation {
+                reply["reproductions"]=json!(reports.iter().map(|f|json!({"finding_id":f["id"],"reason":"Documented review finding"})).collect::<Vec<_>>());
+            }
+            let made=compare(&maker);
+            assert!(made.result.to_string().contains("MakerDone"),"{}",made.result);
+            assert_eq!(made.writes,1);
+            assert!(made.rows.iter().any(|row|row["Put"]["table"]=="review_fixes"));
+        }
+        Ok(())
+    }).unwrap();
+    assert!(reached.borrow().len()>=2,"successful populated rows must span different findings/read tapes");
 }
