@@ -1410,8 +1410,6 @@ proof!(
 );
 
 // No dead states, one phase at a time.
-proof!(progress_from_ingesting, check_witness(Phase::Ingesting));
-proof!(progress_from_auditing, check_witness(Phase::Auditing));
 proof!(
     progress_from_unplanned,
     3,
@@ -1436,34 +1434,6 @@ proof!(
     progress_from_unplanned_waiting_one,
     3,
     check_unplanned_waiting::<1>()
-);
-proof!(
-    progress_from_planning,
-    check_witness(Phase::Planning {
-        must_split: kani::any()
-    })
-);
-proof!(
-    progress_from_ready,
-    check_witness(Phase::Ready(kani::any()))
-);
-proof!(progress_from_making, check_witness(Phase::Making));
-proof!(progress_from_checking, check_witness(Phase::Checking));
-proof!(progress_from_reviewing, check_witness(Phase::Reviewing));
-proof!(progress_from_publishing, check_witness(Phase::Publishing));
-proof!(progress_from_queued, check_witness(Phase::Queued));
-proof!(progress_from_rebasing, check_witness(Phase::Rebasing));
-proof!(
-    progress_from_awaiting_rob,
-    check_witness(Phase::AwaitingRob)
-);
-proof!(
-    progress_from_stopping,
-    check_witness(Phase::Stopping(kani::any()))
-);
-proof!(
-    progress_from_closed,
-    check_witness(Phase::Closed(kani::any()))
 );
 
 proof!(apply_new_adoption, {

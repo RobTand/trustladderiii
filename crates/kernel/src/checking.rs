@@ -5,10 +5,12 @@ impl World {
     kernel_fn! {
     /// #771: true from the actual settle probe excludes every sufficient
     /// internal move used by the gate and pool obstruction argument.
+    /// #806: zero remaining internal height also proves the real probe succeeds.
     pub fn is_settled(&self) -> (result: bool) [
         requires settle_ready(*self),
         ensures result ==> settled_world(*self),
-    ] proof [reveal(settled_world);] {
+            progress_phase::zero_internal_height(*self) ==> result,
+    ] proof [reveal(settled_world); progress_phase::zero_internal_height_definition(*self);] {
         let mut w = snapshot_world(self);
         let mut out = Outbox::new();
         kernel_proof! { reveal(empty_outbox); }
@@ -18,6 +20,8 @@ impl World {
                 w.nodes@ == self.nodes@, w.gates@ == self.gates@,
                 w.pool_capacity == self.pool_capacity, w.dependencies@ == self.dependencies@,
                 w.next_ticket == self.next_ticket,
+                progress_phase::zero_internal_height(*self) ==>
+                    potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) == 0,
                 forall|j: int| 0 <= j < i ==> !movable(*self, j),
             decreases w.nodes.len() - i,
         ] {

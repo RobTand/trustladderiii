@@ -150,6 +150,13 @@ pub(super) open spec fn distance(n: Node) -> nat {
 /// #771: public view of the executable node distance.
 pub closed spec fn node_distance(n: Node) -> nat { distance(n) }
 
+/// #806: expose the existing public node-distance view to the world sum.
+pub(super) proof fn node_distance_definition(n: Node)
+    ensures node_distance(n) == distance(n),
+{
+    reveal(node_distance);
+}
+
 /// #771: local moves left before this node blocks, independent of scheduling.
 /// Stopping has five agenda entries and closure, hence at most six moves.
 pub(super) open spec fn internal_height(n: Node) -> nat {

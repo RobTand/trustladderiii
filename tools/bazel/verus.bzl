@@ -344,7 +344,6 @@ def verus_proofs():
             "kernel::Outbox::is_empty": "Read-only outbox inspection used by tests and adapters.",
             "kernel::Outbox::contains": "Read-only outbox inspection used by tests and adapters.",
             "kernel::World::new": "Container constructor; the verified constructors operate on typed nodes.",
-            "kernel::World::measure": "Bounded diagnostic u64 sum; #805 proves the unbounded natural measure.",
             "kernel::World::valid": "Diagnostic consistency query; the production checker itself is verified.",
             "kernel::proof_of_event": "Exhaustive proof-map metadata; compiled and checked by proof_map.",
             "kernel::proofs_of_phase": "Exhaustive proof-map metadata; compiled and checked by proof_map.",
@@ -363,7 +362,7 @@ def verus_proofs():
             "kernel::queries::Node::effect_cancelling": "Read-only presentation API outside the scoped kernel proof.",
         }
         groups = {
-            "kernel": ("kernel", 91),
+            "kernel": ("kernel", 94),
             "events": ("kernel::events", 1),
             "allocation": ("kernel::allocation#ask_rob", 1),
             "allocation_set_phase": ("kernel::allocation#set_phase", 1),
@@ -395,7 +394,7 @@ def verus_proofs():
             "continuations": ("kernel::continuations", 1),
             "checking": ("kernel::checking", 15),
             "dependencies": ("kernel::dependencies", 36),
-            "progress": ("kernel::progress", 11),
+            "progress": ("kernel::progress", 12),
             "scheduler": ("kernel::scheduler", 13),
             "steps": ("kernel::steps", 2),
             "settling": ("kernel::settling", 3),
@@ -403,7 +402,7 @@ def verus_proofs():
             "witness": ("kernel::witness", 2),
             "progress_pool": ("kernel::progress_pool", 6),
             "progress_global": ("kernel::progress_global", 7),
-            "ranks": ("kernel::ranks", 30),
+            "ranks": ("kernel::ranks", 31),
             "footprint": ("kernel::footprint", 23),
             "ids": ("kernel::ids", 6),
             "controller_boundary": ("controller_boundary", 2),
@@ -431,6 +430,11 @@ def verus_proofs():
             "progress_gate_apply_resume": ("kernel::progress_gate_apply_resume", 1),
             "progress_gate_apply_witness": ("kernel::progress_gate_apply_witness", 3),
             "progress_gate_apply_resume_frame": ("kernel::progress_gate_apply_resume_frame", 1),
+            "progress_phase_measure": ("kernel::progress_phase_measure", 1),
+            "progress_phase": ("kernel::progress_phase", 5),
+            "progress_phase_witness": ("kernel::progress_phase_witness", 2),
+            "progress_phase_late_world": ("kernel::progress_phase_late_witness#world", 1),
+            "progress_phase_late_cover": ("kernel::progress_phase_late_witness#cover", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
