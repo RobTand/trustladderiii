@@ -149,7 +149,7 @@ def test_action_cap_returns_existing_diagnostic_when_the_core_cannot_fit():
 
 
 def test_summary_admission_retains_facts_until_the_action_chooses_a_level():
-    summary = test_tool.Summary()
+    summary = test_tool.Summary(raw=True)
     for index in range(30):
         summary.add(f'test_x.py::test_{index}', 'error', 'x' * 1000)
     summary.add('test_x.py::test_red', 'failed', 'RED')
@@ -157,3 +157,61 @@ def test_summary_admission_retains_facts_until_the_action_chooses_a_level():
     assert summary.result['totals']['error'] == 30
     assert summary.result['totals']['failed'] == 1
     assert summary.result['tests'][-1]['test'] == 'test_x.py::test_red'
+
+
+def test_declared_symptom_retains_legacy_unavailable_at_the_summary_boundary():
+    from tl3_harness.limits import validate_check_plan
+    from tl3_harness.model import Check, Kind
+    from tl3_harness.symptoms import classify
+
+    path = Path(test_tool.__file__).parents[2] / 'test-vectors/summary/declared-symptom-admission.json'
+    vector = json.loads(path.read_text())
+    declaration, entry, expected = vector['declaration'], vector['entry'], vector['expected']
+    node = declaration['node']
+    assert len(node) == expected['node_characters']
+    validate_check_plan((Check('RED', Kind.DEMONSTRATING, (node,), declared_symptom=declaration),))
+    summary = test_tool.Summary()
+    summary.add(entry['test'], entry['outcome'], entry['message'], failures=entry['failures'])
+    observed = test_tool.bounded(summary.result)
+    assert not observed['tests'], 'legacy action bounding must drop this entry before the judge'
+    assert classify(observed, declaration) == expected['classification']
+    raw = {**summary.result, 'tests': list(summary.outcomes.values()), 'note': ''}
+    assert len(json.dumps(raw).encode()) == expected['raw_json_bytes']
+    assert classify(raw, declaration) == expected['raw_classification']
+
+
+def test_action_cap_levels_match_committed_vectors():
+    path = Path(test_tool.__file__).parents[2] / 'test-vectors/summary/action-cap.json'
+    for vector in json.loads(path.read_text()):
+        observed = test_tool.action_summary(vector['input'], limit=vector['limit'])
+        assert observed == vector['expected'], vector['id']
+        assert len(json.dumps(observed).encode()) <= vector['limit']
+    assert test_tool.ACTION_SUMMARY_BYTES == 786_432
+
+
+def test_declared_symptom_run_current_keeps_legacy_bounding(monkeypatch, tmp_path):
+    from tl3_harness.symptoms import classify
+
+    path = Path(test_tool.__file__).parents[2] / 'test-vectors/summary/declared-symptom-admission.json'
+    vector = json.loads(path.read_text())
+    result = test_tool.Summary(raw=True)
+    entry = vector['entry']
+    result.add(entry['test'], entry['outcome'], entry['message'], failures=entry['failures'])
+    monkeypatch.setattr(test_tool, '_run_current', lambda *args, **kwargs: deepcopy(result.result))
+    observed = test_tool.run_current(tmp_path, None, (entry['test'],), declared_symptom=vector['declaration'])
+    assert classify(observed, vector['declaration']) == vector['expected']['classification']
+    assert test_tool.run_current(tmp_path, None, (entry['test'],)) == result.result
+
+
+def test_action_core_keeps_exact_identity_for_a_selection_above_the_action_cap():
+    from tl3_harness.selector_identity import selector_identity
+
+    result = envelope()
+    result['selectors'] = ['test_x.py::test_' + '😀' * 1900 + str(index) for index in range(64)]
+    assert len(json.dumps(result).encode()) > test_tool.ACTION_SUMMARY_BYTES
+    observed = test_tool.action_summary(result)
+    assert observed['status'] == 'completed'
+    assert observed['selectors'] == selector_identity(result['selectors'])
+    assert observed['tests'] == result['tests']
+    assert observed['proof'] == result['proof']
+    assert len(json.dumps(observed).encode()) <= test_tool.ACTION_SUMMARY_BYTES

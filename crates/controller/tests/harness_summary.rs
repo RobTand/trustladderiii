@@ -66,3 +66,82 @@ fn real_cli_rejects_duplicate_keys_nonfinite_values_and_unknown_fields() {
         assert!(output.stdout.is_empty());
     }
 }
+
+#[test]
+fn rust_generated_harness_schema_has_no_drift() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let committed: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("workers/src/tl3_workers/schemas/harness-wire.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(tl3_controller::check_harness::wire_schema(), committed);
+}
+
+/// #823/#760: the old and new shells retain all report/progress/log I/O order,
+/// including byte-identical persisted progress at any generated crash point.
+#[test]
+fn extraction_preserves_recorded_io_schedules_and_crash_state() {
+    use proptest::prelude::*;
+    use proptest::test_runner::{Config, TestRunner};
+    use std::io::{BufRead, BufReader};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // One persistent Python edge runs the real old/new shells. Rust generates
+    // schedules, so no deterministic check starts a fresh child per case.
+    let mut child = Command::new(root.join("workers/.venv/bin/python"))
+        .arg(root.join("workers/tests/harness_io_schedule.py"))
+        .env("TL3_BINARY", env!("CARGO_BIN_EXE_tl3"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let input = child.stdin.take().unwrap();
+    let output = child.stdout.take().unwrap();
+    let output = BufReader::new(output);
+    let pipes = std::cell::RefCell::new((input, output));
+    let strategy = (
+        0u32..100,
+        proptest::collection::vec(0u8..16, 0..9),
+        proptest::collection::vec(0u32..1_000_000, 0..12),
+        -1i32..400,
+    );
+    let mut runner = TestRunner::new(Config {
+        cases: 48,
+        failure_persistence: None,
+        ..Config::default()
+    });
+    let result = runner.run(&strategy, |(initial, reads, times, crash)| {
+        let request =
+            serde_json::json!({"initial": initial, "reads": reads, "times": times, "crash": crash});
+        let mut pipes = pipes.borrow_mut();
+        let (input, output) = &mut *pipes;
+        writeln!(input, "{request}").unwrap();
+        input.flush().unwrap();
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        prop_assert!(!line.is_empty(), "persistent extraction oracle exited");
+        let result: serde_json::Value = serde_json::from_str(&line).unwrap();
+        prop_assert_eq!(result["equal"].as_bool(), Some(true));
+        Ok(())
+    });
+    drop(pipes.into_inner().0);
+    let status = child.wait().unwrap();
+    assert!(status.success(), "extraction oracle failed");
+    result.unwrap();
+}
+
+#[test]
+fn real_cli_preserves_a_python_surrogate_pair_in_identity_comparisons() {
+    let output = invoke(
+        "identity",
+        r#"{"kind":"matches","selectors":[[55296,56320]],"candidate":{"kind":"array","items":[{"kind":"text","codepoints":[55296,56320]}]}}"#,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["result"], true);
+}

@@ -14,9 +14,8 @@ from threading import Lock
 import re2
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
-from tl3_harness.selector_identity import selector_identity
 from tl3_workers.diff import MissingExecutable, make_diff_tool
-from tl3_workers.pb_tests import make_test_tool
+from tl3_workers.pb_tests import make_test_tool, selector_identity
 from tl3_workers.forcing_rehearsal import make_rehearsal_tool
 from tl3_workers.pb_generators import make_generator_tool
 from tl3_workers.recall import make_recall_tool

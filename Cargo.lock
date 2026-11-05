@@ -3037,6 +3037,7 @@ dependencies = [
  "tl3-config",
  "tl3-controller-core",
  "tl3-github",
+ "tl3-harness-core",
  "tl3-kernel",
  "tl3-mergify",
  "tl3-prismabuild",
@@ -3080,8 +3081,11 @@ dependencies = [
 name = "tl3-harness-core"
 version = "0.1.0"
 dependencies = [
+ "proptest",
+ "schemars",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

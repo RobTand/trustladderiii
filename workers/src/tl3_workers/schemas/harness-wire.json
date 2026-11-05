@@ -1,0 +1,394 @@
+{
+  "requests": {
+    "identity": {
+      "$defs": {
+        "Candidate": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "null",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "boolean",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "json": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "number",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "json"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "codepoints": {
+                  "items": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "const": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "codepoints"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "items": {
+                  "items": {
+                    "$ref": "#/$defs/Candidate"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "const": "array",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "items"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "fields": {
+                  "items": {
+                    "maxItems": 2,
+                    "minItems": 2,
+                    "prefixItems": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "$ref": "#/$defs/Candidate"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "const": "object",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "fields"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "invalid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "identity",
+              "type": "string"
+            },
+            "selectors": {
+              "items": {
+                "items": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "selectors"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "candidate": {
+              "$ref": "#/$defs/Candidate"
+            },
+            "kind": {
+              "const": "matches",
+              "type": "string"
+            },
+            "selectors": {
+              "items": {
+                "items": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "selectors",
+            "candidate"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "IdentityRequest"
+    },
+    "summary": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "bounded",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "summary_json": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "summary_json",
+            "limit"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "SummaryRequest"
+    }
+  },
+  "responses": {
+    "bounded": {
+      "$defs": {
+        "DropReport": {
+          "additionalProperties": false,
+          "properties": {
+            "diagnostic": {
+              "type": "boolean"
+            },
+            "dropped": {
+              "items": {
+                "$ref": "#/$defs/Dropped"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "dropped",
+            "diagnostic"
+          ],
+          "type": "object"
+        },
+        "Dropped": {
+          "additionalProperties": false,
+          "properties": {
+            "count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/$defs/DroppedKind"
+            },
+            "path": {
+              "items": {
+                "$ref": "#/$defs/PathPart"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "path",
+            "kind",
+            "count"
+          ],
+          "type": "object"
+        },
+        "DroppedKind": {
+          "enum": [
+            "selector_compaction",
+            "passing_entry",
+            "error_entry",
+            "failure_entry",
+            "run_failure",
+            "group_display",
+            "display_field"
+          ],
+          "type": "string"
+        },
+        "PathPart": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "const": "field",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "report": {
+          "$ref": "#/$defs/DropReport"
+        },
+        "summary_json": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary_json",
+        "report"
+      ],
+      "title": "SummaryResult",
+      "type": "object"
+    },
+    "identity": {
+      "$defs": {
+        "PythonText": {
+          "description": "Python strings can contain isolated surrogates, which Rust `String` cannot.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "prefix": {
+          "items": {
+            "$ref": "#/$defs/PythonText"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "count",
+        "sha256",
+        "prefix"
+      ],
+      "title": "SelectorIdentity",
+      "type": "object"
+    },
+    "matches": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "boolean",
+      "type": "boolean"
+    }
+  }
+}

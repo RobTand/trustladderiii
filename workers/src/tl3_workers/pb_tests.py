@@ -17,10 +17,68 @@ from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, Check, Kind, Proof, Pro
 from tl3_harness.proof import assemble_proof
 from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.node_ids import selects
-from tl3_harness.selector_identity import selection_matches
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
-from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
+from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, infrastructure, options
 from tl3_harness.trees import export, configuration
+from tl3_workers import reply_check
+from tl3_workers.reply_check import ReplyCheckInfrastructureError
+import jsonschema
+
+
+@cache
+def _harness_validator(kind):
+    source = Path(__file__).with_name('schemas') / 'harness-wire.json'
+    return jsonschema.Draft202012Validator(json.loads(source.read_text())['responses'][kind])
+
+
+def _harness_check(command, kind, **facts):
+    document = reply_check.run_check(['check-harness', command], {'kind': kind, **facts}, name='harness')
+    try:
+        if not isinstance(document, dict) or set(document) != {'result'}:
+            raise ValueError()
+        _harness_validator(kind).validate(document['result'])
+    except (ValueError, KeyError, TypeError, OSError, jsonschema.ValidationError, jsonschema.SchemaError):
+        raise ReplyCheckInfrastructureError('harness validator returned invalid output') from None
+    return document['result']
+
+
+def bounded(result, *, limit=SUMMARY_BYTES - 2048):
+    response = _harness_check('summary', 'bounded', summary_json=json.dumps(result, allow_nan=False), limit=limit)
+    try:
+        return json.loads(response['summary_json'])
+    except (ValueError, TypeError):
+        raise ReplyCheckInfrastructureError('harness validator returned invalid output') from None
+
+
+def selector_identity(selectors):
+    selected = [list(map(ord, selector)) for selector in selectors]
+    response = _harness_check('identity', 'identity', selectors=selected)
+    try:
+        return {**response, 'prefix': [''.join(map(chr, points)) for points in response['prefix']]}
+    except (ValueError, TypeError):
+        raise ReplyCheckInfrastructureError('harness validator returned invalid output') from None
+
+
+def _candidate_fact(value):
+    """Serialize Python strings explicitly; JSON merges adjacent surrogate escapes."""
+    if value is None:
+        return {'kind': 'null'}
+    if isinstance(value, bool):
+        return {'kind': 'boolean', 'value': value}
+    if isinstance(value, (int, float)):
+        return {'kind': 'number', 'json': json.dumps(value)}
+    if isinstance(value, str):
+        return {'kind': 'text', 'codepoints': list(map(ord, value))}
+    if isinstance(value, list):
+        return {'kind': 'array', 'items': [_candidate_fact(item) for item in value]}
+    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+        return {'kind': 'object', 'fields': [[key, _candidate_fact(item)] for key, item in value.items()]}
+    return {'kind': 'invalid'}
+
+
+def selection_matches(value, selectors):
+    selected = [list(map(ord, selector)) for selector in selectors]
+    return _harness_check('identity', 'matches', selectors=selected, candidate=_candidate_fact(value))
 
 
 @dataclass(frozen=True)
@@ -277,6 +335,11 @@ def _summary(ending, key):
                 or any(not isinstance(item, dict) or not isinstance(item.get("test"), str)
                        or item.get("outcome") not in OUTCOMES for item in result["tests"])):
             raise ValueError("Invalid summary structure")
+        # #823: raw non-symptom facts still cross the former action envelope
+        # before receipt decoration. An oversized proof must retain its refusal.
+        # Declared symptoms already crossed the unchanged legacy action bound.
+        if result.get('declared_symptom') is None:
+            result = bounded(result, limit=SUMMARY_BYTES - 2048)
         result["action_key"] = key
         # What a maker cites and a reviewer can check against PrismaBuild's own record.
         result["receipts"] = [{"action_key": key, "status": ending["status"], "exit_code": ending["exit_code"],

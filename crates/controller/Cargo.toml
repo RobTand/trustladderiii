@@ -25,6 +25,7 @@ tl3-config = { path = "../config" }
 tl3-controller-core = { path = "../controller-core" }
 tl3-github = { path = "../github" }
 tl3-mergify = { path = "../mergify" }
+tl3-harness-core = { path = "../harness-core" }
 chrono = { version = "0.4", features = ["serde"] }
 ts-rs = { version = "12", features = ["no-serde-warnings"] }
 schemars = "1"

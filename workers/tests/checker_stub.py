@@ -41,6 +41,8 @@ def replay(case, cursor, command, document):
         row = script[position]
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
+        if command[:1] == ['check-harness'] and row['document'] != document:
+            raise RuntimeError(f"Rust harness document changed in {case} at {position}: {command}")
         cursor.write_text(str(position + 1))
         return deepcopy(row["response"])
 
@@ -88,12 +90,13 @@ def main():
         with tempfile.TemporaryDirectory(prefix="tl3-checker-recordings-") as directory:
             environment = {**os.environ, "TL3_BINARY": str(Path(sys.argv[2]).resolve()),
                            "TEST_REAL_CHECKER": "1", "TEST_RECORD_CHECKER_DIR": directory}
-            subprocess.run([sys.executable, "-m", "pytest", *sys.argv[3:]], env=environment, check=True)
+            run = subprocess.run([sys.executable, "-m", "pytest", *sys.argv[3:]], env=environment)
             corpus = dict(cases()) if VECTORS.exists() else {}
             for result in sorted(Path(directory).glob("*.json")):
                 corpus.update(json.loads(result.read_text()))
             data = json.dumps(dict(sorted(corpus.items())), ensure_ascii=False, separators=(",", ":")).encode()
             VECTORS.write_bytes(gzip.compress(data, mtime=0))
+            run.check_returncode()
         return
     if sys.argv[1:] == ["--vectors"]:
         json.dump(vectors(), sys.stdout, ensure_ascii=False)

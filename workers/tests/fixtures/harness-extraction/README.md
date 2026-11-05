@@ -1,0 +1,1 @@
+Test-only pre-extraction references copied verbatim from rust-fv 8345c039. Keep until #823 ships, then delete in a follow-up. The persistent controller-side schedule driver executes both versions against the same recorded I/O and crash schedule.

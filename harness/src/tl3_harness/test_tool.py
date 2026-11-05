@@ -7,6 +7,7 @@ import tempfile
 from .execution import Container, Progress, container_command, require_admission
 from .report import decode
 from .selector_identity import selector_identity
+from .node_ids import selects
 from .model import Forcing
 from .forcing_ownership import valid_delay_budget
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
@@ -24,7 +25,25 @@ ACTION_SUMMARY_BYTES = 786_432
 
 def action_summary(result, *, limit=ACTION_SUMMARY_BYTES):
     """#823: emit full facts, the mandatory core, or the existing diagnostic."""
-    raise NotImplementedError('Red: action summary has no display-entry ordering')
+    if len(json.dumps(result).encode()) <= limit:
+        return result
+    # This is a whole-level safety net. Rust owns display-entry ordering.
+    proof = result.get('proof') or {}
+    observer = proof.get('mode') == 'head-observer' or bool(proof and result.get('forcing'))
+    observers = proof.get('observer_sha256', {})
+    core = {**result, 'tests': [entry for entry in result['tests']
+                              if observer and (entry['outcome'] == 'failed'
+                                  or entry['outcome'] == 'error' and any(
+                                      selects(selected, entry['test']) for selected in observers))], 'note': ''}
+    if isinstance(core.get('selectors'), list):
+        identity = selector_identity(core['selectors'])
+        if len(json.dumps(identity).encode()) < len(json.dumps(core['selectors']).encode()):
+            core['selectors'] = identity
+    if 'runs' in core:
+        core['runs'] = [{**run, 'failed': []} for run in core['runs']]
+    if len(json.dumps(core).encode()) <= limit:
+        return core
+    return _summary_limit(result)
 
 
 def options(repeat, parallel):
@@ -90,6 +109,7 @@ def _shrink(summaries):
 
 
 def bounded(result, *, limit=SUMMARY_BYTES - 2048):
+    """Legacy declared-symptom admission; other live paths use Rust bounding."""
     # Worker base runs combine separately bounded groups. Bound their display
     # entries too, without changing any group's proof, totals or receipts.
     summaries = list(_summaries(result))
@@ -112,12 +132,13 @@ def bounded(result, *, limit=SUMMARY_BYTES - 2048):
 
 
 class Summary:
-    def __init__(self):
+    def __init__(self, *, raw=False):
         self.result = {"status": "completed", "tests": [],
                        "totals": dict.fromkeys(OUTCOMES, 0), "note": ""}
         self.omitted = False
         # Every test's outcome, including entries the size bound drops; repeats aggregate these.
         self.outcomes = {}
+        self.raw = raw
 
     def add(self, test, outcome, message="", truncated=False, target_hits=None, forcing_refusal=None,
             forcing_tampered=False, failures=None, delay_budget=None):
@@ -137,7 +158,7 @@ class Summary:
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
         # Leave space for totals, the action key and the truncation notice.
-        if len(json.dumps(self.result).encode()) > SUMMARY_BYTES - 1024:
+        if not self.raw and len(json.dumps(self.result).encode()) > SUMMARY_BYTES - 1024:
             self.result["tests"].pop()
             self.omitted = True
         if clipped or self.omitted:
@@ -147,7 +168,7 @@ class Summary:
 def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None,
                  declared_symptom=None, records=None):
     require_admission()
-    summary = Summary() if summary is None else summary
+    summary = Summary(raw=declared_symptom is None) if summary is None else summary
     missing = {test for test in tests if not (tree / test.split("::", 1)[0]).exists()}
     if missing:
         for test in sorted(missing):
@@ -270,12 +291,13 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
 def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None,
                 declared_symptom=None, records=None):
     try:
-        return bounded(_run_current(tree, container, tests, parallel, summary, forcing=forcing,
-                                    declared_symptom=declared_symptom, records=records))
+        result = _run_current(tree, container, tests, parallel, summary, forcing=forcing,
+                              declared_symptom=declared_symptom, records=records)
+        return bounded(result) if declared_symptom is not None else result
     except ExecutionFailure as failure:
         if failure.outcome == ExecutionOutcome.TEST_TIMEOUT:
             # Discard partial passes: a run that cannot finish has no GREEN verdict.
-            result = Summary()
+            result = Summary(raw=declared_symptom is None)
             for test in tests or (failure.test,):
                 result.add(test, "error", failure.message())
             result = result.result
@@ -284,7 +306,7 @@ def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=Non
             result = infrastructure(failure.message(), origin=(
                 "test_run" if failure.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE else None))
         result.update(execution=failure.as_json(), selectors=list(tests))
-        return bounded(result)
+        return bounded(result) if declared_symptom is not None else result
 
 
 def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
@@ -298,31 +320,25 @@ def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
                    run_current(tree, container, tests, parallel, forcing=forcing)), **extra}
     runs, worst, notes = [], {}, []
     for number in range(1, repeat + 1):
-        outcomes = Summary()
+        outcomes = Summary(raw=True)
         result = run_current(tree, container, tests, parallel, outcomes)
         if result["status"] != "completed" or result.get("execution", {}).get("outcome") == "test_timeout":
             # No verdict from this run, so none for the repeat.
             result["message"] = f"Run {number} of {repeat}: {result['message']}"
-            return bounded({**result, "repeat": repeat, **extra, "runs": runs})
+            return {**result, "repeat": repeat, **extra, "runs": runs}
         failed = [item["test"] for item in outcomes.outcomes.values() if item["outcome"] in ("failed", "error")]
         runs.append({"run": number, "status": "completed", "totals": result["totals"],
-                     "failed": failed[:RUN_FAILURES]})
+                     "failed": failed})
         for item in outcomes.outcomes.values():
             if item["test"] not in worst or WORST.index(item["outcome"]) > WORST.index(worst[item["test"]]["outcome"]):
                 worst[item["test"]] = item
         notes.append(result["note"])
-    summary = Summary()
+    summary = Summary(raw=True)
     summary.result.update(repeat=repeat, **extra, runs=runs)
-    clipped = False
-    # Keep the run list within half the summary; later runs give up failure ids first.
-    for entry in reversed(runs):
-        while entry["failed"] and len(json.dumps(runs).encode()) > SUMMARY_BYTES // 2:
-            entry["failed"].pop()
-            clipped = True
     for item in worst.values():
         summary.add(item["test"], item["outcome"], item["message"])
     note = summary.result["note"] or next((note for note in notes if note), "")
-    if clipped or any(note.startswith("Truncated") for note in notes):
+    if any(note.startswith("Truncated") for note in notes):
         note = "Truncated: test entries or failure messages were cut. Totals include all results."
     summary.result["note"] = note
     return summary.result
@@ -379,7 +395,7 @@ def main():
         result = infrastructure("Test infrastructure failed before a complete report was available.")
     if Path('proof.json').is_file():
         result['proof'] = json.loads(Path('proof.json').read_text())
-    result = bounded(result)
+    result = bounded(result) if args.declared_symptom else action_summary(result)
     print(PREFIX + json.dumps(result), flush=True)
 
 

@@ -1,7 +1,9 @@
 //! #780/#807: unit stubs are recordings of the same authoritative Rust functions.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tl3_controller::{Error, Result, budget, classifier, postmortem_reply, reviewer};
+use tl3_controller::{
+    Error, Result, budget, check_harness, classifier, postmortem_reply, reviewer,
+};
 
 #[derive(Deserialize, Serialize)]
 pub struct Vector {
@@ -20,6 +22,10 @@ pub fn generate(mut vectors: Vec<Vector>) -> Result<Vec<Vector>> {
             .collect::<Vec<_>>()
             .as_slice()
         {
+            ["check-harness", kind] => serde_json::value::to_raw_value(&check_harness::decide(
+                kind,
+                vector.document.clone(),
+            )?)?,
             ["check-budget"] => {
                 let result = budget::decide(serde_json::from_value(vector.document.clone())?)
                     .map_err(Error::Invalid)?;

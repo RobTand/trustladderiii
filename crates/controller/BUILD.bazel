@@ -11,6 +11,7 @@ tl3_crate(
         "//crates/config:tl3_config",
         "//crates/controller-core:tl3_controller_core",
         "//crates/github:tl3_github",
+        "//crates/harness-core:tl3_harness_core",
         "//crates/kernel:tl3_kernel",
         "//crates/mergify:tl3_mergify",
         "//crates/prismabuild:tl3_prismabuild",

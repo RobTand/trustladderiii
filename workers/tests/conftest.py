@@ -41,6 +41,10 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
 
     import checker_stub
 
+    # #823: summary facts contain base commit identities. Record and replay use
+    # the same immutable fixture dates so full-document equality is meaningful.
+    monkeypatch.setenv('GIT_AUTHOR_DATE', '2000-01-01T00:00:00+0000')
+    monkeypatch.setenv('GIT_COMMITTER_DATE', '2000-01-01T00:00:00+0000')
     tmp_path = tmp_path_factory.mktemp("checker")
     if os.environ.get("TEST_RECORD_CHECKER_DIR"):
         yield from checker_stub.record(request.node.nodeid, tmp_path, monkeypatch)

@@ -59,3 +59,99 @@ fn matching_checks_every_identity_field() {
     assert!(!selection_matches(&Selection::Identity(altered), &selected));
     assert!(!selection_matches(&Selection::Invalid, &selected));
 }
+
+fn text(value: &serde_json::Value) -> PythonText {
+    if let Some(value) = value.as_str() {
+        PythonText::from(value)
+    } else {
+        PythonText::try_from(
+            value["python_codepoints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|point| point.as_u64().unwrap() as u32)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+}
+
+#[test]
+fn all_shared_python_identity_vectors() {
+    use tl3_harness_core::identity::SelectorIdentity;
+    let relative = "harness/test-vectors/core/selector-identity.json";
+    let path = [
+        std::path::PathBuf::from(relative),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(relative),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+    .expect("shared identity vectors staged");
+    let corpus: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let cases = corpus["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 14);
+    for case in cases {
+        let selected = case["input"]["selectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(text)
+            .collect::<Vec<_>>();
+        let expected = &case["expected"]["identity"];
+        let expected = SelectorIdentity {
+            schema: expected["schema"].as_str().unwrap().to_owned(),
+            count: expected["count"].as_u64().unwrap() as usize,
+            sha256: expected["sha256"].as_str().unwrap().to_owned(),
+            prefix: expected["prefix"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(text)
+                .collect(),
+        };
+        assert_eq!(selector_identity(&selected), expected, "{}", case["id"]);
+        let value = &case["expected"]["candidate"];
+        let candidate = if let Some(values) = value.as_array() {
+            Selection::Full(values.iter().map(text).collect())
+        } else if let Some(count) = value["count"].as_u64() {
+            Selection::Identity(SelectorIdentity {
+                schema: value["schema"].as_str().unwrap().to_owned(),
+                count: count as usize,
+                sha256: value["sha256"].as_str().unwrap().to_owned(),
+                prefix: value["prefix"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(text)
+                    .collect(),
+            })
+        } else {
+            Selection::Invalid
+        };
+        assert_eq!(
+            selection_matches(&candidate, &selected),
+            case["expected"]["matches"].as_bool().unwrap(),
+            "{}",
+            case["id"]
+        );
+    }
+}
+
+proptest::proptest! {
+    /// #704/#723: a prefix cannot hide changes to any one exact identity field.
+    #[test]
+    fn any_changed_identity_field_is_rejected(points in proptest::collection::vec(0u32..=0x10ffff, 0..400), field in 0u8..4) {
+        let selected = vec![PythonText::try_from(points).unwrap()];
+        let mut candidate = selector_identity(&selected);
+        match field {
+            0 => candidate.schema.push('x'),
+            1 => candidate.count += 1,
+            2 => candidate.sha256.push('0'),
+            _ => candidate.prefix.push(PythonText::from("unexpected")),
+        }
+        proptest::prop_assert!(!selection_matches(&Selection::Identity(candidate), &selected));
+    }
+}
