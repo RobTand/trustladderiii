@@ -731,6 +731,8 @@ mod planner_reply {
     use serde_json::Value;
     use tl3_kernel::Reply;
 
+    // #832-K routes provenance endings first, then calls this ordinary planner arm.
+    // Its caller retains the original role-schema boundary.
     pub(super) fn map(reply: &Value) -> Result<Reply> {
         // Preserve Q54's error precedence: forecast evidence precedes violations and
         // planner decisions. The schema boundary has already checked the wire shape.
@@ -739,7 +741,7 @@ mod planner_reply {
             .as_array()
             .ok_or(Error::Invalid("planner violations missing"))?;
         if !violations.is_empty() {
-            return Ok(Reply::PlanCantMeet);
+            return Ok(Reply::PlanSplit); // Seeded mutant for the corpus differential red.
         }
         let typed: PlannerReply = serde_json::from_value(reply.clone())
             .map_err(|_| Error::Invalid("worker reply breaks role schema"))?;
@@ -780,6 +782,94 @@ mod planner_reply {
                     fits: reply["forecast"]["fits"] == true,
                 })
             }
+        }
+
+        #[test]
+        fn planner_reply_mapping_matches_completed_p2a_corpus() {
+            use std::io::Write;
+            use std::process::{Command, Stdio};
+
+            // Python only decompresses the committed fixture. Both mapper arms and
+            // all comparisons run in Rust, without replaying the Python planner.
+            let mut decoder = Command::new("python3")
+                .args(["-I", "-c", "import gzip,sys; sys.stdout.buffer.write(gzip.decompress(sys.stdin.buffer.read()))"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("start corpus gzip decoder");
+            decoder
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(include_bytes!(
+                    "../../../../../workers/tests/planner-vectors.json.gz"
+                ))
+                .unwrap();
+            let decoded = decoder.wait_with_output().unwrap();
+            assert!(
+                decoded.status.success(),
+                "{}",
+                String::from_utf8_lossy(&decoded.stderr)
+            );
+            let corpus: Value = serde_json::from_slice(&decoded.stdout).unwrap();
+            let mut completed = 0;
+            let mut corrections = 0;
+            let mut violations = 0;
+            let mut cant_meet = 0;
+            let mut accepted = 0;
+            let mut rejected = 0;
+            for case in corpus["cases"].as_array().unwrap() {
+                let operation = case["operation"].as_str().unwrap();
+                if !matches!(operation, "check_reply" | "constrain" | "constrain_local")
+                    || case["outcome"].get("return").is_none()
+                {
+                    continue;
+                }
+                let reply = &case["outcome"]["reply"];
+                assert!(reply.is_object(), "missing completed reply: {}", case["id"]);
+                if operation == "check_reply" {
+                    completed += 1;
+                } else {
+                    corrections += 1;
+                }
+                violations += usize::from(
+                    reply["violations"]
+                        .as_array()
+                        .is_some_and(|v| !v.is_empty()),
+                );
+                cant_meet += usize::from(reply["kind"] == "cant_meet");
+                let expected = legacy(reply).map(MappedReply::Kernel);
+                let actual = map_reply("planner", reply);
+                match (actual, expected) {
+                    (Ok(MappedReply::Kernel(actual)), Ok(MappedReply::Kernel(expected))) => {
+                        assert_eq!(actual, expected, "corpus reply {}", case["id"]);
+                        accepted += 1;
+                    }
+                    (Err(actual), Err(expected)) => {
+                        assert_eq!(
+                            actual.to_string(),
+                            expected.to_string(),
+                            "corpus error {}",
+                            case["id"]
+                        );
+                        rejected += 1;
+                    }
+                    (actual, expected) => panic!(
+                        "corpus result differs for {}: typed error {:?}, legacy error {:?}",
+                        case["id"],
+                        actual.err(),
+                        expected.err()
+                    ),
+                }
+            }
+            // Pin the reviewed corpus selection so empty or truncated coverage fails.
+            assert_eq!((completed, corrections), (384, 117));
+            assert!(violations > 0 && cant_meet > 0 && accepted > 0 && rejected > 0);
+            eprintln!(
+                "P2a mapper differential: completed={completed}, corrections={corrections}, total={}, violations={violations}, cant_meet={cant_meet}, accepted={accepted}, errors={rejected}",
+                completed + corrections
+            );
         }
 
         #[test]

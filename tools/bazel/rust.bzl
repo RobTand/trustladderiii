@@ -105,6 +105,7 @@ _CONTROLLER_TEST_DATA = [
     "//crates/store:sources",
 ]
 _CONTROLLER_TEST_COMPILE_DATA = {
+    "src/lib.rs": ["//workers/tests:planner-vectors.json.gz"],
     "tests/writer_blocker.rs": ["//workers/tests:fixtures"],
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
