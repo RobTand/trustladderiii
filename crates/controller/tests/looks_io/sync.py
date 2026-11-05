@@ -29,6 +29,8 @@ def main():
         if name == 'current':
             text += function(source, 'incident_view', False)
             text += function(source, 'stall_upstream', False)
+            text += function(source, 'look_kind', False)
+            text += function(source, 'wait_status', False)
         (HERE / (name + '.rs')).write_text(text)
     types = base[base.index('#[derive(Clone, Debug, Serialize, Deserialize)]'):base.index('pub(crate) fn resolve_effect_incidents')]
     # The signature's serde boundary remains real; AttachedIncident is unused here.

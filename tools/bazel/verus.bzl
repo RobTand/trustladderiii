@@ -186,3 +186,17 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
+        # D2: look-result, quota and declared-wait production decisions.
+        verus_test(
+            name = "verus_looks_state",
+            src = "verus/looks_state.rs",
+            srcs = ["src/looks_state.rs"],
+            expected_obligations = 21,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )

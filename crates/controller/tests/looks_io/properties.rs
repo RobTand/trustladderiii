@@ -210,6 +210,12 @@ fn source_pins_and_production_copies() {
         function(include_str!("../../src/looks.rs"), "incident_view", false),
         function(include_str!("current.rs"), "incident_view", false)
     );
+    for name in ["look_kind", "wait_status"] {
+        assert_eq!(
+            function(include_str!("../../src/looks.rs"), name, false),
+            function(include_str!("current.rs"), name, false)
+        );
+    }
     for (source, copy) in [
         (base, include_str!("reference.rs")),
         (

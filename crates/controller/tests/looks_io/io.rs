@@ -443,9 +443,6 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
         })
     });
     let result = catch_unwind(AssertUnwindSafe(|| {
-        if new && s.d2 {
-            panic!("D2 new decisions are stubbed for RED");
-        }
         for &entry in &s.entries {
             let snap = snapshot();
             let result = if new {

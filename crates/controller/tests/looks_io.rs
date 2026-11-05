@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 use tl3_controller::{Error, Repository};
-use tl3_controller_core::looks as decisions;
+use tl3_controller_core::{looks as decisions, looks_state as state_decisions};
 use tl3_kernel::{Ack, Event, Fact, NodeId, Phase, World};
 use tl3_store::{Commit, Effect, EffectState, RowChange, Snapshot};
 type Result<T> = std::result::Result<T, Error>;
