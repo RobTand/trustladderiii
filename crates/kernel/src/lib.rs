@@ -74,6 +74,28 @@ mod continuations;
 use continuations::*;
 mod dependencies;
 pub use dependencies::Dependency;
+#[cfg(verus_keep_ghost)]
+mod progress;
+#[cfg(verus_keep_ghost)]
+use progress::progress_measure;
+#[cfg(verus_keep_ghost)]
+mod progress_global;
+#[cfg(verus_keep_ghost)]
+mod progress_theorem;
+mod scheduler;
+mod settling;
+use scheduler::*;
+mod witness;
+use settling::settle;
+mod steps;
+pub use steps::{step, step_with_passes};
+#[cfg(verus_keep_ghost)]
+mod progress_pool;
+#[cfg(verus_keep_ghost)]
+use progress_pool::*;
+include!("progress_specs.rs");
+#[cfg(verus_keep_ghost)]
+use progress_global::*;
 mod footprint;
 include!("headroom.rs");
 mod ids;
@@ -665,6 +687,7 @@ pub closed spec fn initial_node(n: Node, repo: RepoId) -> bool {
         && n.effect.is_none() && n.run.is_none() && n.job.is_none() && n.ticket.is_none()
         && n.question.is_none() && !n.pool && !n.holds && !n.paused && !n.waiting_incident
         && n.run_failures == 0 && n.fx_failures == 0 && n.run_incidents == 0 && n.fx_incidents == 0
+        && !n.had_pr && !n.pr_open && n.merged.is_none()
         && n.footprint == footprint::inline_footprint(0)
         && !n.incident_needs_rob && n.proposed.is_none() && !n.adopted
         && n.head.is_none() && n.checked.is_none() && n.approved.is_none() && n.merged.is_none()
@@ -1457,128 +1480,6 @@ impl World {
         total
     }
 
-    /// One outside event that moves the world closer to done: a successful
-    /// reply, a confirmation, a fact, or one of Rob's answers. Kani proves it
-    /// always exists while a node is open, and that it lowers `measure`.
-    pub fn witness(&self) -> Option<Event> {
-        for (i, n) in self.nodes.iter().enumerate() {
-            if n.phase.is_closed() {
-                continue;
-            }
-            let node = NodeId(i as u64);
-            if n.paused && !n.phase.is_stopping() {
-                return Some(Event::Command {
-                    node,
-                    id: n.next_command_id()?,
-                    command: Command::Resume,
-                });
-            }
-            if let Some(e) = n.effect {
-                return Some(Event::Ack {
-                    node,
-                    seq: e.seq,
-                    ack: Ack::Confirmed,
-                });
-            }
-            if n.waiting_incident {
-                return Some(Event::Fact {
-                    node,
-                    fact: Fact::IncidentCleared { by_rob: true },
-                });
-            }
-            if let Some(q) = n.question {
-                let answer = match q.kind {
-                    QKind::AuditDisagreement | QKind::EffectFailed => Answer::Continue,
-                    QKind::NeedsSplitting => Answer::Stop,
-                    QKind::CantMeet => Answer::TryAgain,
-                    QKind::OutOfCredit => Answer::AddCredit(1),
-                    QKind::CleanupFailed => Answer::MarkHandled,
-                };
-                let command = Command::Answer {
-                    question: q.id,
-                    answer,
-                };
-                return Some(Event::Command {
-                    node,
-                    id: n.next_command_id()?,
-                    command,
-                });
-            }
-            if n.phase == Phase::Unplanned && !self.dependencies_delivered(node) {
-                let dependency = self
-                    .dependencies
-                    .iter()
-                    .find(|d| {
-                        d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
-                    })
-                    .unwrap();
-                if dependency.rejected || dependency.status == DependencyStatus::Abandoned {
-                    return Some(Event::Command {
-                        node,
-                        id: n.next_command_id()?,
-                        command: Command::ChangeRequest,
-                    });
-                }
-                return Some(Event::Fact {
-                    node,
-                    fact: Fact::Dependency {
-                        target: dependency.target,
-                        status: DependencyStatus::Delivered,
-                    },
-                });
-            }
-            match n.current() {
-                Some(Item::Await) => {
-                    let generation = n.generation;
-                    let reply = match n.phase {
-                        Phase::Ingesting => Reply::IngestDone { size: 1 },
-                        Phase::Auditing => Reply::AuditAgrees,
-                        Phase::Planning { must_split: true } => Reply::PlanSplit,
-                        Phase::Planning { must_split: false } => Reply::PlanLeaf {
-                            footprint: if !n.footprint.is_empty() {
-                                n.footprint
-                            } else {
-                                Footprint::inline(1)
-                            },
-                            fits: true,
-                        },
-                        Phase::Making => Reply::MakerDone {
-                            head: n.head.unwrap_or(HeadId(0)),
-                        },
-                        Phase::Checking => Reply::ChecksDone {
-                            report: true,
-                            pass: true,
-                            in_footprint: true,
-                        },
-                        Phase::Reviewing => Reply::Approved {
-                            head: n.head.unwrap_or(HeadId(0)),
-                        },
-                        Phase::Rebasing => Reply::RebaseClean {
-                            head: n.head.unwrap_or(HeadId(0)),
-                        },
-                        _ => continue,
-                    };
-                    return Some(Event::Reply {
-                        node,
-                        generation,
-                        reply,
-                    });
-                }
-                Some(Item::Merge) => {
-                    let head = n.head.unwrap_or(HeadId(0));
-                    let fact = Fact::PrMerged {
-                        head,
-                        checks_passed: true,
-                    };
-                    return Some(Event::Fact { node, fact });
-                }
-                // Waiting on the gate or the pool: another node holds what it needs.
-                _ => continue,
-            }
-        }
-        None
-    }
-
     /// Everything the kernel promises about a world at rest: consistent and settled.
     pub fn valid(&self) -> bool {
         self.consistent() && self.is_settled()
@@ -1714,81 +1615,11 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 }
 // proof map end
 
-kernel_fn! {
-/// The kernel: apply one event, then settle.
-/// State-table "Counter headroom" / #771: the real step is overflow-safe under
-/// the production checker's invariant, normalized storage, and per-step reserves.
-/// `step_budget` bounds every kernel-owned counter and preserves command order.
-pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
-    requires world_checked(world), world_headroom(world), storage_ordered(world),
-    ensures step_budget(world, result.0),
-] {
-    kernel_proof! { reveal(storage_ordered); checked_reserves(world); }
-    let (world, out, _) = step_with_passes(world, event);
-    (world, out)
-}
-}
-
 /// Settle after the controller reconciles stored gate or agent capacity.
 pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     let mut out = Vec::new();
     settle(&mut world, &mut out, None);
     (world, out)
-}
-
-kernel_fn! {
-/// `step`, also reporting how many passes settle needed. Tests use it to size
-/// the loop bound that Kani's unwinding check then proves.
-/// State-table "Counter headroom" / #771: verify the real event-to-settle
-/// composition under arithmetic and storage consistency, plus headroom. The
-/// progress theorem separately requires command freshness for every node.
-pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
-    requires step_scope(world),
-    ensures step_budget(world, result.0),
-] {
-    kernel_snapshot! { before_step = world }
-    let mut outbox = Outbox::new();
-    kernel_proof! { reveal(step_scope); reveal(empty_outbox); }
-    apply(&mut world, event, &mut outbox);
-    kernel_proof! {
-        reveal(world_headroom);
-        open_prefix_compare(before_step@.nodes@, world.nodes@, before_step@.nodes@.len());
-        open_prefix_monotone(world.nodes@, before_step@.nodes@.len(), world.nodes@.len());
-        settle_reserve_totals(world.nodes@);
-        open_prefix_monotone(world.nodes@, 0, world.nodes@.len());
-        reveal(open_prefix);
-        assert forall|j: int| 0 <= j < world.nodes@.len() implies
-            world.nodes@[j].generation as int + generation_capacity(world.nodes@[j]) <= u64::MAX as int
-                && world.nodes@[j].next_seq as int + effect_capacity(world.nodes@[j]) <= u64::MAX as int
-                && world.nodes@[j].credit.earned as int + merge_capacity(world.nodes@[j]) <= u64::MAX as int
-        by { local_capacities(world.nodes@[j]); }
-        assert(settle_ready(world));
-    }
-    kernel_snapshot! { after_apply = world }
-    let mut out = Vec::new();
-    outbox.drain_into(&mut out);
-    let passes = settle(&mut world, &mut out, None);
-    kernel_proof! {
-        reveal(step_budget);
-        assert forall|j: int| 0 <= j < before_step@.nodes@.len() implies
-            world.nodes@[j].generation as int <= before_step@.nodes@[j].generation as int + GENERATION_STEP_BUDGET
-                && world.nodes@[j].next_seq as int <= before_step@.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
-                && world.nodes@[j].credit.start as int <= before_step@.nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
-                && world.nodes@[j].credit.earned as int <= before_step@.nodes@[j].credit.earned as int + CREDIT_EARNED_STEP_BUDGET
-                && world.nodes@[j].credit.added as int <= before_step@.nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
-                && world.nodes@[j].credit.spent as int <= before_step@.nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET
-        by { local_capacities(after_apply@.nodes@[j]); }
-        assert forall|j: int| before_step@.nodes@.len() <= j < world.nodes@.len() implies
-            world.nodes@[j].generation <= GENERATION_STEP_BUDGET
-                && world.nodes@[j].next_seq <= EFFECT_STEP_BUDGET
-                && world.nodes@[j].credit.start <= CREDIT_START_STEP_BUDGET
-                && world.nodes@[j].credit.earned <= CREDIT_EARNED_STEP_BUDGET
-                && world.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
-                && world.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET
-        by { local_capacities(after_apply@.nodes@[j]); }
-    }
-    (world, out, passes)
-}
 }
 
 /// `step`, also returning the world after the event and after every internal
@@ -1849,6 +1680,10 @@ spec fn node_checked(w: World, n: Node) -> bool {
             && (n.pos == items(n.phase).len() ==> n.phase == Phase::Publishing || n.phase is Stopping))
         && (holding(n.phase) ==> n.holds)
         && (n.holds ==> holding(n.phase) || (n.phase is Stopping && n.pos <= RELEASE_STEP))
+        && (n.phase == Phase::Queued ==> n.pr_open)
+        && (n.pr_open ==> n.had_pr)
+        && (n.merged.is_some() ==> n.phase == Phase::Stopping(Outcome::Merged)
+            || n.phase == Phase::Closed(Outcome::Merged))
         && (n.pool ==> n.run.is_some() && n.phase != Phase::Rebasing)
         && (match n.run {
             Some(g) => (current_item(n) == Some(Item::Await) && g == n.generation
@@ -1899,9 +1734,11 @@ spec fn node_checked(w: World, n: Node) -> bool {
 }
 
 /// #771: immutable file storage is normalized by the executable interner.
+#[verifier::opaque]
 pub closed spec fn storage_ordered(w: World) -> bool { footprint::ordered_table(w) }
 
 /// #771: progress facts obtained by running the production consistency checker.
+#[verifier::opaque]
 pub closed spec fn world_checked(w: World) -> bool {
     w.gates@.len() > 0 && w.pool_capacity > 0
         && (forall|j: int| 0 <= j < w.gates@.len() ==> w.gates@[j].w > 0)
@@ -1909,11 +1746,31 @@ pub closed spec fn world_checked(w: World) -> bool {
         && dependencies::dependencies_checked(w)
 }
 
+/// #805: the production checker projection, exposed to its proof modules.
+proof fn world_checked_definition(w: World)
+    ensures world_checked(w) == (w.gates@.len() > 0 && w.pool_capacity > 0
+        && (forall|j: int| 0 <= j < w.gates@.len() ==> w.gates@[j].w > 0)
+        && (forall|j: int| 0 <= j < w.nodes@.len() ==> node_checked(w, w.nodes@[j]))
+        && dependencies::dependencies_checked(w)),
+{
+    reveal(world_checked);
+}
+
+
 /// Q30/Q39 / #771: obstruction proof needs no sufficient internal move. The
 /// real is_settled and settle bodies both establish this predicate.
+#[verifier::opaque]
 pub closed spec fn settled_world(w: World) -> bool {
     forall|i: int| 0 <= i < w.nodes@.len() ==> !movable(w, i)
 }
+
+/// #805: the production checker projection, exposed to its proof modules.
+proof fn settled_world_definition(w: World)
+    ensures settled_world(w) == (forall|i: int| 0 <= i < w.nodes@.len() ==> !movable(w, i)),
+{
+    reveal(settled_world);
+}
+
 
 /// #771: the production checker and enforced reserves supply the step scope.
 proof fn checked_reserves(w: World)
@@ -1958,7 +1815,8 @@ pub closed spec fn step_budget(before: World, after: World) -> bool {
                 && after.nodes@[j].credit.added <= CREDIT_ADDED_STEP_BUDGET
                 && after.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET)
         && forall|j: int| 0 <= j < before.nodes@.len() ==>
-            after.nodes@[j].last_cmd >= before.nodes@[j].last_cmd
+            (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed)
+            && after.nodes@[j].last_cmd >= before.nodes@[j].last_cmd
                 && after.nodes@[j].generation as int <= before.nodes@[j].generation as int + GENERATION_STEP_BUDGET
                 && after.nodes@[j].next_seq as int <= before.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
                 && after.nodes@[j].credit.start as int <= before.nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
@@ -2023,6 +1881,7 @@ spec fn settle_chain(before: World, after: World) -> bool {
         && after.next_ticket as int + potential_prefix(after.nodes@, after.nodes@.len(), |n: Node| ticket_capacity(n))
             <= before.next_ticket as int + potential_prefix(before.nodes@, before.nodes@.len(), |n: Node| ticket_capacity(n))
         && forall|j: int| 0 <= j < before.nodes@.len() ==>
+            (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed) &&
             after.nodes@[j].generation as int + generation_capacity(after.nodes@[j])
                 <= before.nodes@[j].generation as int + generation_capacity(before.nodes@[j])
             && after.nodes@[j].next_seq as int + effect_capacity(after.nodes@[j])
@@ -2036,83 +1895,6 @@ spec fn settle_chain(before: World, after: World) -> bool {
 }
 }
 
-kernel_fn! {
-/// Takes passes over the nodes until one changes nothing, and returns how many
-/// passes changed something. Each internal transition moves a node along a
-/// finite chain, so the loop ends. Kani's unwinding check proves it within the
-/// bounds.
-fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
-    -> (result: u32) [
-    requires settle_ready(*old(w)),
-    ensures settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
-        forall|i: int| 0 <= i < final(w).nodes@.len() ==> !movable(*final(w), i),
-        result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
-] {
-    kernel_snapshot! { baseline = *w }
-    let mut passes: u32 = 0;
-    kernel_loop! { [
-        invariant baseline@ == *old(w), settle_ready(*w), settle_chain(baseline@, *w),
-            passes as int + potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n))
-                <= potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)),
-            potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int,
-        decreases potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)),
-    ] {
-        kernel_snapshot! { pass_height = potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) }
-        let mut changed = false;
-        let mut i = 0;
-        kernel_while! { (i < w.nodes.len()) [
-            invariant i <= w.nodes.len(), baseline@ == *old(w),
-                settle_ready(*w), settle_chain(baseline@, *w),
-                passes as int + pass_height@ <= potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)),
-                potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int,
-                potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) <= pass_height@,
-                changed ==> potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) < pass_height@,
-                !changed ==> forall|j: int| 0 <= j < i ==> !movable(*w, j),
-            decreases w.nodes.len() - i,
-        ] {
-            let mut outbox = Outbox::new();
-            kernel_proof! {
-                reveal(empty_outbox);
-                potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
-            }
-            kernel_snapshot! { before_node = *w }
-            let moved = advance(w, i, &mut outbox);
-            kernel_proof! {
-                reveal(advance_post);
-                if !changed && !moved {
-                    assert(w.nodes@ == before_node@.nodes@);
-                    assert forall|j: int| 0 <= j <= i implies !movable(*w, j) by {
-                        movable_frame(before_node@, *w, j);
-                        if j < i { assert(!movable(before_node@, j)); }
-                    }
-                }
-                assert forall|j: int| 0 <= j < w.nodes@.len() implies
-                    w.nodes@[j].generation as int + generation_capacity(w.nodes@[j])
-                        <= baseline@.nodes@[j].generation as int + generation_capacity(baseline@.nodes@[j])
-                    && w.nodes@[j].next_seq as int + effect_capacity(w.nodes@[j])
-                        <= baseline@.nodes@[j].next_seq as int + effect_capacity(baseline@.nodes@[j])
-                    && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j])
-                        <= baseline@.nodes@[j].credit.earned as int + merge_capacity(baseline@.nodes@[j])
-                    && w.nodes@[j].last_cmd == baseline@.nodes@[j].last_cmd
-                    && w.nodes@[j].credit.start == baseline@.nodes@[j].credit.start
-                    && w.nodes@[j].credit.added == baseline@.nodes@[j].credit.added
-                    && w.nodes@[j].credit.spent == baseline@.nodes@[j].credit.spent by {
-                    if j != i { assert(w.nodes@[j] == before_node@.nodes@[j]); }
-                }
-            }
-            if moved {
-                outbox.drain_into(out);
-                changed = true;
-                if let Some(t) = trace.as_mut() { t.push(snapshot_world(w)); }
-            }
-            i += 1;
-        } }
-        if !changed { return passes; }
-        passes += 1;
-    } }
-}
-}
-
 /// One internal transition for node `i`, if the facts allow one.
 /// Read scheduling predicates at the same branches as the local transition.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -2122,85 +1904,6 @@ struct AdvanceContext {
     admit: bool,
     pool: bool,
     slot: bool,
-}
-
-kernel_fn! {
-/// #771: source-connected scheduler wrapper. Context queries are read at the
-/// original branches; the verified local transition writes only this node.
-fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
-    requires i < old(w).nodes@.len(), i <= u64::MAX as int,
-        scheduling_safe(*old(w)),
-        advance_pre(old(w).nodes@[i as int], old(w).next_ticket, old(out).len),
-    ensures (!result ==> final(out).len == old(out).len),
-        advance_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
-            old(w).next_ticket, final(w).next_ticket, result),
-        final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
-        final(w).next_question == old(w).next_question,
-        final(w).gates@ == old(w).gates@,
-        final(w).pool_capacity == old(w).pool_capacity,
-        final(w).fail_fast == old(w).fail_fast,
-        final(w).file_sets@ == old(w).file_sets@,
-        final(w).dependencies@ == old(w).dependencies@,
-        movable(*old(w), i as int) ==> result,
-        node_total(final(w).nodes@) <= node_total(old(w).nodes@),
-        potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| internal_height(n))
-            <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
-        result ==> potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| internal_height(n))
-            < potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
-        final(w).next_ticket as int + potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| ticket_capacity(n))
-            <= old(w).next_ticket as int + potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| ticket_capacity(n)),
-        open_prefix(final(w).nodes@, final(w).nodes@.len())
-            <= open_prefix(old(w).nodes@, old(w).nodes@.len()),
-        (forall|j: int| 0 <= j < old(w).nodes@.len() ==> settle_shape(old(w).nodes@[j]))
-            ==> scheduling_safe(*final(w))
-                && (forall|j: int| 0 <= j < final(w).nodes@.len() ==> settle_shape(final(w).nodes@[j])),
-        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
-    kernel_snapshot! { before_advance = *w }
-    kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
-    let n = &w.nodes[i];
-    let mut context = AdvanceContext {
-        node: i,
-        admit: false,
-        pool: false,
-        slot: false,
-    };
-    if !n.phase.is_closed() && !n.waiting_incident && n.effect.is_none() {
-        match n.current() {
-            Some(Item::Admit) if !n.paused => {
-                context.admit = w.dependencies_delivered(NodeId(i as u64)) && admits(w, n.repo);
-            }
-            Some(Item::Start(_)) if !n.paused && n.ticket.is_some() => {
-                context.pool = pool_free(w) && first_in_line(w, i);
-            }
-            Some(Item::Slot)
-                if matches!(n.phase, Phase::Ready(_)) && !n.paused && n.ticket.is_some() =>
-            {
-                context.slot = slot_free(w, i) && first_in_line(w, i);
-            }
-            _ => {}
-        }
-    }
-    kernel_proof! {
-        assert(movable(*w, i as int) ==> advance_enabled(w.nodes@[i as int], context));
-    }
-    let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
-    kernel_proof! {
-        reveal(advance_post);
-        advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,
-            before_advance@.next_ticket, w.next_ticket, changed);
-        if forall|j: int| 0 <= j < before_advance@.nodes@.len()
-            ==> settle_shape(before_advance@.nodes@[j]) {
-            assert forall|j: int| 0 <= j < w.nodes@.len()
-                implies footprint::valid_footprint(*w, w.nodes@[j].footprint) by {
-                footprint::valid_under_table_growth(before_advance@, *w, w.nodes@[j].footprint);
-            }
-            assert forall|j: int| 0 <= j < w.nodes@.len() implies settle_shape(w.nodes@[j]) by {}
-            reveal(footprint::ordered_table);
-        }
-    }
-    changed
-}
 }
 
 kernel_fn! {
@@ -2262,80 +1965,6 @@ kernel_fn! {
     }
 }
 
-kernel_fn! {
-/// Q39 / #771: exact pool occupancy, with the checked open-node scan bound.
-fn pool_free(w: &World) -> (result: bool) [
-    requires open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
-        forall|i: int| 0 <= i < w.nodes@.len()
-            ==> (w.nodes@[i].pool ==> !(w.nodes@[i].phase is Closed)),
-    ensures result == (pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity),
-] {
-    let mut runs = 0u32;
-    let mut i = 0usize;
-    kernel_while! { (i < w.nodes.len()) [
-        invariant
-            i <= w.nodes.len(),
-            runs as int == pool_users(w.nodes@, i as nat),
-            runs as int <= open_prefix(w.nodes@, i as nat),
-            open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
-            forall|j: int| 0 <= j < w.nodes@.len()
-                ==> (w.nodes@[j].pool ==> !(w.nodes@[j].phase is Closed)),
-        decreases w.nodes.len() - i,
-    ] {
-        let n = &w.nodes[i];
-        kernel_proof! {
-            reveal(open_prefix);
-            open_prefix_monotone(w.nodes@, i as nat + 1, w.nodes@.len());
-        }
-        if n.pool {
-            runs += 1;
-        }
-        i += 1;
-    } }
-    runs < w.pool_capacity as u32
-}
-}
-
-kernel_fn! {
-/// Q30 / #771: planning admission uses the actual slot-waiter count.
-fn admits(w: &World, repo: RepoId) -> (result: bool) [
-    requires open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
-    ensures result == if (repo.0 as int) < w.gates@.len() {
-        slot_waiters(w.nodes@, w.nodes@.len(), repo) < w.gates@[repo.0 as int].w
-    } else { false },
-] {
-    let Some(r) = repo.index() else {
-        return false;
-    };
-    let Some(gate) = w.gates.get(r) else {
-        return false;
-    };
-    let mut waiting = 0u32;
-    let mut i = 0usize;
-    kernel_while! { (i < w.nodes.len()) [
-        invariant
-            i <= w.nodes.len(),
-            waiting as int == slot_waiters(w.nodes@, i as nat, repo),
-            waiting as int <= open_prefix(w.nodes@, i as nat),
-            open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int,
-            r < w.gates.len(), r as int == repo.0 as int,
-            *gate == w.gates@[r as int],
-        decreases w.nodes.len() - i,
-    ] {
-        let n = &w.nodes[i];
-        kernel_proof! {
-            reveal(open_prefix);
-            open_prefix_monotone(w.nodes@, i as nat + 1, w.nodes@.len());
-        }
-        if n.repo == repo && matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some() {
-            waiting += 1;
-        }
-        i += 1;
-    } }
-    waiting < gate.w as u32
-}
-}
-
 #[cfg(verus_keep_ghost)]
 verus! {
 /// #771: storage and scratch-scan conditions read by the scheduling queries.
@@ -2349,48 +1978,6 @@ spec fn scheduling_safe(w: World) -> bool {
 }
 
 
-}
-
-kernel_fn! {
-/// Q30 / #771: a request has a free slot when no other request holds one.
-/// The full scan still rejects overlaps and saturated widths at their old sites.
-fn slot_free(w: &World, i: usize) -> (result: bool) [
-    requires i < w.nodes@.len(), scheduling_safe(*w),
-    ensures (w.nodes@[i as int].repo.0 < w.gates@.len()
-        && w.gates@[w.nodes@[i as int].repo.0 as int].w > 0
-        && (forall|j: int| 0 <= j < w.nodes@.len() && j != i ==> !w.nodes@[j].holds))
-        ==> result,
-] {
-    let me = &w.nodes[i];
-    let _gate_count = w.gates.len();
-    let Some(repo) = me.repo.index() else { return false; };
-    let Some(gate) = w.gates.get(repo) else { return false; };
-    let mut holders = 0u32;
-    let mut j = 0usize;
-    kernel_while! { (j < w.nodes.len()) [
-        invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
-            *me == w.nodes@[i as int], repo < w.gates.len(),
-            repo as int == me.repo.0 as int, *gate == w.gates@[repo as int],
-            holders as int <= open_prefix(w.nodes@, j as nat),
-            ((forall|k: int| 0 <= k < w.nodes@.len() && k != i ==> !w.nodes@[k].holds)
-                ==> holders == 0),
-        decreases w.nodes.len() - j,
-    ] {
-        let n = &w.nodes[j];
-        kernel_proof! {
-            reveal(open_prefix);
-            open_prefix_monotone(w.nodes@, j as nat + 1, w.nodes@.len());
-        }
-        if j != i && n.holds && n.repo == me.repo {
-            if !w.footprints_disjoint(n.footprint, me.footprint) {
-                return false;
-            }
-            holders += 1;
-        }
-        j += 1;
-    } }
-    holders < gate.w as u32
-}
 }
 
 /// A node's place in the agent pool's line (Q39), lowest first: its priority,
@@ -2425,92 +2012,5 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
                     None => true, Some(theirs) => theirs >= w.nodes@[i].ticket.unwrap(),
                 }
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
-}
-}
-
-kernel_fn! {
-/// Q39 / #771: the declared priority order followed by the older pool ticket.
-fn earlier_in_pool(a: &Node, b: &Node) -> (result: bool) [
-    ensures result == pool_precedes(*a, *b),
-] {
-    if matches!(a.phase, Phase::Ready(_)) { return false; }
-    match (a.ticket, b.ticket) {
-        (Some(theirs), Some(mine)) => a.priority.rank() < b.priority.rank()
-            || (a.priority == b.priority && theirs < mine),
-        _ => false,
-    }
-}
-}
-
-kernel_fn! {
-/// Q30 / #771: this is the original inner overlap scan, with explicit indices.
-// The pinned Verus frontend requires nested if-let instead of let chains.
-#[allow(clippy::collapsible_if)]
-fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) [
-    requires i < w.nodes@.len(), scheduling_safe(*w),
-] {
-    let waiter = &w.nodes[i];
-    let mut index = 0usize;
-    kernel_while! { (index < w.nodes.len()) [
-        invariant index <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
-            *waiter == w.nodes@[i as int],
-        decreases w.nodes.len() - index,
-    ] {
-        let older = &w.nodes[index];
-        if matches!(older.phase, Phase::Ready(_)) && older.repo == waiter.repo {
-            if let Some(theirs) = older.ticket {
-                if theirs < ticket && !w.footprints_disjoint(older.footprint, waiter.footprint) {
-                    return true;
-                }
-            }
-        }
-        index += 1;
-    } }
-    false
-}
-}
-
-kernel_fn! {
-/// Older slot waiters block runnable or overlapping younger leaves.
-/// Q30/Q39 / #771: the oldest waiter is first in its actual executable line.
-fn first_in_line(w: &World, i: usize) -> (result: bool) [
-    requires i < w.nodes@.len(), scheduling_safe(*w),
-    ensures oldest_waiter(*w, i as int) ==> result,
-] {
-    let me = &w.nodes[i];
-    let Some(mine) = me.ticket else { return false };
-    if !matches!(me.phase, Phase::Ready(_)) {
-        let mut index = 0usize;
-        kernel_while! { (index < w.nodes.len()) [
-            invariant index <= w.nodes.len(), i < w.nodes.len(),
-                *me == w.nodes@[i as int], !(me.phase is Ready), me.ticket == Some(mine),
-            decreases w.nodes.len() - index,
-        ] {
-            if earlier_in_pool(&w.nodes[index], me) { return false; }
-            index += 1;
-        } }
-        return true;
-    }
-    let mut first_runnable = mine;
-    let mut j = 0usize;
-    kernel_while! { (j < w.nodes.len()) [
-        invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
-            *me == w.nodes@[i as int], me.phase is Ready, me.ticket == Some(mine),
-            oldest_waiter(*w, i as int) ==> first_runnable == mine,
-        decreases w.nodes.len() - j,
-    ] {
-        let index = j;
-        let waiter = &w.nodes[j];
-        j += 1;
-        let Some(theirs) = waiter.ticket else { continue; };
-        if !matches!(waiter.phase, Phase::Ready(_)) || waiter.repo != me.repo || theirs >= mine {
-            continue;
-        }
-        kernel_proof! { assert(!oldest_waiter(*w, i as int)); }
-        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
-        if theirs >= first_runnable || !slot_free(w, index) { continue; }
-        if !older_overlap(w, index, theirs) { first_runnable = theirs; }
-    } }
-    first_runnable == mine
 }
 }

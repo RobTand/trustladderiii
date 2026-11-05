@@ -11,7 +11,11 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && id > old(w).nodes@[i as int].last_cmd
+            && command_progress_input(old(w).nodes@[i as int], command)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -35,9 +39,15 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] {
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
     if id <= w.nodes[i].last_cmd {
         return; // a repeated command
+    }
+    kernel_snapshot! { before_command_node = w.nodes@[i as int] }
+    kernel_snapshot! { before_command_world = *w }
+    kernel_proof! {
+        if command == Command::Resume && command_progress_input(w.nodes@[i as int], command)
+            && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
     }
     w.nodes[i].last_cmd = id;
     match command {
@@ -50,7 +60,19 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             }
         }
         Command::Resume => w.nodes[i].paused = false,
-        Command::Answer { question, answer } => on_answer(w, i, question, answer, out),
+        Command::Answer { question, answer } => {
+            kernel_proof! {
+                if node_checked(before_command_world@, before_command_node@)
+                    && command_progress_input(before_command_node@, command) {
+                    footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
+                    assert(node_checked(*w, w.nodes@[i as int]));
+                    assert(answer_progress_input(w.nodes@[i as int], question, answer));
+                    assert(distance(w.nodes@[i as int]) == distance(before_command_node@));
+                }
+            }
+            on_answer(w, i, question, answer, out);
+        },
     }
+
 }
 }

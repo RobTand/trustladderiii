@@ -29,14 +29,17 @@ pub(super) fn allowed(kind: QKind, answer: Answer) -> (result: bool) [
 kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
 pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
+            && old(m).phase is Stopping && matches!(current_item(*old(m)), Some(Item::Teardown(_)))
+            ==> distance(*final(m)) + 2 <= distance(*old(m))),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation == old(m).generation,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).question == old(m).question,
         final(m).phase == old(m).phase,
         final(m).last_cmd == old(m).last_cmd,
-] {
+] proof [reveal(distance);] {
     if let Some(Item::Teardown(kind)) = m.current() {
         match kind {
             EffectKind::StopRun => {

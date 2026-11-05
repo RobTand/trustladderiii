@@ -218,11 +218,14 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Rebasing
+            && target == Phase::Checking
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
     kernel_snapshot! { before_recheck = *w }
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);

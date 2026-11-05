@@ -44,11 +44,23 @@ pub closed spec fn edges_indexable(world: World) -> bool {
         }
 }
 
+/// #805: expose the existing owner/target index invariant across proof modules.
+pub(super) proof fn indexable_definition(world: World)
+    ensures edges_indexable(world) == (forall|i: int| 0 <= i < world.dependencies@.len() ==>
+        world.dependencies@[i].node.0 < world.nodes@.len()
+        && match world.dependencies@[i].target.request {
+            None => true, Some(node) => node.0 < world.nodes@.len(),
+        }),
+{
+    reveal(edges_indexable);
+}
+
 /// #693 / #771: one declaration's existing consistency requirements.
 pub(super) open spec fn dependency_checked(world: World, dependency: Dependency) -> bool {
     let owner = world.nodes@[dependency.node.0 as int];
-    dependency.node.0 < world.nodes@.len()
-        && (match dependency.target.request { None => true, Some(n) => n.0 < world.nodes@.len() })
+    dependency.node.0 < world.nodes@.len() && dependency.target.number > 0
+        && (match dependency.target.request { None => true, Some(n) => n.0 < world.nodes@.len()
+            && world.nodes@[n.0 as int].repo == owner.repo })
         && ((dependency.rejected || dependency.status != DependencyStatus::Delivered) ==>
             !world.nodes@[dependency.node.0 as int].planning_started
                 && matches!(owner.phase,
@@ -63,8 +75,60 @@ pub(super) open spec fn dependency_checked(world: World, dependency: Dependency)
 
 /// #693 / #771: executable prerequisite checks imply this progress projection.
 pub(super) open spec fn dependencies_checked(world: World) -> bool {
-    edges_indexable(world) && forall|j: int| 0 <= j < world.dependencies@.len()
-        ==> dependency_checked(world, world.dependencies@[j])
+    edges_indexable(world) && declarations_unique(world)
+        && forall|j: int| 0 <= j < world.dependencies@.len()
+            ==> dependency_checked(world, world.dependencies@[j])
+}
+
+pub(super) open spec fn same_declaration(a: Dependency, b: Dependency) -> bool {
+    a.node == b.node && a.target.kind == b.target.kind && a.target.number == b.target.number
+}
+
+pub(super) open spec fn declarations_unique(w: World) -> bool {
+    forall|a: int, b: int| 0 <= a < b < w.dependencies@.len()
+        ==> !same_declaration(w.dependencies@[a], w.dependencies@[b])
+}
+
+/// #693 / #805: the production checker's key uniqueness supplies delivery guards.
+pub(super) proof fn pending_ready(w: World, i: int, target: DependencyTarget)
+    requires dependencies_checked(w), 0 <= i < w.nodes@.len(), i <= u64::MAX as int,
+        !(w.nodes@[i].phase is Closed),
+        exists|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+            && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending,
+    ensures delivery_input(w, i, target),
+{
+    reveal(delivery_input);
+    let k = choose|k: int| 0 <= k < w.dependencies@.len()
+        && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+        && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending;
+    assert forall|j: int| 0 <= j < w.dependencies@.len()
+        && w.dependencies@[j].node == NodeId(i as u64)
+        && w.dependencies@[j].target.kind == target.kind && w.dependencies@[j].target.number == target.number
+        implies w.dependencies@[j].target == target && !w.dependencies@[j].rejected
+            && w.dependencies@[j].status == DependencyStatus::Pending by {
+        if j < k { assert(!same_declaration(w.dependencies@[j], w.dependencies@[k])); }
+        if k < j { assert(!same_declaration(w.dependencies@[k], w.dependencies@[j])); }
+        assert(j == k);
+    }
+}
+
+/// State-table prerequisite wait / #805: a concrete Pending entry blocks admission.
+pub(super) proof fn pending_blocks(w: World, k: int)
+    requires 0 <= k < w.dependencies@.len(),
+        w.dependencies@[k].status == DependencyStatus::Pending,
+    ensures !delivered(w.dependencies@, w.dependencies@[k].node),
+{
+    reveal(delivered);
+}
+
+/// #805: immutable declarations and storage length preserve index validity.
+pub(super) proof fn indexability_frame(before: World, after: World)
+    requires edges_indexable(before), after.dependencies@ == before.dependencies@,
+        after.nodes@.len() == before.nodes@.len(),
+    ensures edges_indexable(after),
+{
+    reveal(edges_indexable);
 }
 
 /// Prerequisite fact rows / #693 / #771: exact ledger and node frame shared
@@ -100,6 +164,36 @@ pub(super) open spec fn dependency_frame(before: World, after: World, i: int) ->
             && after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned
             && after.nodes@[i as int].credit.added == before.nodes@[i as int].credit.added
             && after.nodes@[i as int].credit.spent == before.nodes@[i as int].credit.spent
+}
+
+/// Prerequisite delivery / #805: the real lookup has a pending row and every
+/// matching declaration passes the handler's guards. check_dependencies rejects
+/// duplicate keys; no world-size bound is imposed here.
+#[verifier::opaque]
+pub(super) open spec fn delivery_input(w: World, i: int, target: DependencyTarget) -> bool {
+    !(w.nodes@[i].phase is Closed) && target.number > 0
+        && (match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
+            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo })
+        && (exists|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+            && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending)
+        && (forall|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(i as u64)
+            && w.dependencies@[k].target.kind == target.kind && w.dependencies@[k].target.number == target.number
+            ==> w.dependencies@[k].target == target && !w.dependencies@[k].rejected
+                && w.dependencies@[k].status == DependencyStatus::Pending)
+}
+
+/// #805: expose the concrete changed row across the actual handler boundary.
+#[verifier::opaque]
+pub(super) open spec fn delivery_changed(before: World, after: World, i: int,
+    target: DependencyTarget) -> bool {
+    exists|k: int| 0 <= k < before.dependencies@.len()
+        && before.dependencies@[k].node == NodeId(i as u64)
+        && before.dependencies@[k].target == target
+        && before.dependencies@[k].status == DependencyStatus::Pending
+        && after.dependencies@ == before.dependencies@.update(k, Dependency {
+            status: DependencyStatus::Delivered, rejected: false, ..before.dependencies@[k] })
 }
 
 pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
@@ -342,6 +436,8 @@ impl World {
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), self.nodes@.len() <= u64::MAX as int,
                 forall|j: int| 0 <= j < index ==> dependency_checked(*self, self.dependencies@[j]),
+                forall|a: int, b: int| 0 <= a < b < index
+                    ==> !same_declaration(self.dependencies@[a], self.dependencies@[b]),
             decreases self.dependencies.len() - index,
         ] {
             let dependency = &self.dependencies[index];
@@ -362,6 +458,9 @@ impl World {
             let mut previous = 0usize;
             kernel_while! { (previous < index) [
                 invariant previous <= index < self.dependencies.len(),
+                    *dependency == self.dependencies@[index as int],
+                    forall|a: int| 0 <= a < previous
+                        ==> !same_declaration(self.dependencies@[a], *dependency),
                 decreases index - previous,
             ] {
                 let d = &self.dependencies[previous];
@@ -537,9 +636,10 @@ impl World {
 
     kernel_fn! {
     /// #693 / #771: find the same first blocking declaration as the public query.
-    fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
+    pub(super) fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
         ensures match result {
-            Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered),
+            Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
+                && exists|j: int| 0 <= j < self.dependencies@.len() && self.dependencies@[j] == d,
             None => prerequisites_delivered(*self, node),
         },
     ] proof [reveal(prerequisites_delivered); reveal(delivered);] {
@@ -571,12 +671,26 @@ impl World {
             edges_indexable(*old(self)), old(out).len < OUTBOX,
         ensures dependency_frame(*old(self), *final(self), i as int),
             final(out).len <= old(out).len + 1,
+            (status == DependencyStatus::Delivered && delivery_input(*old(self), i as int, target)
+                ==> delivery_changed(*old(self), *final(self), i as int, target)
+                    && progress::progress_measure(*final(self)) + 1 == progress::progress_measure(*old(self))
+                    && edges_indexable(*final(self))),
     ] {
+        kernel_snapshot! { before_delivery = *self }
         let Some((existing, dependency)) = self.prepare_dependency(i, target, status) else {
             kernel_proof! { reveal(dependency_frame); }
             return;
         };
         self.record_dependency(i, existing, dependency, out);
+        kernel_proof! {
+            if status == DependencyStatus::Delivered && delivery_input(before_delivery@, i as int, target) {
+                reveal(delivery_input);
+                let k = existing.unwrap() as int;
+                progress::delivery_rank_delta(before_delivery@, *self, i as int, k);
+                reveal(delivery_changed);
+                assert(before_delivery@.dependencies@[k].target == target);
+            }
+        }
     }
     }
 
@@ -590,7 +704,17 @@ impl World {
             Some((Some(index), _)) => index < self.dependencies@.len(),
             _ => true,
         },
-    ] {
+            (status == DependencyStatus::Delivered && delivery_input(*self, i as int, target)
+                ==> match result {
+                    Some((Some(k), d)) => k < self.dependencies@.len()
+                        && self.dependencies@[k as int].node == NodeId(i as u64)
+                        && self.dependencies@[k as int].target == target
+                        && self.dependencies@[k as int].status == DependencyStatus::Pending
+                        && d == (Dependency { status: DependencyStatus::Delivered, rejected: false,
+                            ..self.dependencies@[k as int] }),
+                    _ => false,
+                }),
+    ] proof [reveal(delivery_input);] {
         if target.number == 0 {
             return None;
         }
@@ -602,6 +726,11 @@ impl World {
         }
         let node = NodeId(i as u64);
         let existing = self.find_dependency(node, target.kind, target.number);
+        kernel_proof! {
+            if status == DependencyStatus::Delivered && delivery_input(*self, i as int, target) {
+                assert(existing is Some);
+            }
+        }
         if let Some(index) = existing {
             let previous = self.dependencies[index];
             if previous.rejected || previous.status != DependencyStatus::Pending {
@@ -643,6 +772,10 @@ impl World {
         requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
             match existing { None => true, Some(index) => index < old(self).dependencies@.len() },
         ensures dependency_frame(*old(self), *final(self), i as int),
+            final(self).dependencies@ == match existing {
+                Some(index) => old(self).dependencies@.update(index as int, dependency),
+                None => old(self).dependencies@.push(dependency),
+            },
             final(out).len <= old(out).len + 1,
     ] proof [reveal(dependency_frame);] {
         let node = NodeId(i as u64);

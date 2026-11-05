@@ -14,19 +14,18 @@ settle. A step may consume its reserve; the next boundary check then stops it.
 Headroom is a precondition for safe arithmetic, not an invariant that reserves
 remain untouched after every step.
 
-Global progress is separate. Its intended scope additionally requires
-settledness, an open request, and `last_cmd < u64::MAX` for every node. No Kani
-harness or test is replaced. The source-connected progress draft is preserved
-on `t771-progress-draft-20261104`, head `2668baf75a`.
+#805 adds the global progress theorem in `src/progress_theorem.rs`. Its scope
+also requires a settled world, an open request, and fresh command IDs. The
+executable `World::witness` selects an event, and the real `step` plus `settle`
+strictly decreases `progress_measure`, a natural-number sum over the actual
+nodes and prerequisite entries. Q30 and Q39 still permit starvation of an
+individual request. No Kani harness or test is replaced.
 
-The remaining progress composition is stuck in `World::dependency_fact` and
-`on_fact`. At rlimit 90, focused runs took 168.15 s and 176.21 s and exhausted
-the solver limit. Separating key lookup from guards, hiding whole-world
-predicates, lifting the exact dependency update separately, and explicitly
-instantiating its strict summand proved supporting lemmas but did not discharge
-those compositions. The safety scope requested in the lead's checkpoint does not assert the global
-outside-witness theorem. [The follow-up issue draft](progress-followup.md) records
-the obligations, measured attempts, and proposed next step.
+Prerequisite delivery exposes the actual changed row and an exact rank delta
+of one. Separate frame lemmas preserve every other contribution. These facts
+compose through `dependency_fact`, `on_fact`, `apply`, and `step`. The
+[progress theorem notes](progress-followup.md) describe the decomposition and
+retain the earlier failed attempt's measurements.
 
 The controller now allocates command IDs through `Node::next_command_id`, using
 `checked_add`. Exhaustion raises `command ids exhausted for request N` without
@@ -100,9 +99,9 @@ projection would not repair this failed correspondence.
 
 The pinned Verus toolchain and spike sources remain at the locations recorded in
 `/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. `verus/run.sh` is the
-PrismaBuild exploratory runner. The required Rust targets are the 20
+PrismaBuild exploratory runner. The required Rust targets are the 28
 `//crates/kernel:verus_*` groups declared in `tools/bazel/verus.bzl`. Their exact
-positive inventory totals 256 verified obligations, including generated type
+positive inventory totals 289 verified obligations, including generated type
 obligations. Every actual callee of `step` is covered by one group. The runner
 rejects missing, zero, duplicate or changed counts, nonzero exits and timeouts.
 No `assume`, `admit`, external body or alternative transition model supplies
@@ -122,7 +121,9 @@ required Rust check. Compiler errors and timeouts do not qualify a mutant.
 
 The cases cover the headroom predicate, actual question increment, command
 allocator, command-order guard, raw-event validator, steering constructor,
-controller apply guard, and actual translate call. The apply and translate
+controller apply guard, and actual translate call. The progress cases retain a
+Pending prerequisite, omit dependency dispatch, skip witness selection, leave a
+request paused, stutter a maker reply, or retain an acknowledged effect. The apply and translate
 cases run the controller's database-backed regressions; the other six run the
 required Verus targets. This connects the proved pure guards with their actual
 controller call sites. The hand-off evidence records each BuildBuddy verdict,
@@ -251,20 +252,20 @@ some progress event, with no per-request fairness claim.
 
 ## Proof migration status
 
-No Kani harness is replaced or weakened. The safety proof does not replace a
-progress harness. Widening credit requires type-only changes in `proofs.rs`: the
-numeric credit bound remains `1 << 30`, and all assertions and covers remain.
-The mapping below separates delivered safety from remaining progress obligations.
+No Kani harness is replaced or weakened. #805 supplies the global theorem and
+its source-connected handlers. #806 still needs to prove each harness's full
+assertions before deleting it, including the Q48 last-conflicting-holder grant.
 
-| Safety foundation | Executable connection | Progress still required |
-| --- | --- | --- |
-| `world_headroom`, `node_headroom`, `open_prefix` | `headroom_ok`, `counter_exhaustion`, checked scan/settle/ticket budgets | None for counter safety; progress also needs fresh commands. |
-| `internal_height`, allocation capacities, `advance_post` | Every executable `advance_node` case and its dispatcher | Outside-event witness decrease. |
-| `potential_update`, `potential_bound`, `settle_reserve_totals` | Potentials over sequences of the real `Node` type | Strict global outside-witness decrease. |
-| `pool_users`, `slot_waiters`, `prerequisites_delivered` | Actual pool, admission and prerequisite queries | Prove slot/file obstruction and global witness existence. |
-| Allocation and credit contracts | Actual `set_phase`, `emit_node`, `take_ticket_node`, `ask_rob`, `raise_incident`, retry and credit bodies | Connect successful outside witnesses to strict rank decrease. |
+| Verus foundation | Executable connection |
+| --- | --- |
+| `world_headroom`, `node_headroom`, `open_prefix` | Checked counter, scan, settle, and ticket reserves from #771. |
+| `outside_branch_exists` | Pool, ticket, slot, and admission obstruction for arbitrary finite worlds. |
+| `witness_selection` | Exact branches, event keys, and payloads of `World::witness`. |
+| `delivery_rank_delta` | One actual Pending row becomes Delivered, with all other contributions framed. |
+| `lift_node_progress` | Successful reply, acknowledgement, fact, and command handlers. |
+| `settle_measure`, `kernel_progress` | Strict decrease through actual `apply`, `step`, and `settle`. |
 
-| Existing Kani harnesses | Required Verus result, not yet delivered |
+| Existing Kani harnesses | Full-assertion port still required in #806 |
 | --- | --- |
 | `progress_from_ingesting`, `progress_from_auditing`, `progress_from_planning`, `progress_from_making`, `progress_from_checking`, `progress_from_reviewing`, `progress_from_publishing`, `progress_from_queued`, `progress_from_rebasing`, `progress_from_awaiting_rob`, `progress_from_stopping`, `progress_from_closed` | Source-connected per-phase witness decrease and global composition. |
 | `progress_from_unplanned`, `progress_from_unplanned_delivered`, `progress_from_unplanned_delivered_one` | Source-connected Unplanned direct progress, admission obstruction, and global composition. |
@@ -275,7 +276,6 @@ The mapping below separates delivered safety from remaining progress obligations
 | `gate_leaf_progress_w2`, `gate_leaf_progress_w3` | Q48 grant after the last conflicting holder finishes, with older tickets and disjoint overtakers. |
 
 The counterexample tests characterize the unrestricted API in debug and release
-profiles. The final proof must refine the actual `apply` and `advance` bodies,
-not the #764 projection. Importing the kernel or verifying helper contracts alone
-does not complete that refinement. Seeded mutants must reject each delivered
-lemma before any replacement of the corresponding Kani harness is proposed.
+profiles. The theorem verifies the actual `apply` and `advance` bodies. Seeded mutations
+to executable handlers must fail required proof targets before #806 proposes
+replacement of any corresponding Kani harness.
