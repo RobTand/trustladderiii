@@ -156,19 +156,28 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
     #[test]
-    fn shared_reports_preserve_absent_empty_and_nonempty_messages(mut test in super::test_result(), message in ".{1,64}") {
+    fn shared_reports_preserve_absent_empty_and_nonempty_messages(mut result in super::check_result(), message in ".{1,64}") {
         use tl3_contracts::{CheckReport, CheckResult, TestResult};
         static VALIDATORS: std::sync::OnceLock<[jsonschema::Validator;3]>=std::sync::OnceLock::new();
         let validators=VALIDATORS.get_or_init(||[super::check_report_validator(Some("TestResult")),super::check_report_validator(Some("CheckResult")),super::check_report_validator(None)]);
         for presence in 0..3 {
-            if presence==0 {test.as_object_mut().unwrap().remove("message");}
-            else {test["message"]=json!(if presence==1 {""} else {&message});}
-            let result=json!({"name":"check","kind":"regression","verdict":"pass","custody":"in-process","tests":[test]});
+            for test in result["tests"].as_array_mut().unwrap() {
+                if presence==0 {test.as_object_mut().unwrap().remove("message");}
+                else {test["message"]=json!(if presence==1 {""} else {&message});}
+                prop_assert!(validators[0].is_valid(test));
+                prop_assert_eq!(serde_json::to_value(serde_json::from_value::<TestResult>(test.clone()).unwrap()).unwrap(),test.clone());
+            }
             let report=json!({"schema":"tl3.checks.v1","effect_key":"check:0","base":"a".repeat(40),"head":"b".repeat(40),"reviewed":null,"results":[result]});
-            prop_assert!(validators[0].is_valid(&test));prop_assert!(validators[1].is_valid(&result));prop_assert!(validators[2].is_valid(&report));
-            prop_assert_eq!(serde_json::to_value(serde_json::from_value::<TestResult>(test.clone()).unwrap()).unwrap(),test.clone());
-            prop_assert_eq!(serde_json::to_value(serde_json::from_value::<CheckResult>(result.clone()).unwrap()).unwrap(),result);
+            prop_assert!(validators[1].is_valid(&result));prop_assert!(validators[2].is_valid(&report));
+            prop_assert_eq!(serde_json::to_value(serde_json::from_value::<CheckResult>(result.clone()).unwrap()).unwrap(),result.clone());
             prop_assert_eq!(serde_json::to_value(serde_json::from_value::<CheckReport>(report.clone()).unwrap()).unwrap(),report);
         }
     }
+}
+
+#[test]
+fn shared_message_presence_does_not_admit_null() {
+    let value = json!({"test":"test_a","base":"passed","head":"passed","pre_existing":false,"passed":true,"message":null});
+    assert!(!super::check_report_validator(Some("TestResult")).is_valid(&value));
+    assert!(serde_json::from_value::<tl3_contracts::TestResult>(value).is_err());
 }
