@@ -264,6 +264,7 @@ pub(crate) fn case_file(
     models: &tl3_config::Models,
     deadline_secs: u32,
 ) -> Result<Value> {
+    use crate::contracts::inputs::{self as wire, value};
     let node = delivery.node();
     let key = node.0.to_string();
     let record = store
@@ -327,29 +328,38 @@ pub(crate) fn case_file(
         &crate::adapters::workers::ladder::quota_resets(snapshot),
         now,
     );
-    Ok(json!({
-        "record": {"id": id, "trigger": record.trigger, "reason": record.reason},
-        "case": {
-            "request": {"node": node.0, "repo": repo, "issue": request.issue,
-                "title": request.title, "text": request.source.as_deref().map(bounded_text)},
-            "outcome": outcome,
-            "grades": grades,
-            "phases": phases,
-            "questions": rows("question_context"),
-            "incidents": rows("incidents"),
-            "plan": document("plans"),
-            "brief": document("briefs"),
-            "audit": document("audits"),
-            "findings": document("findings"),
-            "release": release,
+    Ok(value(wire::PostmortemInput::new(
+        wire::PostmortemRecord::new(
+            id.try_into()
+                .map_err(|_| Error::Invalid("invalid postmortem id"))?,
+            record.trigger,
+            record.reason,
+        ),
+        wire::Case {
+            request: serde_json::from_value(value(wire::CaseRequest {
+                node: node.0,
+                repo: repo.clone(),
+                issue: request.issue,
+                title: request.title,
+                text: request.source.as_deref().map(bounded_text),
+            })?)?,
+            outcome,
+            grades,
+            phases,
+            questions: rows("question_context"),
+            incidents: rows("incidents"),
+            plan: Some(document("plans")),
+            brief: Some(document("briefs")),
+            audit: Some(document("audits")),
+            findings: Some(document("findings")),
+            release: release.clone(),
         },
-        "rubric": serde_json::from_str::<Value>(include_str!("rubric.json"))?,
-        "release": release,
-        "grade_model": grade_model.name,
-        "deadline_secs": deadline_secs,
-        "trace_tags": {"node": key, "request": key, "repo": repo,
-            "issue": request.issue.to_string()},
-    }))
+        serde_json::from_str(include_str!("rubric.json"))?,
+        release,
+        grade_model.name.clone(),
+        deadline_secs.into(),
+        wire::PostmortemTags::new(key.clone(), key, repo, request.issue.to_string()),
+    ))?)
 }
 
 /// Case-file documents stay readable but bounded; the judge reads the rest in traces.

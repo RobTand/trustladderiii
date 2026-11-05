@@ -1,42 +1,11 @@
+use crate::contracts::inputs::{self as wire, value as input_value};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, sync::LazyLock};
 use tl3_github::message::{self, Draft, OptionDraft, Policy, Violation};
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum MessageKind {
-    Question,
-    Clarification,
-    Note,
-    Summary,
-}
-
-/// The request a draft is written for. It names the writer run's operation and
-/// trace tags like any other worker run's (#427); it isn't writer-input.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WriteFor {
-    pub node: u64,
-    pub generation: u64,
-    /// `owner/name`, as the other roles' traces tag it.
-    pub repo: String,
-    pub issue: u64,
-    pub attempt: u8,
-    pub round: u8,
-}
-
-/// Protocol v1 writer-input. The run key belongs to the supervisor, not role input.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WriteRequest {
-    pub kind: MessageKind,
-    pub facts: Value,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub violations: Vec<String>,
-    /// `None` for a write that belongs to no request.
-    #[serde(skip)]
-    pub request: Option<WriteFor>,
-}
+pub use crate::contracts::inputs::{MessageKind, WriteFor, WriteRequest};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionDraft {
@@ -131,9 +100,23 @@ impl Writer for ProcessWriter {
             }
             return Err(error);
         }
-        let mut request = json!({"protocol":1,"operation":operation,"trace":trace,
-            "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
-            "inputs":input,"worktree":root});
+        let model = self.config.models.worker_model(model);
+        let mut request = wire::WorkerRequest::new(
+            1,
+            serde_json::from_value(operation)?,
+            "writer".into(),
+            wire::WorkerRequestModel {
+                base_url: model.base_url.to_string(),
+                name: model.name.to_owned(),
+                effort: model.effort.map(str::to_owned),
+                budget_tokens: model.budget_tokens.into(),
+            },
+            self.config.models.key_file.to_string_lossy().into_owned(),
+            wire::RoleInput::Writer(serde_json::from_value(input_value(input)?)?),
+            root.to_string_lossy().into_owned(),
+        );
+        request.trace = Some(serde_json::from_value(trace)?);
+        let mut request = input_value(request)?;
         if self.prompts {
             let store = match &mut self.store {
                 Some(store) => store,

@@ -8,28 +8,7 @@ use tl3_store::{Commit, RowChange, Snapshot};
 
 pub(crate) const MAX_LIVE_DECISIONS: usize = 64;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Context {
-    pub schema_version: u32,
-    pub request_version: u64,
-    pub decisions: Vec<Decision>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Decision {
-    pub id: String,
-    pub source_comment: Option<String>,
-    pub question: Value,
-    pub answer: String,
-    pub allowed_scope: Vec<String>,
-    pub restrictions: Vec<String>,
-    pub origin_request_version: u64,
-    pub superseded_by: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub supersession_reason: Option<String>,
-}
+pub(crate) use crate::contracts::inputs::{Context, Decision};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

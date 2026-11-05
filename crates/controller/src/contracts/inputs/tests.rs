@@ -38,3 +38,53 @@ fn every_role_input_schema_is_generated() {
         );
     }
 }
+
+/// #730 C1: optional null values remain distinct from absent fields.
+#[test]
+fn envelope_round_trip_preserves_presence_and_sorted_keys() {
+    for mlflow in [None, Some(Value::Null), Some(json!({}))] {
+        let inputs = json!({"comment":{"author":"requester","body":"restart"},
+            "state":{"phase":"Closed(Done)","closed":true,"restartable":false,"open_question":null}});
+        let mut old = json!({"protocol":1,"operation":{"node":0,"generation":2,"kind":"classifier"},
+            "role":"classifier","model":{"base_url":"https://model.invalid/v1","name":"fixture",
+                "effort":null,"budget_tokens":100},"key_file":"/fixture/key", "inputs":inputs,
+            "worktree":"/fixture/worktree", "hindsight_key_file":null});
+        if let Some(mlflow) = mlflow {
+            old["mlflow"] = mlflow;
+        }
+        let typed: WorkerRequest = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(
+            value(typed).unwrap().to_string().as_bytes(),
+            old.to_string().as_bytes()
+        );
+    }
+}
+
+/// #717: parsing a report cannot add its optional default message to worker input.
+#[test]
+fn reviewer_evidence_is_typed_without_normalizing_the_wire() {
+    let old = json!({"name":"regressions","kind":"regression","verdict":"pass","custody":"in-process",
+        "tests":[{"test":"tests/test_a.py","base":"passed","head":"passed","pre_existing":false,"passed":true}]});
+    let parsed = Lossless::<crate::contracts::report::CheckResult>::parse(old.clone()).unwrap();
+    assert_eq!(value(&parsed).unwrap(), old);
+    assert_eq!(parsed.typed().name.as_str(), "regressions");
+}
+
+proptest::proptest! {
+    /// #730 C2: arbitrary Unicode comments round-trip through the typed role contract.
+    #[test]
+    fn typed_classifier_round_trip(author in "[a-z]{1,32}", body in ".{0,512}", closed in proptest::bool::ANY) {
+        let input = ClassifierInput::new(Comment::new(author, body), ClassifierState {
+            phase: "Planning".into(), closed, restartable: Some(true), open_question: Some(None),
+        });
+        let document = value(&input).unwrap();
+        let parsed: ClassifierInput = serde_json::from_value(document.clone()).unwrap();
+        proptest::prop_assert_eq!(parsed, input);
+        let schema: Value = serde_json::from_str(&generated().into_iter().find(|f| f.path.ends_with("/classifier-input.json")).unwrap().text).unwrap();
+        // No cross-file properties are populated in this generator.
+        let mut schema = schema;
+        schema["properties"].as_object_mut().unwrap().remove("selected_answer");
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        proptest::prop_assert!(validator.is_valid(&document));
+    }
+}

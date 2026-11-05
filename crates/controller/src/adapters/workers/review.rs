@@ -1,3 +1,4 @@
+use crate::contracts::inputs::{ReviewerInput, ReviewerInputIssue, value};
 use crate::{Error, Result, executor::Delivery};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
@@ -84,7 +85,15 @@ pub(super) fn inputs(
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
-    let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    let mut inputs = ReviewerInput::new(
+        serde_json::from_value(criteria["goals"].clone())?,
+        base.as_str().to_owned(),
+        head.to_owned(),
+        String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?,
+        serde_json::from_value(report["results"].clone())?,
+        serde_json::from_value(criteria["standing_rules"].clone())?,
+    );
+    inputs.check_base_sha = Some(run.base_sha.as_str().to_owned());
     // A test that failed a selected check is no longer selected once edited (#359).
     if let Some(failures) = report["selected_failures"].as_array() {
         let touched = repository.changed_paths_since_merge_base(&base, &head_id)?;
@@ -97,7 +106,7 @@ pub(super) fn inputs(
             })
             .collect();
         if !edited.is_empty() {
-            inputs["edited_selected_tests"] = json!(edited);
+            inputs.edited_selected_tests = Some(edited.into_iter().map(str::to_owned).collect());
         }
         // Missing head evidence cannot resolve a historical failure, even when no
         // test file changed. This also covers edited, filtered and unverified units.
@@ -127,7 +136,8 @@ pub(super) fn inputs(
             })
             .collect();
         if !displaced.is_empty() {
-            inputs["unresolved_displaced_failures"] = json!(displaced);
+            inputs.unresolved_displaced_failures =
+                Some(displaced.into_iter().map(str::to_owned).collect());
         }
     }
     if base != run.base_sha {
@@ -138,8 +148,8 @@ pub(super) fn inputs(
         }
         let scope_diff = String::from_utf8(scope_diff)
             .map_err(|_| Error::Invalid("scope diff must be UTF-8"))?;
-        if scope_diff != inputs["diff"].as_str().unwrap() {
-            inputs["scope_diff"] = json!(scope_diff);
+        if scope_diff != inputs.diff {
+            inputs.scope_diff = Some(scope_diff);
         }
     }
     // #393: review judges a forcing against the issue's own symptom, not only the
@@ -156,16 +166,16 @@ pub(super) fn inputs(
             .worker_materials(&node)?
             .and_then(|materials| materials.get("issue").cloned())
     {
-        inputs["issue"] = json!({
-            "title": crate::findings::clipped(issue["title"].as_str().unwrap_or_default(), 1_000),
-            "body": crate::findings::clipped(issue["body"].as_str().unwrap_or_default(), 16_000),
-        });
+        inputs.issue = Some(ReviewerInputIssue::new(
+            crate::findings::clipped(issue["title"].as_str().unwrap_or_default(), 1_000),
+            crate::findings::clipped(issue["body"].as_str().unwrap_or_default(), 16_000),
+        ));
     }
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
         && fixes["head_sha"] == head
     {
         fixes.as_object_mut().unwrap().remove("head_sha");
-        inputs["review_fixes"] = fixes;
+        inputs.review_fixes = Some(serde_json::from_value(fixes)?);
     }
     // The run_tests receipts the maker cited for this head (#408). The worker attests each
     // run's tree from the snapshot it staged; keep only runs on this head's tree, or on the
@@ -189,7 +199,7 @@ pub(super) fn inputs(
             .cloned()
             .collect();
         if !tested.is_empty() {
-            inputs["test_evidence"] = json!(tested);
+            inputs.test_evidence = Some(serde_json::from_value(value(tested)?)?);
         }
     }
     if let Some(reply) = store.worker_document(&node, "maker_replies")?
@@ -197,8 +207,9 @@ pub(super) fn inputs(
         && let Some(receipt) = reply.get("generation_evidence")
         && receipt["output_tree"].as_str() == Some(repository.tree(&head_id)?.as_str())
     {
-        inputs["generation_evidence"] = receipt.clone();
+        inputs.generation_evidence = Some(serde_json::from_value(receipt.clone())?);
     }
+    let inputs = value(inputs)?;
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }

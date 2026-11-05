@@ -1,3 +1,4 @@
+use crate::contracts::inputs::{self as wire, value as input_value};
 use crate::executor::{CommentKind, Delivery, Output};
 use crate::{Controller, Error, Repository, Request, Result, put, request, snapshot};
 use serde::{Deserialize, Serialize};
@@ -272,8 +273,13 @@ impl Controller {
             return Ok(false);
         };
         let n = &world.nodes[node.0 as usize];
-        let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
-                "state": state(n)});
+        let mut inputs = input_value(wire::ClassifierInput::new(
+            wire::Comment::new(
+                crate::decode_stored(row.value["comment"]["user"]["login"].clone())?,
+                crate::decode_stored(row.value["comment"]["body"].clone())?,
+            ),
+            crate::decode_stored(state(n))?,
+        ))?;
         let comment: tl3_github::Comment = crate::decode_stored(row.value["comment"].clone())?;
         let delegation = if comment.updated_at > comment.created_at {
             None
@@ -298,7 +304,11 @@ impl Controller {
             .iter()
             .find(|r| r.table == "comment_questions" && r.value["node"] == json!(node))
         {
-            inputs["conversation"] = json!({"comment_id": pending.id, "comment": pending.value["comment"], "question": pending.value["question"]});
+            inputs["conversation"] = input_value(wire::Conversation::new(
+                pending.id.clone(),
+                crate::decode_stored(pending.value["comment"].clone())?,
+                crate::decode_stored(pending.value["question"].clone())?,
+            ))?;
         }
         inputs["decision_context"] =
             json!(crate::decisions::Context::load(snapshot, node)?.applicable());
@@ -1119,8 +1129,16 @@ impl Controller {
                             proposed: None,
                             steering: Some(Task::Classify {
                                 comment_key: format!("restart-decisions:{comment_key}"),
-                                inputs: json!({"comment":{"author":"requester", "body":text}, "state":state(n),
-                                "decision_context":context, "reconcile_issue":issue}),
+                                inputs: {
+                                    let mut inputs = wire::ClassifierInput::new(
+                                        wire::Comment::new("requester".into(), text),
+                                        crate::decode_stored(state(n))?,
+                                    );
+                                    inputs.decision_context = Some(context);
+                                    inputs.reconcile_issue =
+                                        Some(serde_json::from_value(input_value(issue)?)?);
+                                    input_value(inputs)?
+                                },
                             }),
                         },
                     );
