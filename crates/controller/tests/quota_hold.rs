@@ -102,6 +102,8 @@ struct Fixture {
     defer_quota: Rc<Cell<bool>>,
     deferred: Vec<(String, Observation)>,
     success_reply: Option<Observation>,
+    defer_success: bool,
+    allow_quota_incident: bool,
 }
 
 impl Fixture {
@@ -189,6 +191,8 @@ else:
             defer_quota,
             deferred: vec![],
             success_reply: None,
+            defer_success: false,
+            allow_quota_incident: false,
         }
     }
     fn intake(&mut self, number: u64) {
@@ -232,6 +236,10 @@ else:
                     }
                 ) {
                     self.success_reply = Some(observation.clone());
+                    if self.defer_success {
+                        self.deferred.push((key, observation));
+                        continue;
+                    }
                 }
                 self.controller.observe(&key, observation).unwrap();
             }
@@ -243,7 +251,11 @@ else:
             .unwrap()
             .rows
             .into_iter()
-            .filter(|r| r.table == "incidents")
+            .filter(|r| {
+                r.table == "incidents"
+                    && !(self.allow_quota_incident
+                        && r.value["signature"]["class"] == "model_quota_hint_expired")
+            })
             .collect();
         assert!(incidents.is_empty(), "fixture incident: {incidents:?}");
     }
@@ -319,6 +331,8 @@ else:
             defer_quota,
             deferred,
             success_reply,
+            defer_success,
+            allow_quota_incident,
         } = self;
         drop(controller);
         drop(source);
@@ -365,6 +379,8 @@ else:
             defer_quota,
             deferred,
             success_reply,
+            defer_success,
+            allow_quota_incident,
         }
     }
 }
@@ -520,6 +536,13 @@ fn far_reset_uses_one_hourly_probe_per_model_and_family() {
         1,
         "the outstanding probe fences later hours"
     );
+    f.clock.0.set(RESET);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key0) + f.attempt(&key1),
+        1,
+        "reset cannot bypass an outstanding probe"
+    );
     fs::write(f.root.path().join("restored"), "yes").unwrap();
     fs::write(f.root.path().join("probe-release"), "yes").unwrap();
     f.until(|f| {
@@ -530,4 +553,182 @@ fn far_reset_uses_one_hourly_probe_per_model_and_family() {
             .iter()
             .any(|n| n.phase != Phase::Auditing)
     });
+}
+
+/// Q53 / #828: a real late success is availability evidence after its run was stopped.
+#[test]
+fn late_success_wakes_another_request_after_its_node_moved_on() {
+    let mut f = Fixture::new();
+    let key = f.held(true);
+    f.defer_success = true;
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("success"), "yes").unwrap();
+    f.until(|f| !f.deferred.is_empty());
+    f.controller
+        .observe(
+            "stop-success-node",
+            Observation::Steering {
+                node: tl3_kernel::NodeId(1),
+                command: tl3_kernel::Command::Stop,
+            },
+        )
+        .unwrap();
+    f.drain();
+    assert_ne!(
+        f.controller.world().unwrap().nodes[1].phase,
+        Phase::Auditing
+    );
+    for (key, observation) in std::mem::take(&mut f.deferred) {
+        f.controller.observe(&key, observation).unwrap();
+    }
+    f.drain();
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "late availability evidence wakes the held key"
+    );
+}
+
+/// Q53 / #828: retrying the same hint is a new ending, with an hourly shared budget.
+#[test]
+fn failed_probes_repeat_hourly_and_report_a_missed_reset() {
+    let mut f = Fixture::new();
+    let key = f.held(false);
+    let start = f.clock.0.get();
+    f.clock.0.set(start + 3_600_000);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 1);
+    f.until(|f| {
+        f.hold()
+            .is_some_and(|(_, state)| state["last_quota_attempt"] == 1)
+    });
+    f.controller.look_due().unwrap();
+    f.clock.0.set(start + 7_199_999);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "a failed probe cannot reset the hourly budget"
+    );
+    f.clock.0.set(start + 7_200_000);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 2);
+    f.until(|f| {
+        f.hold()
+            .is_some_and(|(_, state)| state["last_quota_attempt"] == 2)
+    });
+    f.controller.look_due().unwrap();
+    f.clock.0.set(RESET + 1);
+    f.allow_quota_incident = true;
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 3);
+    f.until(|f| {
+        f.hold()
+            .is_some_and(|(_, state)| state["last_quota_attempt"] == 3)
+    });
+    f.controller.look_due().unwrap();
+    let incidents: Vec<_> = f
+        .controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| {
+            row.table == "incidents"
+                && row.value["signature"]["class"] == "model_quota_hint_expired"
+        })
+        .collect();
+    assert_eq!(
+        incidents.len(),
+        1,
+        "failed probe past hint raises one infrastructure incident"
+    );
+    assert_eq!(incidents[0].value["cause"], "upstream");
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        3,
+        "past-reset failures keep the hourly bound"
+    );
+}
+
+/// Q53 / #828: process restart retains the in-flight model/family probe fence.
+#[test]
+fn restart_does_not_overlap_a_running_probe() {
+    let mut f = Fixture::new();
+    fs::write(f.root.path().join("quota-all"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-block"), "yes").unwrap();
+    f.intake(2662);
+    f.intake(2663);
+    f.until(|f| f.hold_for(0).is_some() && f.hold_for(1).is_some());
+    f.controller.look_due().unwrap();
+    let key0 = f.hold_for(0).unwrap().0;
+    let key1 = f.hold_for(1).unwrap().0;
+    f.clock.0.set(f.clock.0.get() + 3_600_000);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key0) + f.attempt(&key1), 1);
+    let mut f = f.restart();
+    f.clock.0.set(f.clock.0.get() + 2 * 3_600_000);
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key0) + f.attempt(&key1), 1);
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("probe-release"), "yes").unwrap();
+    f.until(|f| {
+        f.controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|node| node.phase != Phase::Auditing)
+    });
+}
+
+/// Q53 / #828: a configured family change cannot relabel an older hold's evidence.
+#[test]
+fn success_in_another_family_does_not_clear_the_old_hold() {
+    let mut f = Fixture::new();
+    let key = f.held(false);
+    for ladder in [
+        &mut f.config.models.ingest,
+        &mut f.config.models.audit,
+        &mut f.config.models.planner,
+        &mut f.config.models.maker,
+        &mut f.config.models.reviewer,
+        &mut f.config.models.rebaser,
+        &mut f.config.models.comment_classifier,
+        &mut f.config.models.writer,
+        &mut f.config.models.postmortem,
+    ] {
+        for model in ladder {
+            if model.name == "alternate-model" {
+                model.family = "replacement-family".into();
+            }
+        }
+    }
+    let mut f = f.restart();
+    f.intake(2663);
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("success"), "yes").unwrap();
+    f.until(|f| f.controller.world().unwrap().nodes[1].phase != Phase::Auditing);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        0,
+        "same name in another family is not wake evidence"
+    );
+    let holds = tl3_controller::looks::model_quota_holds(
+        &f.controller.snapshot().unwrap(),
+        Some(&f.config.models),
+    )
+    .unwrap();
+    assert_eq!(
+        holds
+            .iter()
+            .find(|hold| hold.key == key)
+            .unwrap()
+            .family
+            .as_deref(),
+        Some("alternate")
+    );
 }

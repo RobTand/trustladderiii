@@ -797,8 +797,7 @@ impl Controller {
             }
             state.quota_ms = None;
             state.quota_retry_ms = None;
-            state.quota_probe_at_ms = None;
-            state.quota_probe_model = None;
+
             self.remove_hold(&state.delivery);
             self.save_allowance(state)?;
             return Ok(());
@@ -1602,8 +1601,7 @@ impl Controller {
             state.last_quota_attempt = attempt;
             state.quota_ms = Some(reset_ms);
             state.quota_retry_ms = None;
-            state.quota_probe_at_ms = None;
-            state.quota_probe_model = None;
+
             state.unserved_since_ms.get_or_insert(self.now_ms());
             // The look asks the adapter whether another model can take the step now.
             state.due_ms = Some(self.now_ms());

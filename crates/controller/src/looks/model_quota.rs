@@ -385,21 +385,15 @@ impl Controller {
             return Ok(Some(resume));
         };
         let snapshot = self.store.load()?;
-        let outstanding = snapshot
-            .rows
-            .iter()
-            .filter(|row| row.table == "model_quota_probes")
-            .map(|row| crate::decode_stored::<Probe>(row.value.clone()))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .any(|probe| probe.identity == identity && probe.owner.is_some());
-        // Success cleared this model, so ordinary work can resume immediately.
-        if !snapshot
-            .rows
-            .iter()
-            .any(|row| row.table == "model_quotas" && row.id == identity.model)
-            && resume <= now
-            && !outstanding
+        // Only ordered availability evidence ends a bounded probe regime early.
+        // Merely expiring the original hint cannot authorize a second probe.
+        if state
+            .last_quota_finished_ms
+            .zip(state.last_quota_model.as_deref())
+            .zip(state.last_quota_family.as_deref())
+            .is_some_and(|((quota_ms, model), family)| {
+                success_after(&snapshot, model, family, quota_ms)
+            })
         {
             return Ok(Some(now));
         }
@@ -439,7 +433,7 @@ impl Controller {
             probe.next_ms = now.saturating_add(HOUR_MS);
             Some(now)
         } else {
-            Some(probe.next_ms.min(resume))
+            Some(probe.next_ms)
         };
         let mut commit = Commit::new(
             format!(
