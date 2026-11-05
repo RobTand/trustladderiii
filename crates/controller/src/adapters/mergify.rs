@@ -713,12 +713,15 @@ impl Adapter {
                 state.state,
                 QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
             );
-        if !lifecycle::dequeue_pending(retry, state.dequeue_rule_concluded, false, None, None, None)
-        {
-            return Ok(false);
-        }
-        if !issue.labels.iter().any(|label| label.name == "dequeued") {
-            return Ok(true);
+        use tl3_mergify::decide::execute::{DequeueProbe, dequeue_probe};
+        match dequeue_probe(
+            retry,
+            state.dequeue_rule_concluded,
+            issue.labels.iter().any(|label| label.name == "dequeued"),
+        ) {
+            DequeueProbe::Clear => return Ok(false),
+            DequeueProbe::Pending => return Ok(true),
+            DequeueProbe::Events => {}
         }
         let events = self.runtime.block_on(
             self.clients[&delivery.repository.installation]
@@ -1024,20 +1027,40 @@ impl Executor for Adapter {
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
-        match self.read_enqueue(delivery)? {
-            Reconciliation::Found(completion) => {
-                if completion.ack == Ack::Confirmed
-                    && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
-                {
+        let initial = self.read_enqueue(delivery)?;
+        let mut action = tl3_mergify::decide::execute::receipt(
+            tl3_mergify::decide::execute::ReceiptStage::Initial,
+            receipt_read(&initial),
+            None,
+        );
+        loop {
+            use tl3_mergify::decide::execute::{ReceiptAction, ReceiptStage, receipt};
+            match action {
+                ReceiptAction::ReadRecord => {
+                    let recorded =
+                        matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
+                    action = receipt(
+                        ReceiptStage::Initial,
+                        receipt_read(&initial),
+                        Some(recorded),
+                    );
+                }
+                ReceiptAction::SaveRecord => {
                     self.records
                         .deliver(delivery, Completion::confirmed(vec![]))?;
+                    action = ReceiptAction::Return;
                 }
-                return Ok(*completion);
+                ReceiptAction::Return => {
+                    let Reconciliation::Found(completion) = initial else {
+                        return Err(Error::Invalid("unexpected enqueue receipt"));
+                    };
+                    return Ok(*completion);
+                }
+                ReceiptAction::Prepare => break,
+                ReceiptAction::Unknown => {
+                    return Err(Error::Invalid("Mergify acceptance is still unknown"));
+                }
             }
-            Reconciliation::Pending => {
-                return Err(Error::Invalid("Mergify acceptance is still unknown"));
-            }
-            Reconciliation::Absent => {}
         }
         let snapshot = self.snapshot()?;
         let (state, _) = self.read(delivery, snapshot.as_ref())?;
@@ -2306,5 +2329,17 @@ mod queue_blocked_tests {
         let mut queued = pb2632();
         queued.state = tl3_mergify::QueueState::Queued;
         assert_eq!(queue_blocked(&queued, true, &required()), None);
+    }
+}
+
+fn receipt_read(result: &Reconciliation) -> tl3_mergify::decide::execute::Receipt {
+    use tl3_mergify::decide::execute::Receipt;
+    match result {
+        Reconciliation::Found(completion) => match completion.ack {
+            Ack::Confirmed => Receipt::Confirmed,
+            _ => Receipt::Other,
+        },
+        Reconciliation::Pending => Receipt::Pending,
+        Reconciliation::Absent => Receipt::Absent,
     }
 }

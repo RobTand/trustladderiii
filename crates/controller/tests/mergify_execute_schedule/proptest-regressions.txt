@@ -1,0 +1,1 @@
+# CC-M1 fixed seed 0x730cc01; proptest appends minimized regressions.

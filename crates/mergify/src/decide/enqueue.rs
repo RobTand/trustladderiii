@@ -405,45 +405,40 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                         Some(false) => {}
                     }
                 }
-                if read.head != Head::Current
-                    && read.queue != QueueState::Merged
-                    && !state.confirmed
-                {
-                    Complete::Retryable
-                } else if read.head == Head::Current && !read.merged && read.conflicts {
-                    Complete::Confirmed {
+                use super::execute::{AckDecision, AckRead, AdmissionQueue, acknowledgement};
+                let queue = match read.queue {
+                    QueueState::Merged => AdmissionQueue::Merged,
+                    QueueState::Queued | QueueState::ChecksRunning => AdmissionQueue::Active,
+                    QueueState::Dequeued
+                    | QueueState::FailedCi
+                    | QueueState::Conflict
+                    | QueueState::DequeuedByPerson => AdmissionQueue::Terminal,
+                    _ => AdmissionQueue::Other,
+                };
+                match acknowledgement(AckRead {
+                    current: read.head == Head::Current,
+                    merged: read.merged,
+                    conflicts: read.conflicts,
+                    confirmed: state.confirmed,
+                    person_removed: read.person_removed,
+                    queue,
+                    no_requeue: state.intent.is_some_and(|before| before.requeue.is_none()),
+                    check_changed: read.check_changed,
+                }) {
+                    AckDecision::Retryable => Complete::Retryable,
+                    AckDecision::Conflict => Complete::Confirmed {
                         progress: false,
                         conflict: true,
-                    }
-                } else {
-                    let Some(person_removed) = read.person_removed else {
+                    },
+                    AckDecision::ReadPerson => {
                         out.push(Effect::Read(Need::Person));
                         return (state, out);
-                    };
-                    let active =
-                        matches!(read.queue, QueueState::Queued | QueueState::ChecksRunning);
-                    let terminal = matches!(
-                        read.queue,
-                        QueueState::Dequeued
-                            | QueueState::FailedCi
-                            | QueueState::Conflict
-                            | QueueState::DequeuedByPerson
-                    );
-                    if state.confirmed
-                        || person_removed
-                        || read.queue == QueueState::Merged
-                        || read.head == Head::Current
-                            && (active
-                                || terminal
-                                    && state.intent.is_some_and(|before| {
-                                        before.requeue.is_none() && read.check_changed
-                                    }))
-                    {
-                        Complete::Confirmed {
-                            progress: true,
-                            conflict: false,
-                        }
-                    } else {
+                    }
+                    AckDecision::Confirmed => Complete::Confirmed {
+                        progress: true,
+                        conflict: false,
+                    },
+                    AckDecision::ReadIssue => {
                         let Some(issue) = read.issue else {
                             out.push(Effect::Read(Need::Issue));
                             return (state, out);

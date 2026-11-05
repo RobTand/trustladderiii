@@ -19,6 +19,7 @@
 pub mod check;
 pub mod delivery_step;
 pub mod enqueue;
+pub mod execute;
 pub mod facts;
 pub mod observe;
 pub mod translate;
