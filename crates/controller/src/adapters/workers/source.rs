@@ -942,3 +942,7 @@ mod tests {
 #[cfg(all(test, loom))]
 #[path = "../../../tests/loom/workers.rs"]
 mod loom_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/worker_events_io/mod.rs"]
+mod worker_events_io;
