@@ -16,6 +16,7 @@ pub mod board;
 mod branches;
 pub mod budget;
 pub mod classifier;
+pub mod planner;
 pub mod cli;
 pub mod clock;
 pub mod console;
