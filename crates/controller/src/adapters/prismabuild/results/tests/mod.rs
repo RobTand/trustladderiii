@@ -130,6 +130,44 @@ fn known_missing_red_match_is_a_judge_disagreement() {
     assert!(evaluate(&job, &report, JUDGE_MISMATCH_CLASS).1);
 }
 
+#[test]
+fn retained_boundary_requires_positive_proof_identity() {
+    let (mut job, mut report) = fixture("added-name", "passed", true, false);
+    job.run.plan[0].kind = Kind::Demonstrating;
+    job.run.plan[0].proof = Some(
+        serde_json::from_value(json!({
+            "subjects": [], "observer_support": [], "red_message": "expected",
+        }))
+        .unwrap(),
+    );
+    report["results"][0]["kind"] = json!("demonstrating");
+    assert!(parse(&raw(&report), &job).is_none());
+}
+
+#[test]
+fn retained_boundary_checks_campaign_flags_and_forced_heads() {
+    let (mut job, mut report) = fixture("error", "passed", true, false);
+    let declaration = json!({"node": "tests/test_x.py::test_x",
+        "exception": "builtins.TimeoutError", "phase": "call", "repeat": 1, "parallel": 0});
+    job.run.plan[0].kind = Kind::Demonstrating;
+    job.run.plan[0].declared_symptom = Some(serde_json::from_value(declaration.clone()).unwrap());
+    report["results"][0]["kind"] = json!("demonstrating");
+    report["results"][0]["declared_symptom"] = declaration;
+    report["results"][0]["verdict"] = json!("fail");
+    assert_eq!(
+        evaluate(&job, &report, JUDGE_MISMATCH_CLASS).4,
+        Some(HARNESS)
+    );
+
+    report["results"][0]["verdict"] = json!("pass");
+    report["results"][0]["forcing"] = json!({"environment": {"OTHER": "1"}});
+    let typed: Report = serde_json::from_value(report.clone()).unwrap();
+    assert!(!rejudged(&typed, &job));
+    report["results"][0]["tests"][0]["head_forced"] = json!("passed");
+    let typed: Report = serde_json::from_value(report).unwrap();
+    assert!(rejudged(&typed, &job));
+}
+
 mod recorded_io {
     use std::{cell::RefCell, io};
     #[derive(Clone, Debug, PartialEq, Eq)]
