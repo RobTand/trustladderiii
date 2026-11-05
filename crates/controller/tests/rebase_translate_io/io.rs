@@ -131,8 +131,16 @@ impl Store {
             &name.to_ascii_lowercase(),
         )
     }
-    pub(super) fn intern_path(&mut self, repo: InternId, path: &str) -> Result<InternId> {
+    pub(super) fn intern_path(
+        &mut self,
+        repo: InternId,
+        path: &str,
+    ) -> std::result::Result<InternId, tl3_store::Error> {
         self.intern_commit(&format!("path:{}", repo.get()), path)
+            .map_err(|error| match error {
+                Error::Store(error) => error,
+                _ => unreachable!("the recorded intern boundary returns only store errors"),
+            })
     }
     pub(super) fn intern_commit(&mut self, scope: &str, sha: &str) -> Result<InternId> {
         let failed = with(|r| {
