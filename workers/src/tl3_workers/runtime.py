@@ -25,13 +25,13 @@ from jsonschema import ValidationError
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
-from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
+from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, coverage_stop, planner_schema_reply
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
 from tl3_workers.exploration import ExplorationMiddleware
-from tl3_workers.turns import TurnControl, repaired
+from tl3_workers.turns import InvalidReply, TurnControl, repaired
 from tl3_workers.session import is_unaccepted_session
 from tl3_workers.prompt_render import render as render_prompt, selection as prompt_renderer
 
@@ -332,9 +332,12 @@ def _run(request, emit):
                     'remaining_candidates': 8 - ledger.attempts}}
             history = [initial_message(request, model_inputs)]
             draft_error = None
+            planner_checks = 0
 
             def checked(text):
-                nonlocal draft_error
+                nonlocal draft_error, planner_checks
+                if role.name == 'planner':
+                    planner_checks += 1
                 if ledger is not None:
                     ledger.raise_infrastructure()
                 if ledger is not None and ledger.failure:
@@ -352,6 +355,11 @@ def _run(request, emit):
                     if ledger is not None and any(item['status'] == 'refused' for item in ledger.candidates):
                         return refused_final()
                     raise
+                if planner_checks > 1:
+                    result['violations'] = [
+                        'Planner coverage correction attempts: 1.'
+                        if item == 'Planner coverage correction attempts: 0.' else item
+                        for item in result['violations']]
                 if draft_error is not None:
                     draft_error.constrain(result)
                 return result
@@ -362,8 +370,13 @@ def _run(request, emit):
                     'kind': 'cant_meet', 'files': [], 'evidence_contract': [],
                     'report': rejected['message']}, worktree=worktree)
 
-            reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
-                             checked)
+            try:
+                reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
+                                 checked)
+            except (PlanConsistencyError, InvalidReply) as error:
+                reply = coverage_stop(error) if role.name == 'planner' else None
+                if reply is None:
+                    raise
         else:
             reply = role.run(model, request, worktree, emit)
             if not role.validates_reply:
