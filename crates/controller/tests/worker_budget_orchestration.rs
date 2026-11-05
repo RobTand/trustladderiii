@@ -11,7 +11,8 @@ sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))
 index, total = map(int, sys.argv[2:])
 class Partition:
     def pytest_collection_modifyitems(self, config, items):
-        selected = [item for position, item in enumerate(items) if position % total == index]
+        rank = {name: position for position, name in enumerate(sorted(item.nodeid for item in items))}
+        selected = [item for item in items if rank[item.nodeid] % total == index]
         config.hook.pytest_deselected(items=[item for item in items if item not in selected])
         items[:] = selected
 raise SystemExit(pytest.main([sys.argv[1], '-v', '--durations=5'], plugins=[Partition()]))

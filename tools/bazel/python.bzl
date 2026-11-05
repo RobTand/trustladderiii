@@ -99,13 +99,16 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     # (wave 6, invocation 9ec338b6) and timed out under Gate load.
     if package == "workers/tests" and name in ("test_pb_machine_records", "test_classifier"):
         kwargs["timeout"] = "long"
+    tokenizer_oracle = package == "workers/tests" and name == "test_tokenizer_parity_oracle"
+    # This oracle reads the offline loader with ast; it imports no worker roles.
+    package_deps = [requirement("tiktoken")] if tokenizer_oracle else _PACKAGE_DEPS.get(package, [])
     py_test(
         name = name,
         main = "//tools/bazel:python_runner.py",
         srcs = srcs + ["//tools/bazel:python_runner.py", "//tools/bazel:runtime.py", "//tools/bazel:sync_contention.py"],
         args = [package + "/" + module],
-        deps = _unique_labels(deps + _PACKAGE_DEPS.get(package, []) + ["//tools/ci:child_env", requirement("pytest")]),
-        data = data + (["//crates/config:tools/tokenizer_oracle.py", "//crates/config:tests/tokenizer/oracle.json"] if package == "workers/tests" and name == "test_tokenizer_parity_oracle" else []) + package_data + native.glob(
+        deps = _unique_labels(deps + package_deps + ["//tools/ci:child_env", requirement("pytest")]),
+        data = data + (["//crates/config:tools/tokenizer_oracle.py", "//crates/config:tests/tokenizer/oracle.json", "//workers:tokenizer_oracle_files"] if tokenizer_oracle else []) + package_data + native.glob(
             ["**"],
             exclude = ["BUILD.bazel", "**/__pycache__/**"],
             allow_empty = True,

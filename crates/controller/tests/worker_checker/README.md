@@ -42,3 +42,7 @@ versions replay their scenarios instead. No assertion was deleted or weakened.
 
 Every hand-back includes graph-impact against the integration base and the PR
 base. Worker reach must stay at or below 65 with no allowlist additions.
+
+The tokenizer oracle reads only its offline loader source and pinned dependency
+manifests. It does not import worker roles, so its unit target has no dependency
+on the complete worker library.

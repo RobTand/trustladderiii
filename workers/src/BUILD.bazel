@@ -149,3 +149,10 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+# The tokenizer parity generator extracts this loader with ast.
+filegroup(
+    name = "offline_tokenizer_source",
+    srcs = ["tl3_workers/forecast.py"],
+    visibility = ["//visibility:public"],
+)
