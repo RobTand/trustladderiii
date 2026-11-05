@@ -235,3 +235,28 @@ fn required_nullable_fields_accept_null_and_remain_required() {
         .remove("body");
     assert!(!input_validator("classifier").is_valid(&document));
 }
+
+/// #730 C2: generation preserves the old item bounds, including nested lists.
+#[test]
+fn generated_inputs_keep_string_item_constraints() {
+    for (role, mut document) in request_input_corpus("fixture", 1) {
+        let changed = match role {
+            "ingest" | "audit" | "planner" => {
+                document["protected_paths"] = json!([""]);
+                true
+            }
+            "maker" => {
+                document["plan"]["files"] = json!(["  "]);
+                true
+            }
+            "reviewer" => {
+                document["edited_selected_tests"] = json!([""]);
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            assert!(!input_validator(role).is_valid(&document), "{role}");
+        }
+    }
+}

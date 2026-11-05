@@ -1,7 +1,7 @@
 // The role-input shapes are owned here. Reply documents remain references to the
 // reply contracts owned by WR1/WR2, rather than a second Rust definition.
 use super::{Context, Lossless, RoleInput};
-use crate::contracts::bounded::{Nullable, present, required_nullable};
+use crate::contracts::bounded::{Nullable, Text, UNBOUNDED, present, required_nullable};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -181,6 +181,7 @@ pub struct RepositoryInput {
     #[schemars(extend("maxLength" = 65536))]
     pub readme: String,
     #[schemars(extend("maxItems" = 10000))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub file_list: Vec<String>,
     #[serde(
         default,
@@ -251,8 +252,8 @@ pub struct Forecast {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("description" = "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance."))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub generated_files: Option<Vec<String>>,
     #[serde(
         default,
@@ -316,7 +317,7 @@ pub struct IngestInput {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub audit_objections: Option<Vec<String>>,
     #[serde(
         default,
@@ -330,8 +331,8 @@ pub struct IngestInput {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("uniqueItems" = true, "description" = "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3."))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub protected_paths: Option<Vec<String>>,
     #[serde(
         default,
@@ -391,8 +392,8 @@ pub struct AuditInput {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("uniqueItems" = true, "description" = "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3."))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub protected_paths: Option<Vec<String>>,
     #[serde(
         default,
@@ -474,14 +475,16 @@ pub struct PlannerInput {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("description" = "Repo-wide rule test files or node IDs that the harness runs as regression checks in every round. Follow these rules when planning test additions."))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub always_tests: Option<Vec<String>>,
     #[schemars(extend("description" = "True after a maker ran out of room. A leaf reply is rejected."))]
     pub must_split: bool,
     #[schemars(extend("description" = "Everything learned before a re-plan, including failed checks and review findings. Empty for initial planning."))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub findings: Vec<String>,
     #[schemars(extend("description" = "Controller-supplied repo-relative glob patterns. A leaf or split cannot declare matching files. ** matches zero or more path segments."))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub protected_paths: Vec<String>,
     #[schemars(schema_with = "schema_PlannerInputIngest")]
     pub ingest: PlannerInputIngest,
@@ -583,6 +586,7 @@ pub struct GoalPublication {
     #[schemars(extend("const" = true))]
     pub non_draft: bool,
     #[schemars(extend("uniqueItems" = true))]
+    #[schemars(with = "Vec<PublicationLine>")]
     pub body_lines: Vec<String>,
     pub proof: bool,
 }
@@ -646,8 +650,10 @@ pub struct PlanCheck {
     pub name: String,
     pub kind: PlanCheckKind,
     #[schemars(extend("minItems" = 1, "uniqueItems" = true))]
+    #[schemars(with = "Vec<NonBlankInputText>")]
     pub tests: Vec<String>,
     #[schemars(extend("minItems" = 1, "uniqueItems" = true))]
+    #[schemars(with = "Vec<NonBlankInputText>")]
     pub goal_ids: Vec<String>,
     #[serde(
         default,
@@ -676,6 +682,7 @@ pub struct PlanCheck {
 #[serde(deny_unknown_fields)]
 pub struct MakerPlan {
     #[schemars(extend("minItems" = 1, "uniqueItems" = true))]
+    #[schemars(with = "Vec<NonBlankInputText>")]
     pub files: Vec<String>,
     #[schemars(extend("minItems" = 1))]
     pub checks: Vec<PlanCheck>,
@@ -758,6 +765,7 @@ pub struct Feedback {
     #[schemars(extend("minLength" = 1, "pattern" = "\\S", "maxLength" = 16000))]
     pub report: String,
     #[schemars(extend("uniqueItems" = true))]
+    #[schemars(with = "Vec<NonBlankInputText>")]
     pub goal_ids: Vec<String>,
     #[serde(
         default,
@@ -772,8 +780,8 @@ pub struct Feedback {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("minItems" = 1, "maxItems" = 100))]
+    #[schemars(with = "Vec<NonBlankInputText>")]
     pub outside_paths: Option<Vec<String>>,
     #[serde(
         default,
@@ -866,7 +874,7 @@ pub struct MakerInput {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub protected_paths: Option<Vec<String>>,
     #[serde(
         default,
@@ -910,8 +918,8 @@ pub struct ReviewerInputReviewFixesFindingsItem {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("minItems" = 1, "uniqueItems" = true))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub tests: Option<Vec<String>>,
     #[serde(
         default,
@@ -1009,16 +1017,16 @@ pub struct ReviewerInput {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("minItems" = 1, "description" = "Historical selected failures without verified complete-unit head outcomes. These remain unresolved even when no test file was edited."))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub unresolved_displaced_failures: Option<Vec<String>>,
     #[serde(
         default,
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "Vec<String>")]
     #[schemars(extend("minItems" = 1))]
+    #[schemars(with = "Vec<Text<1, UNBOUNDED>>")]
     pub edited_selected_tests: Option<Vec<String>>,
     #[serde(
         default,
@@ -2040,5 +2048,36 @@ impl PostmortemInput {
             deadline_secs,
             trace_tags,
         }
+    }
+}
+
+// Schema-only text markers preserve item constraints without changing callers or
+// normalizing persisted input text. protocol::validate_inputs remains authoritative.
+struct NonBlankInputText;
+impl JsonSchema for NonBlankInputText {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "NonBlankInputText".into()
+    }
+    fn inline_schema() -> bool {
+        true
+    }
+    fn json_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let mut schema = Text::<1, UNBOUNDED>::json_schema(g);
+        schema.insert("pattern".into(), "\\S".into());
+        schema
+    }
+}
+struct PublicationLine;
+impl JsonSchema for PublicationLine {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "PublicationLine".into()
+    }
+    fn inline_schema() -> bool {
+        true
+    }
+    fn json_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let mut schema = Text::<1, 512>::json_schema(g);
+        schema.insert("pattern".into(), "^[^\\r\\n]+$".into());
+        schema
     }
 }

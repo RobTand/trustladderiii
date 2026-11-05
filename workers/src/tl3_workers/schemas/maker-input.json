@@ -57,10 +57,24 @@
           "type": "array"
         },
         "source_comment": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "superseded_by": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "supersession_reason": {
           "type": [
@@ -199,8 +213,15 @@
           "type": "string"
         },
         "url": {
-          "maxLength": 4096,
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "maxLength": 4096
         }
       },
       "required": [
