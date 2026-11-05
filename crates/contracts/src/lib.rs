@@ -29,11 +29,15 @@ pub struct Generated {
 
 /// Every file this module generates.
 pub fn generated() -> Vec<Generated> {
-    let mut files = vec![Generated {
-        path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
-        text: render(&check_report_schema()),
-    }];
-    files.push(decision_context::generated().unwrap_or_else(|error| panic!("{error}")));
+    let mut files = vec![
+        Generated {
+            path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
+            text: render(&check_report_schema()),
+        },
+        decision_context::generated().unwrap_or_else(|error| panic!("{error}")),
+        request::generated().unwrap_or_else(|error| panic!("{error}")),
+        roles::postmortem_input::generated().unwrap_or_else(|error| panic!("{error}")),
+    ];
     files.extend(
         [
             ("ingest", roles::ingest_reply::schema_text()),
@@ -97,10 +101,6 @@ fn render(schema: &Value) -> String {
 pub mod render;
 
 pub mod decision_context;
-// P1b: role replies.
-pub mod roles {
-    pub mod classifier_reply;
-    pub mod ingest_reply;
-    pub mod maker_reply;
-    pub mod writer_reply;
-}
+
+pub mod request;
+pub mod roles;

@@ -1675,6 +1675,12 @@ mod contracts_render;
 #[path = "contracts/patterns.rs"]
 mod contract_patterns;
 
+#[path = "contracts/request.rs"]
+mod request_contract;
+
+#[path = "contracts/postmortem.rs"]
+mod postmortem_contract;
+
 // #819 P1b-0: every shared role type must serialize into the unchanged wire schema.
 fn shared_reply_validator(role: &str, definition: Option<&str>) -> &'static jsonschema::Validator {
     static VALIDATORS: std::sync::OnceLock<
