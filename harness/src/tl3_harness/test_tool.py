@@ -13,7 +13,7 @@ from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
 
 
 SUMMARY_BYTES = 16_384
-MESSAGE_CHARS = 1_000
+MESSAGE_CHARS = 999
 PREFIX = "TL3_TEST_SUMMARY "
 OUTCOMES = ("passed", "failed", "error", "skipped")
 # A repeated test reports its worst outcome across runs.

@@ -39,7 +39,7 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {}
+_RUNTIME = {"crates/harness-core": ["//harness:core_vectors"]}
 
 # rust_gate.py runs the controller's github binary as two timed groups.
 _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
@@ -241,6 +241,18 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     """
     directory = native.package_name()
     verus_proofs()
+    if directory == "crates/harness-core":
+        # Wave B entry points are deliberately outside Cargo discovery and Gate selection.
+        # Exact node-ID grammar still runs in the controller until S3 removes that dependency.
+        for kind in ["judge", "phase-fold", "finish-teardown", "summary-bound", "selector-identity", "node-id", "limits", "red-match"]:
+            rust_test(
+                name = "wave_b_" + kind.replace("-", "_"),
+                srcs = ["wave_b/entry.rs"],
+                crate_root = "wave_b/entry.rs",
+                edition = "2024",
+                rustc_env = {"WAVE_B_KIND": kind},
+                tags = ["manual", "wave-b-entry-point"],
+            )
     native.exports_files(["Cargo.toml", "BUILD.bazel"])
     native.filegroup(
         name = "sources",
