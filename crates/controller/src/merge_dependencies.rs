@@ -10,6 +10,8 @@ use tl3_store::{Commit, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExternalFact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     pub repository: Repository,
     pub kind: PrerequisiteKind,
     pub number: u64,
@@ -362,16 +364,17 @@ fn retained_fact(
     )
     .map(decode_stored::<ExternalFact>)
     .transpose()
-    .map(|fact| fact.filter(|f| f.status != DependencyStatus::Pending))
 }
 
 fn retain_fact(
-    snapshot: &Snapshot,
+    _snapshot: &Snapshot,
     commit: &mut Commit,
     fact: ExternalFact,
 ) -> Result<ExternalFact> {
     if let Some(previous) =
-        retained_fact(snapshot, commit, &fact.repository, fact.kind, fact.number)?
+        retained_fact(_snapshot, commit, &fact.repository, fact.kind, fact.number)?
+        && let (Some(previous_at), Some(incoming_at)) = (previous.updated_at, fact.updated_at)
+        && incoming_at < previous_at
     {
         return Ok(previous);
     }
@@ -427,11 +430,11 @@ impl Controller {
         prerequisite_evidence(&snapshot, &world, node)
     }
 
-    /// Q59 / #839: one read per unresolved upstream identity at open, never on
-    /// a periodic look. The normal inbox retains failures for incident recovery.
+    /// Q59 / #839: one current read per unstarted prerequisite identity at open.
+    /// Historical closures cannot establish current state after a reopen.
     pub(crate) fn recover_prerequisites(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
-        let world = crate::snapshot::decode(&snapshot)?;
+        let mut world = crate::snapshot::decode(&snapshot)?;
         let mut commit = Commit::new(
             format!("prerequisite-open:{}", snapshot.revision.get()),
             json!({"prerequisite_open":true}),
@@ -439,9 +442,11 @@ impl Controller {
         );
         let requests = bindings(&snapshot, &commit)?;
         let mut seen = BTreeSet::new();
-        for dependency in world.dependencies() {
+        let mut outputs = Vec::new();
+        let mut invalidated = false;
+        for dependency in world.dependencies().to_vec() {
             if dependency.rejected
-                || dependency.status == DependencyStatus::Delivered
+                || world.nodes[dependency.node.0 as usize].planning_started
                 || world.nodes[dependency.node.0 as usize].phase.is_closed()
             {
                 continue;
@@ -449,18 +454,58 @@ impl Controller {
             let Some(request) = requests.get(&dependency.node) else {
                 continue;
             };
+            if !self.bootstrap.repos.contains(&request.repo) {
+                continue;
+            }
+            if dependency.status == DependencyStatus::Delivered {
+                if !self.apply_fact(
+                    &snapshot,
+                    &mut world,
+                    Event::Fact {
+                        node: dependency.node,
+                        fact: Fact::Dependency {
+                            target: dependency.target,
+                            status: DependencyStatus::Pending,
+                        },
+                    },
+                    &mut outputs,
+                    &mut commit,
+                )? {
+                    return Ok(());
+                }
+                invalidated = true;
+            }
             let key = fact_key(
                 &request.repo,
                 dependency.target.kind,
                 dependency.target.number,
             );
-            if !self.bootstrap.repos.contains(&request.repo) || !seen.insert(key.clone())
-                || snapshot.rows.iter().any(|row| row.table == "inbox" && matches!(
-                    serde_json::from_value::<executor::Observation>(row.value.clone()),
-                    Ok(executor::Observation::PrerequisiteRead { repository, kind, number, .. })
-                        if same_repository(&repository, &request.repo) && kind == dependency.target.kind && number == dependency.target.number
-                ))
-            {
+            if !self.bootstrap.repos.contains(&request.repo) || !seen.insert(key.clone()) {
+                continue;
+            }
+            commit.rows.push(RowChange::Delete {
+                table: "prerequisite_facts".into(),
+                id: key.clone(),
+            });
+            let queued = snapshot.rows.iter().any(|row| row.table == "inbox" && matches!(
+                serde_json::from_value::<executor::Observation>(row.value.clone()),
+                Ok(executor::Observation::PrerequisiteRead { repository, kind, number, .. })
+                    if same_repository(&repository, &request.repo) && kind == dependency.target.kind && number == dependency.target.number
+            ));
+            for row in snapshot.rows.iter().filter(|row| row.table == "inbox") {
+                if matches!(serde_json::from_value::<executor::Observation>(row.value.clone()),
+                    Ok(executor::Observation::Prerequisite(ref fact))
+                        if same_repository(&fact.repository, &request.repo)
+                            && fact.kind == dependency.target.kind
+                            && fact.number == dependency.target.number)
+                {
+                    commit.rows.push(RowChange::Delete {
+                        table: "inbox".into(),
+                        id: row.id.clone(),
+                    });
+                }
+            }
+            if queued {
                 continue;
             }
             commit.rows.push(put(
@@ -469,22 +514,16 @@ impl Controller {
                     "external:prerequisite-open:{}:{key}",
                     snapshot.revision.get()
                 ),
-                match retained_fact(
-                    &snapshot,
-                    &commit,
-                    &request.repo,
-                    dependency.target.kind,
-                    dependency.target.number,
-                )? {
-                    Some(fact) => json!(executor::Observation::Prerequisite(fact)),
-                    None => json!(executor::Observation::PrerequisiteRead {
-                        node: dependency.node,
-                        repository: request.repo.clone(),
-                        kind: dependency.target.kind,
-                        number: dependency.target.number,
-                    }),
-                },
+                json!(executor::Observation::PrerequisiteRead {
+                    node: dependency.node,
+                    repository: request.repo.clone(),
+                    kind: dependency.target.kind,
+                    number: dependency.target.number,
+                }),
             ));
+        }
+        if invalidated {
+            self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
         }
         if !commit.rows.is_empty() {
             self.store.commit(&commit)?;
@@ -597,35 +636,23 @@ impl Controller {
             let observed_reason = observed.reason.clone();
             let observed = observed.status;
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
-            let status =
-                if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
-                    fact.status
-                } else {
-                    let observed = if root
-                        .is_some_and(|root| root_status(world, root) == DependencyStatus::Delivered)
-                    {
-                        DependencyStatus::Delivered
-                    } else {
-                        observed
-                    };
-                    let status = if observed == DependencyStatus::Pending {
-                        root.map_or(observed, |root| root_status(world, root))
-                    } else {
-                        observed
-                    };
-                    retain_fact(
-                        snapshot,
-                        commit,
-                        ExternalFact {
-                            reason: observed_reason,
-                            repository: request.repo.clone(),
-                            kind,
-                            number,
-                            status,
-                        },
-                    )?
-                    .status
-                };
+            let status = if observed == DependencyStatus::Pending {
+                root.map_or(observed, |root| root_status(world, root))
+            } else {
+                observed
+            };
+            retain_fact(
+                snapshot,
+                commit,
+                ExternalFact {
+                    updated_at: None,
+                    reason: observed_reason,
+                    repository: request.repo.clone(),
+                    kind,
+                    number,
+                    status,
+                },
+            )?;
             if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
                 record_closure(node, &fact, commit);
             }
@@ -768,6 +795,7 @@ impl Controller {
                         snapshot,
                         commit,
                         ExternalFact {
+                            updated_at: None,
                             reason: None,
                             repository: request.repo.clone(),
                             kind,
@@ -1289,6 +1317,7 @@ mod tests {
         observation(
             c,
             Observation::Prerequisite(ExternalFact {
+                updated_at: None,
                 reason: None,
                 repository: repo.clone(),
                 kind: PrerequisiteKind::Issue,
@@ -1318,6 +1347,7 @@ mod tests {
             c.observe(
                 &format!("unserved-{index}"),
                 Observation::Prerequisite(ExternalFact {
+                    updated_at: None,
                     reason: None,
                     repository,
                     kind: PrerequisiteKind::Issue,
@@ -1350,6 +1380,7 @@ mod tests {
         c.observe(
             "missing-number",
             Observation::Prerequisite(ExternalFact {
+                updated_at: None,
                 reason: None,
                 repository: repo,
                 kind: PrerequisiteKind::Issue,

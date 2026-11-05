@@ -255,16 +255,19 @@ pub proof fn visit_reduces_unseen(seen: Seq<bool>, index: int, end: nat)
 
 kernel_fn! {
 /// #839 / Q27: finite total decision over 3 statuses x 2 rejection states x
-/// 3 incoming statuses. No loop or unwind. Legacy closures can deliver;
-/// delivered edges never regress and rejected cycles never become accepted.
-fn update_allowed(previous: DependencyStatus, rejected: bool, incoming: DependencyStatus) -> (allowed: bool) [
+/// 3 incoming statuses x 2 planning states. No loop or unwind. Reopens revoke
+/// provisional delivery; consumed admission and rejected cycles stay unchanged.
+fn update_allowed(previous: DependencyStatus, rejected: bool, incoming: DependencyStatus,
+    planning_started: bool) -> (allowed: bool) [
     ensures allowed == (!rejected && (previous == DependencyStatus::Pending
-        || (previous == DependencyStatus::Abandoned && incoming == DependencyStatus::Delivered))),
+        || (previous == DependencyStatus::Abandoned && incoming == DependencyStatus::Delivered)
+        || (!planning_started && incoming == DependencyStatus::Pending))),
 ] {
     !rejected && match previous {
         DependencyStatus::Pending => true,
-        DependencyStatus::Delivered => false,
-        DependencyStatus::Abandoned => incoming == DependencyStatus::Delivered,
+        DependencyStatus::Delivered => !planning_started && incoming == DependencyStatus::Pending,
+        DependencyStatus::Abandoned => incoming == DependencyStatus::Delivered
+            || (!planning_started && incoming == DependencyStatus::Pending),
     }
 }
 }
@@ -799,10 +802,11 @@ impl World {
         }
         if let Some(index) = existing {
             let previous = self.dependencies[index];
-            if !update_allowed(previous.status, previous.rejected, status) {
+            if !update_allowed(previous.status, previous.rejected, status, self.nodes[i].planning_started) {
                 return None;
             }
-            if status == DependencyStatus::Pending && target.request == previous.target.request {
+            if previous.status == DependencyStatus::Pending
+                && status == DependencyStatus::Pending && target.request == previous.target.request {
                 return None;
             }
         } else if self.nodes[i].planning_started

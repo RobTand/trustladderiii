@@ -427,6 +427,7 @@ pub trait Executor {
     ) -> Result<crate::merge_dependencies::ExternalFact> {
         let status = self.prerequisite(repository, kind, number)?;
         Ok(crate::merge_dependencies::ExternalFact {
+            updated_at: None,
             repository: repository.clone(),
             kind,
             number,

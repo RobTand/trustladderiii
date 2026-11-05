@@ -605,6 +605,7 @@ fn observation_inventory(
     let issue = serde_json::from_value(json!({"number":2772,"title":"replacement","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z"})).unwrap();
     vec![
         Observation::Prerequisite(ExternalFact {
+            updated_at: None,
             reason: None,
             repository: repository.clone(),
             kind: PrerequisiteKind::Issue,

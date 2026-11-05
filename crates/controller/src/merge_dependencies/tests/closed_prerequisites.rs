@@ -183,6 +183,7 @@ fn caught_up_closure_has_identical_text_and_html_status() {
     c.observe(
         "t839-catch-up",
         Observation::Prerequisite(ExternalFact {
+            updated_at: None,
             reason: None,
             repository: repository.clone(),
             kind: PrerequisiteKind::Issue,
@@ -218,6 +219,7 @@ fn closed_pr_delivers_and_retains_its_reason() {
     c.observe(
         "t839-pr-closed",
         Observation::Prerequisite(ExternalFact {
+            updated_at: None,
             reason: None,
             repository: repository.clone(),
             kind: PrerequisiteKind::PullRequest,
@@ -249,6 +251,7 @@ fn closed_pr_delivers_and_retains_its_reason() {
     c.observe(
         "t839-pr-merged-later",
         Observation::Prerequisite(ExternalFact {
+            updated_at: None,
             reason: None,
             repository,
             kind: PrerequisiteKind::PullRequest,
@@ -384,6 +387,7 @@ fn merged_pr_delivers_without_closure_record() {
     c.observe(
         "t839-merged-control",
         Observation::Prerequisite(ExternalFact {
+            updated_at: None,
             repository,
             kind: PrerequisiteKind::PullRequest,
             number: 2761,
@@ -498,5 +502,76 @@ fn catch_up_reads_reopened_root_before_planning() {
     assert_eq!(
         c.world().unwrap().nodes[waiter.0 as usize].phase,
         Phase::Unplanned
+    );
+}
+
+/// #839: a queued pre-deploy closure must not undo the current-state refresh.
+#[test]
+fn open_supersedes_old_queued_closure_with_current_read() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_old_inbox");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761]);
+    c.observe(
+        "old-closure-before-deploy",
+        Observation::Prerequisite(ExternalFact {
+            updated_at: None,
+            repository,
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+            status: DependencyStatus::Abandoned,
+            reason: Some("not_planned".into()),
+        }),
+    )
+    .unwrap();
+    set_issue(&repo, 2761, "open", None);
+    let mut c = reopen(&repo, c, &settings);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+}
+
+/// #839: delayed closure events cannot overwrite a newer reopen observation.
+#[test]
+fn older_closed_event_cannot_undo_a_newer_reopen() {
+    let mut db = Database::start();
+    let (_repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_old_event");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761, 2772]);
+    for (key, status, at) in [
+        ("close", DependencyStatus::Abandoned, "2026-11-03T23:00:00Z"),
+        ("reopen", DependencyStatus::Pending, "2026-11-05T23:35:00Z"),
+        (
+            "late-close",
+            DependencyStatus::Abandoned,
+            "2026-11-03T23:00:00Z",
+        ),
+    ] {
+        c.observe(
+            key,
+            Observation::Prerequisite(ExternalFact {
+                updated_at: Some(at.parse().unwrap()),
+                repository: repository.clone(),
+                kind: PrerequisiteKind::Issue,
+                number: 2761,
+                status,
+                reason: Some("not_planned".into()),
+            }),
+        )
+        .unwrap();
+        assert!(c.drive_once().unwrap());
+    }
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.prerequisite_evidence(waiter).unwrap()[0].state,
+        PrerequisiteState::Open
     );
 }

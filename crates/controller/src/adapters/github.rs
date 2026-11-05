@@ -52,6 +52,7 @@ impl Executor for Fake {
         let issue = self.issue(repository, number)?;
         crate::input_resources::validate(repository, kind, &issue)?;
         Ok(crate::merge_dependencies::ExternalFact {
+            updated_at: Some(issue.updated_at),
             repository: repository.clone(),
             kind,
             number,
@@ -458,8 +459,11 @@ impl Executor for Adapter {
                 crate::input_resources::github(error, resource.clone(), repository.installation)
             })?;
         crate::input_resources::validate(repository, kind, &issue)?;
-        let status = match kind {
-            PrerequisiteKind::Issue => crate::merge_dependencies::issue_status(&issue),
+        let (status, updated_at) = match kind {
+            PrerequisiteKind::Issue => (
+                crate::merge_dependencies::issue_status(&issue),
+                issue.updated_at,
+            ),
             PrerequisiteKind::PullRequest => {
                 let pr = self
                     .runtime
@@ -467,10 +471,11 @@ impl Executor for Adapter {
                     .map_err(|error| {
                         crate::input_resources::github(error, resource, repository.installation)
                     })?;
-                crate::merge_dependencies::pr_status(&pr)
+                (crate::merge_dependencies::pr_status(&pr), pr.updated_at)
             }
         };
         Ok(crate::merge_dependencies::ExternalFact {
+            updated_at: Some(updated_at),
             repository: repository.clone(),
             kind,
             number,
