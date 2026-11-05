@@ -537,6 +537,7 @@ fn rejudged(report: &Report, job: &Job) -> bool {
             continue;
         }
         let mut infrastructure = false;
+        let mut changed_test_refusal = false;
         for test in result.tests.iter() {
             if test.head_forced.is_some() && result.forcing.is_none() {
                 return false;
@@ -601,6 +602,7 @@ fn rejudged(report: &Report, job: &Job) -> bool {
                     .changed_paths
                     .iter()
                     .any(|path| path == test.test.as_str().split("::").next().unwrap_or(""));
+            changed_test_refusal |= changed_test && !test.passed;
             if unknown_reason {
                 let possible = core_judge::judge(core_judge::Input {
                     reason: core_judge::Reason::Matched,
@@ -620,7 +622,11 @@ fn rejudged(report: &Report, job: &Job) -> bool {
         } else {
             Verdict::Fail
         };
-        if verdict != result.verdict {
+        // execution.py's changed-test refusal replaces even InfrastructureFailure with Fail.
+        // The report cannot establish that override; changed paths permit its negative result.
+        if verdict != result.verdict
+            && !(changed_test_refusal && matches!(result.verdict, Verdict::Fail))
+        {
             return false;
         }
     }
