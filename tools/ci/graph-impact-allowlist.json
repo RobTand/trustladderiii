@@ -1,7 +1,7 @@
 {
   "crate:tl3-controller-core": {
     "reason": "ctrl-core #730: new decision-only crate tl3-controller-core (no adapter dependencies) linked by tl3-controller",
-    "sources": 9
+    "sources": 11
   },
   "crate:tl3-pb-evidence": {
     "reason": "planner-contracts #730/#821: Rust PB result decisions (tl3-pb-evidence) linked by tl3-controller's tl3 CLI for check-pb",
