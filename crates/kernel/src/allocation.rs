@@ -97,6 +97,7 @@ pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
 
 kernel_fn! {
 /// Stop and replacement rows / #771: at most one generation is allocated.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
@@ -138,7 +139,10 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
             set_phase(m, Phase::Stopping(outcome));
         }
     }
-    kernel_proof! { allocation_stopping_lemmas::stopping_progress(before@, *m, outcome); }
+    kernel_proof! {
+        allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
+        allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
+    }
 }
 }
 

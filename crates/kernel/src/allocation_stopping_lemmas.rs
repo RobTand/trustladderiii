@@ -1,4 +1,4 @@
-//! #806: isolate stopping progress arithmetic from executable allocation frames.
+//! #806: separate stopping rank and frame proofs from executable allocation.
 use super::*;
 
 verus! {
@@ -33,5 +33,32 @@ pub(super) proof fn stopping_progress(before: Node, after: Node, outcome: Outcom
         active_distance_lower(before);
         stopping_distance(after);
     }
+}
+
+/// #806 stopping row: exact stopped state implies every allocation frame clause.
+pub(super) proof fn stopping_frame(before: Node, after: Node, outcome: Outcome)
+    requires after == retirement::stopped(before, outcome),
+        !(before.phase is Closed || before.phase is Stopping) ==> before.generation < u64::MAX,
+    ensures
+        after.repo == before.repo, after.footprint == before.footprint,
+        (settle_shape(before) ==> settle_shape(after)),
+        after.generation as int == before.generation as int
+            + if before.phase is Closed || before.phase is Stopping { 0int } else { 1int },
+        after.phase == match before.phase {
+            Phase::Closed(o) => Phase::Closed(o),
+            Phase::Stopping(o) => Phase::Stopping(if outcome == Outcome::Merged { outcome } else { o }),
+            _ => Phase::Stopping(outcome),
+        },
+        after.next_seq == before.next_seq, after.credit == before.credit,
+        after.last_cmd == before.last_cmd,
+        after.review_stop == before.review_stop,
+        (before.phase is Closed || before.phase is Stopping) ==> after == (Node {
+            phase: after.phase, ..before
+        }),
+        !(before.phase is Closed || before.phase is Stopping) ==>
+            after.pos == 0 && after.ticket.is_none() && after.question.is_none()
+                && !after.waiting_incident && !after.incident_needs_rob,
+{
+    reveal(retirement::stopped);
 }
 }
