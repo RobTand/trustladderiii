@@ -5,6 +5,7 @@
 //! decision. No I/O, no clocks, no `unsafe`, no floats, no target-specific
 //! code, so the Verus proofs hold on amd64 and arm64.
 #![forbid(unsafe_code)]
+pub mod looks;
 pub mod publication;
 pub mod translate;
 pub mod worker_events;
