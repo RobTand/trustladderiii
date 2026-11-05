@@ -1,38 +1,17 @@
 //! Controller-recorded decisions, generated without changing decision-context.json (#819).
 
 use super::bounded::{
-    Integer, JsonObject, List, Natural, NullableString, Text, UNBOUNDED, present, required_nullable,
+    JsonObject, List, Natural, NullableString, Text, UNBOUNDED, present, required_nullable,
 };
 use super::render::{self, Layout, SchemaOrder, TypeOrder, TypeUse};
-use schemars::{JsonSchema, Schema, SchemaGenerator, generate::SchemaSettings, json_schema};
+use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::borrow::Cow;
 
 pub type NonEmpty = Text<1, UNBOUNDED>;
 pub type Scope = List<NonEmpty, 0, UNBOUNDED>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SchemaVersion(Integer<1, 1>);
-
-impl Default for SchemaVersion {
-    fn default() -> Self {
-        Self(Integer::new(1).expect("the protocol version is one"))
-    }
-}
-
-impl JsonSchema for SchemaVersion {
-    fn inline_schema() -> bool {
-        true
-    }
-    fn schema_name() -> Cow<'static, str> {
-        "DecisionContextVersion".into()
-    }
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({"const": 1})
-    }
-}
+pub use super::bounded::RecordSchemaVersion as SchemaVersion;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
