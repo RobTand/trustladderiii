@@ -561,13 +561,31 @@ impl World {
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
     ] {
+        if let Some((existing, dependency)) = self.prepare_dependency(i, target, status) {
+            self.record_dependency(i, existing, dependency, out);
+        }
+    }
+    }
+
+
+    kernel_fn! {
+    /// #693 / #771: validate the unchanged declaration before mutating its table.
+    /// Read-only guards and cycle queries do not change any allocation counter.
+    fn prepare_dependency(&self, i: usize, target: DependencyTarget,
+        status: DependencyStatus) -> (result: Option<(Option<usize>, Dependency)>) [
+        requires i < self.nodes@.len(), i <= u64::MAX as int, edges_indexable(*self),
+        ensures match result {
+            Some((Some(index), _)) => index < self.dependencies@.len(),
+            _ => true,
+        },
+    ] {
         if target.number == 0 {
-            return;
+            return None;
         }
         if let Some(node) = target.request {
             match self.index(node) {
-                None => return,
-                Some(j) => if self.nodes[i].repo != self.nodes[j].repo { return; },
+                None => return None,
+                Some(j) => if self.nodes[i].repo != self.nodes[j].repo { return None; },
             }
         }
         let node = NodeId(i as u64);
@@ -575,10 +593,10 @@ impl World {
         if let Some(index) = existing {
             let previous = self.dependencies[index];
             if previous.rejected || previous.status != DependencyStatus::Pending {
-                return;
+                return None;
             }
             if status == DependencyStatus::Pending && target.request == previous.target.request {
-                return;
+                return None;
             }
         } else if self.nodes[i].planning_started
             || !matches!(
@@ -586,7 +604,7 @@ impl World {
                 Phase::Ingesting | Phase::Auditing | Phase::Unplanned
             )
         {
-            return;
+            return None;
         }
         let rejected = if status == DependencyStatus::Pending {
             match target.request {
@@ -600,7 +618,7 @@ impl World {
             status,
             rejected,
         };
-        self.record_dependency(i, existing, dependency, out);
+        Some((existing, dependency))
     }
     }
 

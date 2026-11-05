@@ -120,12 +120,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 Phase::Publishing | Phase::Queued | Phase::Ready(Resume::Publishing)
             );
             if published {
-                let m = &mut w.nodes[i];
-                if m.head != Some(head) {
-                    m.review_restarted = false;
-                }
-                m.head = Some(head);
-                m.checked = None;
+                update_recheck_head(&mut w.nodes[i], head);
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
             }
         }

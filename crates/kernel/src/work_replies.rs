@@ -108,12 +108,7 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
 ] proof [reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::RebaseClean { head } => {
-            let m = &mut w.nodes[i];
-            if m.head != Some(head) {
-                m.review_restarted = false;
-            }
-            m.head = Some(head);
-            m.checked = None;
+            update_recheck_head(&mut w.nodes[i], head);
             recheck(w, i, Phase::Checking, out);
         }
         Reply::RebaseNeedsChanges => {
@@ -134,5 +129,32 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         }
         _ => {}
     }
+}
+}
+
+
+kernel_fn! {
+/// Rebase and outside-push rows / #771: update the observed head before recheck.
+/// This changes no counter or field used by the settlement shape projection.
+pub(super) fn update_recheck_head(m: &mut Node, head: HeadId) -> (result: ()) [
+    ensures *final(m) == (Node {
+        head: Some(head), checked: None,
+        review_restarted: old(m).head == Some(head) && old(m).review_restarted,
+        ..*old(m)
+    }),
+        final(m).generation == old(m).generation,
+        final(m).next_seq == old(m).next_seq,
+        final(m).credit == old(m).credit,
+        final(m).last_cmd == old(m).last_cmd,
+        final(m).phase == old(m).phase, final(m).pos == old(m).pos,
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        final(m).pool == old(m).pool, final(m).holds == old(m).holds,
+        settle_shape(*final(m)) == settle_shape(*old(m)),
+] {
+    if m.head != Some(head) {
+        m.review_restarted = false;
+    }
+    m.head = Some(head);
+    m.checked = None;
 }
 }
