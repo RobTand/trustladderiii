@@ -45,6 +45,12 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             && final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
             && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
             && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
+        (old(w).nodes@.len() > 0 && old(w).nodes@[0].phase == Phase::Unplanned
+            && progress_unplanned::obstructed(old(w).nodes@[0])
+            && event == progress_unplanned::outside_event(old(w).nodes@[0]))
+            ==> final(w).nodes@.len() == old(w).nodes@.len()
+                && (forall|j: int| 1 <= j < old(w).nodes@.len()
+                    ==> final(w).nodes@[j] == old(w).nodes@[j]),
         match event {
             Event::Fact { node, fact } => retirement::selected(fact)
                 && node.0 < old(w).nodes@.len() ==> {
@@ -66,7 +72,8 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 },
             _ => true,
         },
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
+        progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
     match event {
@@ -126,6 +133,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
                 kernel_proof! {
+                    if command == Command::Resume {
+                        progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
+                    }
                     if progress_input(before_apply@, event) {
                         assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         progress::lift_node_progress(before_apply@, *w, i as int);
@@ -136,6 +146,23 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         }
     }
     kernel_proof! {
+        if before_apply@.nodes@.len() > 0
+            && before_apply@.nodes@[0].phase == Phase::Unplanned
+            && progress_unplanned::obstructed(before_apply@.nodes@[0])
+            && event == progress_unplanned::outside_event(before_apply@.nodes@[0])
+        {
+            assert(match event {
+                Event::Command { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. }
+                    => node == NodeId(0),
+                _ => false,
+            });
+            assert(w.nodes@.len() == before_apply@.nodes@.len());
+            assert forall|j: int| 1 <= j < before_apply@.nodes@.len()
+                implies w.nodes@[j] == before_apply@.nodes@[j] by {}
+        }
+        if !progress_gate_apply::resume_selected(before_apply@, event) {
+            reveal(progress_gate_apply::resume_apply_post);
+        }
         events_lemmas::footprints_after(before_apply@, *w);
     }
 }
