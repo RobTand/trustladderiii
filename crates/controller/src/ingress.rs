@@ -337,6 +337,7 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
             if stored.source == crate::console::SOURCE {
                 crate::console::apply(controller, &stored)?;
             } else if let Some(delivery) = replay(&stored) {
+                controller.queue_approval_news(&delivery)?;
                 for input in translate(delivery, &controller.bootstrap) {
                     apply(controller, input)?;
                 }
@@ -649,19 +650,21 @@ fn comment_input(
     comment: tl3_github::Comment,
     rob: u64,
 ) -> Option<Input> {
-    (comment.user.id == rob).then(|| Input::Observation {
-        key: format!(
-            "github-comment:{}/{}/{}/{}",
-            repo.owner.to_ascii_lowercase(),
-            repo.name.to_ascii_lowercase(),
-            repo.installation,
-            comment.id
-        ),
-        observation: Observation::GitHubComment {
-            repository: repo.clone(),
-            issue,
-            comment,
-        },
+    (comment.user.id == rob || GitHub::comment_effect_key(&comment.body).is_some()).then(|| {
+        Input::Observation {
+            key: format!(
+                "github-comment:{}/{}/{}/{}",
+                repo.owner.to_ascii_lowercase(),
+                repo.name.to_ascii_lowercase(),
+                repo.installation,
+                comment.id
+            ),
+            observation: Observation::GitHubComment {
+                repository: repo.clone(),
+                issue,
+                comment,
+            },
+        }
     })
 }
 
@@ -726,7 +729,7 @@ impl CatchUp {
                 })
                 .map(|(id, _)| id)
                 .collect();
-            let tracked_heads = snapshot
+            let mut tracked_heads: Vec<String> = snapshot
                 .interned
                 .iter()
                 .filter(|entry| {
@@ -734,6 +737,20 @@ impl CatchUp {
                 })
                 .map(|entry| entry.value.clone())
                 .collect();
+            // A stopped request can still have a timed-out POST at GitHub. Only
+            // unresolved records extend catch-up coverage; never rescan effect history.
+            for row in snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == crate::approval_delivery::UNRESOLVED)
+            {
+                let delivery: crate::executor::Delivery = crate::decode_stored(row.value.clone())?;
+                if delivery.repository == *repo
+                    && let Some(head) = delivery.head_sha
+                {
+                    tracked_heads.push(head);
+                }
+            }
             let result = runtime
                 .block_on(client.catch_up(
                     &[ServedRepo {

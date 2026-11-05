@@ -57,6 +57,7 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
+    "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/tl3_controller": 8,
     "tl3-controller/redaction_generated": 8,
@@ -126,6 +127,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
     "tests/production.rs": ["tests/prismabuild_fixture/**"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],

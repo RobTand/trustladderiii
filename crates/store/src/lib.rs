@@ -9,6 +9,11 @@ use postgres::{Client, IsolationLevel, NoTls, Row};
 pub use postgres::{Error as DatabaseError, Transaction};
 use std::{fs, time::Duration};
 
+/// #766: production query exposed for executable EXPLAIN regression evidence.
+pub const DISPATCH_EVIDENCE_QUERY: &str = "SELECT
+    EXISTS (SELECT 1 FROM tl3_dispatch_evidence WHERE operation = $1 AND effect_key <> $2)
+    OR EXISTS (SELECT 1 FROM tl3_dispatch_evidence WHERE effect_key = $1->>'key' AND effect_key <> $2)";
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +63,7 @@ pub struct Store {
 }
 
 const CONTROLLER_CLAIM: i64 = 0x544c33434f4e5452;
+const CONTROLLER_CLAIM_HELD: &str = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND granted)";
 
 /// Exclusive controller ownership, held by the same Postgres session throughout startup.
 /// #785: only this capability can migrate or admit destructive initialization.
@@ -95,9 +101,12 @@ impl Ownership {
 
     /// Probe this session's existing lock, without reacquiring or reconnecting it.
     pub fn ensure_held(&mut self) -> Result<()> {
-        let held = self.store.client.query_one(
-            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND granted)", &[]
-        ).map_err(|_| Error::OwnershipLost)?.get::<_, bool>(0);
+        let held = self
+            .store
+            .client
+            .query_one(CONTROLLER_CLAIM_HELD, &[])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0);
         if !held {
             return Err(Error::OwnershipLost);
         }
@@ -251,6 +260,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
         20,
         include_str!("../migrations/0020_memory_feed_lineage.sql"),
     ),
+    (21, include_str!("../migrations/0021_dispatch_evidence.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1044,6 +1054,92 @@ impl Store {
     /// Includes terminal deliveries so callers can audit coverage, not just pending work.
     pub fn effects(&mut self) -> Result<Vec<Effect>> {
         load_effects(&mut self.client)
+    }
+
+    /// #766/Q27: migrate at most 256 audit rows per drive, using the revision index.
+    /// The cursor commits with the evidence, so a crash neither skips nor double-counts.
+    pub fn migrate_dispatch_evidence(&mut self) -> Result<bool> {
+        let mut tx = self.client.transaction()?;
+        metadata(&mut tx, true)?;
+        let row = tx.query_one(
+            "SELECT cursor, through_revision FROM tl3_dispatch_migration FOR UPDATE",
+            &[],
+        )?;
+        let (cursor, through): (i64, i64) = (row.get(0), row.get(1));
+        if cursor >= through {
+            return Ok(false);
+        }
+        // #785: the backfill uses the controller's claimed session, never an
+        // auxiliary open. Probe its existing lock without acquiring a new one.
+        if !tx
+            .query_one(CONTROLLER_CLAIM_HELD, &[])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::OwnershipLost);
+        }
+        let rows = tx.query("SELECT revision, payload FROM tl3_events WHERE revision > $1 AND revision <= $2 ORDER BY revision LIMIT 256", &[&cursor, &through])?;
+        let mut next = through;
+        for row in &rows {
+            next = row.get(0);
+            let event: serde_json::Value = row.get(1);
+            if event["to"] == "Sent"
+                && let Some(key) = event["effect"].as_str()
+            {
+                tx.execute("INSERT INTO tl3_dispatch_evidence(effect_key, operation, legacy_sends)
+                    SELECT effect_key, tl3_approval_operation(payload), 1 FROM tl3_effects
+                    WHERE effect_key = $1 AND payload->'output'->'Effect'->>'kind' = 'PostApproval'
+                    ON CONFLICT (effect_key) DO UPDATE SET legacy_sends = tl3_dispatch_evidence.legacy_sends + 1", &[&key])?;
+                // Seed closed-head coverage in this same bounded, transactional pass.
+                // A cancelled send may still land. A single confirmed/failed attempt
+                // is retired, unless it changed after the migration watermark; repeated
+                // legacy sends cannot prove all earlier requests have ended either.
+                // No adapter or ownership assumption belongs in this store migration.
+                tx.execute("INSERT INTO tl3_world(table_name, row_id, value, version)
+                    SELECT 'approval_dispatch_recovery', e.effect_key, e.payload, $2
+                    FROM tl3_effects e JOIN tl3_dispatch_evidence d USING(effect_key)
+                    WHERE e.effect_key = $1 AND
+                        (e.state NOT IN ('Confirmed','Failed') OR e.updated_revision > $3 OR d.legacy_sends > 1)
+                    ON CONFLICT (table_name, row_id) DO NOTHING", &[&key, &next, &through])?;
+            }
+        }
+        tx.execute("UPDATE tl3_dispatch_migration SET cursor = $1", &[&next])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Conservative dispatch count, including legacy Sent intent before wire evidence existed.
+    pub fn approval_dispatch_count(&mut self, key: &str) -> Result<i64> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT sends + legacy_sends FROM tl3_dispatch_evidence WHERE effect_key = $1",
+                &[&key],
+            )?
+            .map_or(0, |r| r.get(0)))
+    }
+
+    /// #766: a replacement delivery inherits dispatch evidence for its operation.
+    /// Both positive and negative searches use per-operation/key indexes, never audit scans.
+    pub fn dispatched_effect_matching(
+        &mut self,
+        identity: &serde_json::Value,
+        excluding: &str,
+    ) -> Result<bool> {
+        if self
+            .client
+            .query_one(
+                "SELECT cursor < through_revision FROM tl3_dispatch_migration",
+                &[],
+            )?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid("dispatch evidence migration is incomplete"));
+        }
+        Ok(self
+            .client
+            .query_one(DISPATCH_EVIDENCE_QUERY, &[identity, &excluding])?
+            .get(0))
     }
 
     /// Retirement commits retain comment IDs without loading their old payloads.

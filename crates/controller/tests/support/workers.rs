@@ -98,6 +98,14 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
             None => self.fake.app_login(installation),
         }
     }
+    fn reconcile_message(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        self.primary().reconcile_message(repository, issue, comment)
+    }
     fn prerequisite(
         &mut self,
         repository: &tl3_controller::Repository,
@@ -140,6 +148,9 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
             (self.fake_completion)(delivery, completion);
         }
         Ok(result)
+    }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        self.backend(delivery).repair_approval(delivery)
     }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         if self.is_real(delivery) {

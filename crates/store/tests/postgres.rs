@@ -29,6 +29,11 @@ fn main() {
             "mvp_schema_6_upgrades_to_hindsight",
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
         ),
+        ("dispatch_evidence_index_plan", dispatch_evidence_index_plan),
+        (
+            "dispatch_legacy_migration_is_bounded",
+            dispatch_legacy_migration_is_bounded,
+        ),
         ("worker_completion_facts", worker_completion_facts),
         ("review_fixes_worker_document", review_fixes_worker_document),
         (
@@ -798,7 +803,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
         [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21
         ]
     );
     for table in [
@@ -2948,4 +2953,182 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
         .unwrap()
         .get(0);
     assert!(failed_at, "done clears failed_at");
+}
+
+/// #766, Q27: negative dispatch lookups use indexes, independent of lifetime audit size.
+fn dispatch_evidence_index_plan(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut client = raw(settings);
+    let identity = json!({"repository":{"owner":"owner","name":"sandbox","installation":3},
+        "issue":1000001,"generation":0,"head_sha":"head", "output":{"Effect":{"node":0,"kind":"PostApproval"}}});
+    for size in [10_000_i64, 100_000] {
+        let first = if size == 10_000 { 1_i64 } else { 10_001 };
+        client.execute("INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
+            SELECT 'history-'||n,n,0,jsonb_build_object('effect','effect-'||n,'to','Sent'),'null'::jsonb
+            FROM generate_series($1::bigint,$2::bigint) n", &[&first,&size]).unwrap();
+        client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+            SELECT 'effect-'||n,0,'github',jsonb_build_object('key','effect-'||n,
+            'repository',jsonb_build_object('owner','owner','name','sandbox','installation',3),
+            'issue',n,'generation',0,'head_sha','head','output',jsonb_build_object('Effect',jsonb_build_object('node',0,'kind','PostApproval'))),
+            'Sent',n,n FROM generate_series($1::bigint,$2::bigint) n", &[&first,&size]).unwrap();
+        client
+            .batch_execute("ANALYZE tl3_effects; ANALYZE tl3_events; ANALYZE tl3_dispatch_evidence")
+            .unwrap();
+        let explain = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {DISPATCH_EVIDENCE_QUERY}");
+        let plan: serde_json::Value = client
+            .query_one(&explain, &[&identity, &""])
+            .unwrap()
+            .get(0);
+        println!("DISPATCH_PLAN events={size} {plan}");
+        let key_identity = json!({"key":"effect-10000"});
+        let key_plan: serde_json::Value = client
+            .query_one(&explain, &[&key_identity, &""])
+            .unwrap()
+            .get(0);
+        println!("DISPATCH_KEY_PLAN events={size} {key_plan}");
+        assert!(!key_plan.to_string().contains("Seq Scan"));
+        assert!(store.dispatched_effect_matching(&key_identity, "").unwrap());
+        let mut prior = identity.clone();
+        prior["issue"] = json!(10000);
+        assert!(
+            store
+                .dispatched_effect_matching(&prior, "replacement")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .dispatched_effect_matching(&prior, "effect-10000")
+                .unwrap()
+        );
+        let started = Instant::now();
+        for _ in 0..10 {
+            assert!(!store.dispatched_effect_matching(&identity, "").unwrap());
+        }
+        println!(
+            "DISPATCH_TIMING events={size} negative_lookups=10 elapsed_us={}",
+            started.elapsed().as_micros()
+        );
+        let text = plan.to_string();
+        assert!(
+            !text.contains("Seq Scan"),
+            "dispatch lookup must be indexed: {text}"
+        );
+        assert!(
+            text.contains("Index"),
+            "EXPLAIN must show actual index access: {text}"
+        );
+    }
+}
+
+/// #766/Q27: one-time legacy backfill is bounded, restartable and gates negative admission.
+fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut client = raw(settings);
+    client.batch_execute("ALTER TABLE tl3_effects DISABLE TRIGGER tl3_record_dispatch;
+        INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
+        SELECT 'old-'||n,n,0,CASE WHEN n IN (255,256,257) THEN
+            jsonb_build_object('effect',CASE n WHEN 255 THEN 'pending' WHEN 256 THEN 'cancelled' ELSE 'confirmed' END,'to','Sent')
+            WHEN n=600 THEN '{\"effect\":\"legacy-a\",\"to\":\"Sent\"}'::jsonb ELSE 'null'::jsonb END,'null'::jsonb FROM generate_series(1,600) n;
+        UPDATE tl3_meta SET revision=600;
+        UPDATE tl3_dispatch_migration SET through_revision=600").unwrap();
+    let identity = json!({"repository":{"owner":"owner","name":"sandbox","installation":3},"issue":12,
+        "generation":0,"head_sha":"head","output":{"Effect":{"node":0,"kind":"PostApproval"}}});
+    let mut payload = identity.clone();
+    payload["key"] = json!("legacy-a");
+    client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+        VALUES ('legacy-a',0,'github',$1,'Confirmed',600,600)", &[&payload]).unwrap();
+    for (key, state, revision) in [
+        ("pending", "Uncertain", 255_i64),
+        ("cancelled", "Cancelled", 256),
+        ("confirmed", "Confirmed", 257),
+    ] {
+        let mut delivery = payload.clone();
+        delivery["key"] = json!(key);
+        client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+            VALUES ($1,0,'github',$2,$3::text::tl3_effect_state,$4,$4)", &[&key,&delivery,&state,&revision]).unwrap();
+    }
+    client
+        .batch_execute("ALTER TABLE tl3_effects ENABLE TRIGGER tl3_record_dispatch")
+        .unwrap();
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .is_err(),
+        "incomplete migration cannot authorize a negative lookup"
+    );
+    assert!(
+        matches!(store.migrate_dispatch_evidence(), Err(Error::OwnershipLost)),
+        "an auxiliary session cannot drive the legacy backfill"
+    );
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "a refused auxiliary backfill cannot move its cursor"
+    );
+    let mut ownership = Ownership::claim(store).unwrap();
+    let store = ownership.store();
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        256
+    );
+    let recovery: Vec<_> = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "approval_dispatch_recovery")
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(
+        recovery.len(),
+        2,
+        "the same 256-row batch also recovers unresolved legacy dispatches"
+    );
+    assert!(recovery.contains(&"pending".into()) && recovery.contains(&"cancelled".into()));
+    ownership.release().unwrap();
+    let mut ownership = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    let store = ownership.store();
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .is_err()
+    );
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        512
+    );
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert!(!store.migrate_dispatch_evidence().unwrap());
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .unwrap()
+    );
+    let recovery: Vec<_> = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "approval_dispatch_recovery")
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(
+        recovery.len(),
+        2,
+        "proven terminal single attempts must stay retired; restart must not duplicate recovery"
+    );
+    assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
+    assert!(!store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
 }

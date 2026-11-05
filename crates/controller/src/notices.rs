@@ -203,3 +203,159 @@ impl Controller {
         Ok(true)
     }
 }
+
+impl Controller {
+    /// Existing delivery-failure escalation, for controller-owned cleanup and ambiguity.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn maintenance_incident(
+        &mut self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        key: &str,
+        class: &str,
+        summary: String,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let request = request(snapshot, delivery.node())?;
+        let id = crate::looks::incident_id(snapshot, class);
+        let incidents = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "notice_incidents" && r.id == key)
+            .and_then(|r| r.value.as_u64())
+            .unwrap_or(0)
+            .saturating_add(1);
+        let needs_rob =
+            crate::looks::incident_needs_rob(crate::looks::IncidentCause::NoticeFailure {
+                incidents,
+            });
+        let signature = crate::looks::IncidentSignature {
+            upstream: crate::executor::Upstream::GitHub,
+            class: class.into(),
+        };
+        let mut post = delivery.clone();
+        post.key = format!("incident:{id}");
+        post.marker_key = None;
+        post.epoch = snapshot.epoch.get();
+        post.output = Output::Notice {
+            node: delivery.node(),
+            notice: Notice::Incident { needs_rob },
+        };
+        post.steering = None;
+        post.note = Some(crate::looks::incident_note(
+            &request.repo,
+            request.issue,
+            &summary,
+        ));
+        post.question_context =
+            Some(json!({"issue_title":request.title,"signature":signature,"incident_id":id}));
+        if let Some(operations) = &self.bootstrap.operations {
+            post.repository = crate::Repository {
+                owner: operations.owner.clone(),
+                name: operations.name.clone(),
+                installation: operations.installation_id,
+            };
+            post.issue = operations.number;
+        }
+        commit
+            .rows
+            .push(put("notice_incidents", key.into(), json!(incidents)));
+        commit.rows.push(put(
+            "incidents",
+            id.clone(),
+            json!(Incident {
+                id: id.clone(),
+                node: Some(delivery.node()),
+                input_failure: None,
+                open: true,
+                needs_rob,
+                blocking: false,
+                summary,
+                signature,
+                effect: Some(key.into()),
+                post_key: Some(post.key.clone()),
+                cause: Some(crate::looks::Cause::Upstream),
+            }),
+        ));
+        if class == "message_cleanup" || class == "approval_repair" {
+            self.maintenance_probe(delivery.clone(), key, id, commit);
+        }
+        commit.rows.push(self.allowance_row(post.clone()));
+        commit.effects.push(post.into_effect());
+        Ok(())
+    }
+
+    /// State-table:307: bounded counters and the existing allowance timer per maintenance key.
+    pub(crate) fn maintenance_failure(
+        &mut self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        key: &str,
+        class: &str,
+        error: crate::Error,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if self.maintenance_failure_due(snapshot, key, &error, commit) {
+            self.maintenance_incident(snapshot, delivery, key, class,
+                format!("GitHub {class} failed for {}/{} issue {}. The first incident recovers on an upstream probe; clear later incidents to retry.", delivery.repository.owner, delivery.repository.name, delivery.issue), commit)?;
+        }
+        Ok(())
+    }
+
+    /// State-table:307: identical two-failure accounting even without an old effect.
+    pub(crate) fn maintenance_failure_due(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        error: &crate::Error,
+        commit: &mut Commit,
+    ) -> bool {
+        let count = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "maintenance_failures" && r.id == key)
+            .and_then(|r| r.value.as_u64())
+            .unwrap_or(0)
+            + 1;
+        commit
+            .rows
+            .push(put("maintenance_failures", key.into(), json!(count % 2)));
+        count >= 2 || matches!(error, crate::Error::Permanent { .. })
+    }
+
+    pub(crate) fn maintenance_probe(
+        &self,
+        mut probe: Delivery,
+        key: &str,
+        incident: String,
+        commit: &mut Commit,
+    ) {
+        probe.key = key.into();
+        probe.output = Output::Comment {
+            node: probe.node(),
+            kind: crate::executor::CommentKind::OperationsNote,
+        };
+        let mut state = crate::looks::AllowanceState::new(probe, self.now_ms(), 30_000);
+        state.maintenance = true;
+        state.incident = Some(incident);
+        commit
+            .rows
+            .push(put("allowances", key.into(), json!(state)));
+    }
+
+    pub(crate) fn finish_maintenance(
+        &mut self,
+        snapshot: &Snapshot,
+        key: &str,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        crate::looks::resolve_effect_incidents(snapshot, commit, |_, effect| Ok(effect == key))?;
+        for table in ["allowances", "maintenance_failures", "notice_incidents"] {
+            commit.rows.push(tl3_store::RowChange::Delete {
+                table: table.into(),
+                id: key.into(),
+            });
+        }
+        Ok(())
+    }
+}
