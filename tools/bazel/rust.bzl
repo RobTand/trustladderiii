@@ -68,7 +68,7 @@ _WAVE_B_ENTRIES = {
     "red-match": {
         "srcs": [":sources"],
         "crate_root": "tests/red_match.rs",
-        "deps": [":tl3_harness_core"] + all_crate_deps(normal = True),
+        "deps": [":tl3_harness_core", "@crates//:serde", "@crates//:serde_json"],
         "tags": ["rust", "wave-b-entry-point"],
     },
 }
