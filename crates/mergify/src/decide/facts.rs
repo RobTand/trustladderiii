@@ -260,8 +260,8 @@ pub fn queue_outcome<C: Copy>(
                     let infra = ci_infra(check);
                     decide_proof! {
                         assert(ci_infra.ensures((check,), infra));
-                        assert(exists|r: bool| ci_infra.ensures((check,), r)
-                            && Some(Outcome::CiFailed { check, infra }) == outcome_result(state, Some(check), head_infra, r));
+                        assert(Some(Outcome::CiFailed { check, infra }) == outcome_result(QueueState::FailedCi, Some(check), None, infra));
+                        assert(exists|r: bool| ci_infra.ensures((check,), r) && infra == r);
                     }
                     infra
                 }
@@ -411,11 +411,18 @@ impl PersonFacts<'_> {
         decide_while! { (i < self.events.len()) [
             invariant start <= i <= self.events@.len(), self.position == start,
                 !self.suppressed,
+                old(self).remaining() == person_sequence(self.events@, start as int),
                 person_sequence(self.events@, i as int) == person_sequence(self.events@, start as int),
             decreases self.events@.len() - i,
         ] {
             let fact = person_fact(self.events[i]);
-            decide_proof! { reveal(person_sequence); }
+            decide_proof! {
+                reveal(person_sequence);
+                assert(person_sequence(self.events@, i as int) == match fact {
+                    Some(f) => seq![f] + person_sequence(self.events@, i as int + 1),
+                    None => person_sequence(self.events@, i as int + 1),
+                });
+            }
             i += 1;
             if fact.is_some() {
                 self.position = i;

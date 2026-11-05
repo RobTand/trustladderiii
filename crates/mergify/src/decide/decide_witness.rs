@@ -113,6 +113,7 @@ fn ci_covers() -> bool {
 /// #743/K-person-facts: original event order, bot suppression and later-merge suppression.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result,))]
 fn person_covers() -> bool {
+    decide_proof! { reveal_with_fuel(person_sequence, 4); }
     let dequeue = IssueEvent {
         id: 2,
         actor: Actor::Person,

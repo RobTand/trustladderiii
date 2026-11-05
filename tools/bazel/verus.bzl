@@ -134,7 +134,7 @@ def verus_proofs():
 
         # #743 M1b: real translation, fact decisions, and all original covers.
         for name, module, count in [
-            ("translate", "translate", 5),
+            ("translate", "translate", 11),
             ("decide_properties", "decide_properties", 9),
             ("decide_witness", "decide_witness", 8),
         ]:
