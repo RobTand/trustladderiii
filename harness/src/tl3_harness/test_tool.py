@@ -274,6 +274,7 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
                     raise ValueError("unavailable run reported tests")
             except (ValueError, KeyError, TypeError):
                 failure = process.incomplete()
+                failure.log()
                 result = infrastructure(failure.message(), origin="test_run" if process.report_started else None)
                 result.update(execution=failure.as_json(), selectors=list(tests))
                 return result
@@ -295,6 +296,7 @@ def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=Non
                               declared_symptom=declared_symptom, records=records)
         return bounded(result) if declared_symptom is not None else result
     except ExecutionFailure as failure:
+        failure.log()
         if failure.outcome == ExecutionOutcome.TEST_TIMEOUT:
             # Discard partial passes: a run that cannot finish has no GREEN verdict.
             result = Summary(raw=declared_symptom is None)

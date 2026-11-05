@@ -13,6 +13,15 @@ from .limits import MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES
 from .report import decode
 
 
+MAX_STDERR_BYTES = 16_384
+MAX_STDERR_CHARS = 1024
+MAX_STDERR_LINE_CHARS = 512
+FAILURE_PREFIX = 'TL3_EXECUTION_FAILURE '
+# Share the existing result envelope's headroom across all failed trees in one action.
+MAX_STDERR_LOG_BYTES = 16_384
+_stderr_log_bytes = 0
+
+
 class ExecutionOutcome(StrEnum):
     TEST_TIMEOUT = 'test_timeout'
     SETUP_FAILURE = 'setup_failure'
@@ -27,13 +36,25 @@ class ExecutionFailure(Exception):
     termination_reason: str
     test_started: bool = False
     test: str | None = None
+    stderr_tail: str = ''
 
     def as_json(self):
         result = {'outcome': self.outcome, 'phase': self.phase,
                   'termination_reason': self.termination_reason, 'test_started': self.test_started}
         if self.test is not None:
             result['test'] = self.test[:2048]
+        if self.stderr_tail:
+            result['stderr_tail'] = self.stderr_tail
         return result
+
+    def log(self):
+        global _stderr_log_bytes
+        if self.stderr_tail:
+            line = FAILURE_PREFIX + json.dumps(self.as_json()) + '\n'
+            size = len(line.encode())
+            if _stderr_log_bytes + size <= MAX_STDERR_LOG_BYTES:
+                _stderr_log_bytes += size
+                print(line, end='', flush=True)
 
     def message(self):
         if self.outcome == ExecutionOutcome.TEST_TIMEOUT:
@@ -62,6 +83,7 @@ class Supervised:
         self.report_started = False
         self.exit_code = None
         self.container = None
+        self.stderr_tail = b''
         command = list(command)
         if command[:2] == ['docker', 'run']:
             self.container = 'tl3-test-' + uuid.uuid4().hex
@@ -71,15 +93,22 @@ class Supervised:
     def __enter__(self):
         try:
             self.child = subprocess.Popen(self.command, stdin=self.selection, stdout=subprocess.PIPE,
-                                          stderr=subprocess.DEVNULL, start_new_session=True)
+                                          stderr=subprocess.PIPE, start_new_session=True)
         except OSError as error:
             raise ExecutionFailure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'runtime_unavailable') from error
         return self
 
     def incomplete(self):
         setup = not self.report_started and self.exit_code in (125, 126, 127)
-        return ExecutionFailure(ExecutionOutcome.SETUP_FAILURE if setup else ExecutionOutcome.UNKNOWN_INCOMPLETE,
-                                'container_start' if setup else 'unknown', 'incomplete_report')
+        return self.failure(ExecutionOutcome.SETUP_FAILURE if setup else ExecutionOutcome.UNKNOWN_INCOMPLETE,
+                            'container_start' if setup else 'unknown', 'incomplete_report')
+
+    def failure(self, outcome, phase, reason):
+        # This pytest I/O edge records text only; it makes no ownership or verdict decision.
+        text = self.stderr_tail.decode('utf-8', errors='replace')
+        text = ''.join(c if c == '\n' or c.isprintable() else '?' for c in text)
+        text = '\n'.join(line[-MAX_STDERR_LINE_CHARS:] for line in text.split('\n'))[-MAX_STDERR_CHARS:]
+        return ExecutionFailure(outcome, phase, reason, stderr_tail=text)
 
     def records(self):
         deadline = time.monotonic() + self.allowance
@@ -87,17 +116,30 @@ class Supervised:
         total = 0
         with selectors.DefaultSelector() as ready:
             ready.register(self.child.stdout, selectors.EVENT_READ)
-            while True:
+            ready.register(self.child.stderr, selectors.EVENT_READ)
+            while ready.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'no_progress')
-                if not ready.select(remaining):
+                    raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'no_progress')
+                events = ready.select(remaining)
+                if not events:
+                    continue
+                # One bounded read per ready stream keeps stderr floods from starving stdout.
+                for key, _ in events:
+                    if key.fileobj is self.child.stderr:
+                        chunk = os.read(key.fd, MAX_STDERR_BYTES)
+                        if chunk:
+                            self.stderr_tail = (self.stderr_tail + chunk)[-MAX_STDERR_BYTES:]
+                        else:
+                            ready.unregister(key.fileobj)
+                if not any(key.fileobj is self.child.stdout for key, _ in events):
                     continue
                 chunk = os.read(self.child.stdout.fileno(), 65536)
                 if not chunk:
+                    ready.unregister(self.child.stdout)
                     if buffer:
                         raise ValueError('incomplete report line')
-                    break
+                    continue
                 buffer += chunk
                 total += len(chunk)
                 if total > MAX_REPORT_BYTES:
@@ -126,7 +168,7 @@ class Supervised:
             except subprocess.TimeoutExpired as error:
                 # EOF and a report's finish record do not prove the runner exited:
                 # the direct child may still be Docker's attach/wait transport.
-                raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'no_progress') from error
+                raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'no_progress') from error
 
     def __exit__(self, *args):
         # Reap the whole group even if its launcher exited while a descendant retained pipes.
@@ -139,6 +181,7 @@ class Supervised:
         except subprocess.TimeoutExpired:
             pass
         self.child.stdout.close()
+        self.child.stderr.close()
         if self.container is not None:
             try:
                 subprocess.run(['docker', 'rm', '--force', self.container], stdin=subprocess.DEVNULL,

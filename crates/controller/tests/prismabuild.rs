@@ -3629,6 +3629,10 @@ fn main() {
         ),
         ("bounded_failure_details", bounded_failure_details),
         (
+            "container_stderr_is_operator_evidence",
+            container_stderr_is_operator_evidence,
+        ),
+        (
             "stale_always_test_notes_survive_controller_evidence",
             stale_always_test_notes_survive_controller_evidence,
         ),
@@ -3738,7 +3742,7 @@ fn main() {
     pb_probe_uses_delivery_class_and_fails_closed();
     println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
     database.stop();
-    println!("73 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("74 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
