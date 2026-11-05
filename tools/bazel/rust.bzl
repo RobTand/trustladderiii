@@ -202,6 +202,7 @@ _CONTROLLER_TEST_SOURCES = {
 
 # CC-E: verbatim delivery references, recorded I/O and persisted proptest seeds.
 _CONTROLLER_TEST_SOURCES["tests/delivery_schedule/main.rs"] = ["tests/delivery_schedule/*.txt"]
+_CONTROLLER_TEST_SOURCES["tests/delivery_machine/main.rs"] = ["tests/delivery_machine/*.txt", "tests/delivery_machine/reference-plan.rs"]
 
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()

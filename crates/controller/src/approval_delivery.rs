@@ -107,7 +107,8 @@ impl Controller {
         else {
             return;
         };
-        if matches!(effect.state, EffectState::Sent | EffectState::Uncertain) {
+        if tl3_delivery::can_authorize_approval_retry(crate::executor::delivery_state(effect.state))
+        {
             commit.transitions.push(tl3_store::EffectTransition {
                 key: effect.key.clone(),
                 from: effect.state,
@@ -253,7 +254,10 @@ impl Controller {
             // Count only identity-checked copies from the adapter's successful repair.
             // Sent intent overestimates unknown legacy/preflight attempts conservatively.
             if let Ok((_, Some(copies))) = result
-                && copies as u64 >= self.store.approval_dispatch_count(&row.id)? as u64
+                && tl3_delivery::accounts_for_dispatches(
+                    copies as u64,
+                    self.store.approval_dispatch_count(&row.id)? as u64,
+                )
             {
                 commit.rows.push(RowChange::Delete {
                     table: UNRESOLVED.into(),

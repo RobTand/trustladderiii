@@ -1,0 +1,24 @@
+        let plan = tl3_delivery::completion(
+            executor::delivery_state(effect.state),
+            executor::delivery_ack(completion.ack),
+        );
+        if plan.bridge {
+            // These intermediate edges remain staged in the same transaction.
+            commit.transitions.push(EffectTransition {
+                key: key.into(),
+                from: EffectState::Uncertain,
+                to: EffectState::Intended,
+            });
+            commit.transitions.push(EffectTransition {
+                key: key.into(),
+                from: EffectState::Intended,
+                to: EffectState::Sent,
+            });
+        }
+        let from = executor::stored_state(plan.from);
+        let state = executor::stored_state(plan.to);
+        commit.transitions.push(EffectTransition {
+            key: key.into(),
+            from,
+            to: state,
+        });

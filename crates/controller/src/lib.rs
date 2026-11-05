@@ -1693,7 +1693,7 @@ impl Controller {
         let effect = snapshot
             .pending_effects
             .iter()
-            .find(|e| e.key == key)
+            .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         self.submit_kernel_input(
             format!("completion:{key}:{}", effect.updated_revision.get()),
@@ -1714,7 +1714,7 @@ impl Controller {
         let effect = snapshot
             .pending_effects
             .iter()
-            .find(|e| e.key == key)
+            .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
         if completion.ack == Ack::Permanent
@@ -1743,9 +1743,12 @@ impl Controller {
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(snapshot, key, class, &mut commit)?;
         }
-        if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
-            // A terminal failed attempt was found. Return to the sending state
-            // through the effect machine before recording its failure.
+        let plan = tl3_delivery::completion(
+            executor::delivery_state(effect.state),
+            executor::delivery_ack(completion.ack),
+        );
+        if plan.bridge {
+            // These intermediate edges remain staged in the same transaction.
             commit.transitions.push(EffectTransition {
                 key: key.into(),
                 from: EffectState::Uncertain,
@@ -1757,20 +1760,8 @@ impl Controller {
                 to: EffectState::Sent,
             });
         }
-        let from = if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
-            EffectState::Sent
-        } else {
-            effect.state
-        };
-        let state = if effect.state == EffectState::Cancelling {
-            EffectState::Confirmed
-        } else {
-            match completion.ack {
-                Ack::Confirmed => EffectState::Confirmed,
-                Ack::Retryable => EffectState::Intended,
-                Ack::Permanent | Ack::BodyPolicyRefused => EffectState::Failed,
-            }
-        };
+        let from = executor::stored_state(plan.from);
+        let state = executor::stored_state(plan.to);
         commit.transitions.push(EffectTransition {
             key: key.into(),
             from,
