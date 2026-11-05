@@ -23,6 +23,161 @@ class BazelGraphTests(unittest.TestCase):
             self.assertEqual(measured.get('source_identities'),
                              {'//pkg:lib.rs': hashlib.sha256(content).hexdigest()})
 
+    def test_load_records_cargo_package_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'unrelated-directory').mkdir()
+            (root / 'unrelated-directory/lib.rs').write_text('fn core() {}\n')
+            (root / 'unrelated-directory/Cargo.toml').write_text(
+                '[package]\nname = "tl3-controller-core"\nversion = "0.1.0"\n')
+            source = '//unrelated-directory:lib.rs'
+            deps = root / 'deps.json'
+            deps.write_text(json.dumps({'//tests:t': [source], source: []}))
+            hashes = root / 'hashes.json'
+            hashes.write_text(json.dumps({'//tests:t': 'Rule#test', source: 'SourceFile#file'}))
+            measured, _, _ = adapter.load(deps, hashes, ['//tests:t'], root)
+            self.assertEqual(measured.get('crate_packages'),
+                             {'tl3-controller-core': '//unrelated-directory'})
+
+    def crate_graph(self, count=1, reached=None, other=False):
+        test = '//crates/controller:test_controller'
+        old = '//crates/controller:src/lib.rs'
+        sources = [f'//crates/controller-core:src/core{i}.rs' for i in range(count)]
+        deps = {test: [old], old: []}
+        if sources:
+            deps[test].append('//crates/controller-core:tl3_controller_core')
+            deps['//crates/controller-core:tl3_controller_core'] = sources[:reached]
+            deps.update({source: [] for source in sources})
+        if other:
+            sources.append('//crates/unrelated:src/lib.rs')
+            deps[test].append(sources[-1])
+            deps[sources[-1]] = []
+        graph = adapter.from_deps(deps, [test], [old, *sources])
+        graph['crate_packages'] = {'tl3-controller-core': '//crates/controller-core'} if count else {}
+        return graph
+
+    def crate_entry(self, count=1):
+        return {'crate:tl3-controller-core': {'reason': 'Decision crate for #744.', 'sources': count}}
+
+    def check_crate(self, head, entries=None, base=None, previous=None):
+        base = self.crate_graph(0) if base is None else base
+        return adapter.check(base, head, set(head['reach']), adapter.baseline(base),
+                             self.crate_entry() if entries is None else entries,
+                             {} if previous is None else previous)
+
+    def test_crate_within_bound_excuses_structural_and_per_test_reach(self):
+        result = self.check_crate(self.crate_graph())
+        self.assertEqual(result['errors'], [])
+        self.assertIn('Added allowlist entry crate:tl3-controller-core', result['summary'])
+        self.assertIn('Decision crate for #744.', result['summary'])
+        self.assertIn('sources', result['summary'])
+        self.assertEqual(len(next(iter(result['head']['reach'].values()))), 2)
+
+    def test_crate_reach_past_bound_fails_with_key_and_bound(self):
+        result = self.check_crate(self.crate_graph(2))
+        errors = '; '.join(result['errors'])
+        self.assertIn('crate:tl3-controller-core', errors)
+        self.assertIn('N=1', errors)
+        self.assertTrue(any('reach' in error for error in result['errors']), errors)
+
+    def test_crate_does_not_excuse_other_package_or_subpackage_growth(self):
+        for outsider in ('//crates/unrelated:src/lib.rs', '//crates/controller-core/nested:lib.rs'):
+            with self.subTest(outsider=outsider):
+                head = self.crate_graph(other=True)
+                head['reach'] = {test: [outsider if 'unrelated' in source else source for source in sources]
+                                 for test, sources in head['reach'].items()}
+                head['loc'][outsider] = head['loc'].pop('//crates/unrelated:src/lib.rs')
+                head['edges'] = [[a, outsider if 'unrelated' in b else b] for a, b in head['edges']]
+                head['node_types'][outsider] = 'SourceFile'
+                head['dependents'][outsider] = 1
+                result = self.check_crate(head)
+                self.assertTrue(any('existing test reach grew' in error for error in result['errors']))
+                self.assertTrue(any('reach 2 exceeds budget 1' in error for error in result['errors']))
+                self.assertTrue(any(outsider in error for error in result['errors']))
+
+    def test_crate_real_count_requires_update_even_when_not_all_sources_reached(self):
+        result = self.check_crate(self.crate_graph(2, reached=1))
+        errors = '; '.join(result['errors'])
+        self.assertIn('crate:tl3-controller-core', errors)
+        self.assertIn('N=1', errors)
+        self.assertIn('2', errors)
+        self.assertIn('update N', errors)
+
+    def test_crate_entry_requires_issue_reason(self):
+        for entry in ({'sources': 1}, {'reason': '', 'sources': 1},
+                      {'reason': 'Decision crate', 'sources': 1}):
+            with self.subTest(entry=entry):
+                errors = adapter.allowlist_errors({'crate:tl3-controller-core': entry}, {})
+                self.assertTrue(any('reason' in error for error in errors))
+
+    def test_crate_entry_requires_nonnegative_integer_count(self):
+        for count in (None, -1, True, 1.5, '1'):
+            with self.subTest(count=count):
+                errors = adapter.allowlist_errors(self.crate_entry(count), {})
+                self.assertTrue(any('sources' in error for error in errors), errors)
+
+    def test_crate_reason_immutable_but_count_tracks_real_changes(self):
+        for old_count, new_count in ((1, 2), (2, 1)):
+            with self.subTest(old=old_count, new=new_count):
+                result = self.check_crate(self.crate_graph(new_count), self.crate_entry(new_count),
+                                          self.crate_graph(old_count), self.crate_entry(old_count))
+                self.assertEqual(result['errors'], [])
+                self.assertIn('Changed allowlist entry crate:tl3-controller-core', result['summary'])
+                self.assertIn(str(new_count), result['summary'])
+        entries = self.crate_entry()
+        entries['crate:tl3-controller-core']['reason'] = 'Different reason for #744.'
+        self.assertTrue(any('reason cannot change' in error for error in
+                            adapter.allowlist_errors(entries, self.crate_entry())))
+
+    def test_crate_count_cannot_change_without_real_source_count_change(self):
+        result = self.check_crate(self.crate_graph(), self.crate_entry(2),
+                                  self.crate_graph(), self.crate_entry())
+        self.assertTrue(any('update N' in error for error in result['errors']), result['errors'])
+
+    def test_crate_cannot_keep_excess_budget_after_source_deletion(self):
+        result = self.check_crate(self.crate_graph(), self.crate_entry(2),
+                                  self.crate_graph(2), self.crate_entry(2))
+        self.assertTrue(any('update N' in error for error in result['errors']), result['errors'])
+
+    def test_crate_must_resolve_to_a_cargo_package_in_head(self):
+        result = self.check_crate(self.crate_graph(0))
+        self.assertTrue(any('crate:tl3-controller-core' in error and 'package' in error
+                            for error in result['errors']), result['errors'])
+
+    def test_crate_exception_preserves_existing_source_fanout_checks(self):
+        base = self.crate_graph()
+        head = self.crate_graph()
+        other = '//crates/controller:test_other'
+        old = '//crates/controller:src/lib.rs'
+        source = '//crates/controller-core:src/core0.rs'
+        base['reach'][other], head['reach'][other] = [old], [old, source]
+        for graph in (base, head):
+            graph['edges'].append([other, old])
+            graph['test_packages'][other] = '//crates/controller'
+            graph['node_types'][other] = 'Rule'
+        head['edges'].append([other, source])
+        result = self.check_crate(head, base=base, previous=self.crate_entry())
+        self.assertTrue(any('existing source fanout grew' in error for error in result['errors']))
+
+    def test_crate_does_not_double_discount_moved_sources(self):
+        base, head = self.crate_graph(0), self.crate_graph(other=True)
+        old = '//crates/controller:src/lib.rs'
+        moved = '//crates/controller-core:src/core0.rs'
+        head['reach'] = {test: [source for source in sources if source != old]
+                         for test, sources in head['reach'].items()}
+        del head['loc'][old]
+        head['edges'] = [[a, b] for a, b in head['edges'] if b != old]
+        head['source_identities'], base['source_identities'] = {moved: 'identical'}, {old: 'identical'}
+        result = self.check_crate(head, base=base)
+        self.assertTrue(any('existing test reach grew' in error for error in result['errors']))
+        self.assertTrue(any('reach 2 exceeds budget 1' in error for error in result['errors']))
+
+    def test_per_test_reach_string_exception_unchanged(self):
+        test = '//crates/controller:test_controller'
+        entries = {f'reach:{test}': 'Controller extraction for #744.'}
+        result = self.check_crate(self.crate_graph(2, other=True), entries)
+        self.assertEqual(result['errors'], [])
+
     def test_comparison_inputs_keep_package_ceiling_at_base(self):
         base = adapter.from_deps(
             {'//crates/controller:existing': ['//pkg:a.py', '//pkg:b.py'],
