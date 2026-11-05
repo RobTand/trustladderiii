@@ -8,5 +8,10 @@
     "reason": "ctrl-core #730: new decision-only crate tl3-controller-core (no adapter dependencies) linked by tl3-controller",
     "sources": 35,
     "max_fanout": 87
+  },
+  "crate:tl3-harness-core": {
+    "reason": "Wave B harness decision crate for #730 (#824).",
+    "sources": 12,
+    "max_fanout": 84
   }
 }
