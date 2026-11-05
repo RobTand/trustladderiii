@@ -290,7 +290,13 @@ fn mandatory_base_precedence_scope_and_reset() {
     ] {
         let mut s = fixture();
         s.delivery.round = round;
-        s.session = session.then(|| json!({"head_sha":REVIEWED}));
+        s.session = session.then(|| {
+            if reviewed_head {
+                json!({})
+            } else {
+                json!({"head_sha":REVIEWED})
+            }
+        });
         s.delivery.checks.as_mut().unwrap().reviewed_sha =
             reviewed_head.then(|| CommitId::new(REVIEWED).unwrap());
         let use_old = round == 1 && session;
@@ -601,53 +607,60 @@ fn mandatory_separate_reply_reads_and_opaque_receipt_shapes() {
 
 #[test]
 fn mandatory_all_recorded_error_classes_at_every_reached_read() {
-    let mut s = fixture();
-    s.snapshot.rows[1].value["results"] = json!([{"forcing":null}]);
-    s.tapes.insert(
-        "worker_materials".into(),
-        vec![Read::Value(json!({})), Read::Value(json!({"issue":{}}))],
-    );
-    s.tapes.insert(
-        "worker_document".into(),
-        vec![
-            Read::Value(Value::Null),
-            Read::Value(json!({"head":HEAD,"test_evidence":[]})),
-            Read::Value(json!({"head":HEAD,"generation_evidence":{"output_tree":HEAD}})),
-        ],
-    );
-    let good = compare(&s);
-    let mut counts = BTreeMap::<String, usize>::new();
-    for (cut, call) in good.trace.iter().enumerate() {
-        let op = call["op"].as_str().unwrap();
-        let at = *counts.entry(op.into()).or_default();
-        *counts.get_mut(op).unwrap() += 1;
-        for class in [
-            Read::Io,
-            Read::Json,
-            Read::Git,
-            Read::Invalid,
-            Read::Store,
-            Read::Worktree(0),
-            Read::Worktree(1),
-            Read::Worktree(2),
-            Read::Worktree(3),
-            Read::Worktree(4),
-            Read::Worktree(5),
-            Read::Worktree(6),
-            Read::Worktree(7),
-        ] {
-            let mut broken = s.clone();
-            let tape = broken.tapes.entry(op.into()).or_default();
-            while tape.len() <= at {
-                tape.push(Read::Value(Value::Null));
+    for scope in [false, true] {
+        let mut s = fixture();
+        s.snapshot.rows[1].value["results"] = json!([{"forcing":null}]);
+        s.tapes.insert(
+            "worker_materials".into(),
+            vec![Read::Value(json!({})), Read::Value(json!({"issue":{}}))],
+        );
+        s.tapes.insert(
+            "worker_document".into(),
+            vec![
+                Read::Value(Value::Null),
+                Read::Value(json!({"head":HEAD,"test_evidence":[]})),
+                Read::Value(json!({"head":HEAD,"generation_evidence":{"output_tree":HEAD}})),
+            ],
+        );
+        s.snapshot.rows[1].value["selected_failures"] = json!([]);
+        if scope {
+            s.delivery.round = 1;
+            s.session = Some(json!({"head_sha":REVIEWED}));
+        }
+        let good = compare(&s);
+        let mut counts = BTreeMap::<String, usize>::new();
+        for (cut, call) in good.trace.iter().enumerate() {
+            let op = call["op"].as_str().unwrap();
+            let at = *counts.entry(op.into()).or_default();
+            *counts.get_mut(op).unwrap() += 1;
+            for class in [
+                Read::Io,
+                Read::Json,
+                Read::Git,
+                Read::Invalid,
+                Read::Store,
+                Read::Worktree(0),
+                Read::Worktree(1),
+                Read::Worktree(2),
+                Read::Worktree(3),
+                Read::Worktree(4),
+                Read::Worktree(5),
+                Read::Worktree(6),
+                Read::Worktree(7),
+            ] {
+                let mut broken = s.clone();
+                let tape = broken.tapes.entry(op.into()).or_default();
+                while tape.len() <= at {
+                    tape.push(Read::Value(Value::Null));
+                }
+                tape[at] = class;
+                let r = compare(&broken);
+                assert!(r.result.is_err());
+                assert_eq!(r.trace.len(), cut + 1);
+                assert_eq!(&r.trace[..cut], &good.trace[..cut]);
+                assert_eq!(r.trace[cut]["args"], call["args"]);
+                assert!(r.trace[cut]["outcome"].get("error").is_some());
             }
-            tape[at] = class;
-            let r = compare(&broken);
-            assert!(r.result.is_err());
-            assert_eq!(r.trace.len(), cut + 1);
-            assert_eq!(&r.trace[..cut], &good.trace[..cut]);
-            assert_eq!(r.trace[cut]["args"], call["args"]);
-            assert!(r.trace[cut]["outcome"].get("error").is_some());
         }
     }
 }

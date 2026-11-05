@@ -109,7 +109,7 @@ pub mod selection {
                     if j < i {
                     } else {
                         assert(j == i);
-                        if flags[i] {
+                        if flags[i as int] {
                             assert(out@[out.len() - 1] == i);
                             assert(out@.contains(i));
                         } else {
