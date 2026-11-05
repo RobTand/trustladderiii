@@ -58,6 +58,7 @@ _SCENARIO_SHARDS = {
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
     "tl3-controller/approval_race": 27,
+    "tl3-controller/budget_parity": 3,
     "tl3-controller/tl3_controller": 8,
     "tl3-controller/redaction_generated": 8,
 }
@@ -82,6 +83,7 @@ _CONTROLLER_WORKERS = [
     "test_test_publishing",
     "test_test_workers",
     "test_test_writer_references",
+    "test_test_budget_parity",
 ]
 _CONTROLLER_BINARIES = {
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
@@ -126,6 +128,7 @@ _CONTROLLER_RUNTIME = {
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
+    "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
     "tests/production.rs": ["tests/prismabuild_fixture/**"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],

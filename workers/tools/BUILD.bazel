@@ -1,5 +1,19 @@
 load("@rules_python//python:defs.bzl", "py_binary")
 
+# gazelle:resolve py python.runfiles @rules_python//python/runfiles
+
+py_binary(
+    name = "budget_benchmark",
+    srcs = ["budget_benchmark.py"],
+    data = ["//crates/controller:tl3"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@rules_python//python/runfiles",
+        "@tl3_pip//langchain_core",
+    ],
+)
+
 py_binary(
     name = "replay_repository_ingest",
     srcs = ["replay_repository_ingest.py"],

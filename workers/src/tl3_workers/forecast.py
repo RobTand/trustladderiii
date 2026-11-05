@@ -12,6 +12,7 @@ import sys
 
 import tiktoken
 
+from tl3_workers.budget_check import check as budget_check
 from tl3_workers.generated_scope import generator_owned_outputs
 from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_class, generated_edit_instruction
 from tl3_workers.turns import Unrepairable
@@ -176,14 +177,10 @@ def forecast_fit(brief, file_tokens, config, encoding=None, problems=()):
     Unusable files each cost the entire fit limit, so they cannot prove a fit.
     """
     brief_tokens = len(encoding.encode_ordinary(brief) if encoding is not None else brief.encode())
-    overhead_tokens = sum(config["overhead_tokens"].values())
-    tokens = brief_tokens + sum(file_tokens.values()) + overhead_tokens + config["fit_tokens"] * len(problems)
-    return {
-        "tokenizer": "o200k_base", "brief_tokens": brief_tokens,
-        "file_tokens": file_tokens, "overhead_tokens": overhead_tokens,
-        "tokens": tokens, "fit_tokens": config["fit_tokens"],
-        "context_tokens": config["context_tokens"], "fits": tokens < config["fit_tokens"],
-    }
+    return budget_check("forecast", brief_tokens=brief_tokens, file_tokens=file_tokens,
+                        overhead_tokens=sum(config["overhead_tokens"].values()),
+                        fit_tokens=config["fit_tokens"], context_tokens=config["context_tokens"],
+                        problems=len(problems))
 
 
 def execution_forecast(files, checks, *, declared=0, exploration=None, config=None):
@@ -200,22 +197,12 @@ def execution_forecast(files, checks, *, declared=0, exploration=None, config=No
     from tl3_workers.roles.maker import ROLE
 
     budget = ROLE.exploration_budget
-    reserve = min(budget.finalization_turns, budget.tool_turns)
     config = config or {}
     files = set(files)
     generated = generator_owned_outputs(files, config)
-    components = {"exploration_operations": exploration or 0,
-                  "file_operations": 9 * len(files - generated), "check_operations": 4 * checks,
-                  "scope_operations": 2, "generation_operations": int(bool(config.get("generator")))}
-    if generated:
-        components["generated_inspection_operations"] = len(generated)
-    estimated = max(sum(components.values()), declared)
-    # The estimate already includes final verification; compare the complete run to the backstop.
-    usable = budget.tool_turns
-    return {"allowed_tool_turns": budget.tool_turns, "finalization_turns": reserve,
-            "usable_tool_turns": usable, "estimated_tool_turns": estimated,
-            "components": components, "exploration_declared": exploration is not None,
-            "fits": exploration is not None and estimated <= usable}
+    return budget_check("execution", files=len(files), generated=len(generated), checks=checks,
+                        declared=declared, exploration=exploration, generator=bool(config.get("generator")),
+                        tool_turns=budget.tool_turns, finalization_turns=budget.finalization_turns)
 
 
 class Forecaster:

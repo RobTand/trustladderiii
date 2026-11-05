@@ -26,7 +26,7 @@ _PACKAGE_DATA = {
         "//tools/bazel:workspace_build_files",
         "//workers:runtime_files",
     ],
-    "workers/tests": ["//harness:project_files", "@o200k_base//file"],
+    "workers/tests": ["//harness:project_files", "@o200k_base//file", "//crates/controller:tl3"],
 }
 
 # Project code that pytest imports from the project root, as Light checks do.
@@ -51,6 +51,8 @@ _MEASURED_SECONDS = {
     "harness/tests:test_test_tool": 38,
     "workers/tests:test_large_files": 35,
     "workers/tests:test_maker": 48,
+    # #780 recovery and compaction: 69.67 s unsharded (eeaf53dd).
+    "workers/tests:test_maker_compaction": 70,
     "workers/tests:test_maker_forecast": 37,
     "workers/tests:test_maker_recovery": 46,
     "workers/tests:test_pb_machine_records": 37,
@@ -61,6 +63,8 @@ _MEASURED_SECONDS = {
     "workers/tests:test_pb_tests_rehearsal": 55,
     "workers/tests:test_pb_tests_runtime": 40,
     "workers/tests:test_planner_forecast": 61,
+    # #780: complete 513-turn backstop trace retained; unsharded 58.56 s (9b5e1285).
+    "workers/tests:test_progress_budget": 59,
     "workers/tests:test_reviewer": 69,
     "workers/tests:test_tracing": 66,
     "workers/tests:test_workers": 85,

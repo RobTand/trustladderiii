@@ -10,7 +10,9 @@ fn main() {
         }
         return;
     }
-    let result = if std::env::args().nth(1).as_deref() == Some("check-reply") {
+    let result = if std::env::args().nth(1).as_deref() == Some("check-budget") {
+        tl3_controller::budget::check()
+    } else if std::env::args().nth(1).as_deref() == Some("check-reply") {
         tl3_controller::classifier::check_reply(std::env::args().nth(2).as_deref())
     } else if std::env::args().nth(1).as_deref() == Some("replay-check") {
         tl3_controller::replay::command()

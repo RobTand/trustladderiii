@@ -143,3 +143,27 @@ def test_recovered_maker_recompacts_and_resumes(maker_request, tmp_path, monkeyp
     assert budgets[-1].state().get("compaction_count") == 2
     assert Path(maker_request["worktree"], "greeting.py").read_text().startswith("# edit 9")
     assert_tool_pairs(model.calls[0][0])
+
+
+@pytest.mark.parametrize("invalid", [{"spent": -1}, {"compaction_count": 1},
+                                    {"no_progress_turns": 1000}])
+def test_invalid_allowance_checkpoint_starts_visit_afresh(maker_request, tmp_path, monkeypatch, invalid):
+    """#780 recovery: a decided-invalid checkpoint must not wedge every retry."""
+    maker_request["inputs"]["context_size"] = 100_000
+    maker_request["session_file"] = str(tmp_path / "maker.json")
+    budgets = capture_budget(monkeypatch)
+    install(monkeypatch, [edits(1)[0], Killed()])
+    with pytest.raises(Killed):
+        runtime.run(maker_request, lambda _: None)
+    visit = Path(maker_request["session_file"]).with_suffix(".visit")
+    saved = json.loads(visit.read_text())
+    saved["allowance"].update(invalid)
+    visit.write_text(json.dumps(saved))
+    maker_request["operation"]["generation"] += 1
+    model = install(monkeypatch, [reply(UNFINISHED)])
+    events = []
+    runtime.run(maker_request, events.append)
+    notice = next(m for m in model.calls[0][0] if m.text.startswith("TL3 execution budget: "))
+    assert json.loads(notice.text.removeprefix("TL3 execution budget: "))["tool_turns"]["used"] == 0
+    assert budgets[-1].spent == 100
+    assert events[-1]["event"] == "reply"

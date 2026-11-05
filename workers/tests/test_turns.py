@@ -2,7 +2,6 @@
 import copy
 from dataclasses import replace
 import json
-import sys
 from pathlib import Path
 
 import httpx
@@ -22,20 +21,26 @@ import test_workers
 
 
 @pytest.fixture(autouse=True)
-def classifier_validation_boundary(monkeypatch, tmp_path):
+def classifier_validation_boundary(monkeypatch):
     # These tests exercise turn orchestration. Rust owns classifier decisions.
     monkeypatch.setitem(runtime.ROLES, "classifier", replace(
         runtime.ROLES["classifier"], check_reply=None,
     ))
-    checker = tmp_path / "fake-tl3"
-    checker.write_text(
-        f"#!{sys.executable}\nimport json, sys\n"
-        "assert sys.argv[1:] == ['check-reply', 'reviewer']\n"
-        f"invalid = {ROLES['reviewer'][3]!r}\n"
-        f"message = {ROLES['reviewer'][4]!r}\n"
-        "print(json.dumps({'violations': [message] if json.load(sys.stdin)['reply'] == invalid else []}))\n")
-    checker.chmod(0o755)
-    monkeypatch.setenv("TL3_BINARY", str(checker))
+    from tl3_workers.reply_check import ReplyViolation
+    from tl3_workers.roles import reviewer
+
+    def validate_reviewer(role, inputs, reply):
+        assert role == "reviewer"
+        if reply == ROLES["reviewer"][3]:
+            raise ReplyViolation(ROLES["reviewer"][4])
+
+    monkeypatch.setattr(reviewer, "validate_reply", validate_reviewer)
+
+
+def test_turn_fixture_keeps_the_real_budget_validator():
+    from tl3_workers.budget_check import check
+    assert check("finalizing", maker=True, turns=0, no_progress=0,
+                 allowed=4, window=3, reserve=1) is False
 
 
 maker_request = test_maker.maker_request
