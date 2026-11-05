@@ -3836,7 +3836,7 @@ impl Controller {
         else {
             return Ok(event);
         };
-        let extra = u8::try_from(u32::from(*reserve).saturating_sub(tl3_kernel::RESERVE))
+        let extra = u8::try_from(u64::from(*reserve).saturating_sub(tl3_kernel::RESERVE))
             .unwrap_or(u8::MAX);
         Ok(Event::Reply {
             node,

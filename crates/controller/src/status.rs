@@ -80,7 +80,7 @@ pub struct RequestStatus {
     pub issue: String,
     pub phase: String,
     pub waiting_on: String,
-    pub credit: i64,
+    pub credit: i128,
     pub details: RequestDetails,
 }
 
