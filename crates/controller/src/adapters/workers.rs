@@ -1782,3 +1782,7 @@ mod release_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../contracts/inputs/equivalence.rs"]
+mod input_equivalence;

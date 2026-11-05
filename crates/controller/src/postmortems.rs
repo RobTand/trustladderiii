@@ -1605,3 +1605,9 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) mod input_reference {
+    use super::*;
+    include!("contracts/inputs/reference/postmortem_before.rs");
+}

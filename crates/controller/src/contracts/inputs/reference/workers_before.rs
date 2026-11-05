@@ -1,4 +1,5 @@
 // Test-only reference copied verbatim from cdacce8f99c28ca8dba8f5f76831b77b4dfcd836 crates/controller/src/adapters/workers.rs
+impl Reference<'_> {
     fn build_request(
         &self,
         delivery: &Delivery,
@@ -426,3 +427,5 @@
         }
         Ok(request)
     }
+
+}
