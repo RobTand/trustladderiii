@@ -1066,3 +1066,37 @@ fn base64(s: &str) -> String {
     }
     out
 }
+
+// B1 reachability checks inspect the reference trace as well as comparing both shells.
+pub(super) fn require_recovery(s: &Schedule, entry: Entry, command: &str, timer: Option<u64>) {
+    let trace = run(s, entry, false, None);
+    let bytes = trace.files.get(&recovery_path()).expect("recovery receipt");
+    let saved: Value = serde_json::from_slice(bytes).unwrap();
+    assert_eq!(saved["command"], json!(command), "{trace:#?}");
+    assert_eq!(saved["eligible_since_ms"], json!(timer), "{trace:#?}");
+}
+pub(super) fn require_no_op(s: &Schedule, entry: Entry, op: &str) {
+    let trace = run(s, entry, false, None);
+    assert!(!trace.calls.iter().any(|c| c.op == op), "{trace:#?}");
+}
+pub(super) fn require_command_fence(s: &Schedule) {
+    let trace = run(s, Entry::Command, false, None);
+    let fence = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "file.read" && c.args.ends_with("epoch.fence"))
+        .unwrap();
+    let intent = trace
+        .calls
+        .iter()
+        .position(|c| {
+            c.op == "file.write" && String::from_utf8_lossy(&c.result).contains("Sending")
+        })
+        .unwrap();
+    let post = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "github.command")
+        .unwrap();
+    assert!(fence < intent && intent < post, "{trace:#?}");
+}
