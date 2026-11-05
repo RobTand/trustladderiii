@@ -533,7 +533,8 @@ fn rejudged(report: &Report, job: &Job) -> bool {
         {
             return false;
         }
-        if result.declared_symptom.is_some() {
+        if result.declared_symptom.is_some() || check.is_none() {
+            // Always/selected results include stale-entry, retry and group overrides.
             continue;
         }
         let mut infrastructure = false;
@@ -550,7 +551,9 @@ fn rejudged(report: &Report, job: &Job) -> bool {
                 ] {
                     if let Some(run) = run {
                         let Some(outcome) = outcome else { return false };
-                        if !phase_agrees(run, outcome) {
+                        // A late run-level rejection retains phases but replaces outcomes.
+                        // TL3_CHECKS does not carry the exit/stream validity needed to replay it.
+                        if !matches!(outcome, Outcome::NoReport) && !phase_agrees(run, outcome) {
                             return false;
                         }
                     }
@@ -582,9 +585,6 @@ fn rejudged(report: &Report, job: &Job) -> bool {
             if decision.pre_existing != test.pre_existing {
                 return false;
             }
-            if check.is_none() {
-                continue;
-            } // Always-tests and selected groups have extra shell rules.
             if result.forcing.is_some() && test.head_forced.is_none() {
                 if test.passed {
                     return false;
