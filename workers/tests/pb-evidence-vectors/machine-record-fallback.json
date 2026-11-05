@@ -29,6 +29,292 @@
       }
     },
     {
+      "case": "descriptor-unavailable",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "descriptor": 2
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_descriptor_unavailable. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_descriptor_unavailable",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "probe-bytes-below",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "capability_bytes": 4095
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "private"
+            }
+          ],
+          "supported": true,
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "probe-bytes-at",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "capability_bytes": 4096
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "private"
+            }
+          ],
+          "supported": true,
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "probe-bytes-above",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "capability_bytes": 4097
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "private-bytes-below",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "channel_bytes": 2097151
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "private"
+            }
+          ],
+          "supported": true,
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-bytes-at",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "channel_bytes": 2097152
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "private"
+            }
+          ],
+          "supported": true,
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-bytes-above",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "channel_bytes": 2097153
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_too_large. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_too_large",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "stdout-bytes-below",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "channel_bytes": 2097151
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "stdout-bytes-at",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "channel_bytes": 2097152
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "stdout-bytes-above",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "channel_bytes": 2097153
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_stdout: stdout_record_too_large. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_stdout",
+              "termination_reason": "stdout_record_too_large",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
       "case": "absent",
       "input": {
         "capability": "",

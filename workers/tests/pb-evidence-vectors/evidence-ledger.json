@@ -3804,6 +3804,247 @@
       }
     },
     {
+      "case": "invalid-selectors-base",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          0,
+          [
+            "tests/test_old.py::test_old"
+          ]
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "invalid evidence selectors"
+        }
+      }
+    },
+    {
+      "case": "invalid-selectors-test",
+      "input": {
+        "operation": "selectors",
+        "value": [
+          false,
+          [
+            1
+          ]
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "invalid evidence selectors"
+        }
+      }
+    },
+    {
+      "case": "restore-count-over-limit",
+      "input": {
+        "operation": "restore",
+        "value": {
+          "infrastructure_keys": [],
+          "tool_errors": {},
+          "test_runs": [
+            {
+              "index": 0
+            },
+            {
+              "index": 1
+            },
+            {
+              "index": 2
+            },
+            {
+              "index": 3
+            },
+            {
+              "index": 4
+            },
+            {
+              "index": 5
+            },
+            {
+              "index": 6
+            },
+            {
+              "index": 7
+            },
+            {
+              "index": 8
+            },
+            {
+              "index": 9
+            },
+            {
+              "index": 10
+            },
+            {
+              "index": 11
+            }
+          ]
+        }
+      },
+      "output": {
+        "return": {
+          "state": {
+            "infrastructure_keys": [],
+            "tool_errors": {},
+            "test_runs": [
+              {
+                "index": 2
+              },
+              {
+                "index": 3
+              },
+              {
+                "index": 4
+              },
+              {
+                "index": 5
+              },
+              {
+                "index": 6
+              },
+              {
+                "index": 7
+              },
+              {
+                "index": 8
+              },
+              {
+                "index": 9
+              },
+              {
+                "index": 10
+              },
+              {
+                "index": 11
+              }
+            ]
+          },
+          "restored": {
+            "infrastructure_keys": [],
+            "tool_errors": {},
+            "test_runs": [
+              {
+                "index": 2
+              },
+              {
+                "index": 3
+              },
+              {
+                "index": 4
+              },
+              {
+                "index": 5
+              },
+              {
+                "index": 6
+              },
+              {
+                "index": 7
+              },
+              {
+                "index": 8
+              },
+              {
+                "index": 9
+              },
+              {
+                "index": 10
+              },
+              {
+                "index": 11
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "case": "invalid-state-key",
+      "input": {
+        "operation": "restore",
+        "value": {
+          "infrastructure_keys": [
+            [
+              1,
+              null
+            ]
+          ],
+          "tool_errors": {},
+          "test_runs": []
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "invalid evidence state"
+        }
+      }
+    },
+    {
+      "case": "invalid-state-tool",
+      "input": {
+        "operation": "restore",
+        "value": {
+          "infrastructure_keys": [],
+          "tool_errors": {
+            "x": {
+              "tool": 1,
+              "class": "x",
+              "selectors": null
+            }
+          },
+          "test_runs": []
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "invalid evidence state"
+        }
+      }
+    },
+    {
+      "case": "invalid-state-runs",
+      "input": {
+        "operation": "restore",
+        "value": {
+          "infrastructure_keys": [],
+          "tool_errors": {},
+          "test_runs": {}
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "invalid evidence state"
+        }
+      }
+    },
+    {
+      "case": "invalid-state-run",
+      "input": {
+        "operation": "restore",
+        "value": {
+          "infrastructure_keys": [],
+          "tool_errors": {},
+          "test_runs": [
+            null
+          ]
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "invalid evidence state"
+        }
+      }
+    },
+    {
       "case": "spend-retires",
       "input": {
         "events": [
