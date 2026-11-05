@@ -150,12 +150,11 @@ fn summary_order(raw: &[u8], prefix: &str) -> Order {
 }
 fn layout(operation: &str, document: &Value, input: &Order, summary: Order) -> Order {
     match operation {
-        "summary-finish" => {
-            let mut order = summary;
-            order.put("action_key", Order::Leaf);
-            order.put(
-                "receipts",
-                Order::Array(vec![Order::object(&[
+        "summary-finish" | "summary-decorate" => {
+            let receipt = if operation == "summary-decorate" {
+                input.child("receipt")
+            } else {
+                Order::object(&[
                     "action_key",
                     "status",
                     "exit_code",
@@ -163,8 +162,18 @@ fn layout(operation: &str, document: &Value, input: &Order, summary: Order) -> O
                     "log_sha256",
                     "attempt",
                     "generation",
-                ])]),
-            );
+                ])
+            };
+            if document["before_bound"] == true {
+                return Order::Array(vec![summary, receipt]);
+            }
+            let mut order = if operation == "summary-decorate" {
+                input.child("result")
+            } else {
+                summary
+            };
+            order.put("action_key", Order::Leaf);
+            order.put("receipts", Order::Array(vec![receipt]));
             order
         }
         "generator-finish" => {
@@ -248,7 +257,10 @@ fn layout(operation: &str, document: &Value, input: &Order, summary: Order) -> O
 pub fn respond(operation: &str, raw: &str) -> Result<Box<RawValue>, serde_json::Error> {
     let mut document: Value = serde_json::from_str(raw)?;
     crate::python_json::normalize_floats(&mut document);
-    let input = if matches!(operation, "identity" | "consistency" | "generator-validate") {
+    let input = if matches!(
+        operation,
+        "identity" | "consistency" | "generator-validate" | "summary-decorate"
+    ) {
         serde_json::from_str(raw)?
     } else {
         Order::Leaf
@@ -275,8 +287,20 @@ pub fn respond(operation: &str, raw: &str) -> Result<Box<RawValue>, serde_json::
     // rejects Value's native u128 visitor, while JSON retains arbitrary integers.
     serde_json::from_str(&serde_json::to_string(&document).expect("JSON document serializes"))?;
     let decision = match (request, log) {
-        (crate::Request::SummaryFinish { ending, key, .. }, Some(Ok(raw))) => {
-            crate::ending::finish(&ending, &key, &raw, false)
+        (
+            crate::Request::SummaryFinish {
+                ending,
+                key,
+                before_bound,
+                ..
+            },
+            Some(Ok(raw)),
+        ) => {
+            if before_bound {
+                crate::ending::before_bound(&ending, &key, &raw)
+            } else {
+                crate::ending::finish(&ending, &key, &raw, false)
+            }
         }
         (crate::Request::GeneratorFinish { ending, key, .. }, Some(Ok(raw))) => {
             crate::ending::finish(&ending, &key, &raw, true)

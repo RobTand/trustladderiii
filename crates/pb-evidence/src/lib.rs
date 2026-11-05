@@ -29,6 +29,13 @@ pub enum Request {
         ending: PbEnding,
         key: String,
         raw: String,
+        #[serde(default)]
+        before_bound: bool,
+    },
+    SummaryDecorate {
+        result: Value,
+        key: String,
+        receipt: Value,
     },
     GeneratorStart {
         ending: PbEnding,
@@ -145,9 +152,23 @@ pub fn evaluate(request: Request) -> Result<Value> {
             Ok(serde_json::to_value(ending::start(&ending, &key, false)?)
                 .expect("log receipt serializes"))
         }
-        Request::SummaryFinish { ending, key, raw } => {
-            ending::finish(&ending, &key, &bytes(&raw)?, false)
+        Request::SummaryFinish {
+            ending,
+            key,
+            raw,
+            before_bound,
+        } => {
+            if before_bound {
+                ending::before_bound(&ending, &key, &bytes(&raw)?)
+            } else {
+                ending::finish(&ending, &key, &bytes(&raw)?, false)
+            }
         }
+        Request::SummaryDecorate {
+            result,
+            key,
+            receipt,
+        } => Ok(ending::decorate(result, &key, receipt)),
         Request::GeneratorStart { ending, key } => {
             Ok(serde_json::to_value(ending::start(&ending, &key, true)?)
                 .expect("log receipt serializes"))

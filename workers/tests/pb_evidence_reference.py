@@ -18,3 +18,10 @@ pb_generators = load('pb_generators')
 pb_generators.TestSettings = pb_tests.TestSettings
 pb_generators._failure_receipt = pb_tests._failure_receipt
 forcing_rehearsal = load('forcing_rehearsal')
+
+# S2 changed the action envelope in the integration base. Keep the three original
+# references verbatim and separately pin that current-base summary shell.
+s2_pb_tests = load('s2_pb_tests')
+from tl3_workers import pb_tests as current
+s2_pb_tests._harness_validator = current._harness_validator
+pb_tests._summary = s2_pb_tests._summary

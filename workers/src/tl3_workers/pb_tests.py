@@ -328,7 +328,10 @@ def _summary(ending, key):
             raw = stream.read(1_048_577)
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, 'summary', 'invalid_log_receipt') from error
-    result = _check_pb('summary-finish', ending=facts, key=key, raw=encoded(raw))
+    result, receipt = _check_pb('summary-finish', ending=facts, key=key, raw=encoded(raw), before_bound=True)
+    if result.get('declared_symptom') is None:
+        result = bounded(result, limit=SUMMARY_BYTES - 2048)
+    result = _check_pb('summary-decorate', result=result, key=key, receipt=receipt)
     return bounded(result, limit=SUMMARY_BYTES - 512)
 
 

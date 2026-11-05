@@ -181,6 +181,26 @@ fn summary_shape(value: &Value) -> bool {
 }
 
 pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Result<Value> {
+    finish_parts(ending, key, raw, generator, false)
+}
+
+pub fn before_bound(ending: &PbEnding, key: &str, raw: &[u8]) -> Result<Value> {
+    finish_parts(ending, key, raw, false, true)
+}
+
+pub fn decorate(mut result: Value, key: &str, receipt: Value) -> Value {
+    result["action_key"] = json!(key);
+    result["receipts"] = json!([receipt]);
+    result
+}
+
+fn finish_parts(
+    ending: &PbEnding,
+    key: &str,
+    raw: &[u8],
+    generator: bool,
+    separate: bool,
+) -> Result<Value> {
     let log = start(ending, key, generator)?;
     let mut cause = "invalid_log_receipt";
     let mut decide = || -> Result<Value> {
@@ -212,7 +232,7 @@ pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Resu
             }));
         }
         cause = "invalid_summary";
-        let mut result = parse(records[0])?;
+        let result = parse(records[0])?;
         if generator {
             let mut receipt = json!({"action_key":key,"artifact_sha256":log.sha256,"receipt_sha256":ending.result.optional()["receipt_sha256"],
                 "exit_code":get(&result,"exit_code")?,"inner":{"status":get(&result,"status")?,"exit_code":get(&result,"exit_code")?},
@@ -272,12 +292,14 @@ pub fn finish(ending: &PbEnding, key: &str, raw: &[u8], generator: bool) -> Resu
         if !summary_shape(&result) {
             return Err(Refusal::value("Invalid summary structure"));
         }
-        result["action_key"] = json!(key);
         let mut receipt = json!({"action_key":key,"status":ending.status.optional(),"exit_code":ending.exit_code.optional(),
             "receipt_sha256":ending.result.optional()["receipt_sha256"],"log_sha256":log.sha256});
         metadata(ending, &mut receipt);
-        result["receipts"] = json!([receipt]);
-        Ok(result)
+        Ok(if separate {
+            json!([result, receipt])
+        } else {
+            decorate(result, key, receipt)
+        })
     };
     decide().map_err(|error| {
         if generator || error.kind == "AttributeError" {
