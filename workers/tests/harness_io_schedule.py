@@ -94,14 +94,21 @@ def action(module, directory, schedule):
     entries = [{'event': 'result', 'test': f't.py::t{index:02}',
                 'outcome': outcomes[code % 4], 'message': '' if schedule.get('empty_messages') else f'message-{code}', 'truncated': False}
                for index, code in enumerate(schedule['reads'])]
-    exit_code = int(any(entry['outcome'] in ('failed', 'error') for entry in entries))
-    records = [{'event': 'start', 'schema': 1}, *entries, {'event': 'finish', 'exit_code': exit_code}]
+    launches = 0
 
     class Process:
         report_started = True
 
         def __init__(self, command, selection, tests):
+            nonlocal launches
             trace.append(('launch', command, selection.getvalue().hex(), tests))
+            observed = deepcopy(entries)
+            codes = schedule['reads']
+            for index, item in enumerate(observed):
+                item['outcome'] = outcomes[codes[(index + launches) % len(codes)] % 4]
+            launches += 1
+            self.code = int(any(item['outcome'] in ('failed', 'error') for item in observed))
+            self.observed = [{'event':'start', 'schema':1}, *observed, {'event':'finish', 'exit_code':self.code}]
 
         def __enter__(self):
             return self
@@ -110,14 +117,14 @@ def action(module, directory, schedule):
             trace.append(('process-close',))
 
         def records(self):
-            for index, record in enumerate(records):
+            for index, record in enumerate(self.observed):
                 trace.append(('report-read', index, deepcopy(record)))
                 yield json.dumps(record)
 
         @property
         def exit_code(self):
-            trace.append(('exit-read', exit_code))
-            return exit_code
+            trace.append(('exit-read', self.code))
+            return self.code
 
         def incomplete(self):
             trace.append(('incomplete',))
@@ -160,7 +167,10 @@ def action(module, directory, schedule):
 
     def opened(path, mode='r', *args, **kwargs):
         if path.parent == directory and path.name.startswith('progress'):
-            trace.append(('open', path.name, mode))
+            call = ('open', path.name, mode)
+            if any(flag in mode for flag in 'wax+'):
+                return change(call, lambda: File(original_open(path, mode, *args, **kwargs)))
+            trace.append(call)
             return File(original_open(path, mode, *args, **kwargs))
         return original_open(path, mode, *args, **kwargs)
 
@@ -321,7 +331,10 @@ def lifecycle(module, directory, schedule):
 
     def opened(path, mode='r', *args, **kwargs):
         if path.is_relative_to(directory):
-            trace.append(('stage-open', name(path), mode))
+            call = ('stage-open', name(path), mode)
+            if any(flag in mode for flag in 'wax+'):
+                return change(call, lambda: File(original_open(path, mode, *args, **kwargs), path))
+            trace.append(call)
             return File(original_open(path, mode, *args, **kwargs), path)
         return original_open(path, mode, *args, **kwargs)
 
