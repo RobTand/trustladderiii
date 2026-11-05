@@ -3424,7 +3424,7 @@ impl Controller {
                 generation,
                 role,
                 mut reply,
-                model: _,
+                model,
             } => {
                 use tl3_controller_core::translate_worker as worker;
                 let n = world

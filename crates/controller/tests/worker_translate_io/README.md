@@ -52,7 +52,7 @@ trace for invalid maker paths and known request-scope citations without a quote.
 intentional difference from production is the legacy model-only quota clear,
 which is now forbidden. Its exact bytes and SHA256 are pinned separately in
 legacy-quota-clear.rs.txt and pins.json. The source check strips only that block
-and its now-unused model binding before comparing all remaining code to
+before comparing all remaining code to
 production. Original differential schedules, I/O assertions and references stay
 unchanged. The real-store quota_hold upgrade regression proves that an older or
 other-family success preserves unknown legacy quota after restart.

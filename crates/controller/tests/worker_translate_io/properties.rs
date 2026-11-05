@@ -28,7 +28,7 @@ fn production_and_reference_sources_are_pinned() {
     assert_eq!(format!("{:x}", Sha256::digest(legacy)), pins["legacy_quota_clear"]["sha256"]);
     let source = include_str!("../../src/lib.rs");
     let historical_current = include_str!("current.rs");
-    let normalized = historical_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n").replace("                model,\n", "                model: _,\n");
+    let normalized = historical_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n");
     let normalized_arm = arm(&normalized);
     let normalized_end = normalized_arm.find("        };\n        *detail").unwrap();
     assert_eq!(&normalized_arm[..normalized_end], arm(source));
