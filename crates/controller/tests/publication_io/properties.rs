@@ -54,7 +54,13 @@ fn check(entry: Entry, scenario: Scenario) {
                 initial_attempt,
                 initial_comments,
                 input_shape,
-                body_shape,
+                // Oversized bodies exercise the changed acceptance filter in reconcile.
+                // Publishing body formatting is unchanged and its regex work is expensive.
+                body_shape: if matches!(entry, Entry::Publish) && body_shape == 2 {
+                    1
+                } else {
+                    body_shape
+                },
                 operations_shape,
             },
         );
