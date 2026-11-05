@@ -242,10 +242,6 @@ macro_rules! controller {
             fn complete(&self, key: &str, c: Completion) -> Result<()> {
                 io::write("complete", json!([key, c]), |_| {})
             }
-            fn expire_model_quotas(&self, now: u64) -> Result<()> {
-                io::record("expire_quotas", json!(now));
-                Ok(())
-            }
             fn ladder_out_note(&self, s: &AllowanceState, resume: u64, now: u64) -> Result<()> {
                 io::write("ladder_note", json!([s, resume, now]), |_| {})
             }

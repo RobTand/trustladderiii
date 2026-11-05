@@ -236,6 +236,7 @@ fn source_pins_and_production_copies() {
             "record_progress",
             "progress_allowance",
             "quota_allowance",
+            "expire_model_quotas",
         ] {
             assert_eq!(
                 function(source, name, true),

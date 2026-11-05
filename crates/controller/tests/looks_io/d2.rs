@@ -29,7 +29,7 @@ fn mandatory_d2_quota_wait_and_ladder_bound() {
             frames: vec![(0, 1_000_000)],
             ..schedule()
         });
-        assert!(has(&r, "expire_quotas") && has(&r, "quota_resume"));
+        assert!(has(&r, "store.load") && has(&r, "quota_resume"));
         assert_eq!(has(&r, "ladder_note"), note);
         assert!(!has(&r, "look"));
         if !note {

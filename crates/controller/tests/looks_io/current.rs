@@ -879,6 +879,26 @@ impl Controller {
         }
         Ok(())
     }
+    fn expire_model_quotas(&mut self, now: u64) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("model-quota-reset:{}", snapshot.revision.get()),
+            json!({"model_quota_reset": now}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| {
+            row.table == "model_quotas" && row.value["reset_ms"].as_u64().is_none_or(|r| r <= now)
+        }) {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
 }
 pub(crate) fn incident_needs_rob(cause: IncidentCause) -> bool {
     let cause = match cause {

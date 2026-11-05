@@ -7,7 +7,7 @@ HERE = Path(__file__).resolve().parent
 BASE = 'cdacce8f99c28ca8dba8f5f76831b77b4dfcd836'
 METHODS = ['look_state', 'look_alive', 'finish_stall', 'rearm', 'look_failed',
            'look_observations', 'probe_passed', 'save_allowance', 'allowance_row', 'record_progress',
-           'progress_allowance', 'quota_allowance']
+           'progress_allowance', 'quota_allowance', 'expire_model_quotas']
 FUNCTIONS = ['incident_needs_rob', 'incident_id', 'incident_note', 'failure_class',
              'incident_summary', 'queue_command_detail']
 
