@@ -210,7 +210,9 @@ pub fn decide(kind: &str, document: serde_json::Value) -> crate::Result<serde_js
 
 pub fn command(kind: Option<&str>) -> crate::Result<()> {
     if kind == Some("schema") {
-        serde_json::to_writer_pretty(std::io::stdout().lock(), &wire_schema())?;
+        let mut output = std::io::stdout().lock();
+        serde_json::to_writer_pretty(&mut output, &wire_schema())?;
+        writeln!(output)?;
         return Ok(());
     }
     let Some(kind @ ("summary" | "identity")) = kind else {

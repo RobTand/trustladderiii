@@ -54,7 +54,10 @@ def selector_identity(selectors):
     selected = [list(map(ord, selector)) for selector in selectors]
     response = _harness_check('identity', 'identity', selectors=selected)
     try:
-        return {**response, 'prefix': [''.join(map(chr, points)) for points in response['prefix']]}
+        # Preserve the legacy JSON field order at this transport boundary.
+        return {'schema': response['schema'], 'count': response['count'],
+                'sha256': response['sha256'],
+                'prefix': [''.join(map(chr, points)) for points in response['prefix']]}
     except (ValueError, TypeError):
         raise ReplyCheckInfrastructureError('harness validator returned invalid output') from None
 

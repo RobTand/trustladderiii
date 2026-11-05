@@ -1062,6 +1062,16 @@
         "ending-summary/log-size-negative"
       ]
     },
+    "pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 2048)": {
+      "values": [
+        14336
+      ],
+      "cases": [
+        "ending-summary/action-summary-bytes-below",
+        "ending-summary/action-summary-bytes-at",
+        "ending-summary/action-summary-bytes-above"
+      ]
+    },
     "pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 512)": {
       "values": [
         15872

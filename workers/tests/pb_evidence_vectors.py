@@ -108,6 +108,7 @@ def cases(kind):
             yield 'root-' + name, log_input(value)
         for name, size in [('below', 14_335), ('at', 14_336), ('above', 14_337)]:
             yield 'default-summary-bytes-' + name, {'target_bytes': size, 'default_bound': True}
+            yield 'action-summary-bytes-' + name, {'action_target_bytes': size}
         yield 'identity-over-limit', {'target_bytes': 15_873, 'identity': True}
         for name, size in [('below', 15_871), ('at', 15_872), ('above', 15_873)]:
             yield 'summary-bytes-' + name, {'target_bytes': size}
@@ -428,6 +429,13 @@ def evaluate(kind, data, root):
         result = generator.validate_artifact(artifact, {}, contract)
         return {'outputs': len(outputs), 'bytes': sum(e['bytes'] for e in result.values()),
                 'manifest': generator.digest(result)}
+    if kind == 'ending-summary' and 'action_target_bytes' in data:
+        summary = completed()
+        summary['tests'][0]['message'] = 'x' * (data['action_target_bytes'] - len(json.dumps(summary).encode()))
+        before_bytes = len(json.dumps(summary).encode())
+        assert before_bytes == data['action_target_bytes']
+        value = evaluate(kind, log_input(summary), root)
+        return {'before_bytes': before_bytes, 'after_bytes': len(json.dumps(value).encode()), 'summary': value}
     if kind == 'ending-summary' and 'target_bytes' in data:
         summary = completed()
         if data.get('identity'):
@@ -858,6 +866,9 @@ BOUND_CASES = {'generator.budget: 1 <= cpus <= 16': ['generator-artifact/budget-
                                                      'ending-summary/log-bytes-at',
                                                      'ending-summary/log-bytes-above',
                                                      'ending-summary/log-size-negative'],
+ 'pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 2048)': ['ending-summary/action-summary-bytes-below',
+                                                                    'ending-summary/action-summary-bytes-at',
+                                                                    'ending-summary/action-summary-bytes-above'],
  'pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 512)': ['ending-summary/summary-bytes-below',
                                                                    'ending-summary/summary-bytes-at',
                                                                    'ending-summary/summary-bytes-above'],

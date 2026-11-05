@@ -132,10 +132,18 @@ def test_summary_bounds_use_the_enriched_python_json_bytes():
         assert result['after_bytes'] <= 15872
         summary = result['summary']
         assert summary['totals']['passed'] == 1 and summary['receipts'][0]['action_key']
+        # These raw summaries already exceed the former action limit, before
+        # receipts are attached. #823 now enforces that limit in Rust first.
+        assert summary['tests'] == [] and summary['note'].startswith('Truncated:')
+    for name, size in [('below', 14335), ('at', 14336), ('above', 14337)]:
+        result = cases['action-summary-bytes-' + name]['return']
+        assert result['before_bytes'] == size and result['after_bytes'] <= 15872
+        summary = result['summary']
+        assert summary['totals']['passed'] == 1 and summary['receipts'][0]['action_key']
         if name == 'above':
             assert summary['tests'] == [] and summary['note'].startswith('Truncated:')
         else:
-            assert result['after_bytes'] == size and len(summary['tests']) == 1 and summary['note'] == ''
+            assert len(summary['tests']) == 1 and summary['note'] == ''
 
 
 def test_real_generator_limits_and_text_refusals():
