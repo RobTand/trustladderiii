@@ -650,6 +650,8 @@ def verus_proofs():
             "facts_ci_failed_cancellation_input": ("kernel::facts_ci_failed_lemmas#cancellation_input", 1),
             "kernel_cont_rank_ready": ("kernel#cont_rank_ready", 1),
             "facts_merge_late_result": ("kernel::facts_merge_lemmas#late_result", 1),
+            "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
+            "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

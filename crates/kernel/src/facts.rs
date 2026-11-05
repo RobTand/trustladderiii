@@ -279,14 +279,14 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
     kernel_snapshot! { before_merge = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
-        kernel_proof! { reveal(retirement::fact_node); }
+        kernel_proof! { facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed); }
         return;
     }
     let approved = m.approved == Some(head) && checks_passed;
     match m.phase {
         Phase::Closed(o) => {
             if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
-                kernel_proof! { reveal(retirement::fact_node); }
+                kernel_proof! { facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed); }
                 return;
             }
             // A late merge corrects the record and earns its credit once.
@@ -301,7 +301,9 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
         }
         _ => {
             merge_open(m, head);
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! {
+                facts_merge_lemmas::open_result(before_merge@, *m, head, checks_passed);
+            }
         }
     }
     if !approved {
