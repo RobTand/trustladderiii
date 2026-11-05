@@ -1757,6 +1757,7 @@ impl Controller {
             executor::Output::Effect {
                 node,
                 kind: tl3_kernel::EffectKind::StopRun,
+                ..
             } if completion.ack == Ack::Confirmed => Some(node),
             _ => None,
         };

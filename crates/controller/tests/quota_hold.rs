@@ -766,6 +766,10 @@ fn restart_does_not_overlap_a_running_probe() {
 fn success_in_another_family_does_not_clear_the_old_hold() {
     let mut f = Fixture::new();
     let key = f.held(false);
+    // Credentials are outside the quota identity. Even a rotated proxy account
+    // cannot let success in an unshared family clear this family's hold.
+    f.config.models.key_file = f.root.path().join("replacement-key");
+    fs::write(&f.config.models.key_file, "replacement-fixture-only").unwrap();
     for ladder in [
         &mut f.config.models.ingest,
         &mut f.config.models.audit,
@@ -807,6 +811,24 @@ fn success_in_another_family_does_not_clear_the_old_hold() {
             .family
             .as_deref(),
         Some("alternate")
+    );
+}
+
+/// Q53 / #828: quota records are shared by model across proxy credentials.
+#[test]
+fn same_model_and_family_success_after_credential_rotation_clears_shared_hold() {
+    let mut f = Fixture::new();
+    let key = f.held(false);
+    f.config.models.key_file = f.root.path().join("replacement-key");
+    fs::write(&f.config.models.key_file, "replacement-fixture-only").unwrap();
+    let mut f = f.restart();
+    f.intake(2663);
+    f.success();
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "the quota identity is shared across credentials"
     );
 }
 
