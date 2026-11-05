@@ -11,7 +11,7 @@
   },
   "crate:tl3-harness-core": {
     "reason": "Wave B harness decision crate for #730 (#824).",
-    "sources": 19,
-    "max_fanout": 97
+    "sources": 21,
+    "max_fanout": 100
   }
 }

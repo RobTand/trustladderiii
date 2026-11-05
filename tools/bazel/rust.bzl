@@ -55,12 +55,6 @@ _WAVE_B_STUB = {
 }
 
 _WAVE_B_ENTRIES = {
-    # judge (#822)
-    "judge": _WAVE_B_STUB,
-    # phase-fold (#822)
-    "phase-fold": _WAVE_B_STUB,
-    # finish-teardown (#822)
-    "finish-teardown": _WAVE_B_STUB,
     # summary-bound (#823)
     "summary-bound": {
         "srcs": ["tests/summary_bound.rs", "tests/summary_bound/reference.rs", "tests/summary_bound/conformance.rs"],
