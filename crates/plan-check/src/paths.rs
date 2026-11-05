@@ -59,21 +59,20 @@ fn class_ranges(stuff: &[char]) -> (bool, Vec<(char, char)>) {
         }
     }
     let negated = chunks.first().and_then(|chunk| chunk.first()) == Some(&'!');
-    if let Some(first) = chunks.first_mut() {
-        if first.first() == Some(&'!') {
-            first.remove(0);
-        }
+    if let Some(first) = chunks.first_mut()
+        && first.first() == Some(&'!')
+    {
+        first.remove(0);
     }
     let mut ranges = Vec::new();
     // Each join is one genuine range; escaped hyphens inside chunks stay literal.
     let mut previous: Option<char> = None;
     for (index, chunk) in chunks.iter().enumerate() {
-        if index > 0 {
-            if let Some(left) = previous.take() {
-                if let Some(&right) = chunk.first() {
-                    ranges.push((left, right));
-                }
-            }
+        if index > 0
+            && let Some(left) = previous.take()
+            && let Some(&right) = chunk.first()
+        {
+            ranges.push((left, right));
         }
         for (position, &c) in chunk.iter().enumerate() {
             if index > 0 && position == 0 {
