@@ -38,7 +38,9 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
                 dependencies::delivery_input(*old(w), i as int, target),
             _ => false,
         } ==> progress::progress_measure(*final(w)) + 1 == progress::progress_measure(*old(w))
-            && dependencies::edges_indexable(*final(w))),
+            && dependencies::edges_indexable(*final(w))
+            && match fact { Fact::Dependency { target, .. } =>
+                dependencies::delivery_changed(*old(w), *final(w), i as int, target), _ => false }),
 ] proof [reveal(dependencies::dependency_frame);] {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),

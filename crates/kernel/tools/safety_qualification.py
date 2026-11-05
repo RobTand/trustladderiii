@@ -15,6 +15,15 @@ import bazel_gate  # noqa: E402
 
 
 CASES = {
+    'delivery_retained': ('crates/kernel/src/dependencies.rs',
+                          'Some(index) => self.dependencies[index] = dependency,',
+                          'Some(index) => self.dependencies[index] = Dependency { '
+                          'status: DependencyStatus::Pending, ..dependency },',
+                          '//crates/kernel:verus_dependencies'),
+    'delivery_dispatch': ('crates/kernel/src/facts.rs',
+                          'Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),',
+                          'Fact::Dependency { target, status } => { let _ = (target, status); },',
+                          '//crates/kernel:verus_facts'),
     'apply_enforcement': ('crates/controller/src/input_errors.rs',
                           'world.counter_exhaustion()',
                           'world.counter_exhaustion().filter(|_| false)',

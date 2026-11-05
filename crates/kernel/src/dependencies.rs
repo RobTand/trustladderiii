@@ -44,6 +44,17 @@ pub closed spec fn edges_indexable(world: World) -> bool {
         }
 }
 
+/// #805: expose the existing owner/target index invariant across proof modules.
+pub(super) proof fn indexable_definition(world: World)
+    ensures edges_indexable(world) == (forall|i: int| 0 <= i < world.dependencies@.len() ==>
+        world.dependencies@[i].node.0 < world.nodes@.len()
+        && match world.dependencies@[i].target.request {
+            None => true, Some(node) => node.0 < world.nodes@.len(),
+        }),
+{
+    reveal(edges_indexable);
+}
+
 /// #693 / #771: one declaration's existing consistency requirements.
 pub(super) open spec fn dependency_checked(world: World, dependency: Dependency) -> bool {
     let owner = world.nodes@[dependency.node.0 as int];

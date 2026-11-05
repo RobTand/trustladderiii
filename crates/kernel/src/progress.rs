@@ -89,7 +89,8 @@ proof fn edge_prefix_equal(nodes: Seq<Node>, left: Seq<Dependency>, right: Seq<D
 
 /// #805: the changed-edge witness plus the frame pays exactly one rank token.
 pub(super) proof fn delivery_rank_delta(before: World, after: World, i: int, k: int)
-    requires 0 <= i < before.nodes@.len(), 0 <= k < before.dependencies@.len(),
+    requires 0 <= i < before.nodes@.len(), i <= u64::MAX as int,
+        0 <= k < before.dependencies@.len(),
         dependencies::edges_indexable(before), dependencies::dependency_frame(before, after, i),
         before.dependencies@[k].node == NodeId(i as u64),
         before.dependencies@[k].status == DependencyStatus::Pending,
@@ -100,7 +101,8 @@ pub(super) proof fn delivery_rank_delta(before: World, after: World, i: int, k: 
         dependencies::edges_indexable(after),
 {
     delivery_node_frame(before, after, i);
-    reveal(dependencies::edges_indexable);
+    dependencies::indexable_definition(before);
+    dependencies::indexable_definition(after);
     reveal(edge_weight);
     assert forall|j: int| 0 <= j < before.dependencies@.len() implies
         edge_weight(after.nodes@, before.dependencies@[j])
@@ -108,6 +110,8 @@ pub(super) proof fn delivery_rank_delta(before: World, after: World, i: int, k: 
     edge_prefix_frame(before.nodes@, after.nodes@, before.dependencies@, before.dependencies@.len());
     edge_update_delta(after.nodes@, before.dependencies@, k, after.dependencies@[k],
         before.dependencies@.len());
+    assert(edge_weight(after.nodes@, before.dependencies@[k]) == 1);
+    assert(edge_weight(after.nodes@, after.dependencies@[k]) == 0);
     reveal(progress_measure);
 }
 }
