@@ -2,6 +2,11 @@ use super::*;
 use crate::git_tests::{Repo, documents, git, support::Database};
 use tl3_kernel::{Command as KernelCommand, Fact, NodeId, Notice, Phase, Priority, RepoId, World};
 
+fn typed_round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(value: &serde_json::Value) {
+    let parsed: T = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), *value);
+}
+
 fn materials(
     f: &Repo,
     config: &tl3_config::Config,
@@ -353,6 +358,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         .request(&delivery, role, &mut store, &snapshot)
                         .unwrap_or_else(|error| panic!("{role} {:?}: {error}", n.phase));
                     protocol::validate_inputs(role, &request["inputs"]).unwrap();
+                    typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
                     if matches!(role, "ingest" | "audit") {
                         assert_eq!(
                             request["inputs"]["issue"]["title"],
@@ -421,6 +427,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             .request(&classify, "classifier", &mut store, &snapshot)
             .unwrap();
         protocol::validate_inputs("classifier", &request["inputs"]).unwrap();
+        typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
         coverage.insert("classifier");
         delivery.output = Out::Comment {
             node: NodeId(0),
@@ -434,6 +441,10 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             .request(&delivery, "postmortem", &mut store, &snapshot)
             .unwrap();
         protocol::validate_inputs("postmortem", &request["inputs"]).unwrap();
+        typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
+        typed_round_trip::<tl3_contracts::roles::postmortem_input::PostmortemInput>(
+            &request["inputs"],
+        );
         coverage.insert("postmortem");
     }
     assert_eq!(

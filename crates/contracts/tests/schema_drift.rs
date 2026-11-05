@@ -5,10 +5,24 @@ use tl3_contracts as contracts;
 const FIX: &str = "bazel run --config=remote //crates/contracts:tl3-contracts-schemas";
 
 // The committed generated files, compiled in so the check stays hermetic.
-const COMMITTED: &[(&str, &str)] = &[(
-    "workers/src/tl3_workers/schemas/check-report.json",
-    include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
-)];
+const COMMITTED: &[(&str, &str)] = &[
+    (
+        "workers/src/tl3_workers/schemas/check-report.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/decision-context.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/decision-context.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/request.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/request.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/postmortem-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/postmortem-input.json"),
+    ),
+];
 
 #[test]
 fn generated_schemas_match_committed() {
