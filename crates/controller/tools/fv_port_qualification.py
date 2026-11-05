@@ -76,6 +76,12 @@ CASES = {
         '    status == 429 || status == 403',
         '//crates/github:verus_status',
     ),
+    'postmortem_vacant_slot': (
+        'crates/controller/src/postmortem_reply/decision.rs',
+        '        let Some(item) = item else { continue };',
+        '        let Some(item) = item else { break };',
+        '//crates/controller:test_test_postmortem_decision',
+    ),
 }
 
 
@@ -117,16 +123,16 @@ def main():
     try:
         statuses, log = run(workspace, target, 'fv-port-baseline-' + args.case)
         assert statuses.get(target) == 'PASSED', statuses
-        report['baseline_receipt'] = json.loads(next(
-            line.removeprefix('VERUS_PROOF ') for line in log.splitlines()
-            if line.startswith('VERUS_PROOF ')))
         proof = ':verus_' in target
         if proof:
-            assert 'VERUS_PROOF' in log
+            report['baseline_receipt'] = json.loads(next(
+                line.removeprefix('VERUS_PROOF ') for line in log.splitlines()
+                if line.startswith('VERUS_PROOF ')))
         else:
             assert any(event.get('event') == 'ok' and event.get('passed', 0) > 0
                        for event in libtest_summaries(log)), (
                 'controller qualification must execute nonzero tests')
+            report['baseline_summaries'] = libtest_summaries(log)
         path = workspace.root / filename
         source = path.read_text()
         assert source.count(before) == 1, 'mutant must select exactly one source expression'
