@@ -171,6 +171,10 @@ CASES = {
                                     'self.check_node(&self.nodes[i])?;\n'
                                     '            if i == 0 && self.nodes[i].phase == Phase::Making { return Err(Broken::Gate); }',
                                     '//crates/kernel:verus_checking'),
+    'gate_reply_admission': ('crates/kernel/src/reply_admission.rs',
+                             'end_operation(&mut w.nodes[i]);',
+                             'end_operation(&mut w.nodes[i]);\n    w.nodes[i].pool = true;',
+                             '//crates/kernel:verus_reply_admission_on_reply'),
 
 }
 

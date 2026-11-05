@@ -44,4 +44,55 @@ pub(super) open spec fn maker_reply(before: World, after: World, i: int,
         _ => true,
     }
 }
+
+/// Maker completion row / #806: rejected and unrelated replies make no MakerDone claim.
+pub(super) proof fn maker_reply_inactive(before: World, after: World, i: int,
+    generation: u64, reply: Reply, before_out: Outbox, after_out: Outbox)
+    requires 0 <= i < before.nodes@.len(),
+        !(reply is MakerDone) || before.nodes@[i].effect.is_some()
+            || before.nodes@[i].phase != Phase::Making
+            || current_item(before.nodes@[i]) != Some(Item::Await)
+            || before.nodes@[i].run != Some(generation),
+    ensures maker_reply(before, after, i, generation, reply, before_out, after_out),
+{
+    reveal(maker_reply);
+}
+
+/// Maker completion row / #806: compose the real end_operation and reply_transition contracts.
+pub(super) proof fn maker_reply_composed(before: World, ended: World, after: World, i: int,
+    generation: u64, reply: Reply, before_out: Outbox, after_out: Outbox)
+    requires 0 <= i < before.nodes@.len(), 0 <= i < ended.nodes@.len(),
+        ended.nodes@[i] == (Node { run: None, job: None, pool: false,
+            run_failures: 0, run_incidents: 0,
+            effect: match before.nodes@[i].effect {
+                Some(e) => Some(InFlight { cancelling: e.cancelling
+                    || matches!(e.kind, EffectKind::StartRun(_)
+                        | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
+                None => None,
+            }, ..before.nodes@[i] }),
+        ended.next_question == before.next_question, ended.file_sets@ == before.file_sets@,
+        maker_transition(ended, after, i, reply, before_out, after_out),
+    ensures maker_reply(before, after, i, generation, reply, before_out, after_out),
+{
+    reveal(maker_reply);
+    reveal(maker_transition);
+}
+
+/// Reply rows / #806: unchanged file storage preserves the opaque ordering predicate.
+pub(super) proof fn table_order_frame(before: World, after: World)
+    requires footprint::ordered_table(before), after.file_sets@ == before.file_sets@,
+    ensures footprint::ordered_table(after),
+{
+    reveal(footprint::ordered_table);
+}
+
+/// Reply rows / #806: finishing an unobstructed operation preserves its input and rank.
+pub(super) proof fn end_reply_progress(before: Node, after: Node, reply: Reply)
+    requires successful_reply_input(before, reply),
+        after == (Node { run: None, job: None, pool: false,
+            run_failures: 0, run_incidents: 0, ..before }),
+    ensures successful_reply_input(after, reply), distance(after) == distance(before),
+{
+    reveal(distance);
+}
 }
