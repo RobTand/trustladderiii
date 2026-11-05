@@ -430,7 +430,9 @@ fn r1_mixed_successful_check_and_pending_status_waits_for_event() {
     fixture.check(Some("success"));
     {
         let mut state = fixture.api.state.lock().unwrap();
-        state.required_app = None;
+        state.required = false;
+        state.classic = true;
+        state.classic_context_only = true;
         state.statuses = json!([{"id":1200,"context":"Sandbox tests","state":"pending"}]);
     }
     let (mut controller, _) = fixture.start(&settings);
@@ -490,7 +492,7 @@ fn r1_actions_infrastructure_and_pending_are_classified_by_q47() {
     }
 }
 
-fn catch_up(fixture: &DirectFixture, controller: &mut Controller, changed: bool) {
+fn direct_catch_up(fixture: &DirectFixture, controller: &mut Controller, changed: bool) {
     use tl3_controller::ingress::GitHubTranslator;
     let pull = fixture.api.state.lock().unwrap().pull.clone();
     let changes = serde_json::from_value(json!({"repository":"owner/sandbox","issues":[],"comments":[],"labels":[],"closed":[],"pull_requests":if changed {vec![pull]} else {vec![]},"check_runs":[],"check_suites":[]})).unwrap();
@@ -504,9 +506,9 @@ fn r1_catch_up_skips_unchanged_closed_delivery_history() {
     let (mut controller, _) = fixture.start(&settings);
     drain(&mut controller);
     let reads = fixture.direct.lock().unwrap().reads;
-    catch_up(&fixture, &mut controller, false);
+    direct_catch_up(&fixture, &mut controller, false);
     assert_eq!(fixture.direct.lock().unwrap().reads, reads, "unchanged completed history must not be reread");
-    catch_up(&fixture, &mut controller, true);
+    direct_catch_up(&fixture, &mut controller, true);
     assert!(fixture.direct.lock().unwrap().reads <= reads + 1);
 }
 #[test]
