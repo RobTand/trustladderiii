@@ -42,7 +42,7 @@ class SelectionTests(unittest.TestCase):
         for path in ['crates/controller/src/lib.rs', 'crates/kernel/README.md',
                      'crates/kernel/tests/scenarios.rs', 'crates/kernel/run.py',
                      'crates/kernel/tools/dependency_mutants.py', 'workers/src/tl3_workers/maker.py',
-                     'Cargo.lock', 'docs/state-table.md']:
+                     'docs/state-table.md']:
             with self.subTest(path=path):
                 self.assertEqual(kani_gate.triggered({path}), [])
 
@@ -68,10 +68,53 @@ class SelectionTests(unittest.TestCase):
             prove.assert_not_called()
             self.assertIn('no harness runs', Path(directory, 'summary').read_text())
 
-    def test_pr_selects_only_measured_fast_tier_and_ignores_removed_harnesses(self):
+    def test_lockfile_only_change_triggers(self):
+        self.assertEqual(kani_gate.triggered({'Cargo.lock'}), ['Cargo.lock'])
+
+    def test_kernel_path_dependency_and_transitive_dependency_trigger(self):
+        packages = [
+            {'name': 'tl3-kernel', 'manifest_path': str(ROOT / 'crates/kernel/Cargo.toml'),
+             'dependencies': [{'path': str(ROOT / 'crates/helper')}]},
+            {'name': 'helper', 'manifest_path': str(ROOT / 'crates/helper/Cargo.toml'),
+             'dependencies': [{'path': str(ROOT / 'crates/shared')}]},
+            {'name': 'shared', 'manifest_path': str(ROOT / 'crates/shared/Cargo.toml'), 'dependencies': []},
+        ]
+        with patch.object(kani_gate.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                [], 0, stdout=json.dumps({'packages': packages}))):
+            for path in ['crates/helper/src/lib.rs', 'crates/shared/src/lib.rs']:
+                with self.subTest(path=path):
+                    self.assertEqual(kani_gate.triggered({path}), [path])
+            self.assertEqual(kani_gate.triggered({'crates/controller/src/lib.rs'}), [])
+
+    def test_inventory_survives_mod_rs_and_path_layouts(self):
+        for layout in ['proofs/mod.rs', '../formal/checks.rs']:
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                src = root / 'crates/kernel/src'
+                src.mkdir(parents=True)
+                target = src / layout
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('proof!(kept, check());\n')
+                (src / 'lib.rs').write_text(
+                    'mod proofs;\n' if layout == 'proofs/mod.rs' else f'#[path = "{layout}"]\nmod proofs;\n')
+                with patch.object(kani_gate, 'ROOT', root), patch.object(kani_gate, 'PROOFS', src / 'proofs.rs'):
+                    self.assertEqual(kani_gate.harnesses(), ['kept'])
+
+    def test_missing_inventory_requires_matching_budget_retirement(self):
+        for names in [[], ['fast']]:
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as directory, \
+                 patch.object(kani_gate, 'harnesses', return_value=names), \
+                 patch.object(kani_gate, 'load_budgets', return_value={
+                     'fast': {'tier': 'pr'}, 'lost': {'tier': 'nightly'}}), \
+                 patch.object(kani_gate, 'changed_files', return_value={'crates/kernel/src/lib.rs'}), \
+                 patch.object(kani_gate, 'prove', return_value=({}, [])), \
+                 patch.dict(os.environ, {'BUILDBUDDY_API_KEY': 'fake'}):
+                with self.assertRaisesRegex(kani_gate.KaniError, 'inventory|retir'):
+                    kani_gate.gate_main(gate_args(directory))
+
+    def test_pr_selects_fast_tier_after_matching_budget_retirement(self):
         budgets = {'fast': {'seconds': 600, 'peak_gb': 1, 'tier': 'pr'},
-                   'slow': {'seconds': 601, 'peak_gb': 1, 'tier': 'nightly'},
-                   'removed': {'seconds': 1, 'peak_gb': 1, 'tier': 'pr'}}
+                   'slow': {'seconds': 601, 'peak_gb': 1, 'tier': 'nightly'}}
         results = {'fast': {'name': 'fast', 'verdict': 'SUCCESSFUL'}}
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(kani_gate, 'harnesses', return_value=['fast', 'slow']), \
@@ -361,6 +404,36 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(sorted(client.cancelled), sorted(f'inv{i}' for i in range(1, len(client.runs))))
         self.assertTrue(all(r['verdict'] == 'NOT_RUN' for r in results.values() if r['invocation'] != 'inv0'))
 
+    def test_failed_later_submission_cancels_started_shards(self):
+        import remote_gate
+        client = FakeClient(lambda index, names: record(names))
+        call = client.call
+
+        def submit(method, body, **kwargs):
+            if method == 'Run' and client.runs:
+                raise remote_gate.RemoteError('submission failed')
+            return call(method, body, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {'RUNNER_TEMP': directory}), \
+             patch.object(client, 'call', side_effect=submit):
+            with self.assertRaisesRegex(remote_gate.RemoteError, 'submission failed'):
+                kani_gate.prove(client, gate_args(directory), sorted(self.budgets), self.budgets)
+        self.assertEqual(client.cancelled, ['inv0'])
+
+    def test_pr_and_nightly_have_separate_deadlines(self):
+        import remote_gate
+        for mode, minutes in [('pr', 50), ('nightly', 180)]:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, \
+                 patch.dict(os.environ, {'RUNNER_TEMP': directory}), \
+                 patch.object(kani_gate.time, 'monotonic', return_value=100), \
+                 patch.object(remote_gate, 'wait', return_value={}) as wait, \
+                 patch.object(remote_gate, 'fetch', return_value=record(['a'])):
+                client = FakeClient(lambda index, names: record(names))
+                kani_gate.prove(client, gate_args(directory, mode), ['a'], {'a': {'seconds': 1, 'peak_gb': 1}},
+                                sleep=lambda _: None)
+                self.assertEqual(wait.call_args.args[2], 100 + minutes * 60)
+
     def test_missing_wrong_or_partial_records_fail(self):
         cases = {
             'no record': lambda index, names: None,
@@ -462,6 +535,21 @@ class ShardTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_existing_issue_on_second_page_is_updated(self):
+        calls = []
+
+        def opener(request, timeout):
+            calls.append((request.get_method(), request.full_url))
+            if request.get_method() == 'GET':
+                payload = ([{'number': 7, 'title': kani_gate.ISSUE_TITLE}]
+                           if 'page=2' in request.full_url else
+                           [{'number': i, 'title': f'Other {i}'} for i in range(100)])
+            else:
+                payload = {'number': 999}
+            return io.BytesIO(json.dumps(payload).encode())
+
+        self.assertEqual(kani_gate.report('table', 'o/r', 'fake', 'https://run', opener), 7)
+        self.assertEqual(calls[-1], ('POST', 'https://api.github.com/repos/o/r/issues/7/comments'))
     def test_report_dry_run_prints_the_issue_without_network_or_credentials(self):
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(kani_gate.urllib.request, 'urlopen') as network, \
@@ -515,8 +603,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(any('tools/ci/kani_gate.py pr' in run for run in runs))
         cancel = next(step for step in kani['steps'] if 'kani_gate.py cancel' in step.get('run', ''))
         self.assertEqual(cancel['if'], 'cancelled()')
-        # The job outlives every shard's runner timeout and its deadline.
-        self.assertGreater(kani['timeout-minutes'], kani_gate.WAIT_MINUTES + 10)
+        self.assertGreater(kani['timeout-minutes'], 50)
+        self.assertLess(kani['timeout-minutes'], 60)
 
     def test_nightly_proves_main_and_reports_a_regression(self):
         self.assertTrue(self.nightly, 'kani-nightly.yml is missing')
