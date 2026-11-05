@@ -61,6 +61,19 @@ def verus_proofs():
         )
 
     if native.package_name() == "crates/controller":
+        # #830: direct delivery, full SHA pins, approval, known merge and write order.
+        verus_test(
+            name = "verus_direct_merge",
+            src = "proofs/direct_merge.rs",
+            srcs = ["src/adapters/direct_merge/decide.rs"],
+            expected_obligations = 2,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
             name = "verus_budget_cutoff",

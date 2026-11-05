@@ -280,6 +280,7 @@ pub struct Request {
     pub id: NodeId,
     pub node: Node,
     pub repo: String,
+    pub direct_delivery: bool,
     pub issue: u64,
     pub title: String,
     /// The question was asked, but posting it failed.
@@ -516,6 +517,10 @@ fn card(
                 waiting_on(wait, node.phase),
                 ordinal(position)
             )
+        } else if request.direct_delivery && ending == Some(Ending::Merged) {
+            crate::adapters::direct_merge::VISIBILITY.into()
+        } else if request.direct_delivery && matches!(wait, Wait::Effect(EffectKind::Enqueue)) {
+            "direct merge (CI bypassed by repo config)".into()
         } else {
             waiting_on(wait, node.phase).into()
         },
@@ -900,6 +905,17 @@ impl Rows {
                 id,
                 node: *node,
                 repo: format!("{}/{}", request.repo.owner, request.repo.name),
+                direct_delivery: snapshot.rows.iter().any(|row| {
+                    row.table == "repos"
+                        && row.value["delivery"] == "direct"
+                        && row.value["installation"].as_u64() == Some(request.repo.installation)
+                        && row.value["owner"]
+                            .as_str()
+                            .is_some_and(|owner| owner.eq_ignore_ascii_case(&request.repo.owner))
+                        && row.value["name"]
+                            .as_str()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(&request.repo.name))
+                }),
                 issue: request.issue,
                 title: request.title,
                 question_post_failed,

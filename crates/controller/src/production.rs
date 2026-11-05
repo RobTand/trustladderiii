@@ -7,7 +7,7 @@ pub struct Registration {
     pub webhooks: Webhooks,
     pub workers: adapters::workers::WorkerOutputSource,
     pub bell: adapters::prismabuild::Source,
-    pub mergify: adapters::mergify::Translator,
+    pub mergify: adapters::direct_merge::Translator,
     pub adoption: crate::adoption::Translator,
 }
 
@@ -175,11 +175,20 @@ fn register_owned(
     adapters.register(Upstream::PrismaBuild, pb);
     adapters.register(
         Upstream::Mergify,
-        adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?
-            .with_repositories(&config.github.repos)?
-            .with_store(config.store.clone()),
+        adapters::delivery_router::Router::new(
+            adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?
+                .with_repositories(&config.github.repos)?
+                .with_store(config.store.clone()),
+            adapters::direct_merge::Adapter::new(
+                clients.clone(),
+                epoch,
+                &records.join("direct-merge"),
+                config.store.clone(),
+            )?,
+            &config.github.repos,
+        ),
     );
-    let mergify = adapters::mergify::Translator::new(clients.clone())?;
+    let mergify = adapters::direct_merge::Translator::new(clients.clone())?;
     let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;
     let webhooks = Webhooks::bind(
         listen,

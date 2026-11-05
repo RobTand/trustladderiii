@@ -155,6 +155,11 @@ fn shared_router_and_probe_cover_the_executor_trait() {
     let expected = methods(include_str!("../src/executor.rs"), "pub trait Executor {");
     assert!(!expected.is_empty());
     assert_eq!(
+        methods(include_str!("../src/adapters/delivery_router.rs"), "Executor for Router<Q, D> {"),
+        expected,
+        "#830: the production delivery router must explicitly forward every defaulted method"
+    );
+    assert_eq!(
         methods(
             include_str!("support/workers.rs"),
             "Executor for Workers<F> {"
@@ -170,6 +175,40 @@ fn shared_router_and_probe_cover_the_executor_trait() {
         expected,
         "every Executor method must have a distinguishable forwarding probe"
     );
+}
+
+#[test]
+fn delivery_router_forwards_every_method_without_changing_results() {
+    use tl3_controller::adapters::delivery_router::Router;
+    let mut database = support::Database::start();
+    let mut store = Store::open(&database.create("delivery_router_contract")).unwrap();
+    for mode in ["queue", "direct"] {
+        let calls = Calls::default();
+        let repo = serde_json::from_value(serde_json::json!({"owner":"owner","name":"sandbox","installation_id":3,"delivery":mode})).unwrap();
+        let mut router = Router::new(Spy { name:"queue", calls:calls.clone() }, Spy { name:"direct", calls:calls.clone() }, &[repo]);
+        let d = delivery(Role::Make);
+        assert_delivery_methods(&mut router, &d, mode, &calls);
+        assert_eq!(router.implementation(), "queue");
+        assert_eq!(router.app_login(3).as_deref(), Some("queue"));
+        let question = tl3_controller::adoption::Clarification { repository:d.repository.clone(), number:17 };
+        assert!(router.intake_question(&question, 3).is_err());
+        let notice = tl3_controller::input_errors::IncidentNotice { key:"direct-notice".into(), target:tl3_controller::input_errors::IssueTarget { repository:d.repository.clone(), issue:17 }, title:"title".into(), summary:"summary".into(), id:"notice".into() };
+        assert!(router.input_incident(&notice, 3).is_err());
+        assert!(router.issue(&d.repository, 17).is_err());
+        let comment = serde_json::from_value(serde_json::json!({"id":766,"body":"message","user":{"id":99,"login":"app[bot]"},"created_at":"2026-11-04T00:00:00Z","updated_at":"2026-11-04T00:00:00Z","issue_url":"local"})).unwrap();
+        assert!(router.reconcile_message(&d.repository, 17, &comment).is_err());
+        assert!(router.prerequisite(&d.repository, tl3_kernel::PrerequisiteKind::Issue, 17).is_err());
+        assert!(router.wait_record("key", Path::new("checkout")).is_err());
+        assert!(router.recover_deliveries(17, 29).is_err());
+        assert!(router.probe_memory().is_err());
+        assert!(router.retire(&mut store).is_err());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 11);
+        for (selected, method, _) in calls.iter() {
+            let expected = if matches!(*method, "intake_question" | "issue" | "reconcile_message" | "prerequisite") { mode } else { "queue" };
+            assert_eq!(*selected, expected, "{method}");
+        }
+    }
 }
 
 #[test]

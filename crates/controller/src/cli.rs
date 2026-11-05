@@ -316,6 +316,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
         registration.adapters,
         Bootstrap::from_config(&config)?,
     )?;
+    controller.reconcile_repository_delivery(&config.github.repos)?;
     controller.set_allowances(config.allowances.clone());
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);

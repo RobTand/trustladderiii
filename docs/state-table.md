@@ -525,6 +525,8 @@ Coordinator defaults, for Rob to check: the ladder clamps at its last entry. A c
 
 ### Publishing
 
+Direct delivery variant ([#830](https://github.com/RobTand/trustladderiii/issues/830), Q27 approved by Rob, 2026-11-05): for a repository configured with `delivery = "direct"`, step 4 uses GitHub's SHA-pinned merge API behind the same Enqueue effect. At execution, reread the open PR and its head, TL3's passed Checking and independent approval on that exact head, the own-app approval check, the repository's allowed merge methods, and every still-required protection check. Fence the epoch and durably record the attempt's intent before each upstream write. The adapter adds "delivered directly (CI bypassed by repo config)" to the PR body before merging. A pending protection check waits for check/webhook evidence without a timer or retry charge. A failed protection check follows the existing enqueue CI-failure row below; an observed conflict follows the publication Conflict rule. A permission refusal or otherwise unexplained merge refusal raises an effect incident. Q44 approval, holds, pause, stop, effect fences and postmortems remain in force. Q52's Mergify missing-check rule and Mergify dequeue handling apply only to queue delivery.
+
 The publishing sequence has four steps:
 
 1. Push the branch.
@@ -568,6 +570,8 @@ These clarify how the controller already applies Q52 and #447 (#735). They add n
 - **Not enough credit for the next step:** release the slot and files, and go to AwaitingRob(out of credit, continue to that step).
 
 ### Queued
+
+With direct delivery ([#830](https://github.com/RobTand/trustladderiii/issues/830)), this phase acknowledges the same Enqueue effect before consuming the existing merged or refused fact; it adds no kernel transition. An already-merged PR converges without another merge write. A moved head or HTTP 409 follows the outside-push row and returns to Checking. A lost response or restart reconciles PR state first. If the PR remains open, a fresh attempt rechecks the exact-head preconditions and records a new fenced intent before retrying the pinned PUT. An HTTP 405 after a racing merge rereads and converges to the merged fact. GitHub's pinned, single-merge operation permits at most one successful merge, including when an old issuer races the retry. An observed or recorded merge suppresses later writes. The status/board says "delivered directly (CI bypassed by repo config)"; default-branch CI still runs and its failures remain visible to the repo leads. The Mergify-specific rows below do not apply to direct delivery.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
