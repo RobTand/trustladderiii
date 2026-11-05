@@ -345,6 +345,7 @@ impl Controller {
                         && state.quota_probe_model.as_ref() == Some(&probe.identity)
                     {
                         state.due_ms = Some(state.due_ms.unwrap_or(u64::MAX).min(probe.next_ms));
+                        state.quota_retry_ms = state.due_ms;
                         commit
                             .rows
                             .push(put("allowances", held.id.clone(), json!(state)));

@@ -1041,6 +1041,7 @@ fn ordinary_probe_failure_releases_the_other_held_key_across_restart() {
         wait.value["due_ms"].is_u64(),
         "a terminal probe cannot leave a timerless waiter"
     );
+    assert_eq!(wait.value["quota_retry_ms"], wait.value["due_ms"]);
     let mut f = f.restart();
     fs::write(f.root.path().join("restored"), "yes").unwrap();
     f.clock.0.set(f.clock.0.get() + 3_600_000);
