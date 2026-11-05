@@ -63,7 +63,7 @@ pub struct ChecksDecision {
 }
 
 /// Reply rule, docs/state-table.md:139; Q41, docs/state-machine.md:132 on 751c00ac.
-/// Checking rows :509-510 and rebase row :584 give outcome context. Checks on
+/// Checking rows :507-508 and rebase row :584 give outcome context. Checks on
 /// a stale head cannot pass; only the current job/generation records evidence.
 /// The precise persistence guard preserves existing behaviour (no rule).
 /// Equalities cover all u64 generations.

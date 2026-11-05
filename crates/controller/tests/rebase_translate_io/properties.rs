@@ -295,9 +295,9 @@ fn fixed_seed_differential_schedules_and_sequences() {
     let mut runner = TestRunner::new(Config {
         cases: 512,
         rng_seed: RngSeed::Fixed(0x472a_2026),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/rebase_translate_io/proptest-regressions.txt"
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(writable_regressions(
+            include_str!("proptest-regressions.txt"),
+            "rebase_translate_io-472a2026-regressions.txt",
         )))),
         ..Config::default()
     });
@@ -364,9 +364,9 @@ fn fixed_seed_accepted_sequences_preserve_intern_state_across_transactions() {
     let mut runner = TestRunner::new(Config {
         cases: 128,
         rng_seed: RngSeed::Fixed(0x472b_2026),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/rebase_translate_io/proptest-regressions.txt"
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(writable_regressions(
+            include_str!("proptest-regressions.txt"),
+            "rebase_translate_io-472b2026-regressions.txt",
         )))),
         ..Config::default()
     });

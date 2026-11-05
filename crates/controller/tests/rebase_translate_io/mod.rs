@@ -14,3 +14,13 @@ mod pass_reference;
 mod properties;
 mod rebased_current;
 mod rebased_reference;
+/// Copies the committed regressions to writable test output so proptest can
+/// append new minimized failures there instead of the read-only runfiles tree.
+fn writable_regressions(committed: &str, name: &str) -> &'static str {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+        .or_else(|| std::env::var_os("TEST_TMPDIR"))
+        .expect("writable test output");
+    let path = std::path::PathBuf::from(output).join(name);
+    std::fs::write(&path, committed).unwrap();
+    Box::leak(path.to_str().unwrap().to_owned().into_boxed_str())
+}

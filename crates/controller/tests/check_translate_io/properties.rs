@@ -4,6 +4,16 @@ use proptest::{
     prelude::*,
     test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
 };
+/// Copies the committed regressions to writable test output so proptest can
+/// append new minimized failures there instead of the read-only runfiles tree.
+fn writable_regressions(committed: &str, name: &str) -> &'static str {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+        .or_else(|| std::env::var_os("TEST_TMPDIR"))
+        .expect("writable test output");
+    let path = std::path::PathBuf::from(output).join(name);
+    std::fs::write(&path, committed).unwrap();
+    Box::leak(path.to_str().unwrap().to_owned().into_boxed_str())
+}
 fn arm<'a>(s: &'a str, name: &str) -> &'a str {
     let a = s
         .find(&format!("            Observation::{name} {{"))
@@ -700,9 +710,9 @@ fn fixed_seed_varying_reads_errors_sequences_and_every_write_crash() {
     let mut runner = TestRunner::new(Config {
         cases: 384,
         rng_seed: RngSeed::Fixed(0x472d_2026),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/check_translate_io/proptest-regressions.txt"
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(writable_regressions(
+            include_str!("proptest-regressions.txt"),
+            "check_translate_io-472d2026-regressions.txt",
         )))),
         ..Config::default()
     });
@@ -740,9 +750,9 @@ fn fixed_seed_reachable_check_sequences() {
     let mut runner = TestRunner::new(Config {
         cases: 128,
         rng_seed: RngSeed::Fixed(0x472e_2026),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/check_translate_io/proptest-regressions.txt"
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(writable_regressions(
+            include_str!("proptest-regressions.txt"),
+            "check_translate_io-472e2026-regressions.txt",
         )))),
         ..Config::default()
     });
