@@ -49,10 +49,18 @@ pub mod bounds {
     out == (bytes <= 32768),
 ))]
     pub fn record_fits(bytes: usize) -> bool {
-        bytes <= 32769
+        bytes <= 32768
+    }
+    /// Preserved existing behaviour (no rule): f5b0ba2f memory.rs:274.
+    /// This is the authoritative Postgres JSONB size, sampled in the shell.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+        out == (bytes <= 32768),
+    ))]
+    pub fn stored_record_fits(bytes: i32) -> bool {
+        bytes <= 32768
     }
 }
-pub use bounds::record_fits;
+pub use bounds::{record_fits, stored_record_fits};
 
 pub mod completion {
     use super::Action;

@@ -126,7 +126,7 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
         item["content"] = json!(record.to_string());
     }
     // Postgres is authoritative for JSONB's numeric and escaping representation.
-    if store.memory_item_bytes(&item)? > RECORD_BYTES as i32 {
+    if !retain::stored_record_fits(store.memory_item_bytes(&item)?) {
         return Err(Error::Invalid("oversized memory record"));
     }
     store.queue_memory(&id, &item)?;

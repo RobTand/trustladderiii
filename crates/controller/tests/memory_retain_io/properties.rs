@@ -57,7 +57,10 @@ fn source_pins_no_shared_changed_shims() {
             text = text.replace(function(&text, name), "");
         }
         text.lines()
-            .filter(|line| !line.starts_with("use tl3_controller_core::memory_retain"))
+            .filter(|line| {
+                !line.starts_with("use tl3_controller_core::memory_retain")
+                    && !line.starts_with("const RECORD_BYTES:")
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };

@@ -216,6 +216,15 @@ fn initial(s: &Schedule) -> Run {
     }
 }
 pub(super) fn run(s: &Schedule, entry: Entry, current: bool, cut: Option<(usize, bool)>) -> Run {
+    static HOOK: ::std::sync::Once = ::std::sync::Once::new();
+    HOOK.call_once(|| {
+        let previous = ::std::panic::take_hook();
+        ::std::panic::set_hook(Box::new(move |info| {
+            if !info.payload().is::<Crash>() {
+                previous(info);
+            }
+        }));
+    });
     ACTIVE.with(|a| {
         *a.borrow_mut() = Some(Recording {
             s: s.clone(),

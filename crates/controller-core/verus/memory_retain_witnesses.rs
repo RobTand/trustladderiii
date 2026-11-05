@@ -33,6 +33,9 @@ pub fn bounds() {
     let empty = record_fits(0); assert(empty);
     let exact = record_fits(32768); assert(exact);
     let over = record_fits(32769); assert(!over);
+    let negative = stored_record_fits(-1); assert(negative);
+    let stored_exact = stored_record_fits(32768); assert(stored_exact);
+    let stored_over = stored_record_fits(32769); assert(!stored_over);
     let one = acknowledged(true,true,true,true,true); assert(one);
     let other = acknowledged(true,true,true,true,false); assert(!other);
 }

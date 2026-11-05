@@ -494,7 +494,7 @@ def verus_proofs():
         memory_retain_groups = {
             "qualification": ("memory_retain::qualification", 3),
             "identity": ("memory_retain::identity", 1),
-            "bounds": ("memory_retain::bounds", 1),
+            "bounds": ("memory_retain::bounds", 2),
             "classification": ("memory_retain::classification", 1),
             "completion": ("memory_retain::completion", 3),
             "witnesses": ("memory_retain_witnesses", 5),

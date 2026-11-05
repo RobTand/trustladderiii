@@ -11,5 +11,6 @@ pub mod publication;
 pub mod translate;
 pub mod worker_events;
 
-pub mod memory_retain;
 pub mod translate_worker;
+
+pub mod memory_retain;
