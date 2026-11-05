@@ -1,6 +1,8 @@
 //! Recovery shell decisions over facts parsed at the adapter boundary.
 //! No I/O or clock samples live here. Optional facts preserve short circuits.
 pub mod budget {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Legacy {
         Unused,
@@ -84,6 +86,8 @@ pub mod budget {
     }
 }
 pub mod eligibility {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Repaired {
         pub phase: bool,
@@ -253,6 +257,8 @@ pub mod eligibility {
 }
 pub mod schedule {
     use super::budget::Stage;
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum RecoveryGate {
         Repaired,
@@ -330,6 +336,8 @@ pub mod schedule {
     }
 }
 pub mod command {
+    #[cfg(verus_keep_ghost)]
+    use vstd::prelude::*;
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Reply {
         Accepted,
