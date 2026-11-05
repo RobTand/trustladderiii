@@ -18,6 +18,7 @@ regex-syntax = "0.8"
 fancy-regex = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tl3-prismabuild = { path = "../prismabuild" }
+tl3-harness-core = { path = "../harness-core" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net", "process", "sync", "macros"] }
 tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-store = { path = "../store" }

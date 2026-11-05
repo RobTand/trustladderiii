@@ -11,6 +11,7 @@ use crate::{
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read};
+use tl3_harness_core::{judge as core_judge, phase as core_phase};
 use tl3_prismabuild::{ActionKey, Tool};
 
 pub(super) const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
@@ -168,6 +169,9 @@ pub(super) async fn ending(
 /// TL3-side under Q51, not a PrismaBuild failure.
 pub(crate) const HARNESS: &str = "harness";
 
+/// Q51/#822: disagreement between TL3's producer and judge is a TL3-side defect.
+const JUDGE_MISMATCH_CLASS: Option<&str> = Some(HARNESS);
+
 /// The harness's `SELECTED_CHECK`: existing tests that import the change (#359).
 const SELECTED_CHECK: &str = "Existing tests that import the change";
 
@@ -180,6 +184,21 @@ type CheckEvidence = (
 );
 
 fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
+    evidence_with_read(ending, job, JUDGE_MISMATCH_CLASS, |log| {
+        let mut raw = Vec::new();
+        File::open(&log.path)?
+            .take(log.bytes + 1)
+            .read_to_end(&mut raw)?;
+        Ok(raw)
+    })
+}
+
+fn evidence_with_read(
+    ending: Ending,
+    job: &Job,
+    mismatch_class: Option<&'static str>,
+    read: impl FnOnce(&Log) -> Result<Vec<u8>>,
+) -> Result<CheckEvidence> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
         && ending.succeeded
         && ending.exit_code == Some(0);
@@ -203,10 +222,7 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
                 "unverified or oversized PrismaBuild check result",
             ));
         }
-        let mut raw = Vec::new();
-        File::open(&evidence.stdout.path)?
-            .take(evidence.stdout.bytes + 1)
-            .read_to_end(&mut raw)?;
+        let raw = read(&evidence.stdout)?;
         if raw.len() as u64 != evidence.stdout.bytes
             || format!("{:x}", Sha256::digest(&raw)) != evidence.stdout.sha256
         {
@@ -214,6 +230,9 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
         }
         // The typed report clips each message to MAX_MESSAGE_CHARS as it parses.
         if let Some(parsed) = parse(&raw, job) {
+            if !rejudged(&parsed, job) {
+                return Ok((false, false, vec![], vec![], mismatch_class));
+            }
             failed_tests = parsed
                 .results
                 .iter()
@@ -367,7 +386,6 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         if selected.name.as_str() != SELECTED_CHECK
             || selected.kind != Kind::Regression
             || selected.tests.len() > job.selected_tests.unwrap_or(0) as usize
-            || matches!(selected.verdict, Verdict::Pass) != selected.tests.iter().all(|t| t.passed)
         {
             return None;
         }
@@ -394,9 +412,6 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             if result.test.as_str() != test {
                 return None;
             }
-        }
-        if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|t| t.passed) {
-            return None;
         }
         if let Some(identity) = &result.proof {
             // The receipt's rule, mode and digests are typed; these relate it to the plan.
@@ -426,42 +441,91 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                     || support
                         .iter()
                         .any(|unit| !identity.support_sha256.contains_key(unit.as_str()))
-                    || result.tests.iter().any(|test| {
-                        test.passed
-                            && ((check.declared_symptom.is_none()
-                                && !matches!(test.base, Outcome::Assertion | Outcome::AddedName))
-                                || !matches!(test.head, Outcome::Passed))
-                    })
                 {
                     return None;
                 }
             }
-        } else if check.proof.is_some() && result.tests.iter().any(|test| test.passed) {
-            return None;
-        }
-        if check.proof.is_none()
-            && matches!(check.kind, Kind::Demonstrating | Kind::Reproducing)
-            && check.declared_symptom.is_none()
-            && result
-                .tests
-                .iter()
-                .any(|test| test.passed && matches!(test.base, Outcome::Assertion))
-        {
-            return None;
         }
         // A forced check passes only on evidence from its forced head run (#393).
-        if result.forcing.is_some() != check.forcing.is_some()
-            || (check.forcing.is_some()
-                && result
-                    .tests
-                    .iter()
-                    .any(|t| t.passed && !matches!(t.head_forced, Some(Outcome::Passed))))
-        {
+        if result.forcing.is_some() != check.forcing.is_some() {
             return None;
         }
     }
     Some(report)
 }
+
+impl From<Kind> for core_judge::Kind {
+    fn from(kind: Kind) -> Self {
+        match kind {
+            Kind::Demonstrating => Self::Demonstrating,
+            Kind::Reproducing => Self::Reproducing,
+            Kind::Regression => Self::Regression,
+            Kind::BehaviorPreserving => Self::BehaviorPreserving,
+        }
+    }
+}
+
+impl From<Outcome> for core_judge::Outcome {
+    fn from(outcome: Outcome) -> Self {
+        match outcome {
+            Outcome::Passed => Self::Passed,
+            Outcome::Assertion => Self::Assertion,
+            Outcome::AddedName => Self::AddedName,
+            Outcome::Error => Self::Error,
+            Outcome::Skipped => Self::Skipped,
+            Outcome::Missing => Self::Missing,
+            Outcome::Uncollected => Self::Uncollected,
+            Outcome::NoReport => Self::NoReport,
+        }
+    }
+}
+
+impl From<PhaseOutcome> for core_phase::Status {
+    fn from(outcome: PhaseOutcome) -> Self {
+        match outcome {
+            PhaseOutcome::Passed => Self::Passed,
+            PhaseOutcome::Failed => Self::Failed,
+            PhaseOutcome::Skipped => Self::Skipped,
+        }
+    }
+}
+
+fn phase_agrees(run: &crate::contracts::report::PhaseRun, outcome: Outcome) -> bool {
+    use core_phase::{Fact, Fold, Phase, checking};
+    let folded = checking(
+        run.setup.outcome.into(),
+        run.call.as_ref().map(|call| Fact {
+            phase: Phase::Call,
+            status: call.outcome.into(),
+            assertion: call.assertion,
+        }),
+        run.teardown.outcome.into(),
+    );
+    match (folded, outcome) {
+        (Some(Fold::Passed), Outcome::Passed)
+        | (Some(Fold::Failed), Outcome::Assertion)
+        | (Some(Fold::Skipped), Outcome::Skipped)
+        | (Some(Fold::Error), Outcome::Error) => true,
+        // Missing-name candidates do not survive transport. Preserve the prior classification.
+        (Some(Fold::Error), Outcome::AddedName) => {
+            !matches!(run.setup.outcome, PhaseOutcome::Failed)
+                && !matches!(run.teardown.outcome, PhaseOutcome::Failed)
+                && run.call.as_ref().is_some_and(|call| {
+                    matches!(call.outcome, PhaseOutcome::Failed) && !call.assertion
+                })
+        }
+        _ => false,
+    }
+}
+
+/// #822: replay only represented facts. Shell overrides and symptom campaigns are separate.
+fn rejudged(report: &Report, job: &Job) -> bool {
+    true // #822 red: controller has not re-judged the report yet.
+}
+
+#[cfg(test)]
+#[path = "results/tests/mod.rs"]
+mod judge_tests;
 
 fn symptom_identity(
     result: &CheckResult,
