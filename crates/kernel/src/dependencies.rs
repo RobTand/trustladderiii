@@ -592,9 +592,9 @@ impl World {
             return None;
         }
         if let Some(node) = target.request {
-            match self.index(node) {
-                None => return None,
-                Some(j) => if self.nodes[i].repo != self.nodes[j].repo { return None; },
+            let j = self.index(node)?;
+            if self.nodes[i].repo != self.nodes[j].repo {
+                return None;
             }
         }
         let node = NodeId(i as u64);

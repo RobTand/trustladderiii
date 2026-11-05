@@ -53,8 +53,6 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
 
 kernel_fn! {
 /// Confirmed-effect rows / #771: at most one adoption generation is allocated.
-// The pinned Verus frontend requires nested if-let instead of let chains.
-#[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
@@ -88,6 +86,8 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
 kernel_fn! {
 /// Confirmed-effect rows / #771: after resource cleanup, consume the same
 /// matching agenda item or enter Checking for an adopted worktree.
+// The pinned Verus frontend requires nested if-let instead of let chains.
+#[allow(clippy::collapsible_if)]
 fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
         kind == EffectKind::StopRun ==> !old(m).pool,
