@@ -90,6 +90,7 @@ _SCENARIO_SHARDS = {
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
     "tl3-controller/quota_hold": 21,
+    "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/operations_quota": 4,
@@ -167,7 +168,8 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
-    "src/lib.rs": ["tests/worker_events_io/**"],
+    "tests/input_resources.rs": ["tests/support/**"],
+    "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs"],
     # CC-P: exact source replay and persistent differential schedules.
     "tests/prismabuild_schedule/main.rs": ["tests/prismabuild_schedule/io.rs", "tests/prismabuild_schedule/reference.rs", "tests/prismabuild_schedule/extracted.rs", "tests/prismabuild_schedule/io_schedule-regressions.txt"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],

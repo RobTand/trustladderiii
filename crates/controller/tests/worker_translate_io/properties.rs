@@ -16,6 +16,11 @@ fn arm(source: &str) -> &str {
 }
 #[test]
 fn production_and_reference_sources_are_pinned() {
+    let resource = include_str!("resource.rs")
+        .split_once("// #833: verbatim resource persistence below.\n")
+        .unwrap()
+        .1;
+    assert!(include_str!("../../src/input_resources.rs").contains(resource.trim_end()));
     let pins: Value = serde_json::from_str(include_str!("pins.json")).unwrap();
     let base = include_str!("base-arms.rs.txt");
     assert_eq!(
