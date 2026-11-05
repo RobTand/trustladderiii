@@ -1,7 +1,7 @@
 use crate::review_inputs::{bounds::*, history::*, selection::*};
 use vstd::prelude::*;
 verus! {
-/// Preserved f5b0ba2f review.rs:87-89, :143-145, :167-168. At/over byte
+/// Preserved f5b0ba2f review.rs:84-85, :136-140, :167-168. At/over byte
 /// cap and zero/exact/over scalar prefix. These examples do not bound proofs.
 pub fn bounds_witness() {
     let empty = diff_allowed(0); assert(empty);
@@ -12,7 +12,7 @@ pub fn bounds_witness() {
     let p2 = prefix_len(1001,1000); assert(p2 == 1000);
     let p3 = prefix_len(16001,16000); assert(p3 == 16000);
 }
-/// Preserved f5b0ba2f review.rs:43-70. Re-review precedence and both ancestry
+/// Preserved f5b0ba2f review.rs:42-70. Re-review precedence and both ancestry
 /// results are reachable; state-table.md:512-514 supplies re-review context.
 pub fn history_witness() {
     let a=base_source(false,true,true); assert(a == BaseSource::Check);

@@ -13,7 +13,7 @@ macro_rules! scan {
 }
 
 pub mod bounds {
-    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:87-89, :143-145.
+    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:84-85, :136-140.
     /// The diff cap is inclusive and counts bytes, before UTF-8 decoding.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
         out == (bytes <= 524288),
@@ -22,7 +22,7 @@ pub mod bounds {
         bytes <= 512 * 1024
     }
 
-    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:167-168 and
+    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:159-161 and
     /// findings.rs:87-89. Unicode scalar prefix, not a byte or grapheme bound.
     /// No unwind bound: this arithmetic contract holds for all machine sizes.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
@@ -44,7 +44,7 @@ pub mod history {
     }
 
     /// f5b0ba2f docs/state-table.md:512-514 is re-review context. The precedence
-    /// is preserved existing behaviour (no rule), review.rs:43-64 on that base.
+    /// is preserved existing behaviour (no rule), review.rs:42-60 on that base.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
         out == if round_one && session {
             if reviewed { BaseSource::Reviewed } else { BaseSource::Session }
@@ -62,7 +62,7 @@ pub mod history {
         }
     }
 
-    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:67-70.
+    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:63-65.
     /// An older reviewed history is reset only after the shell reads ancestry.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
         out == (different && !contains_check_base),
@@ -76,7 +76,7 @@ pub mod selection {
     #[cfg(verus_keep_ghost)]
     use vstd::prelude::*;
 
-    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:97-136, :189-202.
+    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:91-130, :179-192.
     /// All matching entries survive, preserving order and duplicate positions.
     /// There is no collection count cap here. #704/#706/#719/#723 receipt
     /// shapes pass through unchanged; this function never rewrites payloads.
@@ -104,7 +104,7 @@ pub mod selection {
     }
 
     /// #717 is the wire-drift incident, not a new evidence-selection rule.
-    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:154-160.
+    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:147-153.
     /// Presence of a forcing, proof, or declaration key includes null values.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
         out == (forcing || proof || declared_symptom),
@@ -123,7 +123,7 @@ pub mod selection {
         Other,
     }
 
-    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:119-135.
+    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:109-125.
     /// Historical failure displacement requires a matching regression unit
     /// with real head evidence. No-report, filtered and absent outcomes cannot resolve it.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
@@ -139,7 +139,7 @@ pub mod selection {
             )
     }
 
-    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:191-199.
+    /// Preserved existing behaviour (no rule), f5b0ba2f review.rs:179-189.
     /// #706 confirms reviewer selection is by exact Git tree, not selector
     /// identity. Base runs use check-base tree; every other run uses head tree.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures

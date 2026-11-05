@@ -31,4 +31,3 @@ pub(crate) fn load(snapshot: &Snapshot, node: NodeId) -> Result<Option<Vec<Value
         .map(|row| identified(&row.value))
         .transpose()
 }
-

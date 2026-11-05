@@ -10,4 +10,4 @@ SOURCE = ROOT / 'crates/controller/src/adapters/workers/review.rs'
 text = SOURCE.read_text()
 start = text.index('pub(super) fn inputs(')
 end = text.index('pub(crate) fn criteria(')
-(HERE / 'current.rs').write_text('use super::*;\n' + text[start:end])
+(HERE / 'current.rs').write_text('use super::*;\n' + text[start:end].rstrip() + '\n')

@@ -199,4 +199,3 @@ pub(super) fn inputs(
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }
-
