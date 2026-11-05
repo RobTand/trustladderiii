@@ -2522,7 +2522,7 @@ impl Controller {
                         input_failure: resource_failure.clone().map(|failure| {
                             input_errors::InputFailure::resource(
                                 input_errors::IssueTarget {
-                                    repository: request.repo.clone(),
+                                    repository: delivery.repository.clone(),
                                     issue: request.issue,
                                 },
                                 &request.title,

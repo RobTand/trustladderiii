@@ -378,19 +378,12 @@ impl Executor for Adapter {
         match kind {
             PrerequisiteKind::Issue => Ok(crate::merge_dependencies::issue_status(&issue)),
             PrerequisiteKind::PullRequest => {
-                let client = self
-                    .clients
-                    .get(&repository.installation)
-                    .ok_or(Error::Invalid("missing GitHub installation client"))?;
-                let pr =
-                    self.runtime
-                        .block_on(client.pull_request(
-                            &format!("{}/{}", repository.owner, repository.name),
-                            number,
-                        ))
-                        .map_err(|error| {
-                            crate::input_resources::github(error, resource, repository.installation)
-                        })?;
+                let pr = self
+                    .runtime
+                    .block_on(client.pull_request(&repo, number))
+                    .map_err(|error| {
+                        crate::input_resources::github(error, resource, repository.installation)
+                    })?;
                 Ok(if pr.merged_at.is_some() {
                     DependencyStatus::Delivered
                 } else {
