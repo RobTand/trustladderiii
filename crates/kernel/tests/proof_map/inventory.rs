@@ -139,7 +139,7 @@ fn functions(source: &str, module: &str) -> Vec<Function> {
                 assert!(
                     matches!(
                         macro_name,
-                        "kernel_snapshot"
+                        "id" | "kernel_snapshot"
                             | "kernel_loop"
                             | "kernel_while"
                             | "kernel_proof"
