@@ -213,7 +213,11 @@ macro_rules! controller {
             fn observe(&self, key: &str, o: Observation) -> Result<()> {
                 io::write("observe", json!([key, o]), |_| {})
             }
-            fn look_observations_stub(&self) {}
+            fn retire_wait(&self, _: &Snapshot, d: &Delivery, c: &mut Commit) -> Result<()> {
+                io::record("retire_wait", json!(d.key));
+                c.rows.push(RowChange::Delete { table: "waits".into(), id: d.key.clone() });
+                Ok(())
+            }
             fn queue_observation(
                 &self,
                 _: &Snapshot,
@@ -249,10 +253,10 @@ macro_rules! controller {
                 io::record("remove_hold", json!(d.key));
             }
             fn hold_class(&self, _: &Delivery) -> Option<&str> {
-                None
+                io::checks().then_some(CHECKS_PENDING)
             }
             fn is_held(&self, _: &Delivery) -> bool {
-                false
+                io::held()
             }
         }
         pub(super) fn run(
@@ -267,6 +271,16 @@ macro_rules! controller {
                 io::Entry::Alive(changed) => c.look_alive(state, changed).map(|_| ()),
                 io::Entry::Probe => c.probe_passed(Some(state), state.incident.as_deref()),
                 io::Entry::Stall => c.finish_stall(state),
+                io::Entry::Progress(code) => {
+                    let mut commit = Commit::new("progress", json!({"entry":"progress"}), s);
+                    c.progress_allowance(s, &state.delivery.key, format!("checkpoint-{code}"), &mut commit)?;
+                    c.store.commit(&commit)
+                }
+                io::Entry::Quota(code) => {
+                    let mut commit = Commit::new("quota", json!({"entry":"quota"}), s);
+                    c.quota_allowance(s, &state.delivery.key, 2_000_000 + u64::from(code / 2), (code & 1 != 0).then_some("model-a"), &mut commit)?;
+                    c.store.commit(&commit)
+                }
             }
         }
     };
@@ -307,3 +321,5 @@ impl LocalQueueFact for tl3_controller::adapters::mergify::QueueFact {
         Ok(false)
     }
 }
+#[path = "looks_io/d2.rs"]
+mod d2;

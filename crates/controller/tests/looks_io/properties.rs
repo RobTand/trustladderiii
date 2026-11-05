@@ -176,6 +176,7 @@ fn differential_schedules() {
                 stopping: bits & 2048 != 0,
                 progress: bits & 4096 != 0,
                 counted: (bits & 8192 != 0).then_some(1_000_000),
+                ..Schedule::default()
             };
             io::compare(&s);
             Ok(())
@@ -227,6 +228,8 @@ fn source_pins_and_production_copies() {
             "save_allowance",
             "allowance_row",
             "record_progress",
+            "progress_allowance",
+            "quota_allowance",
         ] {
             assert_eq!(
                 function(source, name, true),

@@ -769,6 +769,92 @@ impl Controller {
         }
         Ok(Some(changed))
     }
+    pub(crate) fn progress_allowance(
+        &mut self,
+        snapshot: &Snapshot,
+        key: &str,
+        checkpoint: String,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            if state.progress.as_ref() != Some(&checkpoint) {
+                if state.external_wait.take().is_some() {
+                    self.retire_wait(snapshot, &state.delivery, commit)?;
+                }
+                state.wait_ended = false;
+                state.progress = Some(checkpoint);
+                state.progress_ms = self.now_ms();
+                // A model turn or tool result: a model served this step (#759).
+                state.unserved_since_ms = None;
+                state.ladder_out_noticed = false;
+                state.due_ms = Some(
+                    state.progress_ms.saturating_add(
+                        u64::from(
+                            self.allowance(&state.delivery)
+                                .silence_secs
+                                .min(self.allowance(&state.delivery).no_progress_secs),
+                        ) * 1000,
+                    ),
+                );
+                commit
+                    .rows
+                    .push(put("allowances", key.into(), json!(state)));
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn quota_allowance(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        reset_ms: u64,
+        model: Option<&str>,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        // Q53: record the model's quota so every step's ladder can skip it.
+        if let Some(model) = model
+            && snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "model_quotas" && r.id == model)
+                .and_then(|r| r.value["reset_ms"].as_u64())
+                .is_none_or(|old| old < reset_ms)
+        {
+            commit.rows.push(put(
+                "model_quotas",
+                model.into(),
+                json!({"reset_ms": reset_ms}),
+            ));
+        }
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            // A replayed ending of the same model never restarts its wait.
+            if state.last_quota_ms.is_some_and(|old| old >= reset_ms)
+                && state.last_quota_model.as_deref() == model
+            {
+                return Ok(());
+            }
+            state.last_quota_ms = Some(reset_ms);
+            state.last_quota_model = model.map(str::to_owned);
+            state.quota_ms = Some(reset_ms);
+            state.unserved_since_ms.get_or_insert(self.now_ms());
+            // The look asks the adapter whether another model can take the step now.
+            state.due_ms = Some(self.now_ms());
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(())
+    }
 }
 pub(crate) fn incident_needs_rob(cause: IncidentCause) -> bool {
     match cause {
