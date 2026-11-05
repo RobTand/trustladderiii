@@ -125,10 +125,11 @@ pub(super) async fn evaluate(
         let checks: Vec<_> = latest
             .values()
             .filter(|check| {
-                rule.context == check.name
-                    && rule
-                        .integration_id
-                        .is_none_or(|id| check.app.as_ref().is_some_and(|app| app.id == id))
+                required::matches_check(
+                    rule.context == check.name,
+                    rule.integration_id,
+                    check.app.as_ref().map(|app| app.id),
+                )
             })
             .collect();
         let status = rule
@@ -141,31 +142,40 @@ pub(super) async fn evaluate(
             app: rule.integration_id,
         };
         let reports = !checks.is_empty() || status.is_some();
-        match required::presence(reports, rule.integration_id.is_some(), statuses_available) {
-            required::Presence::Missing => {
-                ready = false;
-                missing.push(expected);
-            }
-            required::Presence::Reported => reported.push(expected),
-            required::Presence::Unavailable => {}
+        let evaluation = required::evaluate(
+            reports,
+            rule.integration_id.is_some(),
+            statuses_available,
+            lifecycle::RequiredState::Passed,
+        );
+        if required::q52_kind(evaluation) == Some(Kind::CheckMissing) {
+            ready = false;
+            missing.push(expected);
+        } else if reports {
+            reported.push(expected);
         }
         for check in checks {
             let view = tl3_mergify::views(std::slice::from_ref(check), &pull.head.sha, |_| true)[0];
             // Only Actions failures need annotations to distinguish runner failures.
-            let runner = view.status == tl3_mergify::decide::Status::Completed
-                && view.app == tl3_mergify::decide::App::Actions
-                && view.conclusion == Some(tl3_mergify::decide::Conclusion::Failure)
+            let runner = required::needs_annotations(view)
                 && runner_failure(&github.check_annotations(repo, check.id).await?);
-            match lifecycle::required_check(view, runner) {
-                lifecycle::RequiredState::Passed => {}
-                lifecycle::RequiredState::Pending | lifecycle::RequiredState::Unknown => {
-                    ready = false
-                }
-                lifecycle::RequiredState::Infrastructure => {
+            match required::evaluate(
+                true,
+                rule.integration_id.is_some(),
+                statuses_available,
+                lifecycle::required_check(view, runner),
+            ) {
+                required::Evaluation::Reported(required::Reported::Passed) => {}
+                required::Evaluation::Reported(
+                    required::Reported::Pending | required::Reported::Unknown,
+                )
+                | required::Evaluation::Missing
+                | required::Evaluation::Unavailable => ready = false,
+                required::Evaluation::Infrastructure => {
                     ready = false;
                     infrastructure.push(check.clone());
                 }
-                lifecycle::RequiredState::Tests => {
+                required::Evaluation::Reported(required::Reported::Tests) => {
                     ready = false;
                     tests = Some(Failure::Tests {
                         check: check.id,
@@ -175,10 +185,16 @@ pub(super) async fn evaluate(
             }
         }
         if let Some(status) = status {
-            if status.state != "success" {
+            let status_state = required::legacy_status(match status.state.as_str() {
+                "success" => required::LegacyStatus::Success,
+                "failure" => required::LegacyStatus::Failure,
+                "error" => required::LegacyStatus::Error,
+                _ => required::LegacyStatus::Other,
+            });
+            if status_state != lifecycle::RequiredState::Passed {
                 ready = false;
             }
-            if matches!(status.state.as_str(), "failure" | "error") {
+            if status_state == lifecycle::RequiredState::Tests {
                 tests = Some(Failure::Tests {
                     check: status.id,
                     completed_at: status.updated_at.map(|time| time.to_rfc3339()),
@@ -191,9 +207,13 @@ pub(super) async fn evaluate(
         unavailable,
         missing,
         reported,
-        failure: tests.or_else(|| {
-            (!infrastructure.is_empty()).then_some(Failure::Infrastructure(infrastructure))
-        }),
+        failure: match required::failure_choice(tests.is_some(), !infrastructure.is_empty()) {
+            required::FailureChoice::Tests => tests,
+            required::FailureChoice::Infrastructure => {
+                Some(Failure::Infrastructure(infrastructure))
+            }
+            required::FailureChoice::None => None,
+        },
     })
 }
 
@@ -202,21 +222,28 @@ async fn failure(github: &GitHub, repo: &str, pull: &PullRequest) -> Result<Opti
 }
 
 fn runner_failure(annotations: &[CheckAnnotation]) -> bool {
-    let failures: Vec<_> = annotations
-        .iter()
-        .filter(|annotation| annotation.annotation_level == "failure")
-        .collect();
-    !failures.is_empty()
-        && failures.iter().all(|annotation| {
-            [
-                "The runner has lost communication with the server",
-                "The job was not acquired by Runner of type",
-                "The job was abandoned as the runner did not pick it up",
-                "The job was not started because recent account payments have failed",
-            ]
+    let evidence =
+        annotations
             .iter()
-            .any(|prefix| annotation.message.starts_with(prefix))
-        })
+            .fold(required::RunnerEvidence::default(), |prior, annotation| {
+                let parsed = if annotation.annotation_level != "failure" {
+                    required::Annotation::Ignore
+                } else if [
+                    "The runner has lost communication with the server",
+                    "The job was not acquired by Runner of type",
+                    "The job was abandoned as the runner did not pick it up",
+                    "The job was not started because recent account payments have failed",
+                ]
+                .iter()
+                .any(|prefix| annotation.message.starts_with(prefix))
+                {
+                    required::Annotation::RunnerFailure
+                } else {
+                    required::Annotation::OtherFailure
+                };
+                required::annotation(prior, parsed)
+            });
+    required::runner_failure(evidence)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -360,11 +387,13 @@ impl Adapter {
                                 )) => lifecycle::RerunResult::InProgress,
                                 Err(
                                     tl3_github::Error::ActionsForbidden(_)
-                                    | tl3_github::Error::RateLimited { .. }
-                                    | tl3_github::Error::Http {
-                                        status: 400..=407 | 409..=499,
-                                    },
+                                    | tl3_github::Error::RateLimited { .. },
                                 ) => lifecycle::RerunResult::Refused,
+                                Err(tl3_github::Error::Http { status })
+                                    if required::http_refused(*status) =>
+                                {
+                                    lifecycle::RerunResult::Refused
+                                }
                                 Err(_) => lifecycle::RerunResult::Unknown,
                             };
                             let (next, effects) =

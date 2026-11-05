@@ -2,6 +2,7 @@ use super::*;
 use crate::findings::{self, CiFailure, FailedTest, QueueCiEvidence};
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
+use tl3_mergify::decide::{Conclusion, Status, required};
 
 fn terminal_text(text: &str) -> String {
     enum State {
@@ -125,18 +126,10 @@ pub(super) async fn read_checks(
         .values()
         .copied()
         .filter(|check| {
-            check.status == "completed"
-                && matches!(
-                    check.conclusion.as_deref(),
-                    Some(
-                        "failure"
-                            | "timed_out"
-                            | "cancelled"
-                            | "startup_failure"
-                            | "action_required"
-                            | "stale"
-                    )
-                )
+            required::evidence_failure(
+                Status::parse(&check.status),
+                check.conclusion.as_deref().map(Conclusion::parse),
+            )
         })
         .collect();
     let mut details = QueueCiEvidence {

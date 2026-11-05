@@ -586,52 +586,35 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             status,
             writable,
         } => {
-            if head != Head::Current {
-                out.push(Effect::Error(Failure::PullChanged));
-            } else if state
-                .rerun
-                .is_some_and(|r| r.accepted || attempt > r.attempt)
-            {
-                out.push(Effect::Continue);
-            } else if state.rerun.is_some_and(|r| !r.waiting) {
-                out.push(Effect::Error(Failure::RerunUnknown));
-            } else if status != Status::Completed {
-                state.rerun = Some(Rerun {
-                    attempt,
-                    accepted: false,
-                    waiting: true,
-                });
-                out.push(Effect::SaveRerun);
-                out.push(Effect::Error(Failure::RerunFinishing));
-            } else if writable.is_none() {
-                out.push(Effect::Read(Need::RerunPull));
-            } else if writable == Some(false) {
-                out.push(Effect::Error(Failure::PullChanged));
-            } else {
-                state.rerun = Some(Rerun {
-                    attempt,
-                    accepted: false,
-                    waiting: false,
-                });
-                out.push(Effect::SaveRerun);
-                out.push(Effect::Write(Write::Rerun));
+            let (rerun, action) = super::required::rerun_read(
+                state.rerun,
+                head == Head::Current,
+                attempt,
+                status == Status::Completed,
+                writable,
+            );
+            state.rerun = rerun;
+            match action {
+                super::required::RerunAction::Continue => out.push(Effect::Continue),
+                super::required::RerunAction::PullChanged => {
+                    out.push(Effect::Error(Failure::PullChanged))
+                }
+                super::required::RerunAction::Unknown => {
+                    out.push(Effect::Error(Failure::RerunUnknown))
+                }
+                super::required::RerunAction::Finishing => {
+                    out.push(Effect::SaveRerun);
+                    out.push(Effect::Error(Failure::RerunFinishing));
+                }
+                super::required::RerunAction::ReadPull => out.push(Effect::Read(Need::RerunPull)),
+                super::required::RerunAction::Write => {
+                    out.push(Effect::SaveRerun);
+                    out.push(Effect::Write(Write::Rerun));
+                }
             }
         }
         QueueEvent::RerunDone(result) => {
-            match result {
-                RerunResult::Accepted => {
-                    if let Some(rerun) = &mut state.rerun {
-                        rerun.accepted = true;
-                    }
-                }
-                RerunResult::InProgress => {
-                    if let Some(rerun) = &mut state.rerun {
-                        rerun.waiting = true;
-                    }
-                }
-                RerunResult::Refused => state.rerun = None,
-                RerunResult::Unknown => {}
-            }
+            state.rerun = super::required::rerun_done(state.rerun, result);
             out.push(Effect::SaveRerun);
         }
         QueueEvent::RerunPending {
@@ -639,12 +622,12 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             attempt,
             status,
         } => {
-            let pending = state.rerun.is_some_and(|saved| {
-                !saved.accepted
-                    && (head != Head::Current
-                        || attempt <= saved.attempt
-                            && (!saved.waiting || status != Status::Completed))
-            });
+            let pending = super::required::rerun_pending(
+                state.rerun,
+                head == Head::Current,
+                attempt,
+                status == Status::Completed,
+            );
             out.push(Effect::RerunPending(pending));
         }
     }
@@ -692,29 +675,5 @@ pub enum RequiredState {
 }
 
 pub fn required_check(check: super::CheckView, runner_failure: bool) -> RequiredState {
-    use super::{App, Conclusion};
-    if check.status != Status::Completed
-        || matches!(
-            check.conclusion,
-            Some(Conclusion::ActionRequired | Conclusion::Stale)
-        )
-    {
-        RequiredState::Pending
-    } else if matches!(
-        check.conclusion,
-        Some(Conclusion::Success | Conclusion::Neutral | Conclusion::Skipped)
-    ) {
-        RequiredState::Passed
-    } else if check.app == App::Actions
-        && (matches!(
-            check.conclusion,
-            Some(Conclusion::Cancelled | Conclusion::TimedOut | Conclusion::StartupFailure)
-        ) || check.conclusion == Some(Conclusion::Failure) && runner_failure)
-    {
-        RequiredState::Infrastructure
-    } else if check.conclusion.is_some() {
-        RequiredState::Tests
-    } else {
-        RequiredState::Unknown
-    }
+    super::required::required_check(check, runner_failure)
 }

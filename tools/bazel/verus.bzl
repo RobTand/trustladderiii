@@ -171,3 +171,58 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    # CC-M3/H8: production definitions are projected mechanically, not mirrored.
+    if native.package_name() == "crates/mergify":
+        native.genrule(
+            name = "cc_m3_required_verus_source",
+            srcs = [
+                "src/decide/check.rs",
+                "src/decide/enqueue.rs",
+                "src/decide/required.rs",
+                "src/decide/translate.rs",
+            ],
+            tools = ["//crates/controller:tests/head_checks_schedule/proof_source.py"],
+            outs = ["cc_m3_required_verus.rs"],
+            cmd = "python3 $(location //crates/controller:tests/head_checks_schedule/proof_source.py) " +
+                  "$(location src/decide/check.rs) $(location src/decide/enqueue.rs) " +
+                  "$(location src/decide/required.rs) $(location src/decide/translate.rs) $@",
+        )
+        _cc_m3_measured_verus_toolchain(name = "cc_m3_measured_verus_toolchain")
+        for group, (module, obligations) in {
+            "evaluation": ("required::evaluation", 13),
+            "runner": ("required::runner", 5),
+            "rerun": ("required::rerun", 7),
+        }.items():
+            verus_test(
+                name = "verus_required_" + group,
+                src = ":cc_m3_required_verus.rs",
+                toolchain = ":cc_m3_measured_verus_toolchain",
+                srcs = ["src/decide/required.rs", "src/decide/check.rs", "src/decide/enqueue.rs", "src/decide/translate.rs"],
+                expected_obligations = obligations,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+    if native.package_name() == "crates/controller":
+        native.exports_files(["tests/head_checks_schedule/proof_source.py"])
+
+
+def _cc_m3_measured_verus_toolchain_impl(ctx):
+    upstream = ctx.attr.upstream[VerusToolchainInfo]
+    wrapper = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(wrapper, "#!/bin/bash\nexec python3 -c 'import resource, subprocess, sys; result = subprocess.run(sys.argv[1:]); print(\"VERUS_MEMORY_MAX_RSS_KB\", resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, flush=True); sys.exit(result.returncode)' \"%s\" \"$@\"\n" % upstream.verifier.short_path, is_executable = True)
+    files = depset([wrapper], transitive = [upstream.files])
+    return [
+        DefaultInfo(files = files),
+        VerusToolchainInfo(verifier = wrapper, z3 = upstream.z3, sysroot = upstream.sysroot, files = files),
+    ]
+
+_cc_m3_measured_verus_toolchain = rule(
+    implementation = _cc_m3_measured_verus_toolchain_impl,
+    attrs = {"upstream": attr.label(default = "@verus_linux_amd64//:toolchain", providers = [VerusToolchainInfo])},
+)

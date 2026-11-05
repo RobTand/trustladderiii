@@ -2,6 +2,7 @@ use super::*;
 use crate::findings::{self, CiFailure, FailedTest, QueueCiEvidence};
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
+use tl3_mergify::decide::{Conclusion, Status, required};
 
 fn terminal_text(text: &str) -> String {
     enum State {
@@ -125,18 +126,10 @@ pub(super) async fn read_checks(
         .values()
         .copied()
         .filter(|check| {
-            check.status == "completed"
-                && matches!(
-                    check.conclusion.as_deref(),
-                    Some(
-                        "failure"
-                            | "timed_out"
-                            | "cancelled"
-                            | "startup_failure"
-                            | "action_required"
-                            | "stale"
-                    )
-                )
+            required::evidence_failure(
+                Status::parse(&check.status),
+                check.conclusion.as_deref().map(Conclusion::parse),
+            )
         })
         .collect();
     let mut details = QueueCiEvidence {
@@ -336,6 +329,54 @@ pub(crate) fn outside_change(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #503/H8: Unicode and terminal input remain total, bounded and redacted.
+    /// This parser edge is intentionally tested rather than modeled by Verus.
+    #[test]
+    fn generated_logs_are_total_bounded_and_redacted() {
+        use proptest::{
+            prelude::*,
+            test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let regressions = directory.path().join("parser-regressions.txt");
+        std::fs::write(
+            &regressions,
+            include_bytes!("../../../tests/head_checks_schedule/parser-regressions.txt"),
+        )
+        .unwrap();
+        let path = Box::leak(regressions.to_string_lossy().into_owned().into_boxed_str());
+        let mut runner = TestRunner::new(Config {
+            cases: 64,
+            rng_seed: RngSeed::Fixed(730_803),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(path))),
+            ..Config::default()
+        });
+        runner.run(&(prop::collection::vec(any::<char>(), 0..2048), 0usize..1000), |(chars, cap)| {
+            let text: String = chars.into_iter().collect();
+            let hostile = format!("{text}\npass\x1b[31mword=planted-secret\x1b[0m\nFAILED: //tests:test_a\nFAILED tests/a.py::test_b");
+            let clean = terminal_text(&hostile);
+            let parsed = failures(&clean);
+            prop_assert!(parsed.len() <= findings::MAX_FAILED_TESTS + 1);
+            let safe = safe(&hostile, cap);
+            prop_assert!(safe.chars().count() <= cap);
+            prop_assert!(!safe.contains("planted-secret"));
+            prop_assert!(safe.chars().all(|ch| !ch.is_control() || matches!(ch, '\n' | '\t')));
+            let bounded = bounded(QueueCiEvidence {
+                complete: true,
+                checks: (0..24).map(|_| CiFailure { name: hostile.clone(), summary: hostile.clone(), url: Some(hostile.clone()) }).collect(),
+                failed_tests: parsed,
+                ..Default::default()
+            });
+            prop_assert!(!bounded.complete);
+            prop_assert!(bounded.checks.len() <= 20);
+            prop_assert!(bounded.failed_tests.len() <= findings::MAX_FAILED_TESTS);
+            let total: usize = bounded.checks.iter().map(|check| check.name.chars().count() + check.summary.chars().count() + check.url.as_deref().unwrap_or_default().chars().count()).sum::<usize>()
+                + bounded.failed_tests.iter().map(|test| test.test.chars().count() + test.message.chars().count()).sum::<usize>();
+            prop_assert!(total <= findings::MAX_REPORT_CHARS);
+            Ok(())
+        }).unwrap();
+    }
 
     #[test]
     fn terminal_codes_are_removed_before_redaction_and_clipping() {

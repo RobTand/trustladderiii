@@ -619,6 +619,29 @@ mod properties {
         check(Entry::Rerun, Profile::Rerun)
     }
 
+    /// H8/Q47: stable rerun writes and saved receipts exercise every crash
+    /// before/after create, write, fsync, rename and the upstream POST.
+    #[test]
+    fn required_head_receipts_and_classification() {
+        let base = stable(Profile::Rerun);
+        io::compare(&base, Entry::Rerun).unwrap();
+        io::require_ops(
+            &base,
+            Entry::Rerun,
+            &["github.rerun", "file.write", "file.fsync", "file.rename"],
+        );
+        for receipt in [2, 6, 10, 14, 34, 4096, 1024, 2048] {
+            let mut schedule = base.clone();
+            over(&mut schedule, "file.read", ".reruns", 0, receipt);
+            io::compare(&schedule, Entry::Rerun).unwrap();
+        }
+        for annotations in [0, 1, 32, 64, 128] {
+            let mut schedule = base.clone();
+            over(&mut schedule, "github.annotations", "/1", 0, annotations);
+            io::compare(&schedule, Entry::Rerun).unwrap();
+        }
+    }
+
     fn function<'a>(source: &'a str, name: &str, after: &str) -> &'a str {
         let offset = if after.is_empty() {
             0
