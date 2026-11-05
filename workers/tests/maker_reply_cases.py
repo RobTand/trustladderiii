@@ -17,12 +17,14 @@ def vectors():
     old = reference()
     rows = []
 
-    def reply(name, inputs, value):
+    def reply(name, inputs, value, *, expected=...):
         try:
             old["_check_reply"](inputs, value)
             error = None
         except ValueError as failure:
             error = str(failure)
+        if expected is not ...:
+            assert error == expected, (name, error, expected)
         rows.append({"operation": "reply", "name": name, "inputs": inputs, "reply": value, "error": error})
 
     inputs = {"goals": [{"id": "m"}, {"id": "c", "stage": "checking"},
@@ -91,13 +93,22 @@ def vectors():
     from message_invariants import request_123_handover, review_fix
     fixture = {"inputs": {"plan": {"checks": [], "files": []}, "goals": []}}
     incident, value = request_123_handover.__wrapped__(deepcopy(fixture))
-    reply("request_123/pending", incident["inputs"], value)
+    reply("request_123/pending", incident["inputs"], value, expected=None)
     changed = deepcopy(value)
     changed["self_check"][-1]["status"] = "met"
-    reply("request_123/future-proof", incident["inputs"], changed)
+    reply("request_123/future-proof", incident["inputs"], changed,
+          expected="downstream goals must remain pending for their owning stage")
     review_inputs, value = review_fix.__wrapped__(deepcopy(fixture))
-    reply("review662/declaration", review_inputs, value)
-    for invalid in ["omitted", "partial", "duplicate", "unknown", "old", "selector"]:
+    reply("review662/declaration", review_inputs, value, expected=None)
+    coverage_error = "reproductions must cover each current review finding exactly once"
+    for invalid, diagnostic in {
+        "omitted": coverage_error,
+        "partial": coverage_error,
+        "duplicate": coverage_error,
+        "unknown": coverage_error,
+        "old": coverage_error,
+        "selector": "not a pytest selector: 'test_greeting.py'",
+    }.items():
         changed = deepcopy(value)
         if invalid == "omitted":
             changed.pop("reproductions")
@@ -109,14 +120,33 @@ def vectors():
             changed["reproductions"][0]["finding_id"] = "old-review" if invalid == "old" else "invented"
         else:
             changed["reproductions"][0]["tests"] = ["test_greeting.py"]
-        reply("review-fix/" + invalid, review_inputs, changed)
+        reply("review-fix/" + invalid, review_inputs, changed, expected=diagnostic)
     missing = deepcopy(value)
     missing["reproductions"][0].pop("proof")
-    reply("review662/missing-red-message", review_inputs, missing)
+    reply("review662/missing-red-message", review_inputs, missing,
+          expected="A reproduction needs proof.red_message for its assertion RED.")
     checks = [{"name": "ordinary", "tests": ["a.py::test_a"], "kind": "demonstrating"},
               {"name": "regression", "tests": ["a.py::test_b"], "kind": "regression"},
               {"name": "forced", "tests": ["a.py::test_c"], "kind": "demonstrating", "forcing": {}},
               {"name": "symptom", "tests": ["a.py::test_d"], "kind": "demonstrating", "declared_symptom": {}}]
+    for name, selected in {
+        "forced-only": [checks[2]],
+        "declared-symptom-only": [checks[3]],
+        "forced-and-declared-symptom": [checks[2], checks[3]],
+        "declared-symptom-and-forced": [checks[3], checks[2]],
+        "ordinary-and-forced": [checks[0], checks[2]],
+        "ordinary-and-declared-symptom": [checks[0], checks[3]],
+    }.items():
+        data = {"check_base_sha": "base", "plan": {"checks": selected}}
+        handoff = old["_checking_handoff"](data, "head", "tree")
+        expected = ({"base_sha": "base", "head_sha": "head", "head_tree": "tree",
+                     "status": "pending", "owner": "checking", "checks": [
+                         {"name": "ordinary", "tests": ["a.py::test_a"],
+                          "mode": "base_subject_head_observer"}]}
+                    if name.startswith("ordinary-") else None)
+        assert handoff == expected, (name, handoff, expected)
+        rows.append({"operation": "handoff", "name": "handoff/" + name, "inputs": data,
+                     "handoff": handoff})
     for base_sha in [None, "", "base"]:
         for count in range(5):
             data = {"check_base_sha": base_sha, "plan": {"checks": checks[:count]}}
