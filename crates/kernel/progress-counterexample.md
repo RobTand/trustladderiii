@@ -151,16 +151,20 @@ The real-store refusal property inventories every observation variant and each
 private input kind, refuses before every real kernel step and after the final
 SQL writes, and checks every persisted table and sequence. After clearance and
 restart, replay must match an uninterrupted run. The comparison removes only
-incident audit receipts, maps their revision offsets out of identifiers and
-references, ignores SQL wall-clock timestamps and compares arrival ordering.
+incident audit receipts and each incident's single arrival allocation, maps
+their revision offsets out of identifiers and references, ignores SQL
+wall-clock timestamps and compares arrival ordering. All other allocator
+high-water values and all legacy sequences are compared exactly on refusal.
 Fixed regressions retain the Queue(Merged), Classified and queued-intake edit
 failures from review. Deterministic proptest seeds and persisted regressions
 make the generated inputs repeatable.
 
 PostgreSQL sequences do not roll back. Migration 22 therefore supplies a locked,
-transactional allocator for IDs allocated during input processing, including
-the phase-history trigger. Existing sequence values remain allocation floors.
-An aborted allocation leaves neither a row nor a sequence gap.
+transactional high-water row for IDs allocated during input processing,
+including the phase-history trigger. Existing sequence values remain allocation
+floors. An aborted allocation leaves neither a row nor a sequence gap, and
+deleting a consumed input cannot reuse its committed arrival number. The world
+column's SQL default uses the same allocator for direct store tooling inserts.
 
 The external-write audit found wait-subscription removal inside input handling.
 It now stages a durable retirement intent. Only a committed intent may call

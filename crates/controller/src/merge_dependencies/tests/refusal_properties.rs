@@ -18,6 +18,10 @@ fn persist_world(c: &mut Controller, world: &World, key: &str) {
 // Query every persisted table through the actual reader. Incident bookkeeping is
 // the sole allowed change. In particular, this includes interned IDs, outbox,
 // credit, worker records, queue receipts, jobs, watches and request/edit rows.
+// A counter incident owns exactly one world arrival. Remove only that allocation
+// from the high-water value, just as its row and audit receipt are removed.
+const ALLOCATIONS_WITHOUT_COUNTER_INCIDENTS: &str = "SELECT jsonb_set(to_jsonb(t), '{last_id}', to_jsonb(last_id - CASE WHEN relation = 'tl3_world'::regclass AND column_name = 'arrival' THEN (SELECT count(*) FROM tl3_world WHERE table_name = 'incidents' AND value #>> '{signature,class}' = 'kernel_counter_headroom') ELSE 0 END)) FROM tl3_input_allocations t";
+
 fn business_bytes(c: &mut Controller) -> Vec<u8> {
     let mut reader = c.store.reader().unwrap();
     let mut tx = reader.transaction().unwrap();
@@ -26,6 +30,17 @@ fn business_bytes(c: &mut Controller) -> Vec<u8> {
     ).unwrap().into_iter().map(|r| r.get(0)).collect();
     let mut dump = BTreeMap::<String, Value>::new();
     for table in tables {
+        if table == "tl3_input_allocations" {
+            let mut values: Vec<Value> = tx
+                .query(ALLOCATIONS_WITHOUT_COUNTER_INCIDENTS, &[])
+                .unwrap()
+                .into_iter()
+                .map(|row| row.get(0))
+                .collect();
+            values.sort_by_cached_key(Value::to_string);
+            dump.insert(table, json!(values));
+            continue;
+        }
         if table == "tl3_meta" {
             // The only additional audit receipt is the separate incident commit.
             dump.insert(table, tx.query_one("SELECT jsonb_build_array(jsonb_build_object('singleton', singleton, 'revision', revision - (SELECT count(*) FROM tl3_events WHERE payload ? 'kernel_refusal'), 'epoch', epoch)) FROM tl3_meta", &[]).unwrap().get(0));
@@ -427,6 +442,17 @@ fn replay_bytes(c: &mut Controller, initial_revision: i64) -> Vec<u8> {
         .unwrap().into_iter().map(|r| r.get(0)).collect();
     let mut dump = BTreeMap::<String, Vec<Value>>::new();
     for table in tables {
+        if table == "tl3_input_allocations" {
+            let mut values: Vec<Value> = tx
+                .query(ALLOCATIONS_WITHOUT_COUNTER_INCIDENTS, &[])
+                .unwrap()
+                .into_iter()
+                .map(|row| row.get(0))
+                .collect();
+            values.sort_by_cached_key(Value::to_string);
+            dump.insert(table, values);
+            continue;
+        }
         let filter = match table.as_str() {
             "tl3_world" => {
                 "WHERE NOT (table_name = 'incidents' AND value #>> '{signature,class}' = 'kernel_counter_headroom')"

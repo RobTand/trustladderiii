@@ -252,6 +252,8 @@ fn put(id: &str, value: serde_json::Value) -> RowChange {
     }
 }
 
+/// State-table "Counter headroom": rollback undoes allocations; committed
+/// arrival numbers remain monotone after their rows are consumed.
 fn arrival_within_transaction(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let snapshot = store.load().unwrap();
@@ -279,6 +281,31 @@ fn arrival_within_transaction(settings: &tl3_config::Store) {
             .windows(2)
             .all(|pair| pair[0].arrival < pair[1].arrival)
     );
+    let last_arrival = before.rows.last().unwrap().arrival;
+    let mut consume = Commit::new("consume-latest", json!(null), &before);
+    consume.rows.push(RowChange::Delete {
+        table: "inbox".into(),
+        id: "effect:1".into(),
+    });
+    store.commit(&consume).unwrap();
+    let before_new = store.load().unwrap();
+    let mut next = Commit::new("next-arrival", json!(null), &before_new);
+    next.rows.push(RowChange::Put {
+        table: "inbox".into(),
+        id: "effect:new".into(),
+        value: json!(null),
+    });
+    store.begin_input().unwrap();
+    store.commit(&next).unwrap();
+    store.finish_input(false).unwrap();
+    assert_eq!(store.load().unwrap(), before_new);
+    store.commit(&next).unwrap();
+    let after_new = store.load().unwrap();
+    assert!(
+        after_new.rows.last().unwrap().arrival > last_arrival,
+        "consuming the newest row must not let its arrival number be reused"
+    );
+    let before = after_new;
     let mut update = Commit::new("update-arrival", json!(null), &before);
     update.rows.push(RowChange::Put {
         table: "inbox".into(),

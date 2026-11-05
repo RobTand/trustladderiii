@@ -1025,7 +1025,7 @@ impl Store {
                 RowChange::Put { table, id, value } => {
                     // The metadata lock serializes arrival allocation. Unlike nextval,
                     // this allocation disappears when the input rolls back.
-                    tx.execute("INSERT INTO tl3_world (table_name, row_id, value, version, arrival) SELECT $1, $2, $3, $4, tl3_transactional_id('tl3_world', 'arrival', 'tl3_world_arrival_seq') ON CONFLICT (table_name, row_id) DO UPDATE SET value = EXCLUDED.value, version = EXCLUDED.version",
+                    tx.execute("INSERT INTO tl3_world (table_name, row_id, value, version, arrival) SELECT $1, $2, $3, $4, COALESCE((SELECT arrival FROM tl3_world WHERE table_name = $1 AND row_id = $2), tl3_transactional_id('tl3_world', 'arrival', 'tl3_world_arrival_seq')) ON CONFLICT (table_name, row_id) DO UPDATE SET value = EXCLUDED.value, version = EXCLUDED.version",
                         &[table, id, value, &revision.get()])?;
                     if table == "nodes" && value["phase"].get("Closed").is_some() {
                         tx.execute("DELETE FROM tl3_worker_summary WHERE node_id = $1", &[id])?;

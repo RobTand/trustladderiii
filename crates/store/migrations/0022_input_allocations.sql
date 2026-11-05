@@ -1,20 +1,34 @@
 -- State-table "Counter headroom": a refused input also rolls back allocated IDs.
 -- Keep the old sequences as floors when upgrading an existing database. Reading
--- a sequence does not advance it. Transaction locks serialize all controller allocators;
--- the inserted row, rather than nextval, owns the new ID until commit.
+-- a sequence does not advance it. A locked high-water row preserves committed
+-- IDs even when their business rows are later deleted; rollback undoes its update.
+CREATE TABLE tl3_input_allocations (
+    relation regclass NOT NULL,
+    column_name name NOT NULL,
+    last_id bigint NOT NULL,
+    PRIMARY KEY (relation, column_name)
+);
+
 CREATE FUNCTION tl3_transactional_id(relation regclass, column_name name, old_sequence regclass)
 RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE allocated bigint;
 BEGIN
-    -- Unlike a table-lock upgrade inside INSERT, this cannot deadlock with
-    -- another inserter's already-acquired RowExclusiveLock.
-    PERFORM pg_advisory_xact_lock((771::bigint << 32) | relation::oid::bigint);
+    -- The conflict update locks the allocator row, without upgrading any lock
+    -- on the business table. Concurrent read-committed allocators see its latest ID.
     EXECUTE format('SELECT GREATEST(COALESCE((SELECT MAX(%I) FROM %s), 0) + 1,
         (SELECT last_value + is_called::integer FROM %s))', column_name, relation, old_sequence)
         INTO allocated;
+    INSERT INTO tl3_input_allocations AS counter VALUES (relation, column_name, allocated)
+    ON CONFLICT ON CONSTRAINT tl3_input_allocations_pkey
+        DO UPDATE SET last_id = GREATEST(counter.last_id + 1, EXCLUDED.last_id)
+    RETURNING last_id INTO allocated;
     RETURN allocated;
 END
 $$;
+
+-- Preserve direct SQL inserts used by store tooling as well as the Rust API.
+ALTER TABLE tl3_world ALTER COLUMN arrival SET DEFAULT
+    tl3_transactional_id('tl3_world', 'arrival', 'tl3_world_arrival_seq');
 
 CREATE OR REPLACE FUNCTION tl3_track_phase() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
