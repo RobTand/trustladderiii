@@ -36,6 +36,9 @@ use ranks::*;
 
 mod checking;
 mod events;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement.rs"]
+mod retirement;
 use events::*;
 mod allocation;
 use allocation::*;
@@ -1375,6 +1378,10 @@ kernel_fn! {
     fn notice(out: &mut Outbox, node: usize, value: Notice) -> (result: ()) [
     requires old(out).len < OUTBOX,
     ensures final(out).len == old(out).len + 1,
+        final(out).items@ == old(out).items@.update(old(out).len as int,
+            Some(Out::Notice { node: NodeId(node as u64), notice: value })),
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        final(out).items@.contains(Some(Out::Notice { node: NodeId(node as u64), notice: value })),
     ] {
         out.push(Out::Notice {
             node: NodeId(node as u64),

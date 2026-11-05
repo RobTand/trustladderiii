@@ -308,6 +308,9 @@ impl World {
     pub(super) fn check_dependencies(&self) -> (result: Result<(), Broken>) [
         requires self.nodes@.len() <= u64::MAX as int,
         ensures result.is_ok() ==> dependencies_checked(*self),
+            (self.dependencies@.len() == 0
+                && forall|j: int| 0 <= j < self.nodes@.len() ==> !self.nodes@[j].credit.withheld)
+                ==> result.is_ok(),
     ] proof [reveal(dependencies_checked); reveal(edges_indexable);] {
         let mut node_index = 0usize;
         kernel_while! { (node_index < self.nodes.len()) [

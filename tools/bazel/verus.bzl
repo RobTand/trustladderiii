@@ -98,6 +98,7 @@ def verus_proofs():
             "ids": ("kernel::ids", 6),
             "controller_boundary": ("controller_boundary", 2),
             "command_headroom": ("root", 1),
+            "retirement": ("kernel::retirement", 4),
         }
         for name, (module, count) in groups.items():
             verus_test(
@@ -106,6 +107,7 @@ def verus_proofs():
                 srcs = native.glob(["src/**/*.rs"], exclude = ["src/proofs.rs"]) + ["//crates/controller:src/kernel_boundary.rs"],
                 expected_obligations = count,
                 module = module,
+                specs = ["verus/retirement.rs"],
                 tags = ["rust", "verus"],
                 size = "small",
                 timeout = "short",

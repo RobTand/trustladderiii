@@ -33,6 +33,19 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        retirement::selected(fact) ==> final(w).next_question == old(w).next_question,
+        retirement::selected(fact) ==> final(w).nodes@[i as int]
+            == retirement::fact_node(old(w).nodes@[i as int], fact),
+        retirement::selected(fact) && retirement::notices_only(*old(out))
+            ==> retirement::notices_only(*final(out)),
+        match fact {
+            Fact::PrMerged { head, checks_passed } => old(w).nodes@[i as int].had_pr
+                && old(w).nodes@[i as int].merged.is_none()
+                && !(old(w).nodes@[i as int].phase is Closed)
+                && !(old(w).nodes@[i as int].approved == Some(head) && checks_passed)
+                ==> retirement::unapproved_note(*final(out), i),
+            _ => true,
+        },
 ] proof [reveal(dependencies::dependency_frame);] {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
@@ -79,6 +92,19 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        retirement::selected(fact) ==> final(w).next_question == old(w).next_question,
+        retirement::selected(fact) ==> final(w).nodes@[i as int]
+            == retirement::fact_node(old(w).nodes@[i as int], fact),
+        retirement::selected(fact) && retirement::notices_only(*old(out))
+            ==> retirement::notices_only(*final(out)),
+        match fact {
+            Fact::PrMerged { head, checks_passed } => old(w).nodes@[i as int].had_pr
+                && old(w).nodes@[i as int].merged.is_none()
+                && !(old(w).nodes@[i as int].phase is Closed)
+                && !(old(w).nodes@[i as int].approved == Some(head) && checks_passed)
+                ==> retirement::unapproved_note(*final(out), i),
+            _ => true,
+        },
 ] proof [reveal(retry_bounds);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
@@ -170,7 +196,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             let m = &mut w.nodes[i];
             if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
                 m.waiting_incident = false;
-                m.incident_needs_rob = false;
+                // #806 seeded mutant: retain incident_needs_rob.
             }
         }
     }
@@ -209,6 +235,13 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
             <= old(w).nodes@[i as int].credit.earned as int + 1,
 
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int],
+            Fact::PrMerged { head, checks_passed }),
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        old(w).nodes@[i as int].had_pr && old(w).nodes@[i as int].merged.is_none()
+            && !(old(w).nodes@[i as int].phase is Closed)
+            && !(old(w).nodes@[i as int].approved == Some(head) && checks_passed)
+            ==> retirement::unapproved_note(*final(out), i),
 ] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {

@@ -92,7 +92,8 @@ kernel_fn! {
 pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures *final(m) == retirement::stopped(*old(m), outcome),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int == old(m).generation as int
             + if old(m).phase is Closed || old(m).phase is Stopping { 0int } else { 1int },
@@ -241,7 +242,8 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         holding(old(w).nodes@[i as int].phase) ==>
             old(w).nodes@[i as int].generation < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int] == retirement::incident(old(w).nodes@[i as int], needs_rob),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),

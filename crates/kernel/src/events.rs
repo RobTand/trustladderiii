@@ -41,6 +41,26 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             && final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
             && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
             && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
+        match event {
+            Event::Fact { node, fact } => retirement::selected(fact)
+                && node.0 < old(w).nodes@.len() ==> {
+                    final(w).nodes@ == old(w).nodes@.update(node.0 as int,
+                        retirement::fact_node(old(w).nodes@[node.0 as int], fact))
+                    && final(w).next_question == old(w).next_question
+                    && final(w).file_sets@ == old(w).file_sets@
+                    && final(w).dependencies@ == old(w).dependencies@
+                    && (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)))
+                    && match fact {
+                        Fact::PrMerged { head, checks_passed } => old(w).nodes@[node.0 as int].had_pr
+                            && old(w).nodes@[node.0 as int].merged.is_none()
+                            && !(old(w).nodes@[node.0 as int].phase is Closed)
+                            && !(old(w).nodes@[node.0 as int].approved == Some(head) && checks_passed)
+                            ==> retirement::unapproved_note(*final(out), node.0 as usize),
+                        _ => true,
+                    }
+                },
+            _ => true,
+        },
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_apply = *w }
     match event {
