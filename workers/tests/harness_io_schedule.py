@@ -127,6 +127,7 @@ def action(module, directory, schedule):
     original_exists, original_is_file = Path.exists, Path.is_file
     existence = iter(schedule.get('selector_reads', [1]))
     output = io.StringIO()
+    proof_reads = 0
 
     class Output:
         def write(self, text):
@@ -164,10 +165,12 @@ def action(module, directory, schedule):
         return original_open(path, mode, *args, **kwargs)
 
     def read(path, *args, **kwargs):
+        nonlocal proof_reads
         if path == progress:
             trace.append(('progress-read',))
         if path == Path('proof.json'):
-            value = json.dumps({'mode':'pytest-outcome', 'sample':schedule['initial']})
+            value = json.dumps({'mode':'pytest-outcome', 'sample':schedule['initial'] + proof_reads})
+            proof_reads += 1
             trace.append(('proof-read', value))
             return value
         return original_read(path, *args, **kwargs)
@@ -274,6 +277,8 @@ def lifecycle(module, directory, schedule):
     original_read_bytes, original_read_text = Path.read_bytes, Path.read_text
     original_replace = Path.replace
     original_chmod = os.fchmod
+    original_rmtree = module.shutil.rmtree
+    source_reads = 0
 
     def name(path):
         path = Path(path)
@@ -326,8 +331,10 @@ def lifecycle(module, directory, schedule):
         return original_mkdir(path, *args, **kwargs)
 
     def read_bytes(path):
+        nonlocal source_reads
         if path.name in ('pb_tests.py', 'pb_tests.py.txt'):
-            value = b'recorded trusted worker bytes'
+            value = f'recorded trusted worker bytes {schedule["initial"] + source_reads}'.encode()
+            source_reads += 1
             trace.append(('trusted-source-read', value.hex()))
             return value
         return original_read_bytes(path)
@@ -344,8 +351,10 @@ def lifecycle(module, directory, schedule):
     def git(root, *args):
         return change(('stage-git', args), lambda: 'c' * 40 if args[0] == 'write-tree' else '')
 
-    raw = (test_tool.PREFIX + json.dumps({'status':'completed', 'tests':[],
-        'totals':dict.fromkeys(test_tool.OUTCOMES, 0), 'note':''}) + '\n').encode()
+    proof = {'mode':'pytest-outcome', 'sample':schedule['initial']}
+    facts = {'status':'completed', 'tests':[], 'totals':dict.fromkeys(test_tool.OUTCOMES, 0), 'note':''}
+    if schedule.get('base'): facts['proof'] = proof
+    raw = (test_tool.PREFIX + json.dumps(facts) + '\n').encode()
     key = 'a' * 64
     ending = {'action_key':key, 'status':'executed', 'exit_code':0, 'succeeded':True,
         'result':{'verified':True, 'receipt_sha256':'b' * 64,
@@ -399,6 +408,21 @@ def lifecycle(module, directory, schedule):
         patch.setattr(os, 'fchmod', lambda fd, mode: change(('stage-chmod', mode), lambda: original_chmod(fd, mode)))
         patch.setattr(module.tempfile, 'TemporaryDirectory', Temporary)
         patch.setattr(module.shutil, 'copytree', copytree)
+        patch.setattr(module.shutil, 'rmtree', lambda path, *args, **kwargs: change(('stage-remove', name(path)), lambda: original_rmtree(path, *args, **kwargs)))
+        if schedule.get('base'):
+            tree.test_checkout = source
+            tree.check_base_sha = 'd' * 40
+            def export(checkout, sha, target):
+                trace.append(('base-export', name(checkout), sha, name(target)))
+                target.mkdir()
+                (target / 't.py').write_text((source / 't.py').read_text())
+            def assemble(base, head, checkout, check, configuration):
+                trace.append(('assemble-proof', name(base), name(head), name(checkout)))
+                checkout.mkdir()
+                (checkout / 't.py').write_text((base / 't.py').read_text())
+                return deepcopy(proof)
+            patch.setattr(module, 'export', export)
+            patch.setattr(module, 'assemble_proof', assemble)
         patch.setattr(module, '_git', git); patch.setattr(module, '_json_command', command)
         patch.setattr(module, 'scratch_environment', lambda: {})
         patch.setattr(module.secrets, 'token_hex', lambda n: 'fresh')
@@ -414,7 +438,7 @@ def lifecycle(module, directory, schedule):
         tree.pb_submitted = lambda *args: change(('checkpoint-write', args), lambda: None)
         settings = module.TestSettings('sha256:' + '1' * 64, Path('/recorded-tools'))
         try:
-            result = ('result', module.make_test_tool(tree, settings, emit=emit)(['t.py'], repeat=2))
+            result = ('result', module.make_test_tool(tree, settings, emit=emit)(['t.py'], base=schedule.get('base', False), repeat=2))
         except Crash:
             result = ('crash',)
     state = {str(path.relative_to(directory)):(path.read_bytes().hex(), path.stat().st_mode & 0o777)
@@ -463,8 +487,9 @@ def decide(schedule):
         assert after[1] == vector['worker'], ('complete worker parity vector changed', after)
     for mode in ('run_current', 'run', 'main'):
         compare_crashes(action, legacy_action, test_tool, {**schedule, 'mode':mode})
-    for reattach in (False, True):
-        compare_crashes(lifecycle, legacy_worker, pb_tests, {**schedule, 'reattach':reattach})
+    for base in (False, True):
+        for reattach in (False, True):
+            compare_crashes(lifecycle, legacy_worker, pb_tests, {**schedule, 'base':base, 'reattach':reattach})
     before = worker(legacy_worker, schedule)
     after = worker(pb_tests, schedule)
     assert before == after, ('worker log schedule changed', schedule, before, after)
