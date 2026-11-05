@@ -7,6 +7,7 @@ use crate::{
 use std::path::Path;
 use tl3_kernel::EffectKind;
 
+mod decide;
 mod publishing;
 pub use publishing::APPROVAL_CHECK;
 
@@ -272,11 +273,11 @@ impl Adapter {
         let text = crate::redaction::text(text)?;
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        if self
-            .runtime
-            .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
-            .is_none()
-        {
+        if decide::should_post(
+            self.runtime
+                .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
+                .is_some(),
+        ) {
             self.fence(delivery)?;
             self.runtime.block_on(client.post_comment(
                 &repo,
@@ -1036,11 +1037,11 @@ impl Adapter {
         }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        if self
-            .runtime
-            .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
-            .is_none()
-        {
+        if decide::should_post(
+            self.runtime
+                .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
+                .is_some(),
+        ) {
             let mut policy = self.policy.clone();
             // These posts can't read the request's issue: it lives elsewhere or is gone.
             let input = if matches!(notice, Some(Notice::Incident { .. }))

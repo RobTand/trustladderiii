@@ -207,3 +207,53 @@ fn reference_is_verbatim_base_loop() {
     assert!(reference.contains(original));
     assert!(original.contains("for duplicate in matches.iter().skip(1)"));
 }
+
+mod controller;
+#[path = "../../src/adapters/github/decide.rs"]
+mod decide;
+mod fixture;
+mod legacy_controller;
+mod production_controller;
+pub use tl3_controller::{
+    Error, evidence, executor, publication_failure, redaction, steering, worker_inputs,
+};
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+    serde_json::from_value(value).map_err(Error::StoredJson)
+}
+mod workers {
+    pub mod writer {
+        pub use tl3_controller::adapters::workers::writer::*;
+    }
+}
+mod approval_delivery {
+    pub fn is_approval(delivery: &tl3_controller::executor::Delivery) -> bool {
+        matches!(
+            delivery.output,
+            tl3_controller::executor::Output::Effect {
+                kind: tl3_kernel::EffectKind::PostApproval,
+                ..
+            }
+        )
+    }
+}
+mod review_stops {
+    use serde_json::Value;
+    pub fn outcome(context: &Value) -> Option<String> {
+        let step = context["review_stop"]["text"].as_str()?;
+        Some(format!(
+            "Work on this request stopped so that TL3's maintainers can review a failure before anything is retried: {step}."
+        ))
+    }
+    pub fn findings(context: &Value) -> Option<Value> {
+        context["review_stop"]
+            .get("findings")
+            .filter(|f| f.is_object())
+            .cloned()
+    }
+}
+
+use fixture::{
+    CloseReason, Delivery, MessageKind, NoteKind, Notice, OptionDraft, Out, Outcome, QKind,
+    WriteRequest,
+};
