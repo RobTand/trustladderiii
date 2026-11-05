@@ -63,7 +63,7 @@ _WAVE_B_ENTRIES = {
     "finish-teardown": _WAVE_B_STUB,
     # summary-bound (#823)
     "summary-bound": {
-        "srcs": ["tests/summary_bound.rs"],
+        "srcs": ["tests/summary_bound.rs", "tests/summary_bound/reference.rs"],
         "crate_root": "tests/summary_bound.rs",
         "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
         "data": [
