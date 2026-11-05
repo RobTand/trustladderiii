@@ -688,6 +688,14 @@ def message_pattern(value):
     return None
 
 
+def source_name(function):
+    module = function.__module__.rsplit('.', 1)[-1]
+    # The separately pinned S2 shell replaces the same historical PB summary.
+    if module == 's2_pb_tests':
+        module = 'pb_tests'
+    return module + '.' + function.__qualname__
+
+
 def refusal_patterns():
     """Derive refusal templates and their sources, including cause assignments."""
     result = {}
@@ -709,7 +717,7 @@ def refusal_patterns():
                 values = [node.value]
             for value in values:
                 if (pattern := message_pattern(value)) is not None:
-                    name = function.__module__.rsplit('.', 1)[-1] + '.' + function.__qualname__
+                    name = source_name(function)
                     result.setdefault(pattern, set()).add(name)
     return {pattern: sorted(sources) for pattern, sources in sorted(result.items())}
 
@@ -744,7 +752,7 @@ def bound_sites():
         tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
         for argument, default in zip(tree.body[0].args.kwonlyargs, tree.body[0].args.kw_defaults):
             if default is not None and (value := static_number(default, inspect.unwrap(function).__globals__)) is not None:
-                sites[function.__module__.rsplit('.', 1)[-1] + '.' + function.__qualname__ + ': default ' + argument.arg + '=' + ast.unparse(default)] = [value]
+                sites[source_name(function) + ': default ' + argument.arg + '=' + ast.unparse(default)] = [value]
         for node in ast.walk(tree):
             operands = []
             if isinstance(node, ast.Compare):
@@ -765,7 +773,7 @@ def bound_sites():
                     for group in re.findall(r'\{([0-9,]+)\}', node.args[0].value):
                         values.extend(int(value) for value in group.split(',') if value)
             if values:
-                key = function.__module__.rsplit('.', 1)[-1] + '.' + function.__qualname__ + ': ' + ast.unparse(node)
+                key = source_name(function) + ': ' + ast.unparse(node)
                 sites[key] = values
     return dict(sorted(sites.items()))
 
@@ -942,7 +950,7 @@ def dynamic_refusal_sites():
                 values = node.exc.args[2:3] if len(node.exc.args) == 3 else node.exc.args[:1]
                 for value in values:
                     if message_pattern(value) is None:
-                        sites.add(function.__module__.rsplit('.', 1)[-1] + '.' + function.__qualname__ + ': ' + ast.unparse(value))
+                        sites.add(source_name(function) + ': ' + ast.unparse(value))
     return sites
 
 
