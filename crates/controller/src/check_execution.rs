@@ -11,10 +11,10 @@ impl Diagnostic {
             .split(|byte| *byte == b'\n')
             .rev()
             .find_map(|line| line.strip_prefix(b"TL3_EXECUTION_FAILURE "))?;
-        if line.len() <= 16_384 {
-            if let Ok(diagnostic) = serde_json::from_slice(line) {
-                return Some(diagnostic);
-            }
+        if line.len() <= 16_384
+            && let Ok(diagnostic) = serde_json::from_slice(line)
+        {
+            return Some(diagnostic);
         }
         // Never log invalid producer text: it can itself carry a secret.
         eprintln!("invalid TL3_EXECUTION_FAILURE record in verified action log");
