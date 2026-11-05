@@ -1513,11 +1513,6 @@ fn check_pr_merged(phase: Phase) {
     }
 }
 
-proof!(pr_merged_reviewing, check_pr_merged(Phase::Reviewing));
-proof!(pr_merged_publishing, check_pr_merged(Phase::Publishing));
-proof!(pr_merged_queued, check_pr_merged(Phase::Queued));
-proof!(pr_merged_rebasing, check_pr_merged(Phase::Rebasing));
-proof!(pr_merged_awaiting_rob, check_pr_merged(Phase::AwaitingRob));
 proof!(
     pr_merged_stopping,
     check_pr_merged(Phase::Stopping(kani::any()))
