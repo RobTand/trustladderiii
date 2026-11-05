@@ -1199,6 +1199,23 @@ impl Supervisor {
 }
 
 impl Executor for Supervisor {
+    fn configured_model(&self, model: &str) -> bool {
+        [
+            &self.models.ingest,
+            &self.models.audit,
+            &self.models.planner,
+            &self.models.maker,
+            &self.models.reviewer,
+            &self.models.rebaser,
+            &self.models.comment_classifier,
+            &self.models.writer,
+            &self.models.postmortem,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|configured| configured.name == model)
+    }
+
     fn probe_memory(&mut self) -> Result<()> {
         self.memory.retry()
     }
@@ -1221,6 +1238,17 @@ impl Executor for Supervisor {
 
     fn resume_after_quota(&mut self, delivery: &Delivery) -> Result<Option<Completion>> {
         self.launch(delivery, true).map(Some)
+    }
+
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+        let role =
+            protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        Ok(self
+            .candidates(delivery, role, &mut store, &snapshot)?
+            .iter()
+            .any(|candidate| candidate.name == model))
     }
 
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
