@@ -98,6 +98,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// #826: the portable pytest edge is pinned to the authoritative Rust policy too.
+    #[test]
+    fn harness_policy_matches_the_rust_build() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../harness/src/tl3_harness/_redaction_policy.py");
+        assert_eq!(
+            crate::redaction::generated_harness_policy(),
+            std::fs::read_to_string(path).unwrap()
+        );
+    }
+
     /// #826 review: a malformed producer record is visible operator evidence.
     #[test]
     fn malformed_diagnostic_is_visible() {
