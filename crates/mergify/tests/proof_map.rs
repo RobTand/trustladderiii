@@ -367,6 +367,10 @@ fn inventory(root: &Path, groups: &[Group]) -> Result<(usize, usize), String> {
         covered_files.insert(file.clone());
         let mut declared = BTreeSet::new();
         let base_inputs = [
+            "src/decide/enqueue.rs".into(),
+            "src/decide/check.rs".into(),
+            "src/decide/observe.rs".into(),
+            "src/decide/verification.rs".into(),
             format!("proofs/enqueue_{}.rs", group.root),
             "proofs/enqueue_helpers.rs".into(),
             format!("proofs/enqueue_{}_spec.rs", group.root),
