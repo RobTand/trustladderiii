@@ -1257,3 +1257,9 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+# The existing controller library test embeds the P2a mapper-parity corpus.
+exports_files(
+    ["planner-vectors.json.gz"],
+    visibility = ["//crates/controller:__pkg__"],
+)
