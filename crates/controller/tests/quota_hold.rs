@@ -126,6 +126,9 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_earlier_rung(false)
+    }
+    fn with_earlier_rung(earlier: bool) -> Self {
         let mut db = support::Database::start();
         let settings = db.create("quota_hold");
         let root = tempfile::tempdir().unwrap();
@@ -137,6 +140,11 @@ impl Fixture {
         // workers have no silence/no-progress deadline in this fixture.
         config.allowances.agent_worker.silence_secs = u32::MAX;
         config.allowances.agent_worker.no_progress_secs = u32::MAX;
+        if earlier {
+            let mut model = config.models.audit[0].clone();
+            model.name = "earlier-model".into();
+            config.models.audit.insert(0, model);
+        }
         config.models.key_file = root.path().join("fixture-key");
         fs::write(&config.models.key_file, "fixture-only").unwrap();
         config.workers.python = "/usr/bin/python3".into();
@@ -163,7 +171,8 @@ facts = dict(started_ms=now, finished_ms=now, outcome='quota' if quota else 'suc
              trace_id=None, failure=None)
 pathlib.Path(r['trace']['completion']).write_text(json.dumps(facts))
 if quota:
-    print(json.dumps(dict(event='quota', role='audit', reset_ms=1900000000000)), flush=True)
+    reset = 1899913600000 if r['model']['name'] == 'earlier-model' else 1900000000000
+    print(json.dumps(dict(event='quota', role='audit', reset_ms=reset)), flush=True)
 else:
     print(json.dumps(dict(event='reply', role='audit', reply=dict(verdict='agree', objections=[], evidence_contract=[]))), flush=True)
 "#.into(), root.path().to_str().unwrap().into()];
@@ -819,4 +828,83 @@ fn success_on_an_earlier_rung_wakes_a_hold_from_the_last_rung() {
         2,
         "earlier-rung success wakes the original key"
     );
+}
+
+/// Q53 / #828 review: legacy status survives restart with the ladder's earlier reset,
+/// even when the next scheduled look only posts the #759 maintenance note.
+#[test]
+fn legacy_restart_restores_the_earliest_ladder_deadline() {
+    const EARLIER: u64 = RESET - 86_400_000;
+    for maintenance in [false, true] {
+        let mut f = Fixture::with_earlier_rung(true);
+        f.controller
+            .set_model_quota_policy(&f.config.models, Duration::from_secs(5 * 86_400))
+            .unwrap();
+        f.intake(2662);
+        f.until(|f| f.hold().is_some());
+        let key = f.hold().unwrap().0;
+        f.controller.look_due().unwrap();
+        f.until(|f| {
+            f.hold()
+                .is_some_and(|(_, hold)| hold["last_quota_model"] == "alternate-model")
+        });
+        f.controller.look_due().unwrap();
+        assert_eq!(
+            f.attempt(&key),
+            1,
+            "both ladder rungs really ended with quota"
+        );
+        let (_, mut hold) = f.hold().unwrap();
+        assert_eq!(hold["quota_ms"], RESET);
+        assert_eq!(
+            hold["quota_retry_ms"], EARLIER,
+            "real controller chose the earlier rung"
+        );
+        let due = if maintenance {
+            f.clock.0.get() + 30 * 60 * 1000
+        } else {
+            EARLIER
+        };
+        // Emulate a pre-#828 durable row, preserving its scheduled look.
+        hold.as_object_mut().unwrap().remove("quota_retry_ms");
+        hold["due_ms"] = json!(due);
+        let snapshot = f.store.load().unwrap();
+        let mut commit = Commit::new(
+            format!("fixture:legacy:{maintenance}"),
+            json!({}),
+            &snapshot,
+        );
+        commit.rows.push(RowChange::Put {
+            table: "allowances".into(),
+            id: key.clone(),
+            value: hold,
+        });
+        f.store.commit(&commit).unwrap();
+        let mut f = f.restart();
+        let (_, hold) = f.hold().unwrap();
+        assert_eq!(
+            hold["due_ms"], due,
+            "migration preserves maintenance and retry scheduling"
+        );
+        let holds = tl3_controller::looks::model_quota_holds(
+            &f.controller.snapshot().unwrap(),
+            Some(&f.config.models),
+        )
+        .unwrap();
+        let hold = holds.iter().find(|hold| hold.key == key).unwrap();
+        assert_eq!(
+            hold.retry_at_ms, EARLIER,
+            "legacy restart must advertise the earliest ladder deadline, not the last ending's reset"
+        );
+        assert_eq!(hold.reset_ms, RESET);
+        let view = status::load(&mut Reader::open(&f.settings).unwrap()).unwrap();
+        let wait = &view.requests[0].waiting_on;
+        assert!(
+            wait.contains("until 2030-03-17T17:46:40Z; earliest retry 2030-03-16T17:46:40Z"),
+            "{wait}"
+        );
+        assert!(status::render_text(&view).contains(wait));
+        assert!(status::render_html(&view).contains(wait));
+        assert_eq!(f.attempt(&key), 1, "migration does not dispatch");
+    }
 }

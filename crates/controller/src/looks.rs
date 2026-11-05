@@ -313,6 +313,41 @@ impl Controller {
         Ok(())
     }
 
+    /// Q53 / #828: old allowances lack the ladder deadline introduced for status.
+    /// Ask the scheduling adapter once on open; a #759 maintenance look may be
+    /// earlier than the retry, so its due time is not a substitute for this field.
+    pub(crate) fn migrate_model_quota_deadlines(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let now = self.now_ms();
+        let mut commit = Commit::new(
+            format!("quota-deadlines:{}", snapshot.revision.get()),
+            json!({"migrate_model_quota_deadlines": true}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            if state.maintenance || state.quota_retry_ms.is_some() || state.last_quota_ms.is_none()
+            {
+                continue;
+            }
+            let Some(announced) = state.quota_ms else {
+                continue;
+            };
+            state.quota_retry_ms = Some(self.adapters.adapter(&state.delivery)?.quota_resume_ms(
+                &state.delivery,
+                announced,
+                now,
+            )?);
+            commit
+                .rows
+                .push(put("allowances", row.id.clone(), json!(state)));
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn retire_ended_effect_looks(
         &mut self,
         snapshot: &Snapshot,
