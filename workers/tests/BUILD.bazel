@@ -635,8 +635,10 @@ tl3_py_test(
     name = "test_planner_frozen_tests",
     srcs = ["test_planner_frozen_tests.py"],
     deps = [
+        ":checker_stub",
         ":conftest",
         ":planner_fixtures",
+        ":worker_process",
         "//workers/src",
         "@tl3_pip//pytest",
     ],
@@ -953,8 +955,10 @@ tl3_py_test(
     name = "test_planner_file_selectors",
     srcs = ["test_planner_file_selectors.py"],
     deps = [
+        ":checker_stub",
         ":conftest",
         ":planner_fixtures",
+        ":worker_process",
         "//workers/src",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",

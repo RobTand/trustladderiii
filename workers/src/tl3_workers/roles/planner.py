@@ -40,8 +40,9 @@ class PlanConsistencyError(ValueError):
     """A draft's checks disagree with its declarations or exact base selections."""
 
     def __init__(self, uncovered, missing_forced=(), *, draft=None, selectors=None, missing_proof=None,
-                 missing_subjects=None):
+                 missing_subjects=None, base_sha=None):
         self.draft = deepcopy(draft)
+        self.base_sha = base_sha
         self.uncovered = set(uncovered)
         self.missing_forced = set(missing_forced)
         self.selectors = selectors or {}
@@ -187,7 +188,7 @@ class PlanConsistencyError(ValueError):
                     except HarnessInputError:
                         errors.append(f'Corrected check must name an exact pytest node ID: {node}')
                         continue
-                    oversized, exists = base_definition(node)
+                    oversized, exists = base_definition(node, self.base_sha)
                     if oversized or not exists:
                         errors.append(f'Corrected check must name a test defined at the base: {node}')
         return errors
@@ -312,7 +313,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
         violations.extend(proof_applicability(inputs['ingest']['goals'], [check for _, check in applicable],
             lambda node: base_definition(node, inputs.get('base_sha'))[1], missing_subjects=omissions))
         missing_subjects = {applicable[index][0]: subjects for index, subjects in omissions.items()}
-        edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply)
+        edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply, inputs.get('base_sha'))
         violations.extend(edit_errors)
         planned_checks = []
         for i, check in enumerate(reply['checks']):
@@ -425,7 +426,7 @@ def check_reply(inputs, reply, *, rehearsals=None):
     if uncovered or missing_forced or selectors or missing_proof or missing_subjects:
         mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply,
                                         selectors=selectors, missing_proof=missing_proof,
-                                        missing_subjects=missing_subjects)
+                                        missing_subjects=missing_subjects, base_sha=inputs.get('base_sha'))
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
         # Substantive plan failures still reach the controller under Q54.
         proof_errors = (rehearsals.violations(inputs.get('base_sha'),
@@ -515,7 +516,7 @@ def function(node_id):
     return node_id.split("[", 1)[0]
 
 
-def edit_violations(goals, reply):
+def edit_violations(goals, reply, base_sha=None):
     """Regression and behavior-preserving checks run tests exactly as the base wrote them,
     so a test the change edits can only be shown by a demonstrating check (#438).
     Return substantive violations separately from uncovered edit declarations."""
@@ -542,7 +543,7 @@ def edit_violations(goals, reply):
         path = node_id.split("::")[0]
         if path not in reply["files"]:
             violations.append(f"A test the change edits must be in a declared file: `{path}`.")
-        oversized, exists = base_definition(node_id)
+        oversized, exists = base_definition(node_id, base_sha)
         if oversized:
             violations.append(f"edits_tests names a test in a file over the {HARD_CAP_BYTES}-byte limit: {path}")
         elif not exists:
