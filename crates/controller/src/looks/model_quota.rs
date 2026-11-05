@@ -130,6 +130,8 @@ impl Controller {
         observation: &Observation,
         commit: &mut Commit,
     ) -> Result<()> {
+        self.release_terminal_model_probes(snapshot, commit, None)?;
+        self.retire_completed_model_attempts(snapshot, commit)?;
         let ending = match observation {
             Observation::WorkerReply {
                 node,
@@ -151,29 +153,6 @@ impl Controller {
                 reply: Some(_),
                 ..
             } => self.store.latest_worker_ending(key)?,
-            Observation::WorkerFailed {
-                node, generation, ..
-            } => {
-                let key = snapshot
-                    .rows
-                    .iter()
-                    .find(|row| {
-                        row.table == "allowances"
-                            && row.value["delivery"]["output"]["Effect"]["node"] == node.0
-                            && row.value["delivery"]["generation"] == *generation
-                    })
-                    .map(|row| row.id.clone());
-                if let Some(key) = key {
-                    let ending = self.store.latest_worker_ending(&key)?;
-                    self.release_model_probe(
-                        snapshot,
-                        &key,
-                        ending.as_ref().map(|e| e.attempt),
-                        commit,
-                    )?;
-                }
-                return Ok(());
-            }
             _ => return Ok(()),
         };
         let Some(ending) = ending else {
@@ -186,9 +165,9 @@ impl Controller {
         let Some(finished_ms) = ending.facts.finished_ms else {
             return Ok(());
         };
-        let Some(family) =
+        let Some(family) = ending.family.clone().or_else(|| {
             self.attempt_family(snapshot, &ending.key, ending.attempt, &ending.facts.model)
-        else {
+        }) else {
             return Ok(());
         };
         let identity = QuotaModel {
@@ -204,24 +183,6 @@ impl Controller {
                     .is_some_and(|old| old >= finished_ms)
         }) {
             return Ok(());
-        }
-        if let Some(row) = snapshot
-            .rows
-            .iter()
-            .find(|row| row.table == "model_quota_incidents" && row.id == id)
-            && let Some(id) = row.value["incident"].as_str()
-            && let Some(row) = snapshot
-                .rows
-                .iter()
-                .find(|row| row.table == "incidents" && row.id == id)
-        {
-            let mut incident: Incident = crate::decode_stored(row.value.clone())?;
-            if incident.open && !incident.needs_rob {
-                incident.open = false;
-                commit
-                    .rows
-                    .push(put("incidents", id.into(), json!(incident)));
-            }
         }
         commit.rows.push(put(
             "model_successes",
@@ -280,6 +241,67 @@ impl Controller {
         Ok(())
     }
 
+    /// Q53 / #817(c): authoritative terminal facts, including ordinary failures,
+    /// release leases independently of how their observation is classified.
+    pub(crate) fn release_terminal_model_probes(
+        &mut self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        stopped_node: Option<NodeId>,
+    ) -> Result<()> {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "model_quota_probes")
+        {
+            let probe: Probe = crate::decode_stored(row.value.clone())?;
+            let Some(owner) = probe.owner else { continue };
+            let ending = self.store.latest_worker_ending(&owner.key)?;
+            let stopped = if let Some(node) = stopped_node {
+                self.store
+                    .effect(&owner.key)?
+                    .map(|effect| crate::decode_stored::<Delivery>(effect.payload))
+                    .transpose()?
+                    .is_some_and(|delivery| delivery.node() == node)
+            } else {
+                false
+            };
+            if stopped {
+                // None is reserved for an acknowledged real StopRun, including
+                // a reservation whose replacement never reached worker claim.
+                self.release_model_probe(snapshot, &owner.key, None, commit)?;
+            } else if let Some(ending) = ending
+                && ending.attempt > owner.after_attempt
+            {
+                self.release_model_probe(snapshot, &owner.key, Some(ending.attempt), commit)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Q53 / #828: immutable endings retain dispatch family before transient rows retire.
+    pub(crate) fn retire_completed_model_attempts(
+        &mut self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "model_attempts")
+        {
+            let (key, attempt): (String, i64) =
+                crate::decode_stored(serde_json::from_str(&row.id)?)?;
+            if self.store.worker_facts_recorded(&key, attempt)? {
+                commit.rows.push(RowChange::Delete {
+                    table: row.table.clone(),
+                    id: row.id.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn release_model_probe(
         &self,
         snapshot: &Snapshot,
@@ -292,9 +314,22 @@ impl Controller {
             .iter()
             .filter(|row| row.table == "model_quota_probes")
         {
-            let mut probe: Probe = crate::decode_stored(row.value.clone())?;
+            let value = commit
+                .rows
+                .iter()
+                .rev()
+                .find_map(|change| match change {
+                    RowChange::Put { table, id, value }
+                        if table == "model_quota_probes" && *id == row.id =>
+                    {
+                        Some(value)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(&row.value);
+            let mut probe: Probe = crate::decode_stored(value.clone())?;
             if probe.owner.as_ref().is_some_and(|owner| {
-                owner.key == key && attempt.is_some_and(|attempt| attempt > owner.after_attempt)
+                owner.key == key && attempt.is_none_or(|attempt| attempt > owner.after_attempt)
             }) {
                 probe.owner = None;
                 commit
@@ -316,51 +351,6 @@ impl Controller {
                     }
                 }
             }
-        }
-        Ok(())
-    }
-
-    pub(super) fn overdue_model_quota(
-        &self,
-        snapshot: &Snapshot,
-        state: &AllowanceState,
-        commit: &mut Commit,
-    ) -> Result<()> {
-        let Some(identity) = &state.quota_probe_model else {
-            return Ok(());
-        };
-        let scope = format!("model-quota:{}", identity.key());
-        let request = crate::request(snapshot, state.delivery.node())?;
-        self.input_failed(
-            snapshot,
-            &scope,
-            Some(crate::input_errors::IssueTarget {
-                repository: request.repo,
-                issue: request.issue,
-            }),
-            &request.title,
-            Some(state.delivery.node()),
-            Upstream::Workers,
-            crate::Error::Permanent {
-                class: "model_quota_hint_expired",
-                source: Box::new(crate::Error::Invalid("quota probe failed after reset")),
-            },
-            commit,
-        )?;
-        if let Some(id) = commit.rows.iter().rev().find_map(|row| match row {
-            RowChange::Put { table, id, value }
-                if table == "incidents"
-                    && value["signature"]["class"] == "model_quota_hint_expired" =>
-            {
-                Some(id.clone())
-            }
-            _ => None,
-        }) {
-            commit.rows.push(put(
-                "model_quota_incidents",
-                identity.key(),
-                json!({"incident": id}),
-            ));
         }
         Ok(())
     }

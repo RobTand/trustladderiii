@@ -121,7 +121,6 @@ struct Fixture {
     success_reply: Option<Observation>,
     defer_success: Rc<Cell<bool>>,
     observed_success: Rc<RefCell<Option<Observation>>>,
-    allow_quota_incident: bool,
 }
 
 impl Fixture {
@@ -234,7 +233,6 @@ else:
             success_reply: None,
             defer_success,
             observed_success,
-            allow_quota_incident: false,
         }
     }
     fn intake(&mut self, number: u64) {
@@ -316,11 +314,7 @@ else:
             .unwrap()
             .rows
             .into_iter()
-            .filter(|r| {
-                r.table == "incidents"
-                    && !(self.allow_quota_incident
-                        && r.value["signature"]["class"] == "model_quota_hint_expired")
-            })
+            .filter(|r| r.table == "incidents")
             .collect();
         assert!(incidents.is_empty(), "fixture incident: {incidents:?}");
     }
@@ -399,7 +393,6 @@ else:
             success_reply,
             defer_success,
             observed_success,
-            allow_quota_incident,
         } = self;
         drop(controller);
         drop(source);
@@ -451,7 +444,6 @@ else:
             success_reply,
             defer_success,
             observed_success,
-            allow_quota_incident,
         }
     }
 }
@@ -695,7 +687,6 @@ fn failed_probes_repeat_hourly_without_a_new_incident() {
     });
     f.controller.look_due().unwrap();
     f.clock.0.set(RESET + 1);
-    f.allow_quota_incident = true;
     f.controller.look_due().unwrap();
     assert_eq!(f.attempt(&key), 3);
     f.until(|f| {
@@ -1141,6 +1132,7 @@ fn completed_attempt_identity_retires_from_world_rows() {
     let key = f.held(false);
     let ending = f.store.latest_worker_ending(&key).unwrap().unwrap();
     assert_eq!(ending.facts.model, "alternate-model");
+    assert_eq!(ending.family.as_deref(), Some("alternate"));
     let id = serde_json::to_string(&(&key, ending.attempt)).unwrap();
     assert!(
         !f.controller

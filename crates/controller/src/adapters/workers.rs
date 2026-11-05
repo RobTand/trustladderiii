@@ -1129,6 +1129,11 @@ impl Supervisor {
                 &self.models.writer,
                 &self.models.postmortem,
             ];
+            let families: std::collections::BTreeMap<_, _> = models
+                .iter()
+                .flat_map(|models| models.iter())
+                .map(|model| (model.name.clone(), model.family.to_ascii_lowercase()))
+                .collect();
             if let Some(model) = models
                 .into_iter()
                 .flatten()
@@ -1144,7 +1149,7 @@ impl Supervisor {
                 commit.rows.push(crate::put(
                     "model_attempts",
                     id,
-                    json!({"model": name, "family": model.family.to_ascii_lowercase()}),
+                    json!({"model": name, "family": model.family.to_ascii_lowercase(), "families": families}),
                 ));
                 store.commit(&commit)?;
             }

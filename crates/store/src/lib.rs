@@ -290,6 +290,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
     ),
     (21, include_str!("../migrations/0021_dispatch_evidence.sql")),
     (22, include_str!("../migrations/0022_input_allocations.sql")),
+    (
+        23,
+        include_str!("../migrations/0023_worker_model_identity.sql"),
+    ),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,6 +312,7 @@ fn recorded_worker_ending(row: Row) -> Result<RecordedWorkerEnding> {
     Ok(RecordedWorkerEnding {
         key: row.get(0),
         attempt: row.get(1),
+        family: row.get(3),
         facts,
     })
 }
@@ -1532,7 +1537,7 @@ impl Store {
 
     /// Q53 / #828: completion evidence is imported before worker ingress.
     pub fn latest_worker_ending(&mut self, key: &str) -> Result<Option<RecordedWorkerEnding>> {
-        self.client.query_opt("SELECT run_key, attempt, facts FROM tl3_worker_runs WHERE run_key = $1 ORDER BY attempt DESC LIMIT 1", &[&key])?.map(recorded_worker_ending).transpose()
+        self.client.query_opt("SELECT r.run_key, r.attempt, r.facts, m.family FROM tl3_worker_runs r LEFT JOIN tl3_worker_run_models m USING (run_key, attempt) WHERE r.run_key = $1 ORDER BY r.attempt DESC LIMIT 1", &[&key])?.map(recorded_worker_ending).transpose()
     }
 
     /// Q53 / #828: a late quota observation cannot borrow a newer success's attempt.
@@ -1541,7 +1546,7 @@ impl Store {
         key: &str,
         model: Option<&str>,
     ) -> Result<Option<RecordedWorkerEnding>> {
-        self.client.query_opt("SELECT run_key, attempt, facts FROM tl3_worker_runs WHERE run_key = $1 AND facts->>'outcome' = 'quota' AND ($2::text IS NULL OR facts->>'model' = $2) ORDER BY attempt DESC LIMIT 1", &[&key, &model])?.map(recorded_worker_ending).transpose()
+        self.client.query_opt("SELECT r.run_key, r.attempt, r.facts, m.family FROM tl3_worker_runs r LEFT JOIN tl3_worker_run_models m USING (run_key, attempt) WHERE r.run_key = $1 AND r.outcome = 'quota' AND ($2::text IS NULL OR r.model = $2) ORDER BY r.attempt DESC LIMIT 1", &[&key, &model])?.map(recorded_worker_ending).transpose()
     }
 
     /// Q53 / #828: a late success remains evidence after its node moved on.
@@ -1550,7 +1555,7 @@ impl Store {
         node: &str,
         model: &str,
     ) -> Result<Option<RecordedWorkerEnding>> {
-        self.client.query_opt("SELECT run_key, attempt, facts FROM tl3_worker_runs WHERE node_id = $1 AND facts->>'model' = $2 AND facts->>'outcome' = 'succeeded' ORDER BY (facts->>'finished_ms')::bigint DESC NULLS LAST, attempt DESC LIMIT 1", &[&node, &model])?.map(recorded_worker_ending).transpose()
+        self.client.query_opt("SELECT r.run_key, r.attempt, r.facts, m.family FROM tl3_worker_runs r LEFT JOIN tl3_worker_run_models m USING (run_key, attempt) WHERE r.node_id = $1 AND r.model = $2 AND r.outcome = 'succeeded' ORDER BY r.finished_ms DESC NULLS LAST, r.attempt DESC LIMIT 1", &[&node, &model])?.map(recorded_worker_ending).transpose()
     }
 
     /// Import a worker-owned terminal record before retiring its attempt files.
@@ -1565,16 +1570,23 @@ impl Store {
     ) -> Result<()> {
         facts.validate()?;
         let value = serde_json::to_value(facts).expect("worker facts are JSON values");
-        self.client.execute(
+        let mut tx = operation(&mut self.client, self.input_active)?;
+        tx.execute(
             "INSERT INTO tl3_worker_runs (run_key, node_id, attempt, role, facts) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (run_key, attempt) DO NOTHING",
             &[&key, &node, &attempt, &role, &value],
         )?;
-        if self.client.query_opt(
+        if tx.query_opt(
             "SELECT 1 FROM tl3_worker_runs WHERE run_key = $1 AND node_id = $2 AND attempt = $3 AND role = $4 AND facts = $5",
             &[&key, &node, &attempt, &role, &value],
         )?.is_none() {
             return Err(Error::Invalid("worker completion record changed"));
         }
+        let id = serde_json::to_string(&(key, attempt)).expect("attempt identity serializes");
+        tx.execute(
+            "INSERT INTO tl3_worker_run_models (run_key, attempt, model, family) SELECT $1, $2, $4, COALESCE(value->'families'->>$4, CASE WHEN value->>'model' = $4 THEN value->>'family' END) FROM tl3_world WHERE table_name = 'model_attempts' AND row_id = $3 AND COALESCE(value->'families'->>$4, CASE WHEN value->>'model' = $4 THEN value->>'family' END) IS NOT NULL ON CONFLICT DO NOTHING",
+            &[&key, &attempt, &id, &facts.model],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 

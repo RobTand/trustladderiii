@@ -580,6 +580,7 @@ pub struct WorkerRunFacts {
 pub struct RecordedWorkerEnding {
     pub key: String,
     pub attempt: i64,
+    pub family: Option<String>,
     pub facts: WorkerRunFacts,
 }
 

@@ -1753,6 +1753,15 @@ impl Controller {
             json!(&completion),
             snapshot,
         );
+        let stopped_node = match delivery.output {
+            Out::Effect {
+                node,
+                kind: tl3_kernel::EffectKind::StopRun,
+            } if completion.ack == Ack::Confirmed => Some(node),
+            _ => None,
+        };
+        self.release_terminal_model_probes(snapshot, &mut commit, stopped_node)?;
+        self.retire_completed_model_attempts(snapshot, &mut commit)?;
         if let Some(diagnostic) = &completion.diagnostic {
             eprintln!("{}", diagnostic.render());
             commit

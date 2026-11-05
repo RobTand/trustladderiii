@@ -354,6 +354,8 @@ impl Controller {
         world: &World,
         commit: &mut Commit,
     ) -> Result<()> {
+        self.release_terminal_model_probes(snapshot, commit, None)?;
+        self.retire_completed_model_attempts(snapshot, commit)?;
         let mut states = snapshot
             .rows
             .iter()
@@ -1387,6 +1389,8 @@ impl Controller {
             json!(&completion),
             &snapshot,
         );
+        self.release_terminal_model_probes(&snapshot, &mut commit, None)?;
+        self.retire_completed_model_attempts(&snapshot, &mut commit)?;
         for (index, observation) in completion.observations.iter().enumerate() {
             self.queue_observation(&snapshot, &mut commit, &delivery.key, index, observation)?;
             if let Some(source) = crate::observation_upstream(&snapshot, observation)? {
@@ -1580,31 +1584,40 @@ impl Controller {
             .and_then(|e| e.facts.finished_ms);
         let attempt = ending.as_ref().map(|e| e.attempt);
         let family = model.and_then(|model| {
-            attempt
-                .and_then(|attempt| self.attempt_family(snapshot, key, attempt, model))
+            ending
+                .as_ref()
+                .and_then(|ending| ending.family.clone())
+                .or_else(|| {
+                    attempt.and_then(|attempt| self.attempt_family(snapshot, key, attempt, model))
+                })
                 .or_else(|| self.quota_family(model))
         });
-        self.release_model_probe(snapshot, key, attempt, commit)?;
+        if let Some(attempt) = attempt {
+            self.release_model_probe(snapshot, key, Some(attempt), commit)?;
+        }
         let cleared = model.zip(family.as_deref()).zip(finished_ms).is_some_and(
             |((model, family), finished_ms)| {
                 model_quota::success_after(snapshot, model, family, finished_ms)
             },
         );
-        // Q53: record the model's quota so every step's ladder can skip it.
+        // Q53 / #828: maximum reset and latest ending are independent facts.
+        // Equal (or shorter) hints must still advance the availability evidence.
         if let Some(model) = model
             && !cleared
-            && snapshot
+        {
+            let old = snapshot
                 .rows
                 .iter()
-                .find(|r| r.table == "model_quotas" && r.id == model)
-                .and_then(|r| r.value["reset_ms"].as_u64())
-                .is_none_or(|old| old < reset_ms)
-        {
-            commit.rows.push(put(
-                "model_quotas",
-                model.into(),
-                json!({"reset_ms": reset_ms, "family": family, "finished_ms": finished_ms}),
-            ));
+                .find(|row| row.table == "model_quotas" && row.id == model);
+            let mut value = old.map_or_else(|| json!({}), |row| row.value.clone());
+            let reset = value["reset_ms"].as_u64().unwrap_or(0).max(reset_ms);
+            let old_finished = value["finished_ms"].as_i64();
+            if old.is_none() || old_finished.is_none() || finished_ms > old_finished {
+                value["family"] = json!(family);
+                value["finished_ms"] = json!(finished_ms);
+            }
+            value["reset_ms"] = json!(reset);
+            commit.rows.push(put("model_quotas", model.into(), value));
         }
         if let Some(row) = snapshot
             .rows
@@ -1618,17 +1631,6 @@ impl Controller {
                 && state.last_quota_model.as_deref() == model
             {
                 return Ok(());
-            }
-            if state
-                .last_quota_ms
-                .is_some_and(|hint| hint <= self.now_ms())
-                && state
-                    .last_quota_attempt
-                    .zip(attempt)
-                    .is_some_and(|(old, new)| new > old)
-                && state.quota_probe_model.is_some()
-            {
-                self.overdue_model_quota(snapshot, &state, commit)?;
             }
             state.last_quota_ms = Some(reset_ms);
             state.last_quota_model = model.map(str::to_owned);
@@ -2153,9 +2155,6 @@ pub(crate) fn incident_summary(
         "upstream_server" => "reported a service error",
         "invalid_response" => "returned an unreadable response",
         "quota" => "reached its usage allowance",
-        "model_quota_hint_expired" => {
-            "still reports model quota after its announced reset; bounded hourly probes continue"
-        }
         "message_rejected" => "could not prepare a readable message",
         "prerequisite_number" => {
             "sent a merge prerequisite update missing its issue or pull request number"
