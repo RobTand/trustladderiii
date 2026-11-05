@@ -1223,3 +1223,364 @@ mod required_c1 {
             .unwrap();
     }
 }
+
+// ctrl-core C1 r1: whole-shell payload selection and rerun response coverage.
+#[cfg(test)]
+mod required_payload_c1 {
+    use super::*;
+    use io::c1_payloads::{self as payload, Outcome, Payloads};
+    use io::{Profile, Schedule};
+    use proptest::{
+        prelude::*,
+        test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
+    };
+
+    macro_rules! shell {
+        ($module:ident, $source:literal) => {
+            mod $module {
+                use super::*;
+                use payload::GitHub;
+                use crate::mergify_io::io::mock_std as std;
+                adapter!();
+                impl Adapter {
+                    fn fence(&mut self, delivery: &Delivery) -> Result<()> {
+                        if delivery.epoch < self.epoch { return Err(Error::Invalid("Mergify effect epoch is fenced")); }
+                        self.records.fence(delivery.epoch)?;
+                        self.epoch = delivery.epoch;
+                        Ok(())
+                    }
+                }
+                fn lifecycle_head(current: bool) -> tl3_mergify::decide::Head {
+                    if current { tl3_mergify::decide::Head::Current } else { tl3_mergify::decide::Head::Other }
+                }
+                fn lifecycle_error(failure: lifecycle::Failure) -> Error { Error::Invalid(failure.class()) }
+                mod head_checks {
+                    include!($source);
+                    pub(super) fn evaluate_payload() -> Value {
+                        let pull = io::c1_pull();
+                        let rules = tl3_github::RequiredChecks { checks:vec![tl3_github::RequiredStatusCheck {
+                            context:"CI".into(), integration_id:None }], unavailable:vec![] };
+                        match Runtime.block_on(evaluate(&GitHub::new(), "owner/sandbox", &pull, rules, &[])) {
+                            Ok(r) => json!({"ready":r.ready,"evidence":r.evidence(&pull),"missing":r.missing}),
+                            Err(e) => json!({"error":e.to_string()}),
+                        }
+                    }
+                }
+                pub(super) fn evaluate(_: &Delivery) -> Value { head_checks::evaluate_payload() }
+                pub(super) fn rerun(d: &Delivery) -> Value {
+                    let state = tl3_mergify::Observation { pull_request:io::c1_pull(), state:QueueState::Unknown,
+                        check:None, check_runs:vec![], unapproved_merge:false, dequeue_rule_concluded:false };
+                    match Adapter::new().rerun_head_checks(d, &state) {
+                        Ok(()) => json!("done"), Err(e) => json!({"error":e.to_string()}),
+                    }
+                }
+            }
+        };
+    }
+    shell!(old, "reference-head.rs");
+    shell!(new, "current-head.rs");
+    fn tape(profile: Profile) -> Payloads {
+        Payloads {
+            schedule: Schedule {
+                profile,
+                initial: 0,
+                frames: vec![],
+                appears_at: usize::MAX,
+                write_results: vec![],
+                overrides: vec![],
+                file_results: vec![],
+            },
+            statuses: vec![],
+            runs: vec![],
+            outcome: Outcome::Accepted,
+        }
+    }
+    fn status(id: u64, state: &str, at: &str) -> Value {
+        json!({"id":id,"context":"CI","state":state,"updated_at":at})
+    }
+    fn evaluate(p: &Payloads) -> payload::Report {
+        payload::compare(p, |current, d| {
+            if current {
+                new::evaluate(d)
+            } else {
+                old::evaluate(d)
+            }
+        })
+    }
+    fn rerun(p: &Payloads) -> payload::Report {
+        payload::compare(p, |current, d| {
+            if current {
+                new::rerun(d)
+            } else {
+                old::rerun(d)
+            }
+        })
+    }
+    fn runner() -> TestRunner {
+        TestRunner::new(Config {
+            cases: 128,
+            max_shrink_iters: 2048,
+            rng_seed: RngSeed::Fixed(0x0075_1760_2026),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/mergify_io/proptest-regressions.txt"
+            )))),
+            ..Config::default()
+        })
+    }
+    /// Q52 / #447: status IDs select winners, ties keep the first payload, timestamps do not sort.
+    #[test]
+    fn mandatory_required_status_payload_winners_and_ties() {
+        let early = "2026-11-01T00:00:00Z";
+        let late = "2026-11-02T00:00:00Z";
+        let cases = [
+            (
+                vec![
+                    status(1, "error", late),
+                    status(3, "pending", early),
+                    status(2, "success", late),
+                ],
+                false,
+                None,
+            ),
+            (
+                vec![
+                    status(1, "success", late),
+                    status(3, "error", early),
+                    status(2, "pending", late),
+                ],
+                false,
+                Some((3, early)),
+            ),
+            (
+                vec![status(3, "success", early), status(3, "error", late)],
+                true,
+                None,
+            ),
+            (
+                vec![status(3, "error", early), status(3, "success", early)],
+                false,
+                Some((3, early)),
+            ),
+            (
+                vec![status(3, "pending", early), status(3, "success", early)],
+                false,
+                None,
+            ),
+            (
+                vec![status(1, "success", early), status(2, "error", early)],
+                false,
+                Some((2, early)),
+            ),
+        ];
+        for (mut statuses, ready, evidence) in cases {
+            let mut unrelated = status(99, "failure", late);
+            unrelated["context"] = json!("unrequired");
+            statuses.push(unrelated);
+            let mut p = tape(Profile::Classic);
+            p.statuses = vec![statuses];
+            for side in evaluate(&p).sides {
+                assert_eq!(side.result["ready"], ready);
+                assert_eq!(side.result["missing"], json!([]));
+                if let Some((id, at)) = evidence {
+                    assert_eq!(side.result["evidence"]["CiFailed"]["check"], id);
+                    assert_eq!(
+                        side.result["evidence"]["CiFailed"]["completed_at"],
+                        at.replace('Z', "+00:00")
+                    );
+                    assert_eq!(side.result["evidence"]["CiFailed"]["infra"], false);
+                } else {
+                    assert_eq!(side.result["evidence"], Value::Null);
+                }
+            }
+        }
+    }
+    /// #2705: workflow selection ignores event/conclusion and keeps the last maximum eligible ID.
+    #[test]
+    fn mandatory_required_workflow_payload_newest_and_last_equal() {
+        let first = payload::workflow(9, "push", "failure", 2);
+        let last = payload::workflow(9, "workflow_dispatch", "success", 3);
+        for (ties, winner) in [
+            (vec![first.clone(), last.clone()], last.clone()),
+            (vec![last, first.clone()], first),
+        ] {
+            let mut wrong_head = payload::workflow(99, "pull_request", "cancelled", 1);
+            wrong_head.head_sha = "other".into();
+            let mut wrong_suite = payload::workflow(100, "push", "failure", 1);
+            wrong_suite.check_suite_id = 99;
+            let mut runs = vec![
+                payload::workflow(2, "pull_request", "timed_out", 1),
+                wrong_head,
+                ties[0].clone(),
+                wrong_suite,
+                payload::workflow(7, "push", "neutral", 1),
+                ties[1].clone(),
+                payload::workflow(1, "pull_request", "failure", 1),
+            ];
+            for newest in [false, true] {
+                let expected = if newest {
+                    payload::workflow(10, "schedule", "cancelled", 4)
+                } else {
+                    winner.clone()
+                };
+                if newest {
+                    runs.insert(1, expected.clone());
+                }
+                let mut p = tape(Profile::Rerun);
+                p.runs = vec![runs.clone()];
+                let report = rerun(&p);
+                assert_eq!(report.receipt_crashes, 2);
+                for side in report.sides {
+                    assert_eq!(side.result, json!("done"));
+                    assert_eq!(side.posts, vec![format!("owner/sandbox/{}", expected.id)]);
+                    let receipt = side.receipt.unwrap();
+                    assert_eq!(receipt[0]["run"], serde_json::to_value(&expected).unwrap());
+                    assert_eq!(receipt[0]["accepted"], true);
+                }
+            }
+        }
+    }
+    /// #2705: 408 keeps an unknown intent; every non-progress Actions refusal clears it.
+    #[test]
+    fn mandatory_required_rerun_408_and_actions_receipts() {
+        for outcome in [
+            Outcome::Http408,
+            Outcome::AppAccess,
+            Outcome::RunExpired,
+            Outcome::OtherRefusal,
+        ] {
+            let mut p = tape(Profile::Rerun);
+            p.runs = vec![vec![payload::workflow(8, "pull_request", "failure", 1)]];
+            p.outcome = outcome;
+            let report = rerun(&p);
+            assert_eq!(report.receipt_crashes, 2);
+            assert!(
+                report.comparisons >= 23,
+                "both atomic writes and POST must be crash-tested"
+            );
+            for side in report.sides {
+                let error = match outcome {
+                    Outcome::Http408 => "GitHub returned HTTP 408",
+                    Outcome::AppAccess => "resource not accessible by integration",
+                    Outcome::RunExpired => "workflow run is older than 30 days",
+                    Outcome::OtherRefusal => "workflow or repository restrictions",
+                    Outcome::Accepted => unreachable!(),
+                };
+                assert!(
+                    side.result["error"].as_str().unwrap().contains(error),
+                    "{:?}",
+                    side.result
+                );
+                assert_eq!(side.posts, vec!["owner/sandbox/8"]);
+                let receipt = side.receipt.unwrap();
+                if matches!(outcome, Outcome::Http408) {
+                    assert_eq!(receipt[0]["accepted"], false);
+                    assert_eq!(receipt[0]["waiting_for_completion"], false);
+                    assert_eq!(receipt[0]["run"]["id"], 8);
+                } else {
+                    assert_eq!(receipt, json!([]));
+                }
+            }
+            eprintln!(
+                "C1 r1 {outcome:?}: {} comparisons, {} receipt rename crash points",
+                report.comparisons, report.receipt_crashes
+            );
+        }
+    }
+    #[test]
+    fn required_status_payload_tapes_proptest() {
+        let item = (0u64..8, 0usize..4, any::<bool>(), any::<bool>()).prop_map(
+            |(id, state, late, other)| {
+                let mut s = status(
+                    id,
+                    ["success", "failure", "pending", "error"][state],
+                    if late {
+                        "2026-11-02T00:00:00Z"
+                    } else {
+                        "2026-11-01T00:00:00Z"
+                    },
+                );
+                if other {
+                    s["context"] = json!("other");
+                }
+                s
+            },
+        );
+        runner()
+            .run(
+                &(
+                    prop::collection::vec(item.clone(), 0..16),
+                    prop::collection::vec(item, 0..16),
+                ),
+                |(first, second)| {
+                    let mut p = tape(Profile::Classic);
+                    p.statuses = vec![first, second];
+                    payload::compare(&p, |current, d| {
+                        json!([
+                            if current {
+                                new::evaluate(d)
+                            } else {
+                                old::evaluate(d)
+                            },
+                            if current {
+                                new::evaluate(d)
+                            } else {
+                                old::evaluate(d)
+                            }
+                        ])
+                    });
+                    Ok(())
+                },
+            )
+            .unwrap();
+    }
+    #[test]
+    fn required_workflow_payload_tapes_proptest() {
+        let item = (
+            1u64..8,
+            0usize..3,
+            0usize..4,
+            any::<bool>(),
+            any::<bool>(),
+            1u64..4,
+        )
+            .prop_map(|(id, event, conclusion, head, suite, attempt)| {
+                let mut r = payload::workflow(
+                    id,
+                    ["push", "pull_request", "workflow_dispatch"][event],
+                    ["success", "failure", "cancelled", "timed_out"][conclusion],
+                    attempt,
+                );
+                if !head {
+                    r.head_sha = "other".into();
+                }
+                if !suite {
+                    r.check_suite_id = 99;
+                }
+                r
+            });
+        let comparisons = ::std::cell::Cell::new(0);
+        runner()
+            .run(
+                &(prop::collection::vec(item, 0..16), 0usize..5),
+                |(runs, outcome)| {
+                    let mut p = tape(Profile::Rerun);
+                    p.runs = vec![runs];
+                    p.outcome = [
+                        Outcome::Accepted,
+                        Outcome::Http408,
+                        Outcome::AppAccess,
+                        Outcome::RunExpired,
+                        Outcome::OtherRefusal,
+                    ][outcome];
+                    comparisons.set(comparisons.get() + rerun(&p).comparisons);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        eprintln!(
+            "C1 r1 workflow payloads: 128 schedules; {} complete/crash comparisons",
+            comparisons.get()
+        );
+    }
+}

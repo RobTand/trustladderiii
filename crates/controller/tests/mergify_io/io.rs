@@ -1149,3 +1149,220 @@ pub(super) fn c1_require_read_count(s: &Schedule, e: Entry, suffix: &str, expect
         expected
     );
 }
+
+// ctrl-core C1 r1: payload tapes extend the leaf boundary without changing #760's tapes.
+pub(super) mod c1_payloads {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, Serialize)]
+    pub(crate) enum Outcome {
+        Accepted,
+        Http408,
+        AppAccess,
+        RunExpired,
+        OtherRefusal,
+    }
+    #[derive(Clone, Debug)]
+    pub(crate) struct Payloads {
+        pub schedule: Schedule,
+        pub statuses: Vec<Vec<Value>>,
+        pub runs: Vec<Vec<WorkflowRun>>,
+        pub outcome: Outcome,
+    }
+    thread_local! {
+        static PAYLOAD: RefCell<Option<(Payloads, usize, usize)>> = const { RefCell::new(None) };
+    }
+    #[derive(Clone)]
+    pub(crate) struct GitHub(super::GitHub);
+    impl ::std::ops::Deref for GitHub {
+        type Target = super::GitHub;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl GitHub {
+        pub fn new() -> Self {
+            Self(super::GitHub::new())
+        }
+        pub async fn commit_statuses(
+            &self,
+            repo: &str,
+            head: &str,
+        ) -> ::std::result::Result<Vec<CommitStatus>, ::tl3_github::Error> {
+            github_frame("github.statuses", &format!("{repo}@{head}"))?;
+            let values = PAYLOAD.with(|p| {
+                let mut p = p.borrow_mut();
+                let (payload, next, _) = p.as_mut().unwrap();
+                let values = payload.statuses.get(*next).cloned().unwrap_or_default();
+                *next += 1;
+                values
+            });
+            returned(&values);
+            Ok(values
+                .into_iter()
+                .map(|v| serde_json::from_value(v).unwrap())
+                .collect())
+        }
+        pub async fn workflow_runs(
+            &self,
+            repo: &str,
+            head: &str,
+        ) -> ::std::result::Result<Vec<WorkflowRun>, ::tl3_github::Error> {
+            github_frame("github.runs", &format!("{repo}@{head}"))?;
+            let values = PAYLOAD.with(|p| {
+                let mut p = p.borrow_mut();
+                let (payload, _, next) = p.as_mut().unwrap();
+                let values = payload.runs.get(*next).cloned().unwrap_or_default();
+                *next += 1;
+                values
+            });
+            returned(&values);
+            Ok(values)
+        }
+        pub async fn rerun_workflow_run(
+            &self,
+            repo: &str,
+            id: u64,
+        ) -> ::std::result::Result<(), ::tl3_github::Error> {
+            let outcome = PAYLOAD.with(|p| p.borrow().as_ref().unwrap().0.outcome);
+            with(|r| r.api_writes += 1);
+            mutation(
+                "github.rerun",
+                &format!("{repo}/{id}"),
+                &serde_json::to_vec(&outcome).unwrap(),
+                matches!(outcome, Outcome::Accepted),
+                |_| {},
+            );
+            use ::tl3_github::{ActionsRefusal, Error};
+            match outcome {
+                Outcome::Accepted => Ok(()),
+                Outcome::Http408 => Err(Error::Http { status: 408 }),
+                Outcome::AppAccess => Err(Error::ActionsForbidden(ActionsRefusal::AppAccess)),
+                Outcome::RunExpired => Err(Error::ActionsForbidden(ActionsRefusal::RunExpired)),
+                Outcome::OtherRefusal => Err(Error::ActionsForbidden(ActionsRefusal::Other)),
+            }
+        }
+    }
+    #[derive(Debug)]
+    pub(crate) struct Side {
+        pub result: Value,
+        pub receipt: Option<Value>,
+        pub posts: Vec<String>,
+    }
+    pub(crate) struct Report {
+        pub sides: [Side; 2],
+        pub comparisons: usize,
+        pub receipt_crashes: usize,
+    }
+    fn receipt(run: &Run) -> Option<Value> {
+        run.files
+            .iter()
+            .find(|(path, _)| path.ends_with(".reruns"))
+            .map(|(_, bytes)| serde_json::from_slice(bytes).unwrap())
+    }
+    fn record(
+        p: &Payloads,
+        new: bool,
+        cut: Option<Cut>,
+        execute: &impl Fn(bool, &Delivery) -> Value,
+    ) -> Run {
+        static HOOK: ::std::sync::Once = ::std::sync::Once::new();
+        HOOK.call_once(|| {
+            let original = ::std::panic::take_hook();
+            ::std::panic::set_hook(Box::new(move |info| {
+                if !info.payload().is::<Crash>() {
+                    original(info);
+                }
+            }));
+        });
+        init(p.schedule.clone(), cut);
+        PAYLOAD.with(|active| *active.borrow_mut() = Some((p.clone(), 0, 0)));
+        let delivery = serde_json::from_value(delivery_value("enqueue-1")).unwrap();
+        let result = match catch_unwind(AssertUnwindSafe(|| execute(new, &delivery))) {
+            Ok(result) => result,
+            Err(error) if error.is::<Crash>() => json!("crash"),
+            Err(error) => ::std::panic::resume_unwind(error),
+        };
+        PAYLOAD.with(|active| *active.borrow_mut() = None);
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    }
+    pub(crate) fn compare(p: &Payloads, execute: impl Fn(bool, &Delivery) -> Value) -> Report {
+        let old = record(p, false, None, &execute);
+        let new = record(p, true, None, &execute);
+        assert_eq!(old, new, "C1 payload divergence: {p:?}");
+        let mut receipt_crashes = 0;
+        let mut post_seen = false;
+        let mutations: Vec<_> = old
+            .calls
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.op.as_str(),
+                    "file.create" | "file.write" | "file.fsync" | "file.rename" | "github.rerun"
+                )
+            })
+            .collect();
+        assert_eq!(mutations.len(), old.writes);
+        for (write, call) in mutations.iter().enumerate() {
+            if call.op == "github.rerun" {
+                post_seen = true;
+            }
+            for after in [false, true] {
+                let cut = Some(Cut { write, after });
+                let a = record(p, false, cut, &execute);
+                let b = record(p, true, cut, &execute);
+                assert_eq!(a, b, "C1 payload crash divergence: {p:?}, {cut:?}");
+                if post_seen && call.op == "file.rename" && call.args.ends_with(".reruns") {
+                    assert_eq!(a.result, json!("crash"));
+                    if after {
+                        assert_eq!(
+                            receipt(&a),
+                            receipt(&old),
+                            "receipt rename must publish final bytes"
+                        );
+                    } else {
+                        let before = receipt(&a).expect("intent was persisted before POST");
+                        assert_eq!(before[0]["accepted"], false);
+                        assert_eq!(before[0]["waiting_for_completion"], false);
+                    }
+                    receipt_crashes += 1;
+                }
+            }
+        }
+        let side = |r: &Run| Side {
+            result: r.result.clone(),
+            receipt: receipt(r),
+            posts: r
+                .calls
+                .iter()
+                .filter(|c| c.op == "github.rerun")
+                .map(|c| c.args.clone())
+                .collect(),
+        };
+        Report {
+            sides: [side(&old), side(&new)],
+            comparisons: 1 + old.writes * 2,
+            receipt_crashes,
+        }
+    }
+    pub(crate) fn workflow(id: u64, event: &str, conclusion: &str, attempt: u64) -> WorkflowRun {
+        let mut run = run_value(&Frame {
+            word: 0,
+            elapsed_ms: 0,
+        });
+        run.id = id;
+        run.event = event.into();
+        run.conclusion = Some(conclusion.into());
+        run.run_attempt = attempt;
+        run
+    }
+}
