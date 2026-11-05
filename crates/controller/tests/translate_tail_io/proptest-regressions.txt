@@ -1,1 +1,2 @@
-# Fixed-seed failures are copied from writable TEST_UNDECLARED_OUTPUTS_DIR here.
+# Minimized red run 50e19132-8daa-4377-bddc-18c32fcb2bd0, persisted in writable test output.
+cc 566734b5f4831ba6d825594c253b6cd38e6a917e4c571a8750fbfb44ededc974

@@ -488,3 +488,24 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
+    if native.package_name() == "crates/controller-core":
+        # G2e: total post-match finding selection and concrete non-vacuity witnesses.
+        for name, module, count in [
+            ("finding", "translate_tail#finding", 1),
+            ("witnesses", "translate_tail_witnesses", 5),
+        ]:
+            verus_test(
+                name = "verus_translate_tail_" + name,
+                src = "verus/translate_tail.rs",
+                srcs = ["src/translate_tail.rs"],
+                specs = ["verus/translate_tail_witnesses.rs"],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )

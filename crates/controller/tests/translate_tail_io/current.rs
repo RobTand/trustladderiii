@@ -13,51 +13,69 @@ impl Shell<'_> {
         commit: &mut Commit, detailed_review: bool, failed_tests: Vec<findings::FailedTest>,
         outside_paths: Vec<String>, outside_paths_total: usize, ci_checks: Vec<findings::CiFailure>
     ) -> Result<Option<Event>> {
-        let finding = match event {
-            Event::Reply {
-                node,
-                generation,
-                reply,
-            } if world.nodes.get(node.0 as usize).is_some_and(|n| {
-                (n.run == Some(generation) || n.job == Some(generation))
-                    && n.generation == generation
-            }) =>
-            {
-                let n = &world.nodes[node.0 as usize];
-                let report = match (n.phase, reply) {
-                    (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
-                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
-                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
-                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) if !detailed_review => Some((
-                        findings::Kind::ReviewFinding,
-                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
-                    )),
-                    (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
-                        findings::Kind::ReviewFinding,
-                        commit.rows.iter().find_map(|row| match row {
-                            RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
-                            _ => None,
-                        }).unwrap_or_else(|| "The maker could not meet the goals.".into()),
-                    )),
-                    _ => None,
-                };
-                report.map(|(kind, report)| (node, kind, report))
-            }
-            Event::Fact {
-                node,
-                fact: Fact::CiFailed { infra: false },
-            } if world
-                .nodes
-                .get(node.0 as usize)
-                .is_some_and(|n| n.phase == tl3_kernel::Phase::Queued) =>
-            {
-                Some((
+        let finding = {
+            use tl3_controller_core::translate_tail as tail;
+            let (node, input) = match event {
+                Event::Reply {
                     node,
-                    findings::Kind::FailedCheck,
-                    findings::ci_report(&ci_checks, &failed_tests),
-                ))
-            }
-            _ => None,
+                    generation,
+                    reply,
+                } => (
+                    Some(node),
+                    tail::Input::Reply {
+                        generation,
+                        reply: match reply {
+                            Reply::ChecksDone {
+                                report,
+                                pass,
+                                in_footprint,
+                            } => tail::Reply::ChecksDone {
+                                report,
+                                pass,
+                                in_footprint,
+                            },
+                            Reply::ChangesRequested => tail::Reply::ChangesRequested,
+                            Reply::MakerCantMeet => tail::Reply::MakerCantMeet,
+                            _ => tail::Reply::Other,
+                        },
+                    },
+                ),
+                Event::Fact {
+                    node,
+                    fact: Fact::CiFailed { infra },
+                } => (Some(node), tail::Input::CiFailed { infra }),
+                _ => (None, tail::Input::Other),
+            };
+            let current = node
+                .and_then(|node| world.nodes.get(node.0 as usize))
+                .map(|n| tail::Node {
+                    phase: match n.phase {
+                        tl3_kernel::Phase::Checking => tail::Phase::Checking,
+                        tl3_kernel::Phase::Reviewing => tail::Phase::Reviewing,
+                        tl3_kernel::Phase::Making => tail::Phase::Making,
+                        tl3_kernel::Phase::Queued => tail::Phase::Queued,
+                        _ => tail::Phase::Other,
+                    },
+                    generation: n.generation,
+                    run: n.run,
+                    job: n.job,
+                });
+            let report = match tail::finding(current, input, detailed_review) {
+                tail::Finding::Check { pass, in_footprint } => Some((findings::Kind::FailedCheck,
+                    findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
+                tail::Finding::Review => Some((findings::Kind::ReviewFinding,
+                    "The independent reviewer requested changes. No detailed review report was supplied.".into())),
+                tail::Finding::Maker => Some((findings::Kind::ReviewFinding,
+                    commit.rows.iter().find_map(|row| match row {
+                        RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
+                        _ => None,
+                    }).unwrap_or_else(|| "The maker could not meet the goals.".into()))),
+                tail::Finding::Ci => Some((findings::Kind::FailedCheck,
+                    findings::ci_report(&ci_checks, &failed_tests))),
+                tail::Finding::None => None,
+            };
+            node.zip(report)
+                .map(|(node, (kind, report))| (node, kind, report))
         };
         if let Some((node, kind, report)) = finding {
             let materials = self.store.worker_materials(&node.0.to_string())?;

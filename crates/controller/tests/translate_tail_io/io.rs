@@ -176,10 +176,6 @@ fn run(schedule: &Schedule, current: bool, cut_at: Option<(usize, bool)>) -> Run
         .collect();
     let result = catch_unwind(AssertUnwindSafe(|| {
         if current {
-            // Explicit red-stage new-side stub. The real current copy also compiles.
-            if true {
-                return Ok(None);
-            }
             current::Shell(&mut controller).tail(
                 &Snapshot,
                 &world,
