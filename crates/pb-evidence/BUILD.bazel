@@ -7,4 +7,5 @@ tl3_crate(
     package = "tl3-pb-evidence",
     crate = "tl3_pb_evidence",
     local_deps = ["//crates/contracts:tl3_contracts"],
+    lib_test = False,
 )

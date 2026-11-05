@@ -105,6 +105,7 @@ class RustDependencyTests(unittest.TestCase):
         namespace["test_size"] = sizing["test_size"]
         source = Path(__file__).with_name("rust.bzl").read_text()
         exec(re.sub(r"^load\(.*\)$", "", source, flags=re.MULTILINE), namespace)
+        self.namespace = namespace
         namespace["tl3_crate"](
             package="tl3-controller", crate="tl3_controller", build_script=True,
             bins=["tl3", "tl3d"], declared_tests={
@@ -112,6 +113,12 @@ class RustDependencyTests(unittest.TestCase):
                 for name in ["core_defects", "workers", "publishing", "prismabuild",
                              "github", "hindsight", "writer_references", "writer_blocker",
                              "mergify", "simulation"]})
+
+    def test_library_test_false_does_not_create_an_empty_runner(self):
+        self.rules.clear()
+        self.namespace["tl3_crate"](package="tl3-demo", crate="tl3_demo", lib_test=False)
+        self.assertIn(":tl3_demo", self.rules)
+        self.assertFalse(any(name.startswith(":lib_test_") for name in self.rules))
 
     def dependencies(self, target):
         pending, found = [":" + target], set()

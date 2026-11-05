@@ -69,5 +69,7 @@ print('recorded-verdict mutant rejected')
     assert!(String::from_utf8_lossy(&output.stdout).contains("recorded-verdict mutant rejected"));
 }
 
+#[path = "worker_checker/pb_evidence.rs"]
 mod pb_evidence;
+#[path = "worker_checker/pb_parsers.rs"]
 mod pb_parsers;
