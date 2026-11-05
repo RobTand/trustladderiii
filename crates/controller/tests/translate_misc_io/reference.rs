@@ -15,10 +15,48 @@ impl Shell<'_> {
     fn translate(
         &mut self,
         snapshot: &Snapshot,
+        world: &mut World,
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        if let Observation::GitHubComment {
+            repository,
+            issue,
+            comment,
+        } = &observation
+            && self.operations_comment(snapshot, repository, *issue, comment, commit)?
+        {
+            return Ok(None);
+        }
+
         match observation {
+            Observation::Prerequisite(fact) => {
+                self.external_dependency_fact(snapshot, world, fact, commit)?;
+                return Ok(None);
+            }
+            // Older controllers queued ScratchSaved after writing it with completion.
+            Observation::Classified { key, reply } => {
+                return self.classified(snapshot, world, &key, reply, commit);
+            }
+            Observation::Postmortem {
+                key,
+                reply,
+                failure,
+                judge_failure,
+            } => {
+                self.postmortem_finished(snapshot, &key, reply, failure, judge_failure, commit)?;
+                return Ok(None);
+            }
+            Observation::LinkedRequest {
+                repository,
+                issue,
+                original,
+            } => {
+                return self.linked_request(snapshot, repository, issue, original, commit);
+            }
+            Observation::Steering { node, command } => {
+                return self.command_event(snapshot, world, node, command, commit);
+            }
             Observation::GitHubComment {
                 repository,
                 issue,
@@ -50,14 +88,16 @@ impl Shell<'_> {
                 }
                 return Ok(None);
             }
+            _ => unreachable!("outside the assigned observation shapes"),
         }
     }
 }
 pub(super) fn translate(
     controller: &mut Controller,
     snapshot: &Snapshot,
+    world: &mut World,
     observation: Observation,
     commit: &mut Commit,
 ) -> Result<Option<Event>> {
-    Shell(controller).translate(snapshot, observation, commit)
+    Shell(controller).translate(snapshot, world, observation, commit)
 }

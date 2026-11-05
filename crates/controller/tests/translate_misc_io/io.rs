@@ -7,6 +7,9 @@ use std::{
 #[derive(Clone, Debug)]
 pub(super) struct Schedule {
     pub repos: Vec<Repository>,
+    pub operations: Option<tl3_config::OperationsIssue>,
+    pub operations_replies: Vec<u8>,
+    pub delegate_replies: Vec<u8>,
     pub observations: Vec<Observation>,
     pub rows: Vec<WorldRow>,
     pub reads: Vec<u8>,
@@ -20,6 +23,8 @@ pub(super) struct Run {
     pub results: Vec<Value>,
     pub writes: usize,
     pub reads: usize,
+    pub operations_reads: usize,
+    pub delegate_reads: usize,
 }
 #[derive(Clone, Copy, Debug)]
 struct Cut {
@@ -32,6 +37,8 @@ struct Recording {
     run: Run,
     tape: Vec<u8>,
     failures: Vec<bool>,
+    operations: Vec<u8>,
+    delegates: Vec<u8>,
     commits: usize,
     cut: Option<Cut>,
 }
@@ -124,6 +131,9 @@ pub(super) fn repo() -> Repository {
 pub(super) fn stable() -> Schedule {
     Schedule {
         repos: vec![repo()],
+        operations: None,
+        operations_replies: vec![],
+        delegate_replies: vec![],
         observations: vec![observation(42, repo(), 7, "Please explain".into())],
         rows: vec![],
         reads: vec![0],
@@ -136,6 +146,8 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
             run: Run::default(),
             tape: s.reads.clone(),
             failures: s.commit_failures.clone(),
+            operations: s.operations_replies.clone(),
+            delegates: s.delegate_replies.clone(),
             commits: 0,
             cut,
         })
@@ -145,7 +157,7 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
             bootstrap: Bootstrap {
                 repos: s.repos.clone(),
                 rob: 42,
-                operations: None,
+                operations: s.operations.clone(),
                 slots: 1,
                 pool: 1,
                 fail_fast: false,
@@ -160,13 +172,26 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
             credit: vec![],
             interned: vec![],
         };
+        let mut world = World::new(&[1], 1);
         for observation in &s.observations {
             with(|r| r.run.staged.clear());
             let mut commit = Commit { rows: Rows };
             let result = if new {
-                current::translate(&mut controller, &snapshot, observation.clone(), &mut commit)
+                current::translate(
+                    &mut controller,
+                    &snapshot,
+                    &mut world,
+                    observation.clone(),
+                    &mut commit,
+                )
             } else {
-                reference::translate(&mut controller, &snapshot, observation.clone(), &mut commit)
+                reference::translate(
+                    &mut controller,
+                    &snapshot,
+                    &mut world,
+                    observation.clone(),
+                    &mut commit,
+                )
             };
             match result {
                 Err(e) => with(|r| r.run.results.push(json!({"error":e.to_string()}))),
@@ -229,4 +254,46 @@ pub(super) fn compare(s: &Schedule) -> (Run, usize) {
     }
     let count = 1 + 2 * old.writes;
     (old, count)
+}
+
+pub(super) fn operations_read(args: Value) -> u8 {
+    let reply = with(|r| {
+        let reply = r
+            .operations
+            .get(r.run.operations_reads)
+            .copied()
+            .unwrap_or(0)
+            % 4;
+        r.run.operations_reads += 1;
+        reply
+    });
+    call("operations_comment", json!({"args":args,"reply":reply}));
+    reply
+}
+pub(super) fn delegate(name: &str, args: Value, commit: &mut Commit) -> Result<Option<Event>> {
+    let reply = with(|r| {
+        let reply = r.delegates.get(r.run.delegate_reads).copied().unwrap_or(0) % 6;
+        r.run.delegate_reads += 1;
+        reply
+    });
+    call(name, json!({"args":args,"reply":reply}));
+    if reply >= 3 {
+        commit.rows.push(put(
+            "recorded_delegate",
+            name.into(),
+            json!({"arguments":args}),
+        ));
+    }
+    if reply == 2 || reply == 4 {
+        return Err(Error::Invalid("recorded delegate error"));
+    }
+    Ok(if reply == 1 || reply == 3 {
+        Some(Event::Command {
+            node: NodeId(7),
+            id: 9,
+            command: Command::Stop,
+        })
+    } else {
+        None
+    })
 }
