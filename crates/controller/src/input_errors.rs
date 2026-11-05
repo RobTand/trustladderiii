@@ -485,11 +485,15 @@ impl Controller {
         if current.rows.iter().any(counter_incident) {
             return Ok(true);
         }
-        if !kernel_backlog(&snapshot)
-            && let Some(row) = current
-                .rows
-                .iter()
-                .find(|r| r.table == PENDING_KERNEL && r.id == id)
+        // Redelivery may retry the same retained head after a crash. Every
+        // independent newer producer must still wait for that head to finish.
+        if let Some(row) = current
+            .rows
+            .iter()
+            .filter(|r| r.table == "inbox" || r.table == PENDING_KERNEL)
+            .min_by_key(|r| r.arrival)
+            && row.table == PENDING_KERNEL
+            && row.id == id
             && let Err(error) = self.consume_kernel_input(&current, row)
         {
             self.reject_kernel_input(&current, row, error)?;
