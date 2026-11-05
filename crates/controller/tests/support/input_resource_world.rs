@@ -174,7 +174,7 @@ impl World {
     pub fn reply(&mut self, kind: &str, number: u64) {
         let generation = self.controller.world().unwrap().nodes[0].generation;
         self.controller.observe(&format!("reply-{generation}-{number}"), Observation::WorkerReply {
-            node:NodeId(0), generation,role:"ingest".into(),model:None,plan_check:None,
+            node:NodeId(0), generation,role:"ingest".into(),plan_check:None,model:None,
             reply:json!({"kind":"brief","brief":"Cover scanned sources","goals":[{"description":"Cover sources","verification":"test"}],"memory_ids":[],"files":[],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true},"merge_prerequisites":[{"kind":kind,"number":number,"source_quote":format!("#{number}")}]}),
         }).unwrap();
         Self::drain(&mut self.controller);

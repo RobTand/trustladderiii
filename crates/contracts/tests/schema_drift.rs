@@ -43,10 +43,6 @@ const COMMITTED: &[(&str, &str)] = &[
         include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
     ),
     (
-        "workers/src/tl3_workers/schemas/plan-check-provenance.json",
-        include_str!("../../../workers/src/tl3_workers/schemas/plan-check-provenance.json"),
-    ),
-    (
         "workers/src/tl3_workers/schemas/ingest-input.json",
         include_str!("../../../workers/src/tl3_workers/schemas/ingest-input.json"),
     ),
@@ -69,6 +65,10 @@ const COMMITTED: &[(&str, &str)] = &[
     (
         "workers/src/tl3_workers/schemas/classifier-input.json",
         include_str!("../../../workers/src/tl3_workers/schemas/classifier-input.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/plan-check-provenance.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/plan-check-provenance.json"),
     ),
 ];
 

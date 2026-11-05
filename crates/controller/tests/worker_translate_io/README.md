@@ -71,4 +71,3 @@ before comparing all remaining code to
 production. Original differential schedules, I/O assertions and references stay
 unchanged. The real-store quota_hold upgrade regression proves that an older or
 other-family success preserves unknown legacy quota after restart.
-
