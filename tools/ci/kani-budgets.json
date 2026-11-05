@@ -655,13 +655,6 @@
    "seconds": 2.0,
    "tier": "pr"
   },
-  "progress_from_auditing": {
-   "cpu_seconds": 1328.2,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 26.76,
-   "seconds": 1316.6,
-   "tier": "nightly"
-  },
   "progress_from_awaiting_rob": {
    "cpu_seconds": 1076.8,
    "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
@@ -669,39 +662,11 @@
    "seconds": 1064.9,
    "tier": "nightly"
   },
-  "progress_from_checking": {
-   "cpu_seconds": 1383.8,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 26.71,
-   "seconds": 1374.1,
-   "tier": "nightly"
-  },
   "progress_from_closed": {
    "cpu_seconds": 1037.9,
    "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
    "peak_gb": 26.36,
    "seconds": 1025.9,
-   "tier": "nightly"
-  },
-  "progress_from_ingesting": {
-   "cpu_seconds": 1214.5,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 26.81,
-   "seconds": 1206.7,
-   "tier": "nightly"
-  },
-  "progress_from_making": {
-   "cpu_seconds": 1259.3,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 26.59,
-   "seconds": 1251.7,
-   "tier": "nightly"
-  },
-  "progress_from_planning": {
-   "cpu_seconds": 1260.0,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 27.07,
-   "seconds": 1249.1,
    "tier": "nightly"
   },
   "progress_from_publishing": {
@@ -718,25 +683,11 @@
    "seconds": 1181.5,
    "tier": "nightly"
   },
-  "progress_from_ready": {
-   "cpu_seconds": 1232.8,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 26.4,
-   "seconds": 1223.1,
-   "tier": "nightly"
-  },
   "progress_from_rebasing": {
    "cpu_seconds": 1249.5,
    "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
    "peak_gb": 26.75,
    "seconds": 1245.2,
-   "tier": "nightly"
-  },
-  "progress_from_reviewing": {
-   "cpu_seconds": 1234.8,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 26.61,
-   "seconds": 1230.2,
    "tier": "nightly"
   },
   "progress_from_stopping": {
