@@ -224,6 +224,20 @@ merged PRs and says whether their selection included the failing test. The
 job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
 JSON line per run.
 
+## Graph impact
+
+[Graph-impact policy](graph-impact.md) supports reasoned string exceptions for
+`reach:<test-label>`, `edge:<group>:<consumer> -> <dependency>`, and figure keys.
+A bounded `crate:<Cargo-package-name>` entry uses
+`{"reason": "Decision crate for #744.", "sources": N}` and excuses only gained
+production sources in that crate's exact Bazel package from structural growth
+and per-test reach budgets.
+N must exactly match the crate's production source count in the head graph, so
+increases and decreases require a matching count edit in the same change.
+Reasons name a program issue and remain immutable, added or changed crate
+entries appear in the summary, and fanout, cycle, and edge checks retain their
+existing rules.
+
 ## Kani proofs
 
 Kani is being retired in favour of Verus (#806); this gate shrinks as harnesses are ported.
