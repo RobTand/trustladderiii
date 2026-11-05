@@ -484,15 +484,34 @@
   "Waits": 29.063
  },
  "tl3-controller/quota_hold": {
-  "duplicate_success_and_reset_do_not_dispatch_twice": 1.507,
-  "failed_probes_repeat_hourly_and_report_a_missed_reset": 9.707,
-  "far_reset_uses_one_hourly_probe_per_model_and_family": 8.031,
-  "late_success_wakes_another_request_after_its_node_moved_on": 1.184,
-  "quota_status_names_the_durable_hold_and_retry": 0.871,
-  "restart_between_success_and_redispatch_keeps_the_wake": 0.966,
-  "restart_does_not_overlap_a_running_probe": 1.251,
-  "same_model_success_redispatches_the_quota_held_key": 2.197,
-  "success_before_quota_is_durable_does_not_park_it": 1.247,
-  "success_in_another_family_does_not_clear_the_old_hold": 7.339
+  "far_reset_uses_one_hourly_probe_per_model_and_family": 3.19890796,
+  "late_success_wakes_another_request_after_its_node_moved_on": 2.843437445,
+  "quota_status_names_the_durable_hold_and_retry": 23.896499421,
+  "restart_does_not_overlap_a_running_probe": 11.846358103,
+  "success_in_another_family_does_not_clear_the_old_hold": 1.924532561,
+  "failed_probes_repeat_hourly_without_a_new_incident": 11.993654721,
+  "legacy_restart_restores_the_earliest_ladder_deadline": 13.778578646,
+  "same_model_and_family_success_after_credential_rotation_clears_shared_hold": 3.142578991,
+  "same_model_success_redispatches_the_quota_held_key": 2.534402065,
+  "success_before_quota_is_durable_does_not_park_it": 3.001309345,
+  "success_on_an_earlier_rung_wakes_a_hold_from_the_last_rung": 4.309835215,
+  "completed_attempt_identity_retires_from_world_rows": 22.684128836,
+  "duplicate_success_and_reset_do_not_dispatch_twice": 11.872076097,
+  "late_success_between_equal_hint_endings_cannot_wake_the_newer_hold": 2.698184542,
+  "ordinary_probe_failure_releases_the_other_held_key_across_restart": 6.943530653,
+  "restart_between_success_and_redispatch_keeps_the_wake": 7.792111198,
+  "stopping_either_held_destination_does_not_strand_the_other": 6.979430305,
+  "successful_probe_wakes_both_held_keys_exactly_once": 34.578786647,
+  "operator_clear_and_success_converge_on_one_dispatch": 12
+ },
+ "tl3-controller/operations_quota": {
+  "clear_survives_replay_check": 5.697,
+  "clears_and_wakes_atomically": 5.527,
+  "configured_without_hold_replies_without_effects": 1.634,
+  "duplicate_comments_apply_once": 13.116,
+  "incident_and_quota_share_authorization_and_parser_boundary": 38.048,
+  "later_quota_report_records_normally": 26.583,
+  "status_reports_operator_clear": 13.639,
+  "unknown_and_unconfigured_models_reply_without_mutation": 12.12
  }
 }

@@ -830,7 +830,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
         [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23
         ]
     );
     for table in [
