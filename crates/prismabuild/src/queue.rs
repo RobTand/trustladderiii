@@ -494,6 +494,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lookup_never_returns_absent_during_two_claim_rollbacks() {
+        // The fixture starts with the first claim already in claimed. Use the
+        // existing read_with callback to reproduce two rollback cycles without
+        // timers, copied reader logic or a new production hook.
+        let (root, client, key) = fixture();
+        let claimed = root.path().join(format!("claimed/{key}.json"));
+        let ready = root.path().join(format!("ready/{key}.json"));
+        let publication = std::fs::read(&claimed).unwrap();
+        let assert_publication = || {
+            assert!(ready.exists() || claimed.exists());
+            for path in [&ready, &claimed] {
+                if path.exists() {
+                    assert_eq!(std::fs::read(path).unwrap(), publication);
+                }
+            }
+        };
+        let mut probes = Vec::new();
+        let mut rollbacks = 0;
+        let record = client
+            .read_with(&key, |state| {
+                assert_publication();
+                probes.push(state.to_owned());
+                if state == "ready" {
+                    // Match _ClaimReservation.abandon: restore ready by link
+                    // before removing claimed. The publication never vanishes.
+                    assert!(!ready.exists());
+                    std::fs::hard_link(&claimed, &ready).unwrap();
+                    assert_publication();
+                    std::fs::remove_file(&claimed).unwrap();
+                    rollbacks += 1;
+                } else if state == "withdrawn" {
+                    // Claim again immediately before the second ready probe.
+                    std::fs::rename(&ready, &claimed).unwrap();
+                }
+                assert_publication();
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            probes,
+            [
+                "ready",
+                "claimed",
+                "failed",
+                "done",
+                "withdrawn",
+                "ready",
+                "claimed"
+            ]
+        );
+        assert_eq!(rollbacks, 2);
+        assert_publication();
+        assert!(ready.exists());
+        assert!(!claimed.exists());
+        assert!(
+            !matches!(record, RecordRead::Absent),
+            "reader returned Absent for a continuously existing publication after two claim rollbacks: {probes:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn lookup_does_not_declare_absence_during_finish_handoff() {
         let (root, client, key) = fixture();
         std::fs::rename(
