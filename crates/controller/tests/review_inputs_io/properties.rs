@@ -961,7 +961,7 @@ fn mandatory_schema_valid_optional_fields_reach_the_real_shell() {
 }
 
 proptest! {
-    #![proptest_config(Config {cases:64,rng_seed:RngSeed::Fixed(0x17_b0730_2026),failure_persistence:persistence(),..Config::default()})]
+    #![proptest_config(Config {cases:64,rng_seed:RngSeed::Fixed(0x017b_0730_2026),failure_persistence:persistence(),..Config::default()})]
     #[test]
     fn generated_schema_valid_optional_combinations(bits in 0u8..32, text in "[a-zé界]{0,80}") {
         let (mut s,mut v) = typed_optionals(bits);
@@ -984,5 +984,21 @@ fn mandatory_memories_and_unavailable_note_preserve_typed_wire() {
         protocol::validate_real("reviewer", &wire).unwrap();
         let typed: tl3_contracts::roles::reviewer_input::ReviewerInput = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(serde_json::to_vec(&serde_json::to_value(&typed).unwrap()).unwrap(), serde_json::to_vec(&wire).unwrap());
+    }
+}
+
+
+#[test]
+fn mandatory_schema_errors_keep_variant_message_and_boundary() {
+    for (rule, pointer, keyword) in [
+        (json!({"id":"","description":"rule"}), "/standing_rules/0/id", "minLength"),
+        (json!({"id":"custom","description":"rule","extra":true}), "/standing_rules/0/extra", "additionalProperties"),
+    ] {
+        let mut s = fixture();
+        s.tapes.get_mut("worker_materials").unwrap()[0] = Read::Value(json!({"standing_rules":[rule]}));
+        let r = compare(&s);
+        assert_eq!(ops(&r), BASIC);
+        assert_eq!(r.result, Err(format!("worker inputs break role schema: role=reviewer pointer={pointer} rule={keyword}")));
+        assert_eq!(r.error_variant, Some(format!("{:?}", std::mem::discriminant(&protocol::validate_real("reviewer", &r.trace.last().unwrap()["args"][1]).unwrap_err()))));
     }
 }
