@@ -1,0 +1,33 @@
+use serde_json::{Value, json};
+use std::{cell::RefCell, collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
+use tl3_controller::{Error, Result, executor::Delivery};
+use tl3_kernel::{NodeId, EffectKind};
+use tl3_worktrees::CommitId;
+use io::{Store, Worktrees};
+use criteria::criteria;
+use tl3_store::Snapshot;
+const SCOPE_RULE: &str = "request-scope";
+const REPORT_RULE: &str = "test-report-integrity";
+mod reference;
+mod current;
+mod criteria;
+mod goals;
+mod io;
+mod properties;
+mod tl3_store {
+    use super::*;
+    #[derive(Clone, Debug)]
+    pub struct Row { pub table: String, pub id: String, pub value: Value }
+    #[derive(Clone, Debug)]
+    pub struct Snapshot { pub rows: Vec<Row> }
+}
+mod findings {
+    pub fn clipped(text: &str, cap: usize) -> String { text.chars().take(cap).collect() }
+}
+mod protocol {
+    use super::*;
+    // Unchanged validator is a recorded leaf. Retained worker targets run its real schema.
+    pub fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
+        io::read("validate_inputs", json!([role, inputs])).map(|_| ())
+    }
+}
