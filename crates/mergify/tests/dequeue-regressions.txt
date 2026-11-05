@@ -1,0 +1,2 @@
+# A4 dequeue parity. Fixed seed 0x751760a4; persisted minimized regressions go here.
+# No failing old/new case has been found or discarded.

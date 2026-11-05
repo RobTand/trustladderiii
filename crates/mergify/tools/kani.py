@@ -62,7 +62,6 @@ MUTANTS = [
     ("facts_outcome", DECIDE + "facts.rs",
      "head_infra.unwrap_or(true)",
      "head_infra.unwrap_or(false)"),
-    ("enqueue_dequeue_fresh", DECIDE + "enqueue.rs", "event.id > queued", "event.id >= queued"),
     ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
 ]
 

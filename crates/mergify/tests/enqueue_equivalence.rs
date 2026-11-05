@@ -266,3 +266,185 @@ fn replay_red_unconfirmed_rerun() {
     };
     assert_eq!(decide(state, event), reference::decide(state, event));
 }
+
+// A4: direct old/new dequeue parity, independently of decide's reference.
+// The reference is verbatim rust-fv 9a658a8e32 LabelEvent/dequeue_pending.
+// Its SHA-256 is pinned by enqueue_a4_qualification.py and the source audit.
+mod dequeue_reference {
+    use tl3_mergify::decide::Time;
+    include!("dequeue_reference.rs.txt");
+}
+
+fn dequeue_time() -> impl Strategy<Value = tl3_mergify::decide::Time> {
+    (
+        prop_oneof![
+            any::<i64>(),
+            Just(i64::MIN),
+            Just(-1),
+            Just(0),
+            Just(i64::MAX)
+        ],
+        prop_oneof![
+            any::<u32>(),
+            Just(0),
+            Just(999_999_999),
+            Just(1_000_000_000),
+            Just(u32::MAX)
+        ],
+    )
+        .prop_map(|(secs, nanos)| tl3_mergify::decide::Time { secs, nanos })
+}
+
+fn dequeue_event() -> impl Strategy<Value = Option<LabelEvent>> {
+    prop::option::of(
+        (any::<u64>(), any::<bool>(), dequeue_time()).prop_map(|(id, labeled, at)| LabelEvent {
+            id,
+            labeled,
+            at,
+        }),
+    )
+}
+
+// Keep independent full-domain samples and also make equality/adjacency common.
+fn dequeue_samples() -> impl Strategy<
+    Value = (
+        Option<LabelEvent>,
+        Option<u64>,
+        Option<tl3_mergify::decide::Time>,
+    ),
+> {
+    dequeue_event().prop_flat_map(|event| {
+        let arbitrary_queued = prop::option::of(any::<u64>());
+        let arbitrary_finished = prop::option::of(dequeue_time());
+        let queued = match event {
+            None => arbitrary_queued.boxed(),
+            Some(event) => prop_oneof![
+                arbitrary_queued,
+                Just(Some(event.id)),
+                Just(Some(event.id.saturating_sub(1))),
+                Just(Some(event.id.saturating_add(1))),
+            ]
+            .boxed(),
+        };
+        let finished = match event {
+            None => arbitrary_finished.boxed(),
+            Some(event) => prop_oneof![
+                arbitrary_finished,
+                Just(Some(event.at)),
+                Just(Some(tl3_mergify::decide::Time {
+                    nanos: event.at.nanos.saturating_sub(1),
+                    ..event.at
+                })),
+                Just(Some(tl3_mergify::decide::Time {
+                    nanos: event.at.nanos.saturating_add(1),
+                    ..event.at
+                })),
+            ]
+            .boxed(),
+        };
+        (Just(event), queued, finished)
+    })
+}
+
+fn old_dequeue_event(event: Option<LabelEvent>) -> Option<dequeue_reference::LabelEvent> {
+    event.map(|event| dequeue_reference::LabelEvent {
+        id: event.id,
+        labeled: event.labeled,
+        at: event.at,
+    })
+}
+
+proptest! {
+    #![proptest_config(Config {
+        cases: 4096,
+        rng_seed: RngSeed::Fixed(0x7517_60a4),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+            "tests/dequeue-regressions.txt"))),
+        ..Config::default()
+    })]
+    #[test]
+    fn dequeue_matches_verbatim_old(
+        retry in any::<bool>(), concluded in any::<bool>(), labeled in any::<bool>(),
+        (dequeued, queued, finished) in dequeue_samples(),
+    ) {
+        prop_assert_eq!(
+            dequeue_pending(retry, concluded, labeled, dequeued, queued, finished),
+            dequeue_reference::dequeue_pending(retry, concluded, labeled,
+                old_dequeue_event(dequeued), queued, finished),
+        );
+    }
+}
+
+#[test]
+fn dequeue_time_and_id_boundaries_match_verbatim_old() {
+    use tl3_mergify::decide::Time;
+    let times = [
+        Time {
+            secs: i64::MIN,
+            nanos: 0,
+        },
+        Time {
+            secs: -2,
+            nanos: u32::MAX,
+        },
+        Time { secs: -1, nanos: 0 },
+        Time {
+            secs: -1,
+            nanos: 999_999_999,
+        },
+        Time {
+            secs: -1,
+            nanos: 1_000_000_000,
+        },
+        Time { secs: 0, nanos: 0 },
+        Time {
+            secs: i64::MAX,
+            nanos: u32::MAX,
+        },
+    ];
+    for retry in [false, true] {
+        for concluded in [false, true] {
+            for labeled in [false, true] {
+                for id in [0, 1, u64::MAX] {
+                    for event_labeled in [false, true] {
+                        for at in times {
+                            let event = LabelEvent {
+                                id,
+                                labeled: event_labeled,
+                                at,
+                            };
+                            for dequeued in [None, Some(event)] {
+                                for queued in [
+                                    None,
+                                    Some(id),
+                                    Some(id.saturating_sub(1)),
+                                    Some(id.saturating_add(1)),
+                                ] {
+                                    for finished in
+                                        std::iter::once(None).chain(times.into_iter().map(Some))
+                                    {
+                                        assert_eq!(
+                                            dequeue_pending(
+                                                retry, concluded, labeled, dequeued, queued,
+                                                finished
+                                            ),
+                                            dequeue_reference::dequeue_pending(
+                                                retry,
+                                                concluded,
+                                                labeled,
+                                                old_dequeue_event(dequeued),
+                                                queued,
+                                                finished
+                                            ),
+                                            "retry={retry} concluded={concluded} labeled={labeled} dequeued={dequeued:?} queued={queued:?} finished={finished:?}",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

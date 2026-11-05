@@ -214,7 +214,7 @@ def verus_proofs():
 
 
         # ctrl-core A4: enqueue_ack_sound, independent full-domain contract and witnesses.
-        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 4)]:
+        for suffix, module, count in [("", "enqueue#decide", 1), ("_issue", "enqueue#reconcile_issue", 1), ("_witness", "witness", 4)]:
             verus_test(
                 name = "verus_enqueue_ack_sound" + suffix,
                 src = "proofs/enqueue_ack_sound.rs",
@@ -242,7 +242,7 @@ def verus_proofs():
 
 
         # ctrl-core A4: enqueue_stale_head, independent full-domain contract and witnesses.
-        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 2)]:
+        for suffix, module, count in [("", "enqueue#decide", 1), ("_witness", "witness", 2)]:
             verus_test(
                 name = "verus_enqueue_stale_head" + suffix,
                 src = "proofs/enqueue_stale_head.rs",
@@ -256,6 +256,34 @@ def verus_proofs():
                     "proofs/enqueue_helpers.rs",
                     "proofs/enqueue_stale_head_spec.rs",
                     "proofs/enqueue_stale_head_witness.rs",
+                ],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+
+        # ctrl-core A4: dequeue freshness over its actual body and full-domain witness.
+        for suffix, module, count in [("", "enqueue#dequeue_pending", 1), ("_label_event", "enqueue#LabelEvent", 1), ("_witness", "witness", 4)]:
+            verus_test(
+                name = "verus_enqueue_dequeue_fresh" + suffix,
+                src = "proofs/enqueue_dequeue_fresh.rs",
+                srcs = [
+                    "src/decide/enqueue.rs",
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                ],
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_refused_sticky_spec.rs",
+                    "proofs/enqueue_dequeue_fresh_spec.rs",
+                    "proofs/enqueue_dequeue_fresh_witness.rs",
                 ],
                 module = module,
                 expected_obligations = count,
