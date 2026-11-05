@@ -32,6 +32,21 @@ def fake_model_tool_binding(monkeypatch):
     monkeypatch.setattr(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self)
 
 
+@pytest.fixture
+def checker_state_directory(tmp_path_factory):
+    import tempfile
+    from pathlib import Path
+
+    # Keep real fsync/rename for the cursor, without shared-disk durability waits
+    # for ephemeral test coordination. Executables stay in pytest scratch.
+    try:
+        state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir="/dev/shm")
+    except OSError:
+        state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir=tmp_path_factory.getbasetemp())
+    with state as directory:
+        yield Path(directory)
+
+
 @pytest.fixture(autouse=True)
 def stable_git_commits(monkeypatch):
     import subprocess
@@ -71,14 +86,15 @@ def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
         yield
         return
 
-    cursor = tmp_path / "checker-cursor"
+    cursor = request.getfixturevalue("checker_state_directory") / "checker-cursor"
     # A child needs only this immutable script, not the complete parity corpus.
     script = checker_stub.cases().get(request.node.nodeid, [])
     script_path = tmp_path / "checker-script.json"
     script_path.write_text(json.dumps(script))
+
     checker = tmp_path / "recorded-rust-checker"
     checker.write_text(
-        f"#!{sys.executable}\n"
+        f"#!{sys.executable} -IS\n"
         "import runpy, sys\n"
         f"sys.argv[1:1] = ['--replay-file', {str(script_path)!r}, {request.node.nodeid!r}, {str(cursor)!r}]\n"
         f"runpy.run_path({str(Path(checker_stub.__file__).resolve())!r}, run_name='__main__')\n")
