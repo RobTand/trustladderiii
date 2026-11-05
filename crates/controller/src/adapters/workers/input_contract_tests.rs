@@ -310,7 +310,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         )
         .unwrap(),
     );
-    commit.rows.push(crate::put("prerequisite_closures", "0:Issue:2763", json!({"kind":"issue","number":2763,"reason":"not_planned"})));
+    commit.rows.push(crate::put("prerequisite_closures", "0:Issue:2763".into(), json!({"kind":"issue","number":2763,"reason":"not_planned"})));
     store.commit(&commit).unwrap();
     let postmortem = store.owed_postmortem().unwrap().unwrap().id;
     let mut coverage = std::collections::BTreeSet::new();
