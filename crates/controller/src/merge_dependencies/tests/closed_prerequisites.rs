@@ -39,7 +39,7 @@ fn reopen(repo: &Repo, c: Controller, settings: &tl3_config::Store) -> Controlle
 
 /// #839 / Q27, Rob 2026-11-05: each closed prerequisite releases its own successor.
 #[test]
-fn live_closed_roots_release_nine_and_four_waiter_chains_in_order() {
+fn closed_root_regressions_release_nine_and_four_waiter_chains_in_order() {
     let mut db = Database::start();
     let (repo, mut c, repository, settings) = fixture_with_capacity(&mut db, "t839_chains", 32, 32);
     for (root, count) in [(2763, 9), (2773, 4), (2779, 1), (2781, 1)] {
@@ -170,6 +170,10 @@ fn restart_reads_already_closed_prerequisite_and_retains_it() {
     assert_eq!(
         c.world().unwrap().dependencies()[0].status,
         DependencyStatus::Delivered
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Planning { must_split: false }
     );
 }
 
@@ -573,5 +577,83 @@ fn older_closed_event_cannot_undo_a_newer_reopen() {
     assert_eq!(
         c.prerequisite_evidence(waiter).unwrap()[0].state,
         PrerequisiteState::Open
+    );
+}
+
+/// #839: authoritative ingest reads retain their version against delayed webhooks.
+#[test]
+fn older_closure_cannot_replace_current_open_ingest_read() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_ingest_version");
+    crate::adapters::github::set_fake_issue(
+        &repo.root.path().join("fakes"),
+        &serde_json::from_value(json!({"number":2761,"title":"Prerequisite","body":null,
+            "state":"open","updated_at":"2026-11-05T23:35:00Z"}))
+        .unwrap(),
+    );
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761]);
+    c.observe(
+        "late-closure-after-ingest",
+        Observation::Prerequisite(ExternalFact {
+            updated_at: Some("2026-11-03T23:00:00Z".parse().unwrap()),
+            repository,
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+            status: DependencyStatus::Abandoned,
+            reason: Some("not_planned".into()),
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+}
+
+/// #839: startup revokes delivery before a queued resume can admit planning.
+#[test]
+fn startup_revokes_closed_delivery_before_resume() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_resume_current");
+    let waiter = intake(&mut c, &repository, 42);
+    event(
+        &mut c,
+        Event::Command {
+            node: waiter,
+            id: 1,
+            command: Command::Pause,
+        },
+    );
+    ingest(&mut c, waiter, &[2761]);
+    external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Delivered
+    );
+    assert!(!c.world().unwrap().nodes[waiter.0 as usize].planning_started);
+    c.observe(
+        "resume-before-open",
+        Observation::Kernel(Event::Command {
+            node: waiter,
+            id: 2,
+            command: Command::Resume,
+        }),
+    )
+    .unwrap();
+    set_issue(&repo, 2761, "open", None);
+    let mut c = reopen(&repo, c, &settings);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
     );
 }
