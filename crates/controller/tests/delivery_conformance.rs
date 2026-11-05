@@ -271,3 +271,50 @@ fn intended_is_carried_into_new_epoch_before_dispatch() {
         1
     );
 }
+
+/// State-table Cancelling: a late completion is Confirmed for teardown; an
+/// authoritative absent attempt becomes Cancelled. Neither path dispatches.
+#[test]
+fn cancelling_conforms_for_found_and_absent() {
+    let mut database = database::Database::start();
+    for (index, answer, read) in [
+        (0, Answer::Found, Read::Found),
+        (1, Answer::Absent, Read::Absent),
+    ] {
+        let settings = database.create(&format!("delivery_cancel_{index}"));
+        let script = Arc::new(Mutex::new(Script {
+            answers: VecDeque::from([answer]),
+            ..Script::default()
+        }));
+        let mut controller = open(&settings, script.clone());
+        let epoch = controller.snapshot().unwrap().epoch.get();
+        seed(&settings, "cancelled-attempt", epoch);
+        let mut store = Store::open(&settings).unwrap();
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new("begin-cancellation", json!(null), &snapshot);
+        change.transitions.push(EffectTransition {
+            key: "cancelled-attempt".into(),
+            from: EffectState::Intended,
+            to: EffectState::Sent,
+        });
+        change.transitions.push(EffectTransition {
+            key: "cancelled-attempt".into(),
+            from: EffectState::Sent,
+            to: EffectState::Cancelling,
+        });
+        store.commit(&change).unwrap();
+        let action = mirror::reconciliation(State::Cancelling, read, false, false, false);
+        let expected = mirror::committed(State::Cancelling, action, Ack::Confirmed);
+        drive(&mut controller, &settings, "cancelled-attempt", expected);
+        assert_eq!(
+            script
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .filter(|s| s.starts_with("execute:"))
+                .count(),
+            0
+        );
+    }
+}

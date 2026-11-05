@@ -1,0 +1,4 @@
+                && tl3_delivery::accounts_for_dispatches(
+                    copies as u64,
+                    self.store.approval_dispatch_count(&row.id)? as u64,
+                )

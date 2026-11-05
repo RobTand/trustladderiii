@@ -1,0 +1,1 @@
+                && copies as u64 >= self.store.approval_dispatch_count(&row.id)? as u64
