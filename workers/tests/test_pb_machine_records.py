@@ -165,6 +165,12 @@ generator.require_admission = lambda: None
 generator.container_command = lambda tree, container, argv, cidfile: argv
 contract = json.loads((root / 'generator.json').read_text())
 artifact = generator.run(root / 'checkout', generator.Container(''' + repr(IMAGE) + '''), **contract)
+# Normalize synthetic receipt metadata after executing the real generator and
+# its deadline checks, so the strict replay can compare the remaining facts.
+for timing in artifact['timings'].values():
+    if isinstance(timing, dict):
+        timing['seconds'] = 0.0
+artifact['timings']['total_seconds'] = 0.0
 raw = (generator.PREFIX + json.dumps(artifact) + '\\n').encode()
 log = here / 'generator.log'
 log.write_bytes(raw)
