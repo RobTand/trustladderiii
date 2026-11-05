@@ -33,10 +33,17 @@ impl<const MIN: u64> PartialEq for PlanInteger<MIN> {
 impl<'de, const MIN: u64> Deserialize<'de> for PlanInteger<MIN> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let number = Number::deserialize(d)?;
-        let value = number
-            .as_f64()
-            .ok_or_else(|| D::Error::custom("expected a finite integer"))?;
-        if value.fract() != 0.0 || value < MIN as f64 {
+        let valid = number.as_u64().map_or_else(
+            || {
+                number.as_f64().is_some_and(|value| {
+                    value.fract() == 0.0
+                        && value >= 0.0
+                        && (value >= 18_446_744_073_709_551_616.0 || value as u64 >= MIN)
+                })
+            },
+            |value| value >= MIN,
+        );
+        if !valid {
             return Err(D::Error::custom("planner integer outside its contract"));
         }
         Ok(Self(number))

@@ -162,6 +162,10 @@ fn planner_integer_minimum_compares_large_integers_without_float_rounding() {
         ("18446744073709551615", true),
         ("18446744073709551616.0", true),
     ] {
-        assert_eq!(serde_json::from_str::<Large>(number).is_ok(), valid, "{number}");
+        assert_eq!(
+            serde_json::from_str::<Large>(number).is_ok(),
+            valid,
+            "{number}"
+        );
     }
 }
