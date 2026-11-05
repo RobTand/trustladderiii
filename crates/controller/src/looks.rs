@@ -1537,7 +1537,7 @@ impl Controller {
         model: Option<&str>,
         commit: &mut Commit,
     ) -> Result<()> {
-        let ending = self.store.latest_worker_ending(key)?;
+        let ending = self.store.latest_worker_quota(key, model)?;
         let finished_ms = ending
             .as_ref()
             .filter(|e| e.facts.outcome == "quota" && Some(e.facts.model.as_str()) == model)

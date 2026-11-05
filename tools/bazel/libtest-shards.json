@@ -482,5 +482,17 @@
   "UnavailableRequestError": 15.903,
   "UnavailableRetryLimit": 16.096,
   "Waits": 29.063
+ },
+ "tl3-controller/quota_hold": {
+  "duplicate_success_and_reset_do_not_dispatch_twice": 1.507,
+  "failed_probes_repeat_hourly_and_report_a_missed_reset": 9.707,
+  "far_reset_uses_one_hourly_probe_per_model_and_family": 8.031,
+  "late_success_wakes_another_request_after_its_node_moved_on": 1.184,
+  "quota_status_names_the_durable_hold_and_retry": 0.871,
+  "restart_between_success_and_redispatch_keeps_the_wake": 0.966,
+  "restart_does_not_overlap_a_running_probe": 1.251,
+  "same_model_success_redispatches_the_quota_held_key": 2.197,
+  "success_before_quota_is_durable_does_not_park_it": 1.247,
+  "success_in_another_family_does_not_clear_the_old_hold": 7.339
  }
 }

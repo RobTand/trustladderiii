@@ -268,6 +268,8 @@ impl Controller {
                         )
                     }))
             {
+                state.quota_probe_at_ms = None;
+                state.quota_probe_model = None;
                 state.due_ms = Some(self.now_ms());
                 state.quota_retry_ms = state.due_ms;
                 commit

@@ -793,3 +793,30 @@ fn success_in_another_family_does_not_clear_the_old_hold() {
         Some("alternate")
     );
 }
+
+/// Q53 / #828: availability anywhere in the held step's ladder wakes it.
+#[test]
+fn success_on_an_earlier_rung_wakes_a_hold_from_the_last_rung() {
+    let mut f = Fixture::new();
+    f.config
+        .models
+        .audit
+        .insert(0, f.config.models.ingest[0].clone());
+    let mut f = f.restart();
+    let key = f.held(true);
+    f.until(|f| {
+        f.hold()
+            .is_some_and(|(_, state)| state["last_quota_model"] == "alternate-model")
+    });
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 1, "both real ladder calls ended in quota");
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("success"), "yes").unwrap();
+    f.until(|f| f.controller.world().unwrap().nodes[1].phase != Phase::Auditing);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        2,
+        "earlier-rung success wakes the original key"
+    );
+}

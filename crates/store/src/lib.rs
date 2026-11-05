@@ -1535,6 +1535,15 @@ impl Store {
         self.client.query_opt("SELECT run_key, attempt, facts FROM tl3_worker_runs WHERE run_key = $1 ORDER BY attempt DESC LIMIT 1", &[&key])?.map(recorded_worker_ending).transpose()
     }
 
+    /// Q53 / #828: a late quota observation cannot borrow a newer success's attempt.
+    pub fn latest_worker_quota(
+        &mut self,
+        key: &str,
+        model: Option<&str>,
+    ) -> Result<Option<RecordedWorkerEnding>> {
+        self.client.query_opt("SELECT run_key, attempt, facts FROM tl3_worker_runs WHERE run_key = $1 AND facts->>'outcome' = 'quota' AND ($2::text IS NULL OR facts->>'model' = $2) ORDER BY attempt DESC LIMIT 1", &[&key, &model])?.map(recorded_worker_ending).transpose()
+    }
+
     /// Q53 / #828: a late success remains evidence after its node moved on.
     pub fn latest_worker_success(
         &mut self,
