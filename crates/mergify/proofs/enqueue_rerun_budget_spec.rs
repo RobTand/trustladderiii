@@ -52,6 +52,12 @@ pub open spec fn no_rerun(effects: Seq<Effect>) -> bool {
     forall|i: int| 0 <= i < effects.len() ==> #[trigger] effects[i] != Effect::Write(Write::Rerun)
 }
 
+/// K-rerun-budget: Q47, docs/state-machine.md:681-688 and state-table.md:541,549,575
+/// give infrastructure-retry context. Exact receipts, outcomes and ordering are
+/// preserved existing behaviour (no rule), base 504f10b0 enqueue.rs:631-703.
+/// #447/state-table.md:545,578 concern unmet queue conditions; TL3 #608 records
+/// the served RobTand/prismabuild#2705 incident, not a receipt rule.
+/// All event/state/u64 inputs are arbitrary; no temporal or Vec-length bound.
 pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueState, effects: Effects) -> bool {
     (match event {
         QueueEvent::RerunRead { .. } | QueueEvent::RerunDone(_) | QueueEvent::RerunPending { .. } => {

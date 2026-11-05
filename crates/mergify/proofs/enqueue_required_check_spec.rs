@@ -12,8 +12,11 @@ use crate::enqueue::RequiredState;
 use vstd::prelude::*;
 
 verus! {
-/// The retired Kani oracle, independent of the executable classifier.
-/// Escape metadata and complete unbounded input domain are documented above.
+/// K-required-check: Q47, docs/state-machine.md:681-688 and state-table.md:540-541,549,575.
+/// The exact enum partition is preserved existing behaviour (no rule).
+/// #447/state-table.md:545,578 concern queue conditions; #608 records served
+/// RobTand/prismabuild#2705, not a classifier rule. All inputs are unbounded.
+/// This is the retired Kani oracle, independent of the executable classifier.
 pub open spec fn expected(check: CheckView, runner: bool) -> RequiredState {
     match (check.status, check.conclusion) {
         (Status::Completed, Some(Conclusion::Success | Conclusion::Neutral | Conclusion::Skipped)) => RequiredState::Passed,
