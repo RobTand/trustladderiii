@@ -516,7 +516,11 @@ fn card(
                 .prerequisites
                 .iter()
                 .filter(|fact| {
-                    fact.state != crate::merge_dependencies::PrerequisiteState::Delivered
+                    matches!(
+                        fact.state,
+                        crate::merge_dependencies::PrerequisiteState::Open
+                            | crate::merge_dependencies::PrerequisiteState::Stopped
+                    )
                 })
                 .map(crate::merge_dependencies::PrerequisiteEvidence::waiting_text)
                 .collect::<Vec<_>>();

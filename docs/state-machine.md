@@ -951,7 +951,7 @@ the root waits in Unplanned until every prerequisite is delivered. The wait
 holds no slot, file lock or spendable credit, and avoids planner and maker cost.
 
 Each declaration names an active TL3 request root or an external prerequisite fact.
-Rob, 2026-11-05, #839 (Q27): 'If it's truly closed, the prerequisite should just continue.' [Decision](https://github.com/RobTand/trustladderiii/issues/839#issuecomment-6671251113). 
+Rob, 2026-11-05, #839 (Q27): 'If it's truly closed, the prerequisite should just continue.' [Decision](https://github.com/RobTand/trustladderiii/issues/839#issuecomment-6671251113).
 Any truly closed issue or PR delivers, whether merged, completed, not planned,
 or closed by TL3 as not actionable. A stopped request with an open issue stays
 pending and restartable under Q49; status says "waiting for #N: stopped".

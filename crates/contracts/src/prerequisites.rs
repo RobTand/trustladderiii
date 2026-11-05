@@ -35,3 +35,18 @@ pub fn planner_schema() -> crate::Generated {
         text: crate::render(&schema),
     }
 }
+
+impl crate::render::SchemaOrder for Closure {
+    fn order() -> crate::render::TypeOrder<'static> {
+        crate::render::TypeOrder::of::<Self>(&[
+            (
+                "",
+                &["type", "properties", "required", "additionalProperties"],
+            ),
+            ("/properties", &["kind", "number", "reason"]),
+            ("/properties/kind", &["type", "enum"]),
+            ("/properties/number", &["type", "format", "minimum"]),
+            ("/properties/reason", &["type"]),
+        ])
+    }
+}

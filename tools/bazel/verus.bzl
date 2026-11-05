@@ -675,6 +675,7 @@ def verus_proofs():
             "dependencies_dependency_path": ("kernel::dependencies#World::dependency_path", 7),
             "dependencies_find_dependency": ("kernel::dependencies#World::find_dependency", 2),
             "dependencies_first_undelivered": ("kernel::dependencies#World::first_undelivered", 2),
+            "dependencies_update_allowed": ("kernel::dependencies#update_allowed", 1),
             "dependencies_prepare_dependency": ("kernel::dependencies#World::prepare_dependency", 1),
             "dependencies": ("kernel::dependencies#World::record_dependency", 1),
             "dependencies_remove_dependency": ("kernel::dependencies#World::remove_dependency", 2),

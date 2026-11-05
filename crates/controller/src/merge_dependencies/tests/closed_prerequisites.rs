@@ -193,7 +193,7 @@ fn closed_pr_delivers_and_retains_its_reason() {
     crate::adapters::github::set_fake_issue(
         &repo.root.path().join("fakes"),
         &serde_json::from_value(json!({"number":2761,"title":"Prerequisite PR","body":null,
-            "state":"open","updated_at":"2026-11-03T23:00:00Z","pull_request":{}}))
+            "state":"open","updated_at":"2026-11-03T23:00:00Z","pull_request":{"url":"https://api.github.com/repos/owner/sandbox/pulls/2761"}}))
         .unwrap(),
     );
     let waiter = intake(&mut c, &repository, 42);
@@ -356,7 +356,7 @@ fn startup_reconciles_legacy_abandoned_edge_without_restart_command() {
 fn merged_pr_delivers_without_closure_record() {
     let mut db = Database::start();
     let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_merged_pr");
-    crate::adapters::github::set_fake_issue(&repo.root.path().join("fakes"), &serde_json::from_value(json!({"number":2761,"title":"Prerequisite PR","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z","pull_request":{}})).unwrap());
+    crate::adapters::github::set_fake_issue(&repo.root.path().join("fakes"), &serde_json::from_value(json!({"number":2761,"title":"Prerequisite PR","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z","pull_request":{"url":"https://api.github.com/repos/owner/sandbox/pulls/2761"}})).unwrap());
     let waiter = intake(&mut c, &repository, 42);
     ingest_brief_kind(&mut c, waiter, &[2761], "pull_request");
     reply(&mut c, waiter, Reply::AuditAgrees);

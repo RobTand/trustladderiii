@@ -172,6 +172,7 @@ pub fn schema() -> Value {
 }
 
 pub fn generated() -> Result<super::super::Generated, render::RenderError> {
+    let closure = crate::prerequisites::Closure::order();
     let record = Record::order();
     let case = Case::order();
     let rubric = Rubric::order();
@@ -181,6 +182,10 @@ pub fn generated() -> Result<super::super::Generated, render::RenderError> {
     let decimal = DecimalText::order();
     let repo = RepositoryName::order();
     let shared = [
+        TypeUse {
+            pointer: "/properties/case/properties/prerequisite_closures/items",
+            order: &closure,
+        },
         TypeUse {
             pointer: "/properties/record",
             order: &record,
@@ -239,6 +244,10 @@ pub fn generated() -> Result<super::super::Generated, render::RenderError> {
         },
     ];
     let inline: &[render::ObjectOrder<'_>] = &[
+        (
+            "/properties/case/properties/prerequisite_closures",
+            &["type", "items"],
+        ),
         (
             "",
             &[
