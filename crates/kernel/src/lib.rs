@@ -2045,6 +2045,10 @@ mod progress_gate_apply_merge_safe;
 mod progress_gate_apply_resume_safe;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_resume_frame.rs"]
+mod progress_gate_apply_resume_frame;
+
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: original gate checker domain, exposed by the public checker contract.
 pub closed spec fn gate_apply_checker_domain(w: World) -> bool { progress_gate_apply::domain(w) }

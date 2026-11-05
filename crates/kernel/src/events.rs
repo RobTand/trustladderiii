@@ -136,10 +136,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 on_command(w, i, id, command, out);
                 kernel_proof! {
                     if command == Command::Resume {
-                        reveal(progress_gate_apply::resume_post);
-                        assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
-                        reveal(progress_gate_apply::resume_apply_post);
-                        assert(progress_gate_apply::resume_apply_post(before_apply@, *w, event));
+                        progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
                     }
                     if progress_input(before_apply@, event) {
                         world_checked_definition(before_apply@);

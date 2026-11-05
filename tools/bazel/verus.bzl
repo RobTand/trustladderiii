@@ -161,6 +161,7 @@ def verus_proofs():
             "progress_gate_apply_merge": ("kernel::progress_gate_apply_merge", 1),
             "progress_gate_apply_resume": ("kernel::progress_gate_apply_resume", 1),
             "progress_gate_apply_witness": ("kernel::progress_gate_apply_witness", 3),
+            "progress_gate_apply_resume_frame": ("kernel::progress_gate_apply_resume_frame", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
