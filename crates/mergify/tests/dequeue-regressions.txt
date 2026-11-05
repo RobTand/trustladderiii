@@ -1,2 +1,5 @@
-# A4 dequeue parity. Fixed seed 0x751760a4; persisted minimized regressions go here.
-# No failing old/new case has been found or discarded.
+# A4 dequeue parity. Fixed RNG seed 0x751760a4.
+# Preserved from the seeded production >= mutant on BB 72c82678:
+# retry=true, concluded=false, labeled=true, event=(id=0,labeled=true,time=0/0),
+# queued=Some(0), finished=None. The unmodified production and old reference pass.
+cc ec1b4679f4ec27c75e2839cdc9091667ccf3d80ec55a48bced04813f443b6439

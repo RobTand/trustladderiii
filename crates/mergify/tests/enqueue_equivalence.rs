@@ -358,8 +358,8 @@ proptest! {
     #![proptest_config(Config {
         cases: 4096,
         rng_seed: RngSeed::Fixed(0x7517_60a4),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
-            "tests/dequeue-regressions.txt"))),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+            env!("CARGO_MANIFEST_DIR"), "/tests/dequeue-regressions.txt")))),
         ..Config::default()
     })]
     #[test]
