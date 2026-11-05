@@ -811,3 +811,91 @@ impl<K: Ord + JsonSchema, V: JsonSchema, const MAX: usize> JsonSchema for Object
         schema
     }
 }
+
+/// A JSON integer at least `MIN`, with no schema-imposed upper bound. Keep the original
+/// number so JSON's integral floating-point spelling also round-trips (#819).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Natural<const MIN: u64>(serde_json::Number);
+
+impl<const MIN: u64> Natural<MIN> {
+    pub fn new(value: u64) -> Result<Self, String> {
+        Self::from_number(value.into())
+    }
+
+    fn from_number(number: serde_json::Number) -> Result<Self, String> {
+        let in_range = integral(&number).is_some_and(|value| value >= i128::from(MIN))
+            || number
+                .as_f64()
+                .is_some_and(|value| value.fract() == 0.0 && value >= 18_446_744_073_709_551_616.0);
+        if in_range {
+            Ok(Self(number))
+        } else {
+            Err(format!("expected an integer at least {MIN}"))
+        }
+    }
+}
+
+impl<'de, const MIN: u64> Deserialize<'de> for Natural<MIN> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_number(serde_json::Number::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+impl<const MIN: u64> JsonSchema for Natural<MIN> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("Natural_{MIN}").into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "integer", "minimum": MIN})
+    }
+}
+
+/// Schema-only marker for a required nullable string, using the JSON Schema type union.
+/// Pair with `required_nullable` on an `Option<String>` so absence is still an error.
+pub struct NullableString;
+
+impl JsonSchema for NullableString {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "NullableString".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        Option::<String>::json_schema(generator)
+    }
+}
+
+/// An unconstrained JSON object, distinct from arbitrary JSON values.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct JsonObject(pub serde_json::Map<String, serde_json::Value>);
+
+impl JsonSchema for JsonObject {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "JsonObject".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema = <serde_json::Map<String, serde_json::Value>>::json_schema(generator);
+        // Unconstrained maps already allow every additional property. Preserve the
+        // published spelling by omitting only the redundant true keyword.
+        if schema.get("additionalProperties") == Some(&serde_json::Value::Bool(true)) {
+            schema
+                .as_object_mut()
+                .unwrap()
+                .remove("additionalProperties");
+        }
+        schema
+    }
+}
