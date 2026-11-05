@@ -33,20 +33,40 @@ pub fn stored_reply(settings: &tl3_config::Store) {
     let config = config(settings, root.path(), "normal");
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
+    struct AwaitStored;
+    impl Executor for AwaitStored {
+        fn execute(
+            &mut self,
+            _: &Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+            Ok(tl3_controller::executor::Completion::confirmed(Vec::new()))
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            Ok(Reconciliation::Absent)
+        }
+    }
+    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+    registry.register(tl3_controller::executor::Upstream::Workers, AwaitStored);
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
-        adapters::simulation(&root.path().join("fakes")).unwrap(),
+        registry,
         Bootstrap::from_config(&config).unwrap(),
     )
     .unwrap();
     controller.intake(labelled()).unwrap();
+    wait(|| {
+        controller.drive_once().unwrap();
+        let node = controller.world().unwrap().nodes[0];
+        node.effect.is_none() && node.run == Some(node.generation)
+    });
     let mut supervisor = Supervisor::new(
         &config,
         root.path(),
         &mut crate::startup_ownership::ownership(),
     )
     .unwrap();
-    let run = delivery();
+    let mut run = delivery();
+    run.generation = controller.world().unwrap().nodes[0].generation;
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
     fs::create_dir_all(&attempt).unwrap();
     fs::write(
@@ -120,6 +140,10 @@ pub fn stored_reply(settings: &tl3_config::Store) {
             for observation in completion.observations {
                 controller.observe("stored-ingest", observation).unwrap();
             }
+            wait(|| {
+                controller.drive_once().unwrap();
+                controller.world().unwrap().nodes[0].phase == Phase::Auditing
+            });
         }
         assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Auditing);
         assert_eq!(controller.world().unwrap().nodes[0].run_failures, 0);
