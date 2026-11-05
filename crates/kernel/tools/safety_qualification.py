@@ -151,6 +151,14 @@ CASES = {
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
                     '//crates/kernel:verus_controller_boundary'),
+    'events_ack_skipped': ('crates/kernel/src/events.rs',
+                           'on_ack(w, i, seq, ack, out);',
+                           'let _ = (i, seq, ack);',
+                           '//crates/kernel:verus_events'),
+    'events_adoption_storage': ('crates/kernel/src/events.rs',
+                                'node.proposed = Some(head);',
+                                'node.proposed = Some(head);\n                w.file_sets = Vec::new();',
+                                '//crates/kernel:verus_events'),
 }
 
 

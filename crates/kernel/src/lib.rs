@@ -37,6 +37,9 @@ use ranks::*;
 mod checking;
 mod events;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/events_lemmas.rs"]
+mod events_lemmas;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;
 #[cfg(verus_keep_ghost)]
