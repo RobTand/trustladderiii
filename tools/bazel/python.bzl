@@ -26,7 +26,7 @@ _PACKAGE_DATA = {
         "//tools/bazel:workspace_build_files",
         "//workers:runtime_files",
     ],
-    "workers/tests": ["//harness:project_files", "@o200k_base//file", "//crates/controller:tl3"],
+    "workers/tests": ["//harness:project_files", "@o200k_base//file"],
 }
 
 # Project code that pytest imports from the project root, as Light checks do.

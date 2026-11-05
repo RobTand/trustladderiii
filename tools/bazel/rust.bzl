@@ -34,6 +34,7 @@ _BUILD_SCRIPT_DATA = {
     "crates/controller": ["//workers:schemas", "//workers/src:prompts"],
 }
 _EXAMPLE_DATA = {
+    "examples/checker-vectors.rs": ["//crates/controller:tests/worker_checker/oracle.rs"],
     "//deploy/dl380g10:helper.rs": ["//deploy/github-app:manifest.json"],
 }
 
@@ -59,6 +60,7 @@ _SCENARIO_SHARDS = {
 _LIBTEST_SHARDS = {
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
+    "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 8,
     "tl3-controller/redaction_generated": 8,
 }
@@ -84,6 +86,8 @@ _CONTROLLER_WORKERS = [
     "test_test_workers",
     "test_test_writer_references",
     "test_test_budget_parity",
+    "test_test_worker_checker",
+    "test_test_worker_budget_orchestration",
 ]
 _CONTROLLER_BINARIES = {
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
@@ -99,6 +103,8 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
+    "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
@@ -127,6 +133,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/worker_checker.rs": ["tests/worker_checker/**"],
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
     "tests/production.rs": ["tests/prismabuild_fixture/**"],

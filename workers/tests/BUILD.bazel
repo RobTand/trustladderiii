@@ -22,6 +22,7 @@ py_library(
     srcs = ["conftest.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":checker_stub",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
@@ -1094,4 +1095,45 @@ tl3_py_test(
         "//workers/src",
         "@tl3_pip//pytest",
     ],
+)
+
+# Unit scenarios replay Rust responses; only the controller drift test gets Rust.
+filegroup(
+    name = "checker_recordings",
+    srcs = [
+        "checker-vectors.json.gz",
+        "checker_stub.py",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "checker_stub",
+    testonly = True,
+    srcs = ["checker_stub.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_checker_stub",
+    srcs = ["test_checker_stub.py"],
+    deps = [
+        ":checker_stub",
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+filegroup(
+    name = "budget_orchestration",
+    srcs = glob([
+        "*.py",
+        "fixtures/**",
+    ]) + [
+        ":checker_recordings",
+        "//harness:project_files",
+        "//workers:runtime_files",
+    ],
+    visibility = ["//visibility:public"],
 )
