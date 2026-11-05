@@ -132,7 +132,7 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
-    "test_test_p5_checker": ["//workers/tests:p5_recordings", "//workers/tests:p5_references", ":example_p5-vectors"],
+    "test_test_p5_checker": ["//workers/tests:budget_orchestration", "//workers/tests:p5_recordings", "//workers/tests:p5_references", ":example_p5-vectors"],
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
