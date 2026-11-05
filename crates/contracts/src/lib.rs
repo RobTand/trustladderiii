@@ -33,6 +33,7 @@ pub fn generated() -> Vec<Generated> {
         path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
         text: render(&check_report_schema()),
     }];
+    files.push(decision_context::generated().unwrap_or_else(|error| panic!("{error}")));
     files.extend(
         [
             ("ingest", roles::ingest_reply::schema_text()),
@@ -93,6 +94,9 @@ fn render(schema: &Value) -> String {
     text
 }
 
+pub mod render;
+
+pub mod decision_context;
 // P1b: role replies.
 pub mod roles {
     pub mod classifier_reply;

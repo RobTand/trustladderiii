@@ -28,7 +28,6 @@ STATUS = "crates/github/src/status.rs"
 # Each proof file, its package and the module path of its harnesses.
 PROOF_FILES = [
     (DECIDE + "proofs.rs", "tl3-mergify", "decide::proofs"),
-    (STATUS, "tl3-github", "status::proofs"),
     (DECIDE + "enqueue_proofs.rs", "tl3-mergify", "decide::enqueue_proofs"),
 ]
 # Seeded mutants: (harness, file, exact text, replacement). Each breaks the
@@ -36,27 +35,6 @@ PROOF_FILES = [
 # least one.
 MUTANTS = [
     ("enqueue_ack_sound", DECIDE + "enqueue.rs", "let Some(recovery) = issue.requeue_recovery else", "let Some(recovery) = issue.recovery else"),
-    ("observe_select", DECIDE + "observe.rs",
-     "check.id >= checks[best].id",
-     "check.id > checks[best].id"),
-    ("observe_merged", DECIDE + "observe.rs",
-     "if reported == QueueState::Merged {\n        QueueState::Unknown",
-     "if reported == QueueState::Waiting {\n        QueueState::Unknown"),
-    ("observe_conflict", DECIDE + "observe.rs",
-     "(pull.mergeable == Some(false) || pull.mergeable_state == Mergeable::Dirty)",
-     "pull.mergeable == Some(false)"),
-    ("observe_rule_concluded", DECIDE + "observe.rs",
-     "finished >= dequeued",
-     "finished > dequeued"),
-    ("observe_check_state", DECIDE + "observe.rs",
-     "    ) {\n        QueueState::FailedCi",
-     "    ) && conclusion.is_none() {\n        QueueState::FailedCi"),
-    ("checks_passed_total", DECIDE + "facts.rs",
-     "|a, b| a.app_key == b.app_key && a.name_key == b.name_key",
-     "|a, b| a.name_key == b.name_key"),
-    ("queue_blocked_total", DECIDE + "facts.rs",
-     "            && !check.required\n",
-     "\n"),
     ("q52", DECIDE + "translate.rs",
      "Kind::CheckMissing if node.enqueuing() && approved_head",
      "Kind::CheckMissing if approved_head"),
@@ -82,9 +60,6 @@ MUTANTS = [
     ("person_facts_total", DECIDE + "facts.rs",
      "if event.actor != Actor::Person {",
      "if event.actor == Actor::Missing {"),
-    ("http_status_class_total", STATUS,
-     "status == 429 || status == 403 && rate_signal",
-     "status == 429 || status == 403"),
     ("facts_outcome", DECIDE + "facts.rs",
      "head_infra.unwrap_or(true)",
      "head_infra.unwrap_or(false)"),

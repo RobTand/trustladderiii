@@ -1668,6 +1668,13 @@ fn report_versions_are_written_by_the_action_and_checked_by_the_controller() {
     assert!(serde_json::from_value::<CheckReport>(future).is_err());
 }
 
+// P1a-0 is the renderer foundation; the ten-input inventory returns in P1a proper.
+#[path = "contracts/render.rs"]
+mod contracts_render;
+
+#[path = "contracts/patterns.rs"]
+mod contract_patterns;
+
 // #819 P1b-0: every shared role type must serialize into the unchanged wire schema.
 fn shared_reply_validator(role: &str, definition: Option<&str>) -> &'static jsonschema::Validator {
     static VALIDATORS: std::sync::OnceLock<

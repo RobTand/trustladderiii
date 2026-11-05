@@ -1,0 +1,57 @@
+    fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
+        tl3_worktrees::CommitId::new(sha)?;
+        Ok(HeadId(
+            self.store.intern_commit(&node.0.to_string(), sha)?.get() as u64,
+        ))
+    }
+
+    fn footprint(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        node: NodeId,
+        paths: &[String],
+    ) -> Result<tl3_kernel::Footprint> {
+        let request = request(snapshot, node)?;
+        let repo = self
+            .store
+            .intern_repo(&request.repo.owner, &request.repo.name)?;
+        let files = paths
+            .iter()
+            .map(|p| {
+                if p.is_empty() {
+                    return Err(Error::Invalid("footprint path must be nonempty"));
+                }
+                self.store
+                    .intern_path(repo, p)
+                    .map_err(Error::from)
+                    .map(|id| tl3_kernel::FileId(id.get() as u64))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(world.intern_footprint(files))
+    }
+
+fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
+    let head = head?;
+    snapshot
+        .interned
+        .iter()
+        .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head.0 as i64)
+        .map(|item| item.value.as_str())
+}
+
+fn request(snapshot: &Snapshot, node: NodeId) -> Result<Request> {
+    decode_stored(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "requests" && r.id == node.0.to_string())
+            .ok_or(Error::Invalid("missing request binding"))?
+            .value
+            .clone(),
+    )
+}
+
+fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+    serde_json::from_value(value).map_err(Error::StoredJson)
+}
