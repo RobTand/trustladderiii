@@ -97,6 +97,8 @@ pub enum Error {
     WorkerInputs(#[from] worker_inputs::Failure),
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("merge prerequisite update is missing its issue or pull request number")]
+    PrerequisiteNumber,
     #[error("{0}")]
     CounterExhausted(String),
     #[error("Hindsight returned HTTP {0}")]

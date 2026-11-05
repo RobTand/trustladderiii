@@ -1862,6 +1862,7 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::CounterExhausted(_) => crate::input_errors::COUNTER_HEADROOM,
         crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
+        crate::Error::PrerequisiteNumber => "prerequisite_number",
         crate::Error::ChecksPending => CHECKS_PENDING,
         crate::Error::ApprovalAmbiguous => crate::approval_delivery::AMBIGUOUS,
         crate::Error::RedactionInfra(_) => "redaction_infra",
@@ -1973,6 +1974,9 @@ pub(crate) fn incident_summary(
         "invalid_response" => "returned an unreadable response",
         "quota" => "reached its usage allowance",
         "message_rejected" => "could not prepare a readable message",
+        "prerequisite_number" => {
+            "sent a merge prerequisite update missing its issue or pull request number"
+        }
         "setup" => "could not complete its setup",
         "environment_blocked" => "reported that TL3's environment blocked the work",
         "git_remote" => "could not reach the Git remote",
