@@ -62,13 +62,29 @@ CPUS = 8
 MEMORY_GB = 176
 # Leave room for the runner's own processes inside the VM.
 RESERVED_GB = 2
-MAX_SHARDS = 8
-# Planned load per shard before the planner adds another shard.
-TARGET_SECONDS = 20 * 60
+# BuildBuddy's free tier kills every Remote Bazel run at one hour, whatever
+# timeout the Run API asks for (invocation 3d5ffcdf-9f3b-431e-9f0c-ac31e13e262a:
+# "Remote run exceeded timeout (1h0m0s) due to free tier limitations"). A
+# killed runner uploads nothing, so every shard must finish inside the hour.
+RUNNER_MINUTES = 60
+# Install and codegen: about 4 minutes on a warm runner, more on a cold one.
+SETUP_SECONDS = 8 * 60
+# What a shard may spend proving, with two minutes for the upload and scan.
+PROVE_SECONDS = RUNNER_MINUTES * 60 - SETUP_SECONDS - 120
+# Planned finish of every shard, leaving room for a slower executor.
+TARGET_SECONDS = int(PROVE_SECONDS * 0.9)
+MAX_SHARDS = 12
+# Shards beyond the account's concurrent quota queue, so the job waits for
+# about three runner hours in total.
+WAIT_MINUTES = 180
 # Assumed for a harness with no measurement yet. It runs alone on its runner.
 UNMEASURED_SECONDS = 1800.0
+# Measured peaks repeat closely from run to run; 20% headroom lets four of the
+# 35 GB proofs share a runner.
+MEMORY_HEADROOM = 1.2
 # The hard timeout fails a harness, as Bazel's TIMEOUT does. It is generous,
-# because a shared executor can be slow; the warning budget is the measure.
+# because a shared executor can be slow, but no later than the runner allows.
+# The warning budget is the measure.
 TIMEOUT_FACTOR = 3
 MIN_TIMEOUT = 15 * 60
 WARN_FACTOR = 1.5
@@ -135,20 +151,37 @@ def budget(name, budgets):
     usable = MEMORY_GB - RESERVED_GB
     seconds = measured['seconds'] if measured else UNMEASURED_SECONDS
     peak = measured['peak_gb'] if measured else usable
-    # Peak plus 25%, in whole GiB. A proof whose headroom would not fit runs
-    # alone on its runner.
-    memory = min(usable, max(2, math.ceil(peak * 1.25)))
-    timeout = max(MIN_TIMEOUT, math.ceil(TIMEOUT_FACTOR * seconds))
+    # A proof whose headroom would not fit runs alone on its runner.
+    memory = min(usable, max(2, math.ceil(peak * MEMORY_HEADROOM)))
+    timeout = min(PROVE_SECONDS, max(MIN_TIMEOUT, math.ceil(TIMEOUT_FACTOR * seconds)))
     return {'seconds': seconds, 'memory_gb': memory, 'peak_gb': peak, 'measured': bool(measured),
             'warn_after': round(WARN_FACTOR * seconds, 1), 'timeout': timeout}
 
 
+def makespan(names, budgets, cpus=CPUS, memory_gb=MEMORY_GB):
+    """Simulate Prover's schedule: longest first, first fit by memory and CPU."""
+    free, clock, running = memory_gb - RESERVED_GB, 0.0, []
+    pending = sorted(names, key=lambda name: (-budget(name, budgets)['seconds'], name))
+    while pending or running:
+        for name in list(pending):
+            info = budget(name, budgets)
+            if len(running) < cpus and info['memory_gb'] <= free:
+                pending.remove(name)
+                free -= info['memory_gb']
+                running.append((clock + info['seconds'], info['memory_gb']))
+        running.sort()
+        clock, memory = running.pop(0)
+        free += memory
+    return clock
+
+
 def plan(names, budgets, cpus=CPUS, memory_gb=MEMORY_GB, max_shards=MAX_SHARDS,
          target=TARGET_SECONDS):
-    """Split harnesses across shards, longest first onto the least loaded.
+    """Split harnesses across the fewest shards that each finish by target.
 
-    A harness that needs more than one CPU's share of memory occupies more
-    than one slot, so its load counts that many times."""
+    Harnesses go longest first onto the least loaded shard. A harness that
+    needs more than one CPU's share of memory counts that many slots. A
+    harness that cannot finish inside a runner's hour fails the plan."""
     usable = memory_gb - RESERVED_GB
     share = usable / cpus
     load = {}
@@ -156,17 +189,30 @@ def plan(names, budgets, cpus=CPUS, memory_gb=MEMORY_GB, max_shards=MAX_SHARDS,
         info = budget(name, budgets)
         if info['peak_gb'] > usable:
             raise KaniError(f'{name} peaks at {info["peak_gb"]} GB, more than a runner has')
+        if info['seconds'] > target:
+            raise KaniError(
+                f'{name} takes {info["seconds"]:.0f}s, more than a {RUNNER_MINUTES}-minute runner can '
+                f'prove ({target}s after setup). Split the harness, or raise the BuildBuddy plan\'s limit.')
         load[name] = info['seconds'] * max(1, math.ceil(info['memory_gb'] / share))
     if not names:
         return []
     count = max(1, min(max_shards, len(names), math.ceil(sum(load.values()) / cpus / target)))
-    shards = [[] for _ in range(count)]
-    totals = [0.0] * count
-    for name in sorted(names, key=lambda name: (-load[name], name)):
-        index = min(range(count), key=lambda i: (totals[i], i))
-        shards[index].append(name)
-        totals[index] += load[name]
-    return [shard for shard in shards if shard]
+    while True:
+        shards = [[] for _ in range(count)]
+        totals = [0.0] * count
+        for name in sorted(names, key=lambda name: (-load[name], name)):
+            index = min(range(count), key=lambda i: (totals[i], i))
+            shards[index].append(name)
+            totals[index] += load[name]
+        shards = [shard for shard in shards if shard]
+        longest = max(makespan(shard, budgets, cpus, memory_gb) for shard in shards)
+        if longest <= target or count >= min(max_shards, len(names)):
+            break
+        count += 1
+    if longest > target:
+        raise KaniError(f'{len(names)} harnesses need more than {max_shards} shards to finish inside '
+                        f'{RUNNER_MINUTES}-minute runners')
+    return shards
 
 
 # Kani's terse output: one block per harness.
@@ -213,7 +259,7 @@ class Prover:
         self.command = command or (lambda name: [
             'cargo', 'kani', '-p', 'tl3-kernel', '--output-format', 'terse',
             '--harness', f'proofs::{name}', '--exact'])
-        self.running, self.results = {}, {}
+        self.running, self.results, self.stopping = {}, {}, set()
         self.heartbeat = HEARTBEAT
 
     def start(self, name):
@@ -233,6 +279,9 @@ class Prover:
         seconds = self.clock() - started
         output = (self.logs / f'{name}.log').read_text(errors='replace')
         result = verdict(output, process.returncode, timed_out)
+        if pid in self.stopping:
+            # Killed by fail-fast: no verdict, and not a solver failure either.
+            result.update(verdict='STOPPED', reason='stopped after an earlier harness failed')
         result.update(name=name, seconds=round(seconds, 1), timeout=info['timeout'],
                       warn_after=info['warn_after'], measured=info['measured'],
                       cpu_seconds=round(usage.ru_utime + usage.ru_stime, 1),
@@ -290,6 +339,7 @@ class Prover:
                 if result['verdict'] != 'SUCCESSFUL' and self.fail_fast and not stopped:
                     stopped = True
                     for other in list(self.running):
+                        self.stopping.add(other)
                         self.kill(other)
             if self.clock() - beat >= self.heartbeat:
                 # A quiet runner log can lose its event stream; keep it moving.
@@ -389,7 +439,7 @@ def shard_entrypoint(argv):
 
 # GitHub side.
 
-def run_request(args, index, names):
+def run_request(args, index, names, minutes):
     import remote_gate
     command = ['tools/ci/kani_gate.py', 'shard', '--head', args.head, '--mode', args.mode,
                '--index', str(index), *names]
@@ -402,7 +452,7 @@ def run_request(args, index, names):
             'EstimatedFreeDiskBytes': '50GB', 'container-image': remote_gate.IMAGE,
             'workload-isolation-type': 'firecracker', 'recycle-runner': 'true',
         },
-        'timeout': f'{args.timeout}m',
+        'timeout': f'{minutes}m',
         'wait_until': 'STARTED',
     }
 
@@ -448,9 +498,10 @@ def prove(client, args, names, budgets, sleep=time.sleep):
     results, errors, invocations, finished = {}, [], {}, set()
     lock = threading.Lock()
     failed = threading.Event()
-    deadline = time.monotonic() + (args.timeout + 10) * 60
+    deadline = time.monotonic() + WAIT_MINUTES * 60
     for index, shard in enumerate(shards):
-        invocation_id = client.call('Run', run_request(args, index, shard), timeout=600).get('invocationId')
+        invocation_id = client.call('Run', run_request(args, index, shard, args.timeout),
+                                    timeout=600).get('invocationId')
         if not invocation_id:
             raise KaniError('BuildBuddy Run returned no invocation id')
         invocations[invocation_id] = shard
@@ -623,7 +674,8 @@ def main(argv=None):
         gate.add_argument('--head', required=True)
         gate.add_argument('--branch', required=True)
         gate.add_argument('--repo', default='https://github.com/RobTand/trustladderiii')
-        gate.add_argument('--timeout', type=int, default=110, help='minutes per shard')
+        gate.add_argument('--timeout', type=int, default=RUNNER_MINUTES,
+                          help='each shard runner\'s limit, in minutes')
         gate.add_argument('--output-dir', default='gate-output')
     sub.add_parser('cancel')
     issue = sub.add_parser('report')

@@ -95,14 +95,34 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(unmeasured['memory_gb'], kani_gate.MEMORY_GB - kani_gate.RESERVED_GB)
 
     def test_plan_balances_shards_and_keeps_every_harness_once(self):
-        budgets = {f'p{i}': {'seconds': 100.0 * (i + 1), 'peak_gb': 4.0} for i in range(40)}
+        budgets = {f'p{i}': {'seconds': 10.0 * (i + 1), 'peak_gb': 4.0} for i in range(40)}
         shards = kani_gate.plan(sorted(budgets), budgets, cpus=4, memory_gb=44, max_shards=4, target=600)
         self.assertEqual(len(shards), 4)
         self.assertEqual(sorted(sum(shards, [])), sorted(budgets))
         loads = [sum(budgets[name]['seconds'] for name in shard) for shard in shards]
-        self.assertLess(max(loads) - min(loads), 4000)
+        self.assertLess(max(loads) - min(loads), 400)
         self.assertEqual(kani_gate.plan(['p0'], budgets), [['p0']])
         self.assertEqual(kani_gate.plan([], budgets), [])
+
+    def test_every_shard_fits_inside_the_runner_hour(self):
+        many = {f'p{i}': {'seconds': 1500.0, 'peak_gb': 35.0} for i in range(24)}
+        shards = kani_gate.plan(sorted(many), many)
+        self.assertEqual(sorted(sum(shards, [])), sorted(many))
+        # Four 42 GB reservations share a 174 GB runner: two rounds of 1500 s
+        # would pass the target, so each shard holds at most four.
+        self.assertTrue(all(len(shard) <= 4 for shard in shards))
+        for shard in shards:
+            self.assertLessEqual(kani_gate.makespan(shard, many), kani_gate.TARGET_SECONDS)
+        self.assertLessEqual(kani_gate.TARGET_SECONDS + kani_gate.SETUP_SECONDS,
+                             kani_gate.RUNNER_MINUTES * 60)
+        self.assertEqual(kani_gate.makespan(['a', 'b'], {'a': {'seconds': 10.0, 'peak_gb': 100.0},
+                                                         'b': {'seconds': 20.0, 'peak_gb': 100.0}}), 30.0)
+
+    def test_a_harness_longer_than_a_runner_hour_fails_the_plan(self):
+        budgets = {'leaf': {'seconds': 3400.0, 'peak_gb': 14.0}, 'quick': {'seconds': 60.0, 'peak_gb': 2.0}}
+        with self.assertRaisesRegex(kani_gate.KaniError, 'leaf takes 3400s.*Split the harness'):
+            kani_gate.plan(['leaf', 'quick'], budgets)
+        self.assertEqual(kani_gate.budget('leaf', budgets)['timeout'], kani_gate.PROVE_SECONDS)
 
     def test_plan_refuses_a_harness_no_runner_can_hold(self):
         with self.assertRaises(kani_gate.KaniError):
@@ -168,7 +188,7 @@ class ProverTests(unittest.TestCase):
             # Two slots: the slow harness and the failing one start first.
             results = self.prover(directory, commands, budgets=budgets, cpus=2).run()
             self.assertEqual(results['bad']['verdict'], 'FAILED')
-            self.assertNotEqual(results['slow']['verdict'], 'SUCCESSFUL')
+            self.assertEqual(results['slow']['verdict'], 'STOPPED')
             self.assertTrue(any(r['verdict'] == 'NOT_RUN' for r in results.values()))
             self.assertEqual(sorted(results), sorted(commands))
 
@@ -255,7 +275,7 @@ def gate_args(directory, mode='pr'):
 
 
 class ControllerTests(unittest.TestCase):
-    budgets = {f'p{i}': {'seconds': 600.0, 'peak_gb': 4.0} for i in range(24)}
+    budgets = {f'p{i}': {'seconds': 1500.0, 'peak_gb': 4.0} for i in range(24)}
 
     def prove(self, records, mode='pr', running=()):
         client = FakeClient(records, running)
@@ -282,10 +302,11 @@ class ControllerTests(unittest.TestCase):
     def test_a_failed_harness_fails_and_cancels_the_other_shards(self):
         def records(index, names):
             return record(names, {names[0]: 'FAILED'} if index == 0 else {})
-        client, results, errors = self.prove(records, running={'inv1', 'inv2'})
+        client, results, errors = self.prove(records, running={f'inv{i}' for i in range(1, 8)})
         self.assertTrue(any(r['verdict'] == 'FAILED' for r in results.values()))
+        self.assertGreater(len(client.runs), 1)
         # Only the runs still going are cancelled; their harnesses never pass.
-        self.assertEqual(sorted(client.cancelled), ['inv1', 'inv2'])
+        self.assertEqual(sorted(client.cancelled), sorted(f'inv{i}' for i in range(1, len(client.runs))))
         self.assertTrue(all(r['verdict'] == 'NOT_RUN' for r in results.values() if r['invocation'] != 'inv0'))
 
     def test_missing_wrong_or_partial_records_fail(self):
@@ -391,7 +412,7 @@ class WorkflowTests(unittest.TestCase):
         cancel = next(step for step in kani['steps'] if 'kani_gate.py cancel' in step.get('run', ''))
         self.assertEqual(cancel['if'], 'cancelled()')
         # The job outlives every shard's runner timeout and its deadline.
-        self.assertGreater(kani['timeout-minutes'], 110 + 10)
+        self.assertGreater(kani['timeout-minutes'], kani_gate.WAIT_MINUTES + 10)
 
     def test_nightly_proves_main_and_reports_a_regression(self):
         self.assertTrue(self.nightly, 'kani-nightly.yml is missing')
@@ -400,6 +421,7 @@ class WorkflowTests(unittest.TestCase):
         job = self.nightly['jobs']['prove']
         runs = [step.get('run', '') for step in job['steps']]
         self.assertTrue(any('tools/ci/kani_gate.py nightly' in run for run in runs))
+        self.assertGreater(job['timeout-minutes'], kani_gate.WAIT_MINUTES + 10)
         report = next(step for step in job['steps'] if 'kani_gate.py report' in step.get('run', ''))
         self.assertIn('failure()', report['if'])
         self.assertEqual(self.nightly['permissions']['issues'], 'write')

@@ -238,7 +238,7 @@ The job plans shards from `tools/ci/kani-budgets.json` and starts each one on
 a BuildBuddy Remote Bazel runner through the Run API. Each runner has
 8 CPUs and 176 GB. A shard installs Rust 1.99.1 and Kani 0.68.0, runs one
 codegen, and then proves its harnesses in parallel. A harness reserves its
-measured peak memory plus 25%, so heavy proofs run alone. Each shard leaves
+measured peak memory plus 20%, so four 35 GB proofs share a runner. Each shard leaves
 `kani-shard.json` and one log per harness as BuildBuddy artifacts. The runner
 credential stays with the shard supervisor. Kani runs with `child_env()`, and
 the supervisor scans the artifacts before upload.
@@ -251,6 +251,27 @@ is only a warning. The hard timeout is 3 times the measured time, and at least
 15 minutes. In PR mode the first failure stops its shard, and the job cancels
 the other shards. A harness with no measurement gets a 30-minute estimate and
 runs alone on its runner.
+
+BuildBuddy's free tier kills every Remote Bazel run at one hour, whatever
+timeout the Run API asks for. A killed runner uploads nothing. The planner
+therefore simulates each shard's schedule from the budgets. It adds shards
+until every shard finishes within 90% of the hour, after 8 minutes for setup
+and codegen. Hard timeouts never pass that point. A harness that cannot finish
+inside one runner hour fails the check, and the error names the harness. Split
+it, or raise the plan's limit. Shards beyond the account's concurrent quota
+queue, so the job waits up to 180 minutes. BuildBuddy's runner log can show
+`DISCONNECTED` while the run is still going.
+
+`gate_leaf_progress_w2` and `gate_leaf_progress_w3` do not fit. Each was still
+running alone after 55 minutes when the hour ended, so they have no verdict on
+BuildBuddy. Until they are split, or the limit rises, a kernel change fails the
+Kani check on those two names.
+
+Memory decides the cost. About a third of the harnesses peak at 24 to 35 GB.
+On these runners, each takes 17 to 45 minutes under the shard's parallel load.
+A harness killed for memory reports `VERIFICATION:- FAILED` with no covers,
+which is not a counterexample. The gate labels it "likely out of memory".
+Measure a new heavy harness before it relies on a shared runner.
 
 `.github/workflows/kani-nightly.yml` proves every harness on `main` each night.
 It runs with no fail-fast and keeps `kani-result.json` for 90 days, with each
