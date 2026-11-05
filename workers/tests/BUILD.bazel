@@ -1137,3 +1137,9 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "maker_reply_parity",
+    srcs = glob(["*.py", "fixtures/**"]) + ["reference/maker_before.py"],
+    visibility = ["//visibility:public"],
+)

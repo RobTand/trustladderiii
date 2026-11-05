@@ -34,6 +34,7 @@ pub mod looks;
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
+pub mod maker_reply;
 pub mod memory;
 pub mod merge_dependencies;
 mod narrowing;
