@@ -1329,8 +1329,11 @@ impl Controller {
                             ) && current.rows.iter().any(|row| {
                                 row.table == "input_resource_contexts"
                                     && row.id == delivery.node().0.to_string()
-                            }) {
-                                // A successful input build retires its diagnostic, not any open incident.
+                            }) && !input_resources::awaiting_correction(
+                                &current,
+                                delivery.node(),
+                            )? {
+                                // Input read errors retire here; rejected declarations need feedback until corrected.
                                 let snapshot = self.store.load()?;
                                 let mut commit = Commit::new(
                                     format!(
@@ -3742,6 +3745,15 @@ impl Controller {
                     return Err(error);
                 }
                 if role == "ingest" {
+                    // Q7/#833: accepting the reply retires feedback atomically with its brief.
+                    if snapshot.rows.iter().any(|row| {
+                        row.table == "input_resource_contexts" && row.id == node.0.to_string()
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: "input_resource_contexts".into(),
+                            id: node.0.to_string(),
+                        });
+                    }
                     commit.rows.push(put(
                         "goals",
                         node.0.to_string(),

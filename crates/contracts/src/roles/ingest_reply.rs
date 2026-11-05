@@ -327,6 +327,12 @@ pub struct IngestReplyBriefMergePrerequisitesItem {
     pub source_quote: BoundedText<1, 4000>,
 }
 
+/// Q59/#833: bound shared-token reads to at most 64 for a reply of 32 real PRs.
+/// The #2713/#2714 production ingest traces each declared at most one prerequisite.
+pub const MAX_MERGE_PREREQUISITES: usize = 32;
+pub type MergePrerequisites =
+    List<IngestReplyBriefMergePrerequisitesItem, 0, MAX_MERGE_PREREQUISITES, true>;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(inline)]
@@ -392,15 +398,11 @@ pub struct IngestReplyBrief {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(
-        with = "List<IngestReplyBriefMergePrerequisitesItem, 0, UNBOUNDED, true>",
-        default
-    )]
+    #[schemars(with = "MergePrerequisites", default)]
     #[schemars(
         description = "Same-repository merge prerequisites explicitly required by the original issue, each with its verbatim source quote."
     )]
-    pub merge_prerequisites:
-        Option<List<IngestReplyBriefMergePrerequisitesItem, 0, UNBOUNDED, true>>,
+    pub merge_prerequisites: Option<MergePrerequisites>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -731,7 +733,7 @@ pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ),
     (
         "/oneOf/0/properties/merge_prerequisites",
-        &["type", "uniqueItems", "items", "description"],
+        &["type", "uniqueItems", "maxItems", "items", "description"],
     ),
     (
         "/oneOf/0/properties/merge_prerequisites/items",

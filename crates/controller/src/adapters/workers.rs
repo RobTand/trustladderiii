@@ -544,6 +544,21 @@ impl Supervisor {
             inputs["audit_objections"] = audit["objections"].clone();
         }
         if role == "ingest" {
+            if let Some(failure) = crate::input_resources::retry_feedback(
+                snapshot,
+                delivery.node(),
+                delivery.generation,
+            )? {
+                let objections = inputs
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("audit_objections")
+                    .or_insert_with(|| json!([]));
+                objections
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("invalid ingest feedback"))?
+                    .push(json!(failure.to_string()));
+            }
             inputs["forecast"] = forecast;
         }
         if matches!(role, "ingest" | "audit" | "planner" | "maker") {

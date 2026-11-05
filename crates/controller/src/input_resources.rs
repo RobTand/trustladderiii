@@ -186,6 +186,35 @@ pub(crate) fn record(commit: &mut Commit, node: NodeId, generation: u64, failure
     ));
 }
 
+fn recorded(snapshot: &Snapshot, node: NodeId) -> Result<Option<Context>> {
+    snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "input_resource_contexts" && row.id == node.0.to_string())
+        .map(|row| crate::decode_stored(row.value.clone()))
+        .transpose()
+}
+
+/// Q7/Q51/#833: rejection feedback survives launches until ingest accepts a valid reply.
+pub(crate) fn awaiting_correction(snapshot: &Snapshot, node: NodeId) -> Result<bool> {
+    Ok(recorded(snapshot, node)?
+        .is_some_and(|context| matches!(context.failure.problem, Problem::KindMismatch { .. })))
+}
+
+/// Q7/Q51/#833: send only typed, adapter-owned identities through ingest's existing feedback.
+pub(crate) fn retry_feedback(
+    snapshot: &Snapshot,
+    node: NodeId,
+    generation: u64,
+) -> Result<Option<Failure>> {
+    Ok(recorded(snapshot, node)?
+        .filter(|context| {
+            context.generation < generation
+                && matches!(context.failure.problem, Problem::KindMismatch { .. })
+        })
+        .map(|context| context.failure))
+}
+
 pub(crate) fn current(
     snapshot: &Snapshot,
     commit: &Commit,

@@ -289,6 +289,10 @@ impl Controller {
             return Ok(());
         }
         let prerequisites = prerequisites.unwrap();
+        // Q59/#833: also protect internal callers before any prerequisite read.
+        if prerequisites.len() > crate::contracts::roles::ingest_reply::MAX_MERGE_PREREQUISITES {
+            return Err(Error::Invalid("too many merge prerequisites"));
+        }
         let request = crate::request(snapshot, node)?;
         let requests = bindings(snapshot, commit)?;
         let materials = self

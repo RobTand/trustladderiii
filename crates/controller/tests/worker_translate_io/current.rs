@@ -322,6 +322,15 @@ impl Shell<'_> {
                     return Err(error);
                 }
                 if role == "ingest" {
+                    // Q7/#833: accepting the reply retires feedback atomically with its brief.
+                    if snapshot.rows.iter().any(|row| {
+                        row.table == "input_resource_contexts" && row.id == node.0.to_string()
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: "input_resource_contexts".into(),
+                            id: node.0.to_string(),
+                        });
+                    }
                     commit.rows.push(put(
                         "goals",
                         node.0.to_string(),
