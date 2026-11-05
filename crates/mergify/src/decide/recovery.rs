@@ -3,18 +3,24 @@
 pub mod budget {
     #[cfg(verus_keep_ghost)]
     use vstd::prelude::*;
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Legacy {
         Unused,
         Sending,
         Refused,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Stage {
         Ready,
         Sending,
         Spent,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Binding {
         pub repository: bool,
@@ -88,6 +94,8 @@ pub mod budget {
 pub mod eligibility {
     #[cfg(verus_keep_ghost)]
     use vstd::prelude::*;
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Repaired {
         pub phase: bool,
@@ -100,6 +108,8 @@ pub mod eligibility {
         pub repository: Option<bool>,
         pub pull_request: Option<bool>,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum RepairStep {
         Stop,
@@ -108,12 +118,16 @@ pub mod eligibility {
         PullRequest,
         History,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum PriorFailure {
         QueueCi,
         Conflict,
         Other,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Eligibility {
         pub current_head: bool,
@@ -130,6 +144,8 @@ pub mod eligibility {
         pub checks_ready: Option<bool>,
         pub reruns_pending: Option<bool>,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum EligibilityStep {
         Stop,
@@ -220,10 +236,7 @@ pub mod eligibility {
     /// State-table.md:573-580 Queued, Q41 human approval; #608. Without a snapshot there is no proof of explicit resume.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == match unresolved { None => true, Some(value) => value }))]
     pub fn event_hold(unresolved: Option<bool>) -> bool {
-        match unresolved {
-            None => true,
-            Some(value) => value,
-        }
+        unresolved.unwrap_or(true)
     }
     #[cfg(verus_keep_ghost)]
     vstd::prelude::verus! {
@@ -259,12 +272,16 @@ pub mod schedule {
     use super::budget::Stage;
     #[cfg(verus_keep_ghost)]
     use vstd::prelude::*;
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum RecoveryGate {
         Repaired,
         Pending,
         Proceed,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum DispatchGate {
         Eligibility,
@@ -292,10 +309,7 @@ pub mod schedule {
     /// State-table.md:573-580 Queued, Q41/Q47; #608/#760. Timer reread selects budget adoption without resampling the clock.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == timer.is_some()))]
     pub fn saved_timer(timer: Option<u64>) -> bool {
-        match timer {
-            Some(_) => true,
-            None => false,
-        }
+        timer.is_some()
     }
     /// State-table.md:573-580 Queued, Q41/Q47; #608. Eligibility is sampled only for repaired-head dispatch; holds only when eligible.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == (if !waiting { DispatchGate::Holds } else { match eligible { None => DispatchGate::Eligibility, Some(true) => DispatchGate::Holds, Some(false) => DispatchGate::Ineligible } })))]
@@ -338,6 +352,8 @@ pub mod schedule {
 pub mod command {
     #[cfg(verus_keep_ghost)]
     use vstd::prelude::*;
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Reply {
         Accepted,
@@ -345,6 +361,8 @@ pub mod command {
         RateLimited,
         Other,
     }
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Outcome {
         Accepted,

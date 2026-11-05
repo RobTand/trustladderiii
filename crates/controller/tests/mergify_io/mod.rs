@@ -875,7 +875,7 @@ mod recovery_reachability {
     /// #608: every spent head budget prevents another command or archive read.
     #[test]
     fn mandatory_budget_exhausted() {
-        for initial in [136, 144, 152, 160, 168] {
+        for initial in [128, 136, 152, 160, 168] {
             let mut s = stable(Profile::Command);
             s.initial = initial;
             io::compare(&s, Entry::Command).unwrap();
