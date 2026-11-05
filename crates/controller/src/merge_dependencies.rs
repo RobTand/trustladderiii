@@ -1540,7 +1540,7 @@ mod tests {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "observed_delivery");
         intake(&mut c, &repo, 2761);
-        external(&mut c, &repo, 2761, DependencyStatus::Pending);
+        external(&mut c, &repo, 2761, DependencyStatus::Delivered);
         external(&mut c, &repo, 2761, DependencyStatus::Pending);
         let waiter = intake(&mut c, &repo, 42);
         ingest(&mut c, waiter, &[2761]);
