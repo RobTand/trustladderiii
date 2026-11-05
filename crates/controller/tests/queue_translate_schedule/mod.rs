@@ -110,6 +110,8 @@ trait QueueFactExt {
     fn recorded(&self, snapshot: &Snapshot) -> Result<bool>;
     fn identity(&self) -> String;
 }
+#[path = "base-core.rs"]
+pub mod base_core;
 mod queue_fact;
 
 pub mod looks {
@@ -272,6 +274,25 @@ impl Store {
                 format!("event:{}", commit.event_key),
                 serde_json::to_vec(&bytes).unwrap(),
             );
+            for row in &commit.rows {
+                match row {
+                    RowChange::Put { table, id, value } => {
+                        state.insert(
+                            format!("row:{table}:{id}"),
+                            serde_json::to_vec(value).unwrap(),
+                        );
+                    }
+                    RowChange::Delete { table, id } => {
+                        state.remove(&format!("row:{table}:{id}"));
+                    }
+                }
+            }
+            for effect in &commit.effects {
+                state.insert(
+                    format!("effect:{}", effect.key),
+                    serde_json::to_vec(&effect.payload).unwrap(),
+                );
+            }
         });
         Ok(())
     }
@@ -400,6 +421,17 @@ impl Shell {
     }
 }
 
+macro_rules! frozen_boundary {
+    (reference) => {
+        mod tl3_mergify {
+            pub mod decide {
+                pub use crate::schedule::base_core as translate;
+            }
+        }
+        include!("reference-evidence.rs");
+    };
+    (current) => {};
+}
 macro_rules! shell {
     ($module:ident, $file:literal) => {
         mod $module {
@@ -416,6 +448,7 @@ macro_rules! shell {
                     &mut self.0
                 }
             }
+            frozen_boundary!($module);
             include!($file);
         }
     };
@@ -531,6 +564,16 @@ fn world(mode: u8) -> World {
         2 => tl3_kernel::Phase::Closed(tl3_kernel::Outcome::Stopped),
         _ => tl3_kernel::Phase::Making,
     };
+    if mode & 4 != 0 {
+        node.effect = Some(tl3_kernel::InFlight {
+            seq: 0,
+            kind: tl3_kernel::EffectKind::Enqueue,
+            cancelling: mode & 8 != 0,
+        });
+    }
+    if mode & 16 != 0 {
+        node.merged = Some(HeadId(1));
+    }
     node.head = Some(HeadId(1));
     node.approved = Some(HeadId(1));
     world.nodes.push(node);
@@ -663,7 +706,7 @@ fn changing_reads_and_every_write_crash_match() {
 #[test]
 fn every_queue_kind_is_exercised() {
     for kind in 0..11 {
-        for mode in 0..4 {
+        for mode in [0, 1, 2, 3, 4, 8, 12, 18] {
             compare(
                 Tape {
                     reads: vec![0; 64],
@@ -738,4 +781,32 @@ fn effect_values(effects: &[tl3_store::NewEffect]) -> Value {
             .map(|effect| json!({"key":effect.key,"kind":effect.kind,"payload":effect.payload}))
             .collect(),
     )
+}
+
+#[test]
+fn frozen_base_hashes() {
+    for (bytes, expected) in [
+        (
+            include_bytes!("base-observe.rs.txt").as_slice(),
+            "f72d836520d797e05e806f5b92c0550c3139c2cc7f670a63a4d5336330eb55ad",
+        ),
+        (
+            include_bytes!("base-queue_observation.rs.txt").as_slice(),
+            "03ada881c326a4a450f303ab0405f3b47a7e84ae9870c2d24e4a183d2567e4e1",
+        ),
+        (
+            include_bytes!("base-translate.rs.txt").as_slice(),
+            "72e3f42549eb6a09c17c343cd45df3d3c29f81a25f747f0ef53a262f62900320",
+        ),
+        (
+            include_bytes!("base-adapter.rs.txt").as_slice(),
+            "4c23cc4a17eb17793dfe1cfc4b911de49660267bbebb306269e8bc673eb255f9",
+        ),
+        (
+            include_bytes!("base-core.rs").as_slice(),
+            "e368ea619196e9fb58cc9a64981c7496a7b1aee3ac2658ac6ba9e1801595848f",
+        ),
+    ] {
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected);
+    }
 }

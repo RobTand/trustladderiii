@@ -175,7 +175,7 @@ def verus_proofs():
     # CC-T: real Queue translation/intake functions and separate property witnesses.
     if native.package_name() == "crates/controller":
         queue_groups = {
-            "core": ("translate", 9),
+            "core": ("translate", 15),
             "closed": ("root#translate_closed", 1),
             "head_ci": ("root#head_ci_consume", 1),
             "q52": ("root#q52_no_kernel", 1),
