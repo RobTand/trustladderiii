@@ -254,6 +254,7 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
 
 kernel_fn! {
 /// Incident rows / #771: only a holding phase allocates a generation.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -290,7 +291,7 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    kernel_proof! { reveal(retirement::incident); }
+    kernel_snapshot! { before_incident = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;
@@ -299,8 +300,19 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     if let Some(r) = m.phase.resume() {
         m.holds = false;
         set_phase(m, Phase::Ready(r));
+        kernel_proof! {
+            allocation_incident_lemmas::resumed_result(before_incident@, *m, needs_rob, r);
+        }
+    }
+    kernel_proof! {
+        if !holding(before_incident@.phase) {
+            allocation_incident_lemmas::waiting_result(before_incident@, w.nodes@[i as int], needs_rob);
+        }
     }
     notice(out, i, Notice::Incident { needs_rob });
+    kernel_proof! {
+        allocation_incident_lemmas::incident_frame(before_incident@, w.nodes@[i as int], needs_rob);
+    }
 }
 }
 

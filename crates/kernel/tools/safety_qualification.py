@@ -155,6 +155,14 @@ CASES = {
                                      'm.phase = Phase::Stopping(Outcome::Merged);',
                                      'm.phase = Phase::Stopping(Outcome::Stopped);',
                                      '//crates/kernel:verus_allocation_enter_stopping'),
+    'allocation_incident_rob': ('crates/kernel/src/allocation.rs',
+                               'm.incident_needs_rob = needs_rob;',
+                               'm.incident_needs_rob = !needs_rob;',
+                               '//crates/kernel:verus_allocation_raise_incident'),
+    'facts_transition_closed_priority': ('crates/kernel/src/facts.rs',
+                                         'if !w.nodes[i].phase.is_closed() {',
+                                         'if true {',
+                                         '//crates/kernel:verus_facts_transition'),
 }
 
 

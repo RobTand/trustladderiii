@@ -2026,3 +2026,8 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
 
 #[cfg(verus_keep_ghost)]
 mod allocation_stopping_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod allocation_incident_lemmas;
+#[cfg(verus_keep_ghost)]
+mod facts_transition_lemmas;

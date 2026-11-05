@@ -89,6 +89,7 @@ kernel_fn! {
 /// Fact rows / #771: non-dependency, non-merge facts allocate at most one
 /// generation, one question and one paid credit, and emit at most two notices.
 #[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
@@ -138,8 +139,9 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 ==> retirement::unapproved_note(*final(out), i),
             _ => true,
         },
-] proof [reveal(retry_bounds); reveal(retirement::fact_frame); reveal(distance);
-    reveal(retirement::fact_node); reveal(retirement::stopped);] {
+] proof [reveal(retry_bounds); reveal(retirement::fact_node);] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
@@ -191,6 +193,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             raise_incident(w, i, needs_rob, out);
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
+    }
+    kernel_proof! {
+        if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
+            facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+        }
     }
 }
 }

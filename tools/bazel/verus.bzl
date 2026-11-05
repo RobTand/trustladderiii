@@ -333,6 +333,10 @@ def verus_proofs():
             "allocation_stopping_distance": ("kernel::allocation_stopping_lemmas#stopping_distance", 1),
             "allocation_stopping_progress": ("kernel::allocation_stopping_lemmas#stopping_progress", 1),
             "allocation_stopping_frame": ("kernel::allocation_stopping_lemmas#stopping_frame", 1),
+            "allocation_incident_frame": ("kernel::allocation_incident_lemmas#incident_frame", 1),
+            "facts_transition_frame": ("kernel::facts_transition_lemmas#frame_consequences", 1),
+            "allocation_incident_resumed_result": ("kernel::allocation_incident_lemmas#resumed_result", 1),
+            "allocation_incident_waiting_result": ("kernel::allocation_incident_lemmas#waiting_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
