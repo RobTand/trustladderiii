@@ -96,7 +96,9 @@ def replay(case, cursor, command, document):
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
         cursor.write_text(str(position + 1))
-        return rebound(row["response"], row["document"], document)
+        if command[0] == 'check-pb':
+            return rebound(row["response"], row["document"], document)
+        return deepcopy(row["response"])
 
 
 def record(case, temporary, monkeypatch):
