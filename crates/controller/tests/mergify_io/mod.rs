@@ -1957,3 +1957,6 @@ fn a2_boundary_helpers_are_production_source() {
 
 // A3 ingress routing uses independently compiled real old/current shell bodies.
 mod a3;
+
+// A3: C1 focused head fixtures inherit the same production route namespace.
+use tl3_mergify::decide::route;

@@ -321,6 +321,11 @@ pub mod failure {
         pub value: T,
         pub infra: bool,
     }
+    /// Preserved existing behaviour (no rule): Infrastructure stores a nonempty list and uses its first check, not the newest id. An empty list still panics at the Rust boundary, as before.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => requires checks@.len() > 0, ensures equal(*out, checks@[0]),))]
+    pub fn first<T>(checks: &[T]) -> &T {
+        &checks[0]
+    }
     /// docs/state-table.md:540-541,574-575: preserve the selected test/runner failure and its payload. Infrastructure's first check is selected at the typed boundary, as before (no rule).
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures match failure {
     Some(Failure::Tests(value)) => matches!(out, Some(Evidence { value: v, infra: false }) if equal(v,value)),
@@ -345,6 +350,7 @@ pub mod failure {
         let tests = evidence(Some(Failure::Tests(7u64))); assert(matches!(tests,Some(Evidence {value:7,infra:false})));
         let infra = evidence(Some(Failure::Infrastructure(11u64))); assert(matches!(infra,Some(Evidence {value:11,infra:true})));
         let none = evidence::<u64>(None); assert(none.is_none());
+    let selected = first(&vec![3u64, 99u64]); assert(*selected == 3);
     }
     }
 }

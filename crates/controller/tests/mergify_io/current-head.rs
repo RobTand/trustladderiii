@@ -37,7 +37,7 @@ impl Checks {
                 completed_at.clone(),
             ))),
             Some(Failure::Infrastructure(checks)) => {
-                let check = &checks[0];
+                let check = route::failure::first(checks);
                 Some(route::failure::Failure::Infrastructure((
                     check.id,
                     check.completed_at.map(|time| time.to_rfc3339()),
