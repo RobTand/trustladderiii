@@ -1137,3 +1137,9 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "p5_references",
+    srcs = glob(["p5/*.py"]),
+    visibility = ["//visibility:public"],
+)

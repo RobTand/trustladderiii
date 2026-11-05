@@ -28,6 +28,7 @@ mod github_messages;
 mod goals;
 mod http;
 pub mod ingress;
+pub mod input_check;
 pub mod input_errors;
 mod kernel_boundary;
 pub mod looks;
@@ -40,6 +41,7 @@ mod narrowing;
 mod notices;
 pub mod postmortem_reply;
 mod postmortems;
+pub mod quota;
 #[cfg(all(test, loom))]
 #[path = "../tests/support/ownership.rs"]
 mod startup_ownership;
