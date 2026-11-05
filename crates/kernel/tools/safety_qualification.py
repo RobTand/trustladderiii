@@ -161,6 +161,18 @@ CASES = {
                                  'if d.status == DependencyStatus::Delivered\n'
                                  '                && !self.nodes[d.node.0 as usize].phase.is_closed()',
                                  '//crates/kernel:verus_kernel'),
+    'phase_scope_checker': ('crates/kernel/src/checking.rs',
+                            'if self.gates.is_empty() || self.pool_capacity == 0 {',
+                            'if self.gates.is_empty() {',
+                            '//crates/kernel:verus_checking'),
+    'phase_settled_probe': ('crates/kernel/src/checking.rs',
+                             'if advance(&mut w, i, &mut out) { return false; }',
+                             'if !advance(&mut w, i, &mut out) { return false; }',
+                             '//crates/kernel:verus_checking'),
+    'phase_witness_resume': ('crates/kernel/src/witness.rs',
+                             'command: Command::Resume,',
+                             'command: Command::Pause,',
+                             '//crates/kernel:verus_witness'),
 }
 
 

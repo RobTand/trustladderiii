@@ -170,6 +170,8 @@ def verus_proofs():
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
             "progress_phase_measure": ("kernel::progress_phase_measure", 1),
+            "progress_phase": ("kernel::progress_phase", 5),
+            "progress_phase_witness": ("kernel::progress_phase_witness", 2),
         }
         for name, (module, count) in groups.items():
             verus_test(

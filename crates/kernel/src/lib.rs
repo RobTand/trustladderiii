@@ -117,8 +117,14 @@ pub use queries::Wait;
 mod proofs;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase.rs"]
+mod progress_phase;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_phase_measure.rs"]
 mod progress_phase_measure;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase_witness.rs"]
+mod progress_phase_witness;
 
 /// Starting credit is the request's size in leaves plus this reserve.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
