@@ -117,6 +117,32 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+        # Group G2b: only WorkerReply/WorkerFailed translation decisions.
+        translate_worker_groups = {
+            "role": ("translate_worker#valid_role", 1),
+            "failed": ("translate_worker#worker_failed", 1),
+            "maker": ("translate_worker#maker_self_check", 1),
+            "budget": ("translate_worker#findings_prefix", 2),
+            "document": ("translate_worker#document", 1),
+            "review": ("translate_worker#review_route", 1),
+            "witnesses": ("translate_worker_witnesses", 6),
+        }
+        for name, (module, count) in translate_worker_groups.items():
+            verus_test(
+                name = "verus_translate_worker_" + name,
+                src = "verus/translate_worker.rs",
+                srcs = ["src/translate_worker.rs"],
+                specs = ["verus/translate_worker_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/kernel":
         # Every body called by step is checked in one of these groups. Module
         # filters bound solver context; exact counts refuse empty selections.
