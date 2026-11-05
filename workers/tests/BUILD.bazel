@@ -1137,3 +1137,30 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "prompt_identity_vectors",
+    srcs = ["prompt_identity_vectors.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//workers/src"],
+)
+
+tl3_py_test(
+    name = "test_prompt_identity",
+    srcs = ["test_prompt_identity.py"],
+    deps = [
+        ":conftest",
+        ":prompt_identity_vectors",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_schema_identity",
+    srcs = ["test_schema_identity.py"],
+    deps = [
+        ":conftest",
+        "@tl3_pip//pytest",
+    ],
+)
