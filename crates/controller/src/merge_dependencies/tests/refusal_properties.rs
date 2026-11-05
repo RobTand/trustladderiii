@@ -1673,3 +1673,280 @@ fn slow_input_http_does_not_block_other_writers() {
     );
     assert!(results.iter().all(|(_, millis)| *millis < 750));
 }
+
+fn contention_sql(settings: &tl3_config::Store) -> postgres::Client {
+    postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .dbname(&settings.database)
+        .connect(postgres::NoTls)
+        .unwrap()
+}
+
+fn contention_issue(c: &Controller, repository: &Repository, number: u64) -> LabelledIssue {
+    LabelledIssue {
+        delivery: format!("contention-{number}"),
+        owner: repository.owner.clone(),
+        repo: repository.name.clone(),
+        installation: repository.installation,
+        number,
+        title: "[P2] Intake before later input".into(),
+        actor: c.bootstrap.rob,
+        label: "tl3".into(),
+        labels: vec!["tl3".into()],
+    }
+}
+
+fn input_rows(snapshot: &Snapshot) -> Vec<String> {
+    let mut rows: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "inbox" || r.table == crate::input_errors::PENDING_KERNEL)
+        .collect();
+    rows.sort_by_key(|r| r.arrival);
+    rows.into_iter().map(|r| r.id.clone()).collect()
+}
+
+// Queue audit receipts interleave differently when an input is retained. Compare
+// all current business values, effects and applied-input order, not queue timing.
+fn contention_outcome(c: &mut Controller) -> Value {
+    let snapshot = c.snapshot().unwrap();
+    let rows: BTreeMap<_, _> = snapshot
+        .rows
+        .iter()
+        .map(|r| (format!("{}:{}", r.table, r.id), r.value.clone()))
+        .collect();
+    let effects: Vec<_> = snapshot
+        .pending_effects
+        .iter()
+        .map(|e| json!({"key":e.key,"kind":e.kind,"state":e.state,"payload":e.payload}))
+        .collect();
+    let mut reader = c.store.reader().unwrap();
+    let mut tx = reader.transaction().unwrap();
+    let keys: Vec<String> = tx
+        .query("SELECT event_key FROM tl3_events WHERE event_key IN ('github:contention-42', 'consume:github-issue:contention-edit', 'github:contention-2772') ORDER BY revision", &[])
+        .unwrap().into_iter().map(|r| r.get(0)).collect();
+    json!({"rows":rows,"effects":effects,"applied_inputs":keys})
+}
+
+fn serialization_backlog_case(edit: bool) {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let mut db = Database::start();
+    let name = if edit {
+        "serialization_edit_order"
+    } else {
+        "serialization_direct_order"
+    };
+    let (repo, c, repository, settings) = fixture_with_settings(&mut db, name);
+    let bootstrap = c.bootstrap.clone();
+    let issue = contention_issue(&c, &repository, 42);
+    let newer = contention_issue(&c, &repository, 2772);
+    drop(c);
+    let baseline_settings = copy_database(&settings, &format!("{name}_baseline"));
+    let change = crate::IssueChange {
+        delivery: "contention-edit".into(),
+        owner: repository.owner.clone(),
+        repo: repository.name.clone(),
+        installation: repository.installation,
+        number: 42,
+        title: "[P1] Updated while intake is retained".into(),
+        labels: vec![],
+        updated_at: "2026-11-05T09:20:00Z".parse().unwrap(),
+    };
+    let mut baseline = open_case(&baseline_settings, &repo, &bootstrap);
+    baseline.intake(issue.clone()).unwrap();
+    if edit {
+        baseline.issue_changed(&change).unwrap();
+    }
+    baseline.intake(newer.clone()).unwrap();
+    let expected = contention_outcome(&mut baseline);
+    drop(baseline);
+
+    let mut c = open_case(&settings, &repo, &bootstrap);
+    let mut writer = contention_sql(&settings);
+    let conflicted = Arc::new(AtomicBool::new(false));
+    let seen = conflicted.clone();
+    c.store.set_boundary_hook(move |point, _, _| {
+        if point == tl3_store::SavePoint::InternBeforeCommit && !seen.swap(true, Ordering::SeqCst) {
+            // The intake already has a REPEATABLE READ snapshot. Updating the
+            // other allocator commits a new version before its first use.
+            writer.execute("UPDATE tl3_input_allocations SET last_id=last_id WHERE relation='tl3_world'::regclass AND column_name='arrival'", &[]).unwrap();
+        }
+    });
+    assert!(c.intake(issue).unwrap());
+    assert!(
+        conflicted.load(Ordering::SeqCst),
+        "the real input must reach the conflicting allocator write"
+    );
+    assert!(c.world().unwrap().nodes.is_empty());
+    assert_eq!(input_rows(&c.snapshot().unwrap()), ["intake:contention-42"]);
+    if edit {
+        c.issue_changed(&change).unwrap();
+    }
+    c.intake(newer).unwrap();
+    let mut expected_queue = vec!["intake:contention-42"];
+    if edit {
+        expected_queue.push("github-issue:contention-edit");
+    }
+    expected_queue.push("intake:contention-2772");
+    assert_eq!(
+        input_rows(&c.snapshot().unwrap()),
+        expected_queue,
+        "serialization retention must keep edits and newer direct input behind the intake"
+    );
+    assert!(
+        c.world().unwrap().nodes.is_empty(),
+        "newer direct input must wait its turn"
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents")
+    );
+    drop(c);
+    let mut c = open_case(&settings, &repo, &bootstrap);
+    for _ in 0..expected_queue.len() {
+        assert!(c.drive_once().unwrap());
+    }
+    assert!(input_rows(&c.snapshot().unwrap()).is_empty());
+    if edit {
+        assert_eq!(
+            c.world().unwrap().nodes[0].priority,
+            tl3_kernel::Priority::P1
+        );
+    }
+    assert_eq!(
+        contention_outcome(&mut c),
+        expected,
+        "ordered replay must equal the no-conflict run"
+    );
+}
+
+/// State-table "Counter headroom" / Q39: contention retains complete edits even
+/// before their queued intake has created a request, through restart and replay.
+#[test]
+fn serialization_retained_intake_preserves_edit_order() {
+    serialization_backlog_case(true);
+}
+
+/// State-table "Counter headroom": a newer direct producer cannot overtake an
+/// older input retained by serialization, even though no counter incident exists.
+#[test]
+fn serialization_retained_intake_blocks_newer_direct_input() {
+    serialization_backlog_case(false);
+}
+
+/// State-table "Counter headroom" / Q39: PostgreSQL deadlock refusal rolls back
+/// the real input, restores memory, charges no failure and permits fresh replay.
+#[test]
+fn deadlock_retains_input_and_replays_without_incident() {
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    let mut db = Database::start();
+    let (repo, c, repository, settings) = fixture_with_settings(&mut db, "deadlock_retention");
+    let bootstrap = c.bootstrap.clone();
+    let issue = contention_issue(&c, &repository, 42);
+    drop(c);
+    let mut admin = contention_sql(&settings);
+    assert!(
+        settings
+            .database
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    );
+    // The controller detects the cycle first and is the chosen victim. The
+    // competing session uses 10 seconds and must commit successfully.
+    admin
+        .batch_execute(&format!(
+            "ALTER DATABASE {} SET deadlock_timeout='50ms'",
+            settings.database
+        ))
+        .unwrap();
+    let mut c = open_case(&settings, &repo, &bootstrap);
+    queue_case(
+        &mut c,
+        crate::input_errors::PENDING_KERNEL,
+        json!(crate::input_errors::PendingKernelInput::Intake {
+            issue,
+            proposed: None
+        }),
+    );
+    let original = c.snapshot().unwrap();
+    let row = original
+        .rows
+        .iter()
+        .find(|r| r.table == crate::input_errors::PENDING_KERNEL)
+        .unwrap()
+        .clone();
+    let before = business_bytes(&mut c);
+    c.postmortem_since = 77;
+    c.held_effects
+        .entry(crate::executor::Upstream::GitHub)
+        .or_default()
+        .insert("retained-probe".into(), "unchanged".into());
+    let holds = c.held_effects.clone();
+    for _ in 0..2 {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (locked_tx, locked_rx) = mpsc::channel();
+        let mut blocker = contention_sql(&settings);
+        let competing = std::thread::spawn(move || {
+            blocker.batch_execute("SET deadlock_timeout='10s'; SET statement_timeout='8s'; BEGIN; UPDATE tl3_input_allocations SET last_id=last_id WHERE relation='tl3_world'::regclass AND column_name='arrival'").unwrap();
+            let pid: i32 = blocker
+                .query_one("SELECT pg_backend_pid()", &[])
+                .unwrap()
+                .get(0);
+            ready_tx.send(pid).unwrap();
+            locked_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            blocker.batch_execute("UPDATE tl3_input_allocations SET last_id=last_id WHERE relation='tl3_intern'::regclass AND column_name='id'; COMMIT")
+        });
+        let pid = ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut observer = contention_sql(&settings);
+        let mut signalled = false;
+        c.store.set_boundary_hook(move |point, _, _| {
+            if point != tl3_store::SavePoint::InternBeforeCommit || signalled { return; }
+            signalled = true;
+            locked_tx.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let waiting: bool = observer.query_one("SELECT COALESCE((SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1),false)", &[&pid]).unwrap().get(0);
+                if waiting { break; }
+                assert!(Instant::now() < deadline, "the competing session must wait for the input's intern allocator");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let current = c.snapshot().unwrap();
+        let result = c.consume_kernel_input(&current, &row);
+        assert!(
+            competing.join().unwrap().is_ok(),
+            "the other session must not be the deadlock victim"
+        );
+        assert!(
+            matches!(result, Ok(false)),
+            "a real PostgreSQL deadlock must retain the input, not crash: {result:?}"
+        );
+        assert_eq!(business_bytes(&mut c), before);
+        assert_eq!(c.held_effects, holds);
+        assert_eq!(c.postmortem_since, 77);
+        assert_eq!(input_rows(&c.snapshot().unwrap()), [row.id.clone()]);
+    }
+    c.store.set_boundary_hook(|_, _, _| {});
+    assert!(c.drive_once().unwrap());
+    assert!(input_rows(&c.snapshot().unwrap()).is_empty());
+    assert_eq!(c.world().unwrap().nodes.len(), 1);
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents")
+    );
+}
