@@ -1704,19 +1704,14 @@ own executable in the immutable release. Test drivers may supply that path
 explicitly. The worker's Python code only transports JSON and raises the
 returned repair message.
 
-The finite decision proof imports the production `decision.rs` directly through
-`src/classifier/kani.rs`. This avoids the kernel's intentionally disabled serde
-implementations under `cfg(kani)`. Until #726 provides a Bazel proof target, run
-this command inside an admitted PrismaBuild campaign action:
-
-```text
-kani crates/controller/src/classifier/kani.rs --harness proofs::classification_total_and_sound --exact --output-format regular -j 1
-```
-
-Require `VERIFICATION:- SUCCESSFUL` and all 14 cover checks. A separate disposable
-action removes the restartability guard in `decision.rs`; the same proof must
-fail its ordered-rule assertion. The unwind bound is 13 for the proof's twelve
-rule rows. Production decisions have no loops or collection-size bound.
+The Verus target `//crates/controller:verus_classifier` imports the production
+`src/classifier/decision.rs` directly. It proves the ordered twelve-rule table
+over every finite parsed fact, without a request-count or string-length bound.
+`proofs/classifier.rs` constructs all 14 original acceptance and rejection
+witnesses and calls the real decision. The required Rust Gate includes the
+proof target. `tools/fv_port_qualification.py classification_total_and_sound`
+runs its baseline and rejects a production guard mutation on a disposable
+BuildBuddy runner; a frontend error or timeout does not count as rejection.
 
 `//crates/controller:test_test_workers` retains the golden cases, CLI contract,
 parse proptests, and real-process repair/tool-denial test. Use
