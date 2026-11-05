@@ -62,16 +62,15 @@ impl Executor for Audit {
                 ..
             } => {
                 let result = self.0.reconcile(d)?;
-                if let Reconciliation::Found(completion) = &result {
-                    if let Some(reply) = completion
+                if let Reconciliation::Found(completion) = &result
+                    && let Some(reply) = completion
                         .observations
                         .iter()
                         .find(|o| matches!(o, Observation::WorkerReply { .. }))
-                    {
-                        *self.4.borrow_mut() = Some(reply.clone());
-                        if self.3.get() {
-                            return Ok(Reconciliation::Pending);
-                        }
+                {
+                    *self.4.borrow_mut() = Some(reply.clone());
+                    if self.3.get() {
+                        return Ok(Reconciliation::Pending);
                     }
                 }
                 if self.2.get()
