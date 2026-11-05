@@ -41,3 +41,6 @@ pub const MERGIFY_APP_SLUG: &str = "mergify";
 pub const QUEUE_LABEL: &str = "tl3-queue";
 
 pub mod completion;
+
+pub mod heal;
+pub mod plan;
