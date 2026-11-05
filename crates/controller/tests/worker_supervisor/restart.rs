@@ -13,7 +13,7 @@ use tl3_controller::{
     adapters::{self, workers::Supervisor},
     executor::{Delivery, Executor, Observation, Reconciliation, Upstream},
 };
-use tl3_kernel::{Command as KernelCommand, Event, NodeId};
+use tl3_kernel::{Command as KernelCommand, NodeId};
 use tl3_store::Store;
 
 #[derive(Clone)]

@@ -33,36 +33,6 @@ pub(crate) fn credit_entries(
     entries
 }
 
-#[cfg(test)]
-mod credit_tests {
-    /// #771: full-width changes remain exact without altering old journal rows.
-    #[test]
-    fn journal_parts_preserve_wide_signed_deltas() {
-        for delta in [
-            0,
-            1,
-            -1,
-            i64::MAX as i128 + 1,
-            i64::MIN as i128 - 1,
-            3 * u64::MAX as i128,
-            -(3 * u64::MAX as i128),
-        ] {
-            let parts = super::credit_entries(0, "consume:input", delta);
-            assert!(parts.len() <= 7);
-            assert_eq!(
-                parts.iter().map(|entry| entry.amount as i128).sum::<i128>(),
-                delta
-            );
-            if let Some(first) = parts.first() {
-                assert_eq!(first.reason, "consume:input");
-            }
-            let reasons: std::collections::BTreeSet<_> =
-                parts.iter().map(|entry| &entry.reason).collect();
-            assert_eq!(reasons.len(), parts.len());
-        }
-    }
-}
-
 pub(crate) fn encode(world: &World) -> Result<Rows> {
     let Value::Object(mut fields) = serde_json::to_value(world)? else {
         unreachable!()
@@ -151,4 +121,34 @@ pub(crate) fn changes(before: &Rows, after: Rows) -> Vec<RowChange> {
         }
     }
     changes
+}
+
+#[cfg(test)]
+mod credit_tests {
+    /// #771: full-width changes remain exact without altering old journal rows.
+    #[test]
+    fn journal_parts_preserve_wide_signed_deltas() {
+        for delta in [
+            0,
+            1,
+            -1,
+            i64::MAX as i128 + 1,
+            i64::MIN as i128 - 1,
+            3 * u64::MAX as i128,
+            -(3 * u64::MAX as i128),
+        ] {
+            let parts = super::credit_entries(0, "consume:input", delta);
+            assert!(parts.len() <= 7);
+            assert_eq!(
+                parts.iter().map(|entry| entry.amount as i128).sum::<i128>(),
+                delta
+            );
+            if let Some(first) = parts.first() {
+                assert_eq!(first.reason, "consume:input");
+            }
+            let reasons: std::collections::BTreeSet<_> =
+                parts.iter().map(|entry| &entry.reason).collect();
+            assert_eq!(reasons.len(), parts.len());
+        }
+    }
 }
