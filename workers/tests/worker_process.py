@@ -304,6 +304,11 @@ def generator_backend(tmp_path, monkeypatch):
             root = Path(args[args.index("--cwd") + 1])
             contract = json.loads((root / "generator.json").read_text())
             result = generator.run(root / "checkout", generator.Container(IMAGE), **contract)
+            # Keep metadata clocks stable before recording and replay; real deadlines still run.
+            for timing in result['timings'].values():
+                if isinstance(timing, dict):
+                    timing['seconds'] = 0.0
+            result['timings']['total_seconds'] = 0.0
             raw = (generator.PREFIX + json.dumps(result) + "\n").encode()
             log = tmp_path / f"generator-{len(calls)}.log"
             log.write_bytes(raw)
@@ -408,7 +413,7 @@ def rehearsal(tmp_path, monkeypatch):
     git(root, 'add', '.')
     git(root, 'commit', '-qm', 'base')
     base = git(root, 'rev-parse', 'HEAD')
-    inputs = {'base_sha': base, 'tests': {'image': IMAGE, 'tools_path': str(tmp_path)},
+    inputs = {'base_sha': base, 'tests': {'image': IMAGE, 'tools_path': str(tmp_path / 'tools')},
               'must_split': False, 'findings': [], 'protected_paths': [],
               'ingest': {'brief': 'Preserve adoption, no copying and no publication wait.',
                          'goals': [{'description': 'Make the adoption test deterministic.', 'verification': 'test'}]},
