@@ -1374,3 +1374,72 @@ pub(super) mod c1_payloads {
         run
     }
 }
+
+// #830: real router versus bare current Mergify, with the same leaf I/O tape.
+fn run_router(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
+    static HOOK: ::std::sync::Once = ::std::sync::Once::new();
+    HOOK.call_once(|| {
+        let original = ::std::panic::take_hook();
+        ::std::panic::set_hook(Box::new(move |info| {
+            if !info.payload().is::<Crash>() {
+                original(info)
+            }
+        }));
+    });
+    init(schedule.clone(), cut);
+    let d: Delivery = serde_json::from_value(delivery_value("enqueue-1")).unwrap();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        super::current::router_run(entry, &d, new)
+    }));
+    let result = match result {
+        Ok(v) => v,
+        Err(e) if e.is::<Crash>() => json!("crash"),
+        Err(e) => ::std::panic::resume_unwind(e),
+    };
+    ACTIVE.with(|v| {
+        let r = v.borrow_mut().take().unwrap();
+        Run {
+            calls: r.calls,
+            effects: r.effects,
+            files: r.files,
+            result,
+            writes: r.writes,
+        }
+    })
+}
+pub(super) fn compare_router(
+    schedule: &Schedule,
+    entry: Entry,
+) -> ::std::result::Result<usize, String> {
+    let old = run_router(schedule, entry, false, None);
+    let new = run_router(schedule, entry, true, None);
+    if old != new {
+        return Err(format!(
+            "I/O schedule divergence\nschedule={schedule:?}\nentry={entry:?}\nold outcome={}\nnew outcome={}\nold calls={:?}\nnew calls={:?}",
+            old.result,
+            new.result,
+            old.calls
+                .iter()
+                .map(|c| (&c.op, &c.args))
+                .collect::<Vec<_>>(),
+            new.calls
+                .iter()
+                .map(|c| (&c.op, &c.args))
+                .collect::<Vec<_>>()
+        ));
+    }
+    let writes = old.writes;
+    for write in 0..writes {
+        for after in [false, true] {
+            let cut = Some(Cut { write, after });
+            let old = run_router(schedule, entry, false, cut);
+            let new = run_router(schedule, entry, true, cut);
+            if old != new {
+                return Err(format!(
+                    "crash boundary divergence: {schedule:?}, {entry:?}, {cut:?}\nold={old:#?}\nnew={new:#?}"
+                ));
+            }
+        }
+    }
+    Ok(writes * 2 + 1)
+}

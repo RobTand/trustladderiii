@@ -7,15 +7,21 @@ use tl3_github::webhook::Event;
 
 /// Queue repositories keep the existing translator, including its read order and fact keys.
 pub struct Translator {
+    wakes: Wakes,
     queue: super::super::mergify::Translator,
     clients: BTreeMap<u64, GitHub>,
 }
 impl Translator {
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
+            wakes: Wakes::default(),
             queue: super::super::mergify::Translator::new(clients.clone())?,
             clients,
         })
+    }
+    pub fn with_wakes(mut self, wakes: Wakes) -> Self {
+        self.wakes = wakes;
+        self
     }
     fn input(
         &self,
@@ -95,6 +101,7 @@ impl Translator {
                     }
                 )
             {
+                self.wakes.wake(&effect.key);
                 inputs.push(Input::Look {
                     key: effect.key.clone(),
                 });

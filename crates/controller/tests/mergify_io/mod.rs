@@ -106,6 +106,20 @@ pub mod executor {
         Absent,
         Pending,
     }
+    include!("router_executor.rs");
+}
+
+// #830: compile the real router. Its forwarded method bodies have no test replacements.
+#[path = "../../src/adapters/delivery_router.rs"]
+mod delivery_router;
+struct NoDirect;
+impl executor::Executor for NoDirect {
+    fn execute(&mut self, _: &Delivery) -> Result<Completion> {
+        panic!("queue route called direct execute")
+    }
+    fn reconcile(&mut self, _: &Delivery) -> Result<Reconciliation> {
+        panic!("queue route called direct reconcile")
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueueFact {
@@ -334,6 +348,7 @@ mod reference {
 mod current {
     adapter!();
     include!("current.rs");
+    include!("router_current_executor.rs");
     mod ci_evidence {
         use crate::mergify_io::io::mock_std as std;
         include!("current-ci.rs");
@@ -347,6 +362,23 @@ mod current {
     pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
         let mut a = Adapter::new();
         run_entry!(a, entry, d, None)
+    }
+    pub(super) fn router_run(entry: io::Entry, d: &Delivery, wrapped: bool) -> Value {
+        let bare = Adapter::new();
+        let mut adapter: Box<dyn executor::Executor> = if wrapped {
+            let repo: tl3_config::Repository = serde_json::from_value(
+                json!({"owner":"owner","name":"sandbox","installation_id":3,"delivery":"queue"}),
+            )
+            .unwrap();
+            Box::new(delivery_router::Router::new(bare, NoDirect, &[repo]))
+        } else {
+            Box::new(bare)
+        };
+        match entry {
+            io::Entry::Execute => io::completed(adapter.execute(d)),
+            io::Entry::Reconcile => io::reconciliation(adapter.reconcile(d)),
+            _ => panic!("router differential entry must be execute or reconcile"),
+        }
     }
 }
 
@@ -1582,5 +1614,151 @@ mod required_payload_c1 {
             "C1 r1 workflow payloads: 128 schedules; {} complete/crash comparisons",
             comparisons.get()
         );
+    }
+}
+
+// #830: the wrapped side compiles delivery_router.rs directly. These generated copies
+// contain complete unchanged trait/adapter bodies, not shared behavioral substitutes.
+mod router_queue {
+    use super::*;
+    use io::{Entry, Frame, Profile, Schedule};
+    use proptest::{
+        prelude::*,
+        test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
+    };
+    fn tape(profile: Profile) -> Schedule {
+        Schedule {
+            profile,
+            initial: 0,
+            frames: vec![],
+            appears_at: usize::MAX,
+            write_results: vec![],
+            overrides: vec![],
+            file_results: vec![],
+        }
+    }
+    #[test]
+    fn router_queue_generated_schedules_and_write_crashes() {
+        let profiles = [
+            Profile::Plain,
+            Profile::Flip,
+            Profile::Label,
+            Profile::Command,
+            Profile::Waiting,
+            Profile::Rerun,
+            Profile::Body,
+            Profile::Classic,
+            Profile::Duplicates,
+            Profile::Refusal,
+            Profile::Active,
+            Profile::Terminal,
+            Profile::Merged,
+            Profile::MergeFalse,
+            Profile::Draft,
+            Profile::Missing,
+        ];
+        let mut comparisons = 0;
+        for profile in profiles {
+            for entry in [Entry::Execute, Entry::Reconcile] {
+                comparisons += io::compare_router(&tape(profile), entry).unwrap();
+            }
+        }
+        assert!(
+            comparisons > 32,
+            "mandatory schedules must reach durable/upstream writes"
+        );
+        let count = ::std::cell::Cell::new(comparisons);
+        let mut runner = TestRunner::new(Config {
+            cases: 256,
+            max_shrink_iters: 2048,
+            rng_seed: RngSeed::Fixed(0x0830_2026_1105),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/mergify_io/router-regressions.txt"
+            )))),
+            ..Config::default()
+        });
+        let strategy = (
+            0usize..profiles.len(),
+            any::<u8>(),
+            prop::collection::vec((any::<u16>(), 0u32..300_002), 0..96),
+            prop::collection::vec(0u8..7, 0..8),
+            prop::collection::vec(0u8..4, 0..48),
+            any::<bool>(),
+        );
+        runner
+            .run(
+                &strategy,
+                |(p, initial, frames, write_results, file_results, execute)| {
+                    let s = Schedule {
+                        profile: profiles[p],
+                        initial,
+                        frames: frames
+                            .into_iter()
+                            .map(|(word, elapsed_ms)| Frame { word, elapsed_ms })
+                            .collect(),
+                        appears_at: usize::MAX,
+                        write_results,
+                        overrides: vec![],
+                        file_results,
+                    };
+                    count.set(
+                        count.get()
+                            + io::compare_router(
+                                &s,
+                                if execute {
+                                    Entry::Execute
+                                } else {
+                                    Entry::Reconcile
+                                },
+                            )
+                            .map_err(TestCaseError::fail)?,
+                    );
+                    Ok(())
+                },
+            )
+            .unwrap();
+        eprintln!(
+            "#830 router: 256 fixed-seed generated schedules + 32 mandatory schedules; {} complete/crash comparisons",
+            count.get()
+        );
+    }
+    fn block<'a>(source: &'a str, marker: &str) -> &'a str {
+        let start = source.find(marker).unwrap();
+        let brace = start + source[start..].find('{').unwrap();
+        let mut depth = 1;
+        let mut cursor = brace + 1;
+        while depth != 0 {
+            match source.as_bytes()[cursor] {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            cursor += 1;
+        }
+        &source[start..cursor]
+    }
+    fn tokens(s: &str) -> String {
+        s.split_whitespace().collect()
+    }
+    #[test]
+    fn router_queue_copies_are_complete_production_bodies() {
+        let actual = include_str!("../../src/executor.rs");
+        let copy = include_str!("router_executor.rs");
+        for marker in [
+            "pub enum Look {",
+            "pub enum WaitRecord {",
+            "pub trait Executor {",
+        ] {
+            assert_eq!(tokens(block(actual, marker)), tokens(block(copy, marker)));
+        }
+        let actual = block(
+            include_str!("../../src/adapters/mergify.rs"),
+            "impl Executor for Adapter {",
+        );
+        let copy = include_str!("router_current_executor.rs");
+        for marker in ["    fn execute(", "    fn reconcile("] {
+            assert_eq!(tokens(block(actual, marker)), tokens(block(copy, marker)));
+        }
     }
 }

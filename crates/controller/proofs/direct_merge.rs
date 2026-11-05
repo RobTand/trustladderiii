@@ -8,7 +8,7 @@ verus! {
 /// #830/Q44, Publishing/Queued docs/state-table.md:526,570; outside push :667.
 /// Witnesses reach both upstream writes, refusal, and the absorbing merged state.
 /// No loop bound: the production decision is straight-line over arbitrary full SHA values.
-proof fn witnesses() {
+fn witnesses() {
     let h = decide::Head { upper: 1, lower: 2 };
     let visible = decide::Facts { approved: h, observed: h, checked: h, approval: true,
         open: true, merged: false, recorded_merge: false, held: false, conflict: false,

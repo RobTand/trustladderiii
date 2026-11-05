@@ -52,7 +52,7 @@ impl Respond for DirectApi {
         self.base.respond(request)
     }
 }
-struct DirectFixture { api: Server, root: tempfile::TempDir, direct: Arc<Mutex<DirectState>> }
+struct DirectFixture { api: Server, root: tempfile::TempDir, direct: Arc<Mutex<DirectState>>, wakes: direct_merge::Wakes }
 fn direct_repo() -> tl3_config::Repository {
     serde_json::from_value(json!({"owner":"owner", "name":"sandbox", "installation_id":3, "delivery":"direct"})).unwrap()
 }
@@ -65,17 +65,17 @@ impl DirectFixture {
             Mock::given(|_: &Request| true).respond_with(DirectApi { base: Api(api.state.clone()), direct: direct.clone() }).with_priority(1).mount(&api.server).await;
         });
         api.state.lock().unwrap().pull["mergeable"] = json!(true);
-        Self { api, root, direct }
+        Self { api, root, direct, wakes: direct_merge::Wakes::default() }
     }
     fn adapter(&self, settings: &tl3_config::Store) -> direct_merge::Adapter {
-        direct_merge::Adapter::new(self.api.clients(), 0, &self.root.path().join("direct"), settings.clone()).unwrap()
+        direct_merge::Adapter::new(self.api.clients(), 0, &self.root.path().join("direct"), settings.clone()).unwrap().with_wakes(self.wakes.clone())
     }
     fn open(&self, settings: &tl3_config::Store) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
         registry.register(Upstream::Mergify, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), self.adapter(settings), &[direct_repo()]));
         let mut controller = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
         controller.reconcile_repository_delivery(&[direct_repo()]).unwrap();
-        controller.register_github_translator("mergify", direct_merge::Translator::new(self.api.clients()).unwrap());
+        controller.register_github_translator("mergify", direct_merge::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
         controller
     }
     fn start(&self, settings: &tl3_config::Store) -> (Controller, Delivery) {
@@ -86,7 +86,8 @@ impl DirectFixture {
             let progressed = controller.drive_once_with(|boundary, key| {
                 if boundary != Boundary::BeforeDispatch { return; }
                 let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
-                let d: Delivery = serde_json::from_value(effect.payload).unwrap();
+                let mut d: Delivery = serde_json::from_value(effect.payload).unwrap();
+                d.pull_request = Some(100);
                 if !matches!(d.output, Out::Effect { kind: EffectKind::Enqueue, .. }) { return; }
                 let mut state = self.api.state.lock().unwrap();
                 state.pull["head"]["sha"] = json!(d.head_sha);

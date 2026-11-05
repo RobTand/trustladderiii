@@ -173,6 +173,7 @@ fn register_owned(
     adapters.register(Upstream::Worktrees, worktrees);
     adapters.register(Upstream::Workers, supervisor);
     adapters.register(Upstream::PrismaBuild, pb);
+    let direct_wakes = adapters::direct_merge::Wakes::default();
     adapters.register(
         Upstream::Mergify,
         adapters::delivery_router::Router::new(
@@ -184,11 +185,13 @@ fn register_owned(
                 epoch,
                 &records.join("direct-merge"),
                 config.store.clone(),
-            )?,
+            )?
+            .with_wakes(direct_wakes.clone()),
             &config.github.repos,
         ),
     );
-    let mergify = adapters::direct_merge::Translator::new(clients.clone())?;
+    let mergify =
+        adapters::direct_merge::Translator::new(clients.clone())?.with_wakes(direct_wakes);
     let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;
     let webhooks = Webhooks::bind(
         listen,

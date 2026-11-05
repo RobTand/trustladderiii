@@ -5,6 +5,7 @@ pub use mergify_io::{Error, Result, decode_stored, executor};
 
 pub use mergify_io::{evidence, snapshot};
 pub use tl3_controller::pr_body;
+pub use tl3_controller::{Repository, adoption, input_errors};
 pub mod findings {
     pub use tl3_controller::findings::*;
     pub const MAX_REPORT_CHARS: usize = 16000;

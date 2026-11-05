@@ -3,12 +3,16 @@ use vstd::prelude::*;
 
 /// A SHA-1 split without hashing or truncation. The I/O boundary parses 40 hex digits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct Head {
     pub upper: u128,
     pub lower: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Checks {
     Passed,
     Pending,
@@ -16,6 +20,7 @@ pub enum Checks {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub struct Facts {
     pub approved: Head,
     pub observed: Head,
@@ -31,6 +36,8 @@ pub struct Facts {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Step {
     None,
     Fence,
@@ -40,6 +47,8 @@ pub enum Step {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Outcome {
     Ready,
     Merged,
@@ -52,6 +61,7 @@ pub enum Outcome {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub struct Plan {
     pub outcome: Outcome,
     pub first: Step,

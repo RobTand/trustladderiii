@@ -15,9 +15,10 @@ use crate::{
 use decide::{Checks, Facts, Head, Outcome, Plan, Step};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use tl3_github::{CheckRun, GitHub, MergeMethod, PullRequest};
 use tl3_kernel::{EffectKind, Phase};
@@ -44,7 +45,24 @@ struct Read {
     method: Option<MergeMethod>,
 }
 
+/// Sleeping effects are invalidated only by relevant webhook/catch-up events.
+/// A new adapter after restart starts awake and reconciles from GitHub.
+#[derive(Clone, Default)]
+pub struct Wakes(Arc<Mutex<BTreeSet<String>>>);
+impl Wakes {
+    fn sleeping(&self, key: &str) -> bool {
+        self.0.lock().unwrap().contains(key)
+    }
+    fn sleep(&self, key: &str) {
+        self.0.lock().unwrap().insert(key.to_owned());
+    }
+    fn wake(&self, key: &str) {
+        self.0.lock().unwrap().remove(key);
+    }
+}
+
 pub struct Adapter {
+    wakes: Wakes,
     clients: BTreeMap<u64, GitHub>,
     epoch: i64,
     records: Records,
@@ -60,12 +78,17 @@ impl Adapter {
     ) -> Result<Self> {
         fs::create_dir_all(records)?;
         Ok(Self {
+            wakes: Wakes::default(),
             clients,
             epoch,
             records: Records::new(records),
             store,
             runtime: crate::executor::runtime()?,
         })
+    }
+    pub fn with_wakes(mut self, wakes: Wakes) -> Self {
+        self.wakes = wakes;
+        self
     }
     fn client(&self, d: &Delivery) -> Result<&GitHub> {
         self.clients
@@ -264,10 +287,14 @@ impl Adapter {
                     });
                 }
             }
+            let checked_base = pull.base.branch.clone();
             // A later read can differ. Never cache the first PR read across check/settings I/O.
             pull = self
                 .runtime
                 .block_on(github.pull_request(&repo, number(d)?))?;
+            if pull.base.branch != checked_base {
+                checks = Checks::Pending;
+            }
         }
         let snapshot = self.snapshot()?;
         let world = crate::snapshot::decode(&snapshot)?;
@@ -370,7 +397,11 @@ impl Adapter {
                     .ok_or(Error::Invalid("direct check failure lacks evidence"))?,
             )?,
             Outcome::Closed => Completion::permanent("direct_pr_closed"),
-            Outcome::Wait | Outcome::Held => return Err(Error::ChecksPending),
+            Outcome::Wait => {
+                self.wakes.sleep(&d.key);
+                return Err(Error::ChecksPending);
+            }
+            Outcome::Held => return Err(Error::ChecksPending),
             Outcome::Ready => return Ok(None),
         }))
     }
@@ -384,6 +415,9 @@ impl Adapter {
                     checks_passed: merged.checks_passed,
                 },
             );
+        }
+        if self.wakes.sleeping(&d.key) {
+            return Err(Error::ChecksPending);
         }
         // At most one annotation and one merge per call. A pending check never loops.
         for _ in 0..2 {
@@ -527,6 +561,9 @@ impl Executor for Adapter {
                     },
                 )?
                 .observations);
+        }
+        if self.wakes.sleeping(&d.key) {
+            return Ok(vec![]);
         }
         let read = self.read(d)?;
         let plan = decide::decide(read.facts);
