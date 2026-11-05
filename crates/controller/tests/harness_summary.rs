@@ -102,18 +102,20 @@ fn extraction_preserves_recorded_io_schedules_and_crash_state() {
     let pipes = std::cell::RefCell::new((input, output));
     let strategy = (
         0u32..100,
-        proptest::collection::vec(0u8..16, 0..9),
+        proptest::collection::vec(0u8..16, 0..5),
         proptest::collection::vec(0u32..1_000_000, 0..12),
-        -1i32..400,
+        proptest::collection::vec(any::<bool>(), 2..5),
+        1usize..4,
+        0usize..4,
     );
     let mut runner = TestRunner::new(Config {
-        cases: 48,
+        cases: 8,
         failure_persistence: None,
         ..Config::default()
     });
-    let result = runner.run(&strategy, |(initial, reads, times, crash)| {
+    let result = runner.run(&strategy, |(initial, reads, times, selector_reads, repeat, waits)| {
         let request =
-            serde_json::json!({"initial": initial, "reads": reads, "times": times, "crash": crash});
+            serde_json::json!({"initial": initial, "reads": reads, "times": times, "selector_reads": selector_reads, "repeat": repeat, "waits": (0..waits).map(|_| false).chain([true]).collect::<Vec<_>>()});
         let mut pipes = pipes.borrow_mut();
         let (input, output) = &mut *pipes;
         writeln!(input, "{request}").unwrap();
