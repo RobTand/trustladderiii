@@ -1,0 +1,3 @@
+fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+    serde_json::from_value(value).map_err(Error::StoredJson)
+}

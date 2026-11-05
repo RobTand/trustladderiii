@@ -270,6 +270,123 @@ pub(super) fn whole_ladder_waits(settings: &tl3_config::Store) {
     );
 }
 
+/// #828 / Q53: any eligible rung can end a quota wait under the same effect key.
+pub(super) fn operator_clear_resumes(settings: &tl3_config::Store, non_last: bool) {
+    let mut f = fixture_at(
+        settings,
+        if non_last {
+            &["default-model", "alternate-model"]
+        } else {
+            &["default-model"]
+        },
+        if non_last {
+            json!({"planner": {"default-model": 600, "alternate-model": 300}})
+        } else {
+            json!({"planner": {"default-model": 600}})
+        },
+        real_now(),
+        true,
+    );
+    f.quota_recorded("default-model");
+    f.controller.look_due().unwrap();
+    if non_last {
+        f.quota_recorded("alternate-model");
+        f.controller.look_due().unwrap();
+    }
+    let wait = f.quota_waits().pop().expect("planner is quota held");
+    let key = wait["delivery"]["key"].as_str().unwrap().to_owned();
+    let attempt = i64::from(non_last);
+    assert_eq!(f.planner_attempt(), attempt);
+    assert_eq!(
+        wait["last_quota_model"],
+        if non_last {
+            "alternate-model"
+        } else {
+            "default-model"
+        }
+    );
+    if !non_last {
+        // Alternate is configured for another role, but is not in this planner's ladder.
+        let snapshot = f.store.load().unwrap();
+        let mut commit = tl3_store::Commit::new("other-role-quota", json!({}), &snapshot);
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "model_quotas".into(),
+            id: "alternate-model".into(),
+            value: json!({"reset_ms": f.clock.0.get() + 300_000}),
+        });
+        f.store.commit(&commit).unwrap();
+        f.clear_quota("alternate-model", 829);
+        assert!(f.model_quota("alternate-model").is_none());
+        assert_eq!(
+            f.quota_waits().pop().unwrap()["due_ms"],
+            wait["due_ms"],
+            "a model outside this ladder must not wake it"
+        );
+        assert_eq!(f.planner_attempt(), attempt);
+    }
+    fs::write(f.root.path().join("entered.quota-models"), "{}").unwrap();
+    f.clear_quota("default-model", 828);
+    assert!(f.model_quota("default-model").is_none());
+    assert_eq!(
+        f.quota_waits().pop().unwrap()["due_ms"],
+        f.clock.0.get(),
+        "clearing any eligible rung must wake the quota wait"
+    );
+    assert_eq!(f.controller.next_look_in().unwrap(), Some(Duration::ZERO));
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.planner_attempt(),
+        attempt + 1,
+        "operator evidence resumes before reset"
+    );
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "allowances" && row.id == key)
+    );
+    f.finish_planning();
+    let expected = if non_last {
+        vec!["default-model", "alternate-model", "default-model"]
+    } else {
+        vec!["default-model", "default-model"]
+    };
+    assert_eq!(f.planner_models(), expected);
+}
+
+impl Fixture {
+    fn clear_quota(&mut self, model: &str, id: u64) {
+        self.controller
+            .observe(
+                &format!("operator-clear-{id}"),
+                Observation::GitHubComment {
+                    repository: tl3_controller::Repository {
+                        owner: "RobTand".into(),
+                        name: "trustladderiii".into(),
+                        installation: 2,
+                    },
+                    issue: 17,
+                    comment: tl3_github::Comment {
+                        id,
+                        body: format!("clear quota {model}"),
+                        user: tl3_github::Actor {
+                            id: self.config.github.rob.id,
+                            login: "fixture".into(),
+                        },
+                        created_at: chrono::DateTime::UNIX_EPOCH,
+                        updated_at: chrono::DateTime::UNIX_EPOCH,
+                        issue_url: "https://api.github.com/repos/RobTand/trustladderiii/issues/17"
+                            .into(),
+                    },
+                },
+            )
+            .unwrap();
+        self.step();
+    }
+}
+
 pub(super) fn removed_model_resumes_on_open(settings: &tl3_config::Store, legacy: bool) {
     let mut f = fixture(
         settings,

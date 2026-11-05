@@ -3123,6 +3123,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tl3-plan-check"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "tl3-contracts",
+ "tl3-harness-core",
+]
+
+[[package]]
 name = "tl3-prismabuild"
 version = "0.1.0"
 dependencies = [

@@ -14,10 +14,10 @@ use std::{
     },
     time::Duration,
 };
+use tl3_controller_core::memory_retain::{self as retain, Action as MemoryAction};
 use tl3_store::Store;
 
 const SECTION_BYTES: usize = 6000;
-const RECORD_BYTES: usize = 32768;
 
 fn clip(text: &str, limit: usize) -> &str {
     let mut end = text.len().min(limit);
@@ -195,7 +195,11 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
             }
         }
     }
-    let succeeded = exit["code"] == 0 && summary["outcome"] != "failed" && !reply.is_null();
+    let succeeded = retain::run_succeeded(
+        exit["code"] == 0,
+        summary["outcome"] == "failed",
+        !reply.is_null(),
+    );
     let reason = if succeeded {
         Value::Null
     } else if summary["outcome"] == "failed" {
@@ -218,8 +222,20 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
         attempt.file_name().and_then(|n| n.to_str()),
         request["operation"]
     ]);
-    let id = uuid(&identity);
-    if succeeded && matches!(role.as_str(), "ingest" | "planner") {
+    let hash = Sha256::digest(identity.to_string().as_bytes());
+    let (high, low) = retain::identity_bits(
+        u64::from_be_bytes(hash[..8].try_into().expect("SHA-256 prefix")),
+        u64::from_be_bytes(hash[8..16].try_into().expect("SHA-256 prefix")),
+    );
+    let id = format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        high >> 32,
+        (high >> 16) & 0xffff,
+        high & 0xffff,
+        low >> 48,
+        low & 0xffffffffffff,
+    );
+    if retain::review_eligible(succeeded, matches!(role.as_str(), "ingest" | "planner")) {
         let worktree = attempt
             .parent()
             .ok_or(Error::Invalid("worker attempt has no run directory"))?
@@ -252,15 +268,18 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
     });
     if request["role"] == "maker"
         && let Some(head) = reply["head"].as_str()
-        && head.len() == 40
-        && head.bytes().all(|b| b.is_ascii_hexdigit())
+        && retain::head_eligible(
+            true,
+            head.len(),
+            head.bytes().all(|b| b.is_ascii_hexdigit()),
+        )
     {
         record["head_sha"] = json!(head);
     }
     let mut item = json!({"content": record.to_string(), "document_id": format!("tl3-run-{id}"),
         "context": "TL3 Deep Agents run summary", "tags": [format!("repo:{repo}"), format!("request:{request_id}"), format!("role:{role}"), "kind:run", "source:run"],
         "metadata": {"source": "tl3", "run": id}});
-    if stored_json_bytes(&item) > RECORD_BYTES {
+    if !retain::record_fits(stored_json_bytes(&item)) {
         for field in ["inputs", "activity", "reply", "reason", "model"] {
             record[field] =
                 json!({"summary": clip(&record[field].to_string(), 512), "truncated": true});
@@ -268,7 +287,7 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
         item["content"] = json!(record.to_string());
     }
     // Postgres is authoritative for JSONB's numeric and escaping representation.
-    if store.memory_item_bytes(&item)? > RECORD_BYTES as i32 {
+    if !retain::stored_record_fits(store.memory_item_bytes(&item)?) {
         return Err(Error::Invalid("oversized memory record"));
     }
     store.queue_memory(&id, &item)?;
@@ -283,7 +302,7 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
     let mut count = curate(store, settings)?;
     let mut pending = store.pending_memories(0)?;
     if pending.is_empty() {
-        if count > 0 {
+        if retain::made_progress(count) {
             store.memory_delivery_ack()?;
         }
         return Ok(count);
@@ -316,42 +335,47 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
                     .json()
                     .await
                     .map_err(|e| Error::Adapter(Box::new(e)))?;
-                if body["success"] != true
-                    || body["async"] != true
-                    || body["operation_id"] != id
-                    || body["bank_id"] != settings.bank
-                    || body["items_count"] != 1
-                {
+                if !retain::acknowledged(
+                    body["success"] == true,
+                    body["async"] == true,
+                    body["operation_id"] == id,
+                    body["bank_id"] == settings.bank,
+                    body["items_count"] == 1,
+                ) {
                     return Err(Error::Invalid("invalid Hindsight retain acknowledgement"));
                 }
                 Ok(())
             });
-            match result {
-                Ok(()) => {
+            let status = match &result {
+                Err(Error::HindsightStatus(status)) => Some(*status),
+                _ => None,
+            };
+            match retain::retain_action(result.is_ok(), status) {
+                MemoryAction::Done => {
                     store.forget_memory(&id)?;
                     count += 1;
                 }
-                Err(Error::HindsightStatus(status @ (401 | 403))) => {
+                MemoryAction::RejectKey => {
+                    let status = status.expect("key rejection has an HTTP status");
                     store.reject_memory_key(status)?;
                     return Err(Error::HindsightStatus(status));
                 }
-                Err(error @ Error::HindsightStatus(408 | 429)) => return Err(error),
-                Err(Error::HindsightStatus(status @ 400..=499)) => {
-                    store.park_memory(&id, status)?;
+                MemoryAction::Park => {
+                    store.park_memory(&id, status.expect("parked memory has an HTTP status"))?;
                 }
-                Err(error) => return Err(error),
+                MemoryAction::Retry => return Err(result.expect_err("retry requires a failure")),
             }
         }
         pending = store.pending_memories(after)?;
         if pending.is_empty() {
-            if count == 0 || store.replay_capacity_memories()? == 0 {
+            if !retain::made_progress(count) || store.replay_capacity_memories()? == 0 {
                 break;
             }
             after = 0;
             pending = store.pending_memories(after)?;
         }
     }
-    if count > 0 {
+    if retain::made_progress(count) {
         store.memory_delivery_ack()?;
     }
     Ok(count)
@@ -1146,18 +1170,17 @@ fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> 
                     .map(|response| response.status().as_u16())
                     .map_err(|e| Error::Adapter(Box::new(e)))
             })?;
-            match status {
-                200..=299 => {
+            match retain::http_action(status) {
+                MemoryAction::Done => {
                     store.settle_memory_curation(sequence, None)?;
                     count += 1;
                 }
-                401 | 403 => {
+                MemoryAction::RejectKey => {
                     store.reject_memory_key(status)?;
                     return Err(Error::HindsightStatus(status));
                 }
-                408 | 429 => return Err(Error::HindsightStatus(status)),
-                400..=499 => store.settle_memory_curation(sequence, Some(status))?,
-                _ => return Err(Error::HindsightStatus(status)),
+                MemoryAction::Park => store.settle_memory_curation(sequence, Some(status))?,
+                MemoryAction::Retry => return Err(Error::HindsightStatus(status)),
             }
         }
         pending = store.pending_memory_curations()?;
