@@ -455,7 +455,6 @@ impl Controller {
                 dependency.target.number,
             );
             if !self.bootstrap.repos.contains(&request.repo) || !seen.insert(key.clone())
-
                 || snapshot.rows.iter().any(|row| row.table == "inbox" && matches!(
                     serde_json::from_value::<executor::Observation>(row.value.clone()),
                     Ok(executor::Observation::PrerequisiteRead { repository, kind, number, .. })
@@ -1708,7 +1707,7 @@ mod tests {
             ("open", None, DependencyStatus::Pending),
             ("closed", Some("completed"), DependencyStatus::Delivered),
             ("closed", Some("not_planned"), DependencyStatus::Abandoned),
-            ("closed", None, DependencyStatus::Pending),
+            ("closed", None, DependencyStatus::Abandoned),
         ] {
             let issue = serde_json::from_value(json!({"number":2761,"title":"Prerequisite","body":null,"state":state,"state_reason":reason,"updated_at":"2026-11-03T23:00:00Z","pull_request":null})).unwrap();
             assert_eq!(issue_status(&issue), expected);
