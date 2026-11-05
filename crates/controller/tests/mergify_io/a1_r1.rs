@@ -56,7 +56,9 @@ fn mandatory_a1_scheduled_hold_versions() {
             rows.push(row("queue_resumes", "0", v, json!({})));
         }
         // Later duplicate rows must never replace the first matching revision.
-        rows.push(row("queue_resumes", "0", i64::MAX, json!({})));
+        if resumed.is_some() {
+            rows.push(row("queue_resumes", "0", i64::MAX, json!({})));
+        }
         io::with_inputs(
             A1Inputs {
                 rows,
