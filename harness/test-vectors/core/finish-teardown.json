@@ -1,0 +1,2942 @@
+{
+ "cases": [
+  {
+   "expected": 0,
+   "id": "checking-finish-None-return-0",
+   "input": {
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-None-return-1",
+   "input": {
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-None-return-2",
+   "input": {
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-return-3",
+   "input": {
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-None-return-4",
+   "input": {
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-None-return-5",
+   "input": {
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-None-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": null,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "checking-finish-0-return-0",
+   "input": {
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-0-return-1",
+   "input": {
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-0-return-2",
+   "input": {
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-0-return-3",
+   "input": {
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-0-return-4",
+   "input": {
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-0-return-5",
+   "input": {
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "checking-finish-0-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-0-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-0-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-0-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-0-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-0-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-0-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 0,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "checking-finish-1-return-0",
+   "input": {
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-1-return-1",
+   "input": {
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-1-return-2",
+   "input": {
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-1-return-3",
+   "input": {
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-1-return-4",
+   "input": {
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-1-return-5",
+   "input": {
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-1-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-1-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-1-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-1-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-1-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-1-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-1-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 1,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "checking-finish-2-return-0",
+   "input": {
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-2-return-1",
+   "input": {
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-2-return-2",
+   "input": {
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-2-return-3",
+   "input": {
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-2-return-4",
+   "input": {
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-2-return-5",
+   "input": {
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-2-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-2-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-2-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-2-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-2-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-2-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-2-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 2,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "checking-finish-3-return-0",
+   "input": {
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-3-return-1",
+   "input": {
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-3-return-2",
+   "input": {
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-return-3",
+   "input": {
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-3-return-4",
+   "input": {
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-3-return-5",
+   "input": {
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-3-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 3,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "checking-finish-4-return-0",
+   "input": {
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-4-return-1",
+   "input": {
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-4-return-2",
+   "input": {
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-4-return-3",
+   "input": {
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-4-return-4",
+   "input": {
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-4-return-5",
+   "input": {
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-4-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-4-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-4-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-4-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-4-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-4-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-4-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 4,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "checking-finish-5-return-0",
+   "input": {
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "checking-finish-5-return-1",
+   "input": {
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "checking-finish-5-return-2",
+   "input": {
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-5-return-3",
+   "input": {
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "checking-finish-5-return-4",
+   "input": {
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-5-return-5",
+   "input": {
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "checking-finish-5-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-5-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-5-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-5-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-5-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-5-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "checking-finish-5-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 5,
+    "mode": "checking",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-None-return-0",
+   "input": {
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-None-return-1",
+   "input": {
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-None-return-2",
+   "input": {
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-return-3",
+   "input": {
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-None-return-4",
+   "input": {
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-None-return-5",
+   "input": {
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-None-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": null,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-0-return-0",
+   "input": {
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-0-return-1",
+   "input": {
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-0-return-2",
+   "input": {
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-0-return-3",
+   "input": {
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-0-return-4",
+   "input": {
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-0-return-5",
+   "input": {
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-0-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-0-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-0-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-0-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-0-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-0-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-0-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 0,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-1-return-0",
+   "input": {
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-1-return-1",
+   "input": {
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-1-return-2",
+   "input": {
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-1-return-3",
+   "input": {
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-1-return-4",
+   "input": {
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-1-return-5",
+   "input": {
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-1-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-1-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-1-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-1-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-1-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-1-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-1-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 1,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-2-return-0",
+   "input": {
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-2-return-1",
+   "input": {
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-2-return-2",
+   "input": {
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-2-return-3",
+   "input": {
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-2-return-4",
+   "input": {
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-2-return-5",
+   "input": {
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-2-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-2-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-2-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-2-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-2-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-2-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-2-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 2,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-3-return-0",
+   "input": {
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-3-return-1",
+   "input": {
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-3-return-2",
+   "input": {
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-return-3",
+   "input": {
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-3-return-4",
+   "input": {
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-3-return-5",
+   "input": {
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-3-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 3,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-4-return-0",
+   "input": {
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-4-return-1",
+   "input": {
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-4-return-2",
+   "input": {
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-4-return-3",
+   "input": {
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-4-return-4",
+   "input": {
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-4-return-5",
+   "input": {
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-4-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-4-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-4-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-4-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-4-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-4-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-4-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 4,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 0,
+   "id": "summary-finish-5-return-0",
+   "input": {
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 0,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 1,
+   "id": "summary-finish-5-return-1",
+   "input": {
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 1,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 2,
+   "id": "summary-finish-5-return-2",
+   "input": {
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 2,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-5-return-3",
+   "input": {
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 3,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 4,
+   "id": "summary-finish-5-return-4",
+   "input": {
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 4,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-5-return-5",
+   "input": {
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": false,
+    "return_code": 5,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 5,
+   "id": "summary-finish-5-xdist-thread",
+   "input": {
+    "exception_fixture": "xdist-thread",
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": true
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-5-wrong-file",
+   "input": {
+    "exception_fixture": "wrong-file",
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-5-wrong-frame",
+   "input": {
+    "exception_fixture": "wrong-frame",
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-5-wrong-type",
+   "input": {
+    "exception_fixture": "wrong-type",
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-5-subclass",
+   "input": {
+    "exception_fixture": "subclass",
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-5-wrong-message",
+   "input": {
+    "exception_fixture": "wrong-message",
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": 3,
+   "id": "summary-finish-5-system-exit",
+   "input": {
+    "exception_fixture": "system-exit",
+    "finished": 5,
+    "mode": "summary",
+    "op": "run-pytest",
+    "raised": true,
+    "worker_teardown_exhausted": false
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "tests/test_value.py::test_value": "passed"
+    }
+   },
+   "id": "checking-parse-0-matching",
+   "input": {
+    "exit_code": 0,
+    "finish": "matching",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-0-missing",
+   "input": {
+    "exit_code": 0,
+    "finish": "missing",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-0-mismatched",
+   "input": {
+    "exit_code": 0,
+    "finish": "mismatched",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "tests/test_value.py::test_value": "assertion"
+    }
+   },
+   "id": "checking-parse-1-matching",
+   "input": {
+    "exit_code": 1,
+    "finish": "matching",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-1-missing",
+   "input": {
+    "exit_code": 1,
+    "finish": "missing",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-1-mismatched",
+   "input": {
+    "exit_code": 1,
+    "finish": "mismatched",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "tests/test_value.py::test_value": "error"
+    }
+   },
+   "id": "checking-parse-2-matching",
+   "input": {
+    "exit_code": 2,
+    "finish": "matching",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-2-missing",
+   "input": {
+    "exit_code": 2,
+    "finish": "missing",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-2-mismatched",
+   "input": {
+    "exit_code": 2,
+    "finish": "mismatched",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-3-matching",
+   "input": {
+    "exit_code": 3,
+    "finish": "matching",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-3-missing",
+   "input": {
+    "exit_code": 3,
+    "finish": "missing",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-3-mismatched",
+   "input": {
+    "exit_code": 3,
+    "finish": "mismatched",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "tests/test_value.py::test_value": "uncollected"
+    }
+   },
+   "id": "checking-parse-4-matching",
+   "input": {
+    "exit_code": 4,
+    "finish": "matching",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-4-missing",
+   "input": {
+    "exit_code": 4,
+    "finish": "missing",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-4-mismatched",
+   "input": {
+    "exit_code": 4,
+    "finish": "mismatched",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "value": {
+     "tests/test_value.py::test_value": "uncollected"
+    }
+   },
+   "id": "checking-parse-5-matching",
+   "input": {
+    "exit_code": 5,
+    "finish": "matching",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-5-missing",
+   "input": {
+    "exit_code": 5,
+    "finish": "missing",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "error": "incomplete report or inconsistent process exit"
+   },
+   "id": "checking-parse-5-mismatched",
+   "input": {
+    "exit_code": 5,
+    "finish": "mismatched",
+    "mode": "checking",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "note": "",
+    "status": "completed",
+    "tests": [
+     {
+      "message": "",
+      "outcome": "passed",
+      "test": "tests/test_value.py::test_value"
+     }
+    ],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 1,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-0-matching",
+   "input": {
+    "exit_code": 0,
+    "finish": "matching",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-0-missing",
+   "input": {
+    "exit_code": 0,
+    "finish": "missing",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-0-mismatched",
+   "input": {
+    "exit_code": 0,
+    "finish": "mismatched",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "note": "",
+    "status": "completed",
+    "tests": [
+     {
+      "message": "",
+      "outcome": "failed",
+      "test": "tests/test_value.py::test_value"
+     }
+    ],
+    "totals": {
+     "error": 0,
+     "failed": 1,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-1-matching",
+   "input": {
+    "exit_code": 1,
+    "finish": "matching",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-1-missing",
+   "input": {
+    "exit_code": 1,
+    "finish": "missing",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-1-mismatched",
+   "input": {
+    "exit_code": 1,
+    "finish": "mismatched",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "note": "",
+    "status": "completed",
+    "tests": [
+     {
+      "message": "collection fixture",
+      "outcome": "error",
+      "test": "tests/test_value.py::test_value"
+     }
+    ],
+    "totals": {
+     "error": 1,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-2-matching",
+   "input": {
+    "exit_code": 2,
+    "finish": "matching",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-2-missing",
+   "input": {
+    "exit_code": 2,
+    "finish": "missing",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-2-mismatched",
+   "input": {
+    "exit_code": 2,
+    "finish": "mismatched",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-3-matching",
+   "input": {
+    "exit_code": 3,
+    "finish": "matching",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-3-missing",
+   "input": {
+    "exit_code": 3,
+    "finish": "missing",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-3-mismatched",
+   "input": {
+    "exit_code": 3,
+    "finish": "mismatched",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "note": "",
+    "status": "completed",
+    "tests": [
+     {
+      "message": "Selector not found: tests/test_value.py::test_value",
+      "outcome": "error",
+      "test": "tests/test_value.py::test_value"
+     }
+    ],
+    "totals": {
+     "error": 1,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-4-matching",
+   "input": {
+    "exit_code": 4,
+    "finish": "matching",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-4-missing",
+   "input": {
+    "exit_code": 4,
+    "finish": "missing",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-4-mismatched",
+   "input": {
+    "exit_code": 4,
+    "finish": "mismatched",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "note": "No tests were collected.",
+    "status": "completed",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-5-matching",
+   "input": {
+    "exit_code": 5,
+    "finish": "matching",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-5-missing",
+   "input": {
+    "exit_code": 5,
+    "finish": "missing",
+    "mode": "summary",
+    "op": "parse"
+   }
+  },
+  {
+   "expected": {
+    "execution": {
+     "outcome": "unknown_incomplete",
+     "phase": "unknown",
+     "termination_reason": "incomplete_report",
+     "test_started": false
+    },
+    "message": "Test execution unknown_incomplete in unknown: incomplete_report. No test verdict is available; inspect this action, not fleet availability.",
+    "note": "",
+    "origin": "test_run",
+    "selectors": [
+     "tests/test_value.py::test_value"
+    ],
+    "status": "infrastructure_error",
+    "tests": [],
+    "totals": {
+     "error": 0,
+     "failed": 0,
+     "passed": 0,
+     "skipped": 0
+    }
+   },
+   "id": "summary-parse-5-mismatched",
+   "input": {
+    "exit_code": 5,
+    "finish": "mismatched",
+    "mode": "summary",
+    "op": "parse"
+   }
+  }
+ ],
+ "kind": "finish-teardown"
+}
