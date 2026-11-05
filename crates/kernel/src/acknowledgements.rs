@@ -81,6 +81,29 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
+    confirmed_agenda(m, kind);
+}
+}
+
+
+kernel_fn! {
+/// Confirmed-effect rows / #771: after resource cleanup, consume the same
+/// matching agenda item or enter Checking for an adopted worktree.
+fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+        kind == EffectKind::StopRun ==> !old(m).pool,
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m))
+            && (old(m).phase is Stopping ==> current_item(*old(m)) == Some(Item::Teardown(kind)))
+            ==> settle_shape(*final(m))),
+        final(m).generation as int <= old(m).generation as int + 1,
+        final(m).generation >= old(m).generation,
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).question == old(m).question,
+        final(m).fx_failures == old(m).fx_failures,
+        final(m).fx_incidents == old(m).fx_incidents,
+        final(m).last_cmd == old(m).last_cmd,
+] {
     if !kind.starts_operation() {
         if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
             if k == kind {
