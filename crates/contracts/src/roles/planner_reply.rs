@@ -13,6 +13,11 @@ use std::{borrow::Cow, collections::BTreeMap};
 #[derive(Clone, Debug, Eq, Serialize)]
 #[serde(transparent)]
 pub struct PlanInteger<const MIN: u64>(Number);
+impl<const MIN: u64> PlanInteger<MIN> {
+    pub fn number(&self) -> &Number {
+        &self.0
+    }
+}
 // uniqueItems compares mathematical integers, including 1 and 1.0. Avoid
 // rounding large u64 values through f64 when just one side is a float.
 impl<const MIN: u64> PartialEq for PlanInteger<MIN> {
