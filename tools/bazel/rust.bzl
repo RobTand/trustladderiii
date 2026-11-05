@@ -82,7 +82,13 @@ _WAVE_B_ENTRIES = {
         "tags": ["rust", "wave-b-selector-identity"],
     },
     # limits (S4)
-    "limits": _WAVE_B_STUB,
+    "limits": {
+        "srcs": ["tests/limits.rs"],
+        "crate_root": "tests/limits.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde_json"],
+        "data": ["//harness:core_vectors", "tests/fixtures/limits/delay.json"],
+        "tags": ["wave-b-plan-only", "rust"],
+    },
     # red-match (S4)
     "red-match": {
         "srcs": [":sources"],
