@@ -130,7 +130,7 @@ def main():
             stack.enter_context(patch.object(module, "budget_check", measured))
         stack.enter_context(patch.object(exploration.ExplorationMiddleware, "wrap_model_call", model_turn))
         for case in ("final_only", "read_then_final", "compaction", "compaction_arguments",
-                     "compaction_many", "compaction_many_50"):
+                     "compaction_many_50", "compaction_many"):
             state["record"] = False
             visit(case, -1)
             state["record"] = True
