@@ -30,11 +30,11 @@ pub struct Generated {
 /// Every file this module generates.
 pub fn generated() -> Vec<Generated> {
     vec![
-        crate::maker_reply::generated(),
         Generated {
             path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
             text: render(&check_report_schema()),
         },
+        crate::maker_reply::generated(),
     ]
 }
 

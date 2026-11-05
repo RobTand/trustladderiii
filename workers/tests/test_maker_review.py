@@ -62,24 +62,6 @@ def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(ma
     assert not Draft202012Validator(schema('maker-input'), registry=registry()).is_valid(inputs), 'rounds start at 1'
 
 
-@pytest.mark.parametrize('invalid', ['omitted', 'partial', 'duplicate', 'unknown', 'old', 'selector'])
-def test_review_fix_must_cover_current_findings_exactly_once(review_fix, invalid):
-    inputs, reply = review_fix
-    if invalid == 'omitted':
-        reply.pop('reproductions')
-    elif invalid == 'partial':
-        reply['reproductions'].pop()
-    elif invalid == 'duplicate':
-        reply['reproductions'].append(reply['reproductions'][0])
-    elif invalid == 'unknown':
-        reply['reproductions'][0]['finding_id'] = 'invented'
-    elif invalid == 'old':
-        reply['reproductions'][0]['finding_id'] = 'old-review'
-    else:
-        reply['reproductions'][0]['tests'] = ['test_greeting.py']
-    with pytest.raises(ValueError, match='reproduc|finding|pytest'):
-        maker._check_reply(inputs, reply)
-
 
 def test_failed_checks_do_not_require_new_tests(maker_request):
     inputs = maker_request['inputs']

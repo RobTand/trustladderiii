@@ -32,6 +32,10 @@ def vectors():
         for item, goal in zip(value["self_check"], ids):
             item["goal_id"] = goal
         reply("coverage/" + "/".join(ids), inputs, value)
+    for count in range(6):
+        value = deepcopy(done)
+        value["self_check"] = [deepcopy(done["self_check"][index % 3]) for index in range(count)]
+        reply(f"coverage/count/{count}", inputs, value)
     for statuses in itertools.product(["met", "pending", "not_met"], repeat=3):
         value = deepcopy(done)
         for item, status in zip(value["self_check"], statuses):
@@ -45,7 +49,8 @@ def vectors():
     declarations = [None, {}, {**proof, "extra": 1}, {**proof, "subjects": None},
                     {**proof, "subjects": ["a.py"] * 17}, {**proof, "subjects": ["../a.py"]},
                     {**proof, "subjects": ["a.py", "a.py"]}, {**proof, "red_message": ""},
-                    {**proof, "red_message": "r" * 161}, proof]
+                    {**proof, "red_message": "r" * 161}, {**proof, "red_message": "é" * 160},
+                    {**proof, "red_message": "é" * 161}, proof]
     for index, declaration in enumerate(declarations):
         value = {"kind": "done", "self_check": [], "reproductions": [{"finding_id": "f",
                  "tests": ["test_a.py::test_a"], "proof": declaration}]}
@@ -81,6 +86,19 @@ def vectors():
     reply("request_123/future-proof", incident["inputs"], changed)
     review_inputs, value = review_fix.__wrapped__(deepcopy(fixture))
     reply("review662/declaration", review_inputs, value)
+    for invalid in ["omitted", "partial", "duplicate", "unknown", "old", "selector"]:
+        changed = deepcopy(value)
+        if invalid == "omitted":
+            changed.pop("reproductions")
+        elif invalid == "partial":
+            changed["reproductions"].pop()
+        elif invalid == "duplicate":
+            changed["reproductions"].append(deepcopy(changed["reproductions"][0]))
+        elif invalid in {"unknown", "old"}:
+            changed["reproductions"][0]["finding_id"] = "old-review" if invalid == "old" else "invented"
+        else:
+            changed["reproductions"][0]["tests"] = ["test_greeting.py"]
+        reply("review-fix/" + invalid, review_inputs, changed)
     missing = deepcopy(value)
     missing["reproductions"][0].pop("proof")
     reply("review662/missing-red-message", review_inputs, missing)

@@ -19,7 +19,7 @@ class Crash(Exception):
     pass
 
 
-@pytest.mark.parametrize("seed", range(12))
+@pytest.mark.parametrize("seed", range(21))
 def test_checker_and_handoff_preserve_the_io_schedule(maker_request, monkeypatch, tmp_path, seed):
     old = SimpleNamespace(**reference())
     # Execute the verbatim old run with the exact same injected I/O boundary.
@@ -42,6 +42,8 @@ def test_checker_and_handoff_preserve_the_io_schedule(maker_request, monkeypatch
         reads = iter(random_reads.randrange(65536) for _ in range(100))
         write_index = 0
         crash = seed // 3
+        crash_write = (crash + 1) // 2
+        crash_after = crash > 0 and crash % 2 == 0
 
         class Agent:
             def stream(self, *args, **kwargs):
@@ -52,7 +54,7 @@ def test_checker_and_handoff_preserve_the_io_schedule(maker_request, monkeypatch
         class Evidence:
             def state(self):
                 events.append(["evidence.state", next(reads)])
-                return {"test_runs": [], "environment_failures": []}
+                return {"test_runs": [], "environment_failures": [], "sample": next(reads)}
 
             def test_evidence(self):
                 events.append(["evidence.test_evidence", next(reads)])
@@ -67,20 +69,23 @@ def test_checker_and_handoff_preserve_the_io_schedule(maker_request, monkeypatch
             data = json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
             events.append(["save", Path(path).suffix, data])
             write_index += 1
-            if write_index == crash:
+            if write_index == crash_write and not crash_after:
                 raise Crash()
             persisted[str(path)] = data
+            if write_index == crash_write and crash_after:
+                raise Crash()
 
         def starting(request, session):
             events.append(["starting", next(reads)])
-            return "base", None, None
+            return f"base-{next(reads)}", None, None
 
         def read_json(text):
-            return {"generation": 0}
+            events.append(["read_json", next(reads)])
+            return {"generation": next(reads)}
 
         def commit(*args):
             events.append(["commit", next(reads)])
-            return "b" * 40
+            return f"{next(reads):040x}"
 
         def tree(*args):
             sample = next(reads)

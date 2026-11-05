@@ -85,5 +85,24 @@ fn extracted_loop_preserves_generated_io_schedules() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("12 passed"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("21 passed"));
+}
+
+proptest::proptest! {
+    /// Q54: the real parser's set/count reduction agrees with one occurrence per goal.
+    #[test]
+    fn parsed_goal_and_finding_maps_cover_each_identity_once(
+        count in 0usize..8,
+        mapped in proptest::collection::vec(0usize..9, 0..12),
+    ) {
+        use serde_json::json;
+        let inputs = json!({"goals":(0..count).map(|id| json!({"id":format!("goal-{id}")})).collect::<Vec<_>>()});
+        let reply = json!({"kind":"done", "self_check":mapped.iter().map(|id| json!({"goal_id":format!("goal-{id}"), "status":"met"})).collect::<Vec<_>>()});
+        let expected = mapped.iter().all(|id| *id < count)
+            && (0..count).all(|id| mapped.iter().filter(|mapped| **mapped == id).count() == 1);
+        proptest::prop_assert_eq!(maker_reply::validate(&inputs, &reply).is_ok(), expected);
+        let inputs = json!({"goals":[], "current_review_findings":(0..count).map(|id| json!({"id":format!("finding-{id}")})).collect::<Vec<_>>()});
+        let reply = json!({"kind":"done", "self_check":[], "reproductions":mapped.iter().map(|id| json!({"finding_id":format!("finding-{id}"), "reason":"manual correction"})).collect::<Vec<_>>()});
+        proptest::prop_assert_eq!(maker_reply::validate(&inputs, &reply).is_ok(), expected);
+    }
 }
