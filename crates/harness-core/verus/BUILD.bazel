@@ -9,7 +9,7 @@ verus_test(
     src = "limits_arithmetic.rs",
     srcs = ["//crates/harness-core:src/limits.rs"],
     module = "limits::arithmetic",
-    expected_obligations = 4,
+    expected_obligations = 5,
     tags = ["rust", "verus"],
     size = "small",
     timeout = "short",
