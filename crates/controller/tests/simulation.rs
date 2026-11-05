@@ -1837,6 +1837,7 @@ fn reconciled_failure(settings: &tl3_config::Store) {
             let mut ownership =
                 tl3_controller::Ownership::claim(Store::connect(settings).unwrap()).unwrap();
             ownership.migrate().unwrap();
+            ownership.release().unwrap();
         }
         let (mut controller, fault) = faulty(settings, root.path(), Fault::Found(ack));
         controller.intake(labelled()).unwrap();
@@ -2194,7 +2195,7 @@ fn status_is_read_only(settings: &tl3_config::Store) {
     let mut ownership =
         tl3_controller::Ownership::claim(Store::connect(settings).unwrap()).unwrap();
     ownership.migrate().unwrap();
-    drop(ownership);
+    ownership.release().unwrap();
     let mut writer = Store::open(settings).unwrap();
     assert!(
         status::load(&mut Reader::open(settings).unwrap())
