@@ -2,7 +2,12 @@
 //! unreadable checks) only opens or clears incidents; it never becomes a
 //! kernel fact, so it never counts a failure or charges credit.
 
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
 /// The request's node, as the translation reads it.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Phase {
@@ -12,6 +17,8 @@ pub enum Phase {
     Other,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct NodeView {
@@ -24,12 +31,17 @@ pub struct NodeView {
 
 impl NodeView {
     /// Publishing with an enqueue still pending.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == (self.phase == Phase::Publishing && self.enqueue_pending),
+))]
     fn enqueuing(self) -> bool {
         self.phase == Phase::Publishing && self.enqueue_pending
     }
 }
 
 /// A queue fact's evidence, without its payload.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Kind {
@@ -57,6 +69,9 @@ impl Kind {
 
     /// Evidence about a queue attempt on one head, which matters only while
     /// that head is the node's head.
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == matches!(self, Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand),
+))]
     pub fn names_attempt_head(self) -> bool {
         matches!(
             self,
@@ -68,6 +83,9 @@ impl Kind {
 /// Whether the node takes the fact at all. A closed node takes only a merge
 /// it has not recorded. A head-check failure waits for a node that is queued
 /// or still enqueuing, so a later active enqueue can consume it.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == (if node.phase == Phase::Closed { matches!(kind, Kind::Merged { .. }) && !node.merged } else if matches!(kind, Kind::CiFailed { head_check: true, .. }) { node.phase == Phase::Queued || node.phase == Phase::Publishing && node.enqueue_pending } else { true }),
+))]
 pub fn admit(kind: Kind, node: NodeView) -> bool {
     if node.phase == Phase::Closed && (!matches!(kind, Kind::Merged { .. }) || node.merged) {
         return false;
@@ -82,6 +100,8 @@ pub fn admit(kind: Kind, node: NodeView) -> bool {
 }
 
 /// Why a queue CI failure is or is not infrastructure.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
     /// A test that failed in an earlier infrastructure failure on this head
@@ -105,6 +125,9 @@ impl Decision {
 
 /// Classify a queue CI failure. A repeated test is never infrastructure; a
 /// failure outside the change is, unless repeated; otherwise `upstream` stands.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result.0 == (!repeated && (outside || upstream)), result.1 == (if repeated { Decision::RepeatedTest } else if outside { Decision::OutsideChange } else { Decision::UpstreamClassification }),
+))]
 pub fn classify_ci(upstream: bool, outside: bool, repeated: bool) -> (bool, Decision) {
     let infra = if outside || repeated {
         outside && !repeated
@@ -122,6 +145,8 @@ pub fn classify_ci(upstream: bool, outside: bool, repeated: bool) -> (bool, Deci
 }
 
 /// The kernel fact a queue fact becomes.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KernelFact {
     PrMerged { checks_passed: bool },
@@ -133,6 +158,8 @@ pub enum KernelFact {
 }
 
 /// What the controller does with an admitted queue fact.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route {
     /// Record the fact as observed; nothing else.
@@ -153,6 +180,9 @@ pub enum Route {
 
 /// `head_current`: an attempt's head is the node's head. `approved_head`: a
 /// Q52 or #447 fact names the node's approved head.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == route_result(kind, node, head_current, approved_head),
+))]
 pub fn route(kind: Kind, node: NodeView, head_current: bool, approved_head: bool) -> Route {
     if kind.names_attempt_head() && !head_current {
         return Route::Record;
@@ -176,4 +206,26 @@ pub fn route(kind: Kind, node: NodeView, head_current: bool, approved_head: bool
         Kind::ClosedByPerson => Route::Kernel(KernelFact::PrClosedByPerson),
         Kind::PushByOther => Route::Kernel(KernelFact::PushByOther),
     }
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #743/K-translate-route and Q52: independent exact routing oracle.
+pub open spec fn route_result(kind: Kind, node: NodeView, current: bool, approved: bool) -> Route {
+    let attempt = matches!(kind, Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand);
+    if attempt && !current { Route::Record } else {
+        match kind {
+            Kind::ChecksUnavailable => Route::SetupIncident,
+            Kind::CheckMissing => if node.phase == Phase::Publishing && node.enqueue_pending && approved { Route::MissingIncident } else { Route::Skip },
+            Kind::QueueBlocked => if (node.phase == Phase::Queued || node.phase == Phase::Publishing && node.enqueue_pending) && approved { Route::BlockedIncident } else { Route::Skip },
+            Kind::CheckReported => Route::ClearIncident,
+            Kind::Merged { checks_passed } => Route::Kernel(KernelFact::PrMerged { checks_passed }),
+            Kind::CiFailed { infra, .. } => Route::Kernel(KernelFact::CiFailed { infra }),
+            Kind::Conflict => Route::Kernel(KernelFact::Conflict),
+            Kind::DequeuedByPerson | Kind::DequeuedByCommand => Route::Kernel(KernelFact::PrDequeuedByPerson),
+            Kind::ClosedByPerson => Route::Kernel(KernelFact::PrClosedByPerson),
+            Kind::PushByOther => Route::Kernel(KernelFact::PushByOther),
+        }
+    }
+}
 }

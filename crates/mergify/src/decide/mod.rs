@@ -50,3 +50,6 @@ pub mod required;
 
 #[cfg(test)]
 mod observe_witness;
+
+#[cfg(any(test, verus_keep_ghost))]
+mod decide_witness;
