@@ -502,6 +502,9 @@ fn ingest_validation_retry_receives_the_safe_kind_diagnostic() {
     assert_eq!(retry.generation, 1);
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.github.repos[0].owner = "owner".into();
+    config.github.repos[0].name = "sandbox".into();
+    config.github.repos[0].installation_id = 3;
     config.store = w.settings.clone();
     config.workers.runs = w.root.path().join("runs");
     config.models.key_file = w.root.path().join("fixture-key");
