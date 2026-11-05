@@ -2023,3 +2023,13 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned.rs"]
+mod progress_unplanned;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned_admission.rs"]
+mod progress_unplanned_admission;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned_waiting.rs"]
+mod progress_unplanned_waiting;
