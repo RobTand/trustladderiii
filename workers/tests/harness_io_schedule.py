@@ -488,10 +488,29 @@ def compare_crashes(function, before_module, after_module, schedule):
     return old
 
 
+
+def verify_crash_cut(schedule):
+    """#823 review-r2: capture unflushed bytes before context-manager cleanup."""
+    example = {**schedule, 'reads':[0], 'selector_reads':[True, True],
+               'selectors':['t.py'], 'mode':'run_current', 'crash':-1, 'base':False, 'reattach':False}
+    for function, module, write in [(action, test_tool, 'write'), (lifecycle, pb_tests, 'stage-write')]:
+        with tempfile.TemporaryDirectory(prefix='harness-cut-') as name:
+            complete = function(module, Path(name), example)
+        index = next(i for i, call in enumerate(complete[0]) if call[0] == write)
+        cut = 2 * sum(call[0] == 'after' for call in complete[0][:index]) + 1
+        with tempfile.TemporaryDirectory(prefix='harness-cut-') as name:
+            crashed = function(module, Path(name), {**example, 'crash':cut})
+        path = 'progress.json.823.tmp' if write == 'write' else complete[0][index][1]
+        persisted = crashed[2][path]
+        if write == 'stage-write': persisted = persisted[0]
+        assert persisted == '', ('crash cleanup published unflushed bytes', function.__name__, path, persisted)
+
+
 def decide(schedule):
     global REFUSALS_CHECKED
     # The fixed below-cap counterexample must be compared before the random paths.
     if not REFUSALS_CHECKED:
+        verify_crash_cut(schedule)
         example = {**schedule, 'reads':[1] * 21, 'selector_reads':[1, 1],
                    'selectors':['t.py'], 'repeat':2, 'mode':'run', 'crash':-1, 'empty_messages':True}
         with tempfile.TemporaryDirectory(prefix='harness-repeat-') as name:

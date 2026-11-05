@@ -471,3 +471,10 @@ fn production_contract_boundaries_match_the_verified_document_reference() {
         conform(input.clone(), limit);
     }
 }
+
+/// #823 review-r2: Python surrogate keys are supported throughout proof metadata.
+#[test]
+fn complete_surrogate_key_summary_matches_the_reference() {
+    let input = value(r#"{"status":"completed","tests":[{"test":"t.py::red","outcome":"failed","message":"\udfff"}],"totals":{"failed":1},"proof":{"mode":"head-observer","observer_sha256":{"\ud800":"\udc00"}},"receipts":[{"\udfff":"\ud800"}],"note":"","origin":"test_run"}"#);
+    conform(input.clone(), size(&input) as usize);
+}
