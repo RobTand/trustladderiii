@@ -1,0 +1,17 @@
+pub fn head(verdict: Verdict, matches: bool) -> Result<(), Violation> {
+    if verdict == Verdict::Approve && !matches {
+        Err(Violation::Head)
+    } else {
+        Ok(())
+    }
+}
+
+pub fn finding(f: Finding) -> Result<(), Violation> {
+    if !f.known {
+        Err(Violation::Citation)
+    } else if f.scope && !f.quoted {
+        Err(Violation::Scope)
+    } else {
+        Ok(())
+    }
+}

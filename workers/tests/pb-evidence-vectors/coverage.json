@@ -1,0 +1,1204 @@
+{
+  "refusals": {
+    ".+\\ ended\\ .+;\\ expected\\ .+": {
+      "sources": [
+        "forcing_rehearsal.unusable"
+      ],
+      "cases": [
+        "rehearsal-identity/unusable-wrong-outcome"
+      ]
+    },
+    "Generator\\ action\\ did\\ not\\ succeed;\\ inspect\\ its\\ PrismaBuild\\ terminal\\ record\\.": {
+      "sources": [
+        "pb_generators._artifact"
+      ],
+      "cases": [
+        "generator-artifact/exit",
+        "generator-artifact/key",
+        "generator-artifact/status",
+        "generator-artifact/success-bool-required"
+      ]
+    },
+    "Generator\\ action\\ has\\ no\\ verified\\ PrismaBuild\\ receipt\\.": {
+      "sources": [
+        "pb_generators._artifact"
+      ],
+      "cases": [
+        "generator-artifact/receipt-sha",
+        "generator-artifact/unverified"
+      ]
+    },
+    "Generator\\ action\\ returned\\ no\\ unique\\ complete\\ artifact\\.": {
+      "sources": [
+        "pb_generators._artifact"
+      ],
+      "cases": [
+        "generator-artifact/no-artifact",
+        "generator-artifact/two-artifacts"
+      ]
+    },
+    "Generator\\ artifact\\ digest\\ mismatch\\.": {
+      "sources": [
+        "pb_generators._artifact"
+      ],
+      "cases": [
+        "generator-artifact/log-sha",
+        "generator-artifact/log-size"
+      ]
+    },
+    "Generator\\ artifact\\ exceeds\\ its\\ limit\\.": {
+      "sources": [
+        "pb_generators._artifact"
+      ],
+      "cases": [
+        "generator-artifact/artifact-bytes-above",
+        "generator-artifact/empty-log",
+        "generator-artifact/oversized-log"
+      ]
+    },
+    "Invalid\\ summary\\ structure": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/shape-note",
+        "ending-summary/shape-status",
+        "ending-summary/shape-tests",
+        "ending-summary/shape-totals",
+        "ending-summary/test-name",
+        "ending-summary/test-outcome",
+        "ending-summary/test-shape",
+        "ending-summary/totals-bool",
+        "ending-summary/totals-float",
+        "ending-summary/totals-keys",
+        "ending-summary/totals-negative"
+      ]
+    },
+    "PrismaBuild\\ action\\ did\\ not\\ succeed": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/exit",
+        "ending-summary/key",
+        "ending-summary/status",
+        "ending-summary/succeeded"
+      ]
+    },
+    "PrismaBuild\\ result\\ lacks\\ verified\\ receipt\\ evidence": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/receipt-sha",
+        "ending-summary/receipt-type",
+        "ending-summary/verified"
+      ]
+    },
+    "PrismaBuild\\ result\\ log\\ changed": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/log-sha",
+        "ending-summary/log-size-changed"
+      ]
+    },
+    "PrismaBuild\\ result\\ log\\ exceeded\\ its\\ limit": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/log-bytes-above",
+        "ending-summary/log-size-bool",
+        "ending-summary/log-size-limit",
+        "ending-summary/log-size-negative"
+      ]
+    },
+    "PrismaBuild\\ returned\\ no\\ unique\\ test\\ summary": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/no-summary",
+        "ending-summary/two-summaries"
+      ]
+    },
+    "PrismaBuild\\ tools_path\\ must\\ be\\ absolute": {
+      "sources": [
+        "pb_tests.TestSettings.__post_init__"
+      ],
+      "cases": [
+        "post-wait-consistency/settings-relative-tools"
+      ]
+    },
+    "Q55\\ check\\ lacks\\ a\\ matching\\ forcing\\ rehearsal\\ receipt\\ for\\ the\\ exact\\ base,\\ selectors\\ and\\ forcing:\\ .+": {
+      "sources": [
+        "forcing_rehearsal.ForcingRehearsals.violations"
+      ],
+      "cases": [
+        "rehearsal-identity/violations-absent",
+        "rehearsal-identity/violations-wrong-base"
+      ]
+    },
+    "Test\\ resource\\ and\\ quiet\\ allowances\\ must\\ be\\ positive\\ integers": {
+      "sources": [
+        "pb_tests.TestSettings.__post_init__"
+      ],
+      "cases": [
+        "post-wait-consistency/settings-cpus-zero",
+        "post-wait-consistency/settings-mem-bool",
+        "post-wait-consistency/settings-quiet-float"
+      ]
+    },
+    "Use\\ a\\ list\\ of\\ at\\ most\\ 256\\ test\\ selectors": {
+      "sources": [
+        "pb_tests._selectors"
+      ],
+      "cases": [
+        "post-wait-consistency/selectors-not-list",
+        "post-wait-consistency/selectors-too-many"
+      ]
+    },
+    "Use\\ an\\ explicit\\ configured\\ image\\ interpreter,\\ such\\ as\\ python3\\ tools/bazel/build_files\\.py": {
+      "sources": [
+        "generator._check_interpreter"
+      ],
+      "cases": [
+        "generator-artifact/invalid-interpreter"
+      ]
+    },
+    "Use\\ an\\ immutable\\ container\\ image\\ digest": {
+      "sources": [
+        "pb_tests.TestSettings.__post_init__"
+      ],
+      "cases": [
+        "post-wait-consistency/settings-mutable-image"
+      ]
+    },
+    "Use\\ priority\\ \\-10\\ to\\ 0,\\ or\\ leave\\ it\\ out\\ for\\ PrismaBuild's\\ default": {
+      "sources": [
+        "pb_tests._priority"
+      ],
+      "cases": [
+        "post-wait-consistency/priority-'0'",
+        "post-wait-consistency/priority--11",
+        "post-wait-consistency/priority-0.0",
+        "post-wait-consistency/priority-1",
+        "post-wait-consistency/priority-True"
+      ]
+    },
+    "Use\\ relative\\ pytest\\ paths\\ or\\ node\\ IDs": {
+      "sources": [
+        "pb_tests._selectors"
+      ],
+      "cases": [
+        "post-wait-consistency/selectors-absolute",
+        "post-wait-consistency/selectors-backslash",
+        "post-wait-consistency/selectors-blank",
+        "post-wait-consistency/selectors-carriage-return",
+        "post-wait-consistency/selectors-git",
+        "post-wait-consistency/selectors-newline",
+        "post-wait-consistency/selectors-node-without-file",
+        "post-wait-consistency/selectors-nul",
+        "post-wait-consistency/selectors-option",
+        "post-wait-consistency/selectors-parent",
+        "post-wait-consistency/selectors-too-long"
+      ]
+    },
+    "duplicate\\ generator\\ output": {
+      "sources": [
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/duplicate-output"
+      ]
+    },
+    "generator\\ artifact\\ argv\\ differs\\ from\\ its\\ configured\\ command": {
+      "sources": [
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/argv"
+      ]
+    },
+    "generator\\ artifact\\ contains\\ an\\ unchanged\\ output": {
+      "sources": [
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/unchanged-output"
+      ]
+    },
+    "generator\\ artifact\\ has\\ a\\ stale\\ input\\ tree": {
+      "sources": [
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/stale-input"
+      ]
+    },
+    "generator\\ budget\\ requires\\ 1–16\\ CPUs,\\ 1–64\\ GiB\\ and\\ generator_timeout_s\\ in\\ 1–600": {
+      "sources": [
+        "generator.budget"
+      ],
+      "cases": [
+        "generator-artifact/budget-cpus-above",
+        "generator-artifact/budget-cpus-below",
+        "generator-artifact/budget-mem_gb-above",
+        "generator-artifact/budget-mem_gb-below",
+        "generator-artifact/budget-timeout_s-above",
+        "generator-artifact/budget-timeout_s-below"
+      ]
+    },
+    "generator\\ changed\\ an\\ output\\ mode:\\ .+;\\ new\\ outputs\\ require\\ mode\\ 0644": {
+      "sources": [
+        "generator.changed"
+      ],
+      "cases": [
+        "generator-artifact/changed-mode"
+      ]
+    },
+    "generator\\ changed\\ protected\\ output:\\ .+": {
+      "sources": [
+        "generator.changed"
+      ],
+      "cases": [
+        "generator-artifact/protected-output"
+      ]
+    },
+    "generator\\ changed\\ undeclared\\ generated\\ output:\\ .+": {
+      "sources": [
+        "generator.changed"
+      ],
+      "cases": [
+        "generator-artifact/undeclared"
+      ]
+    },
+    "generator\\ deleted\\ an\\ output:\\ .+": {
+      "sources": [
+        "generator.changed"
+      ],
+      "cases": [
+        "generator-artifact/deleted-output"
+      ]
+    },
+    "generator\\ output\\ digest\\ or\\ mode\\ mismatch": {
+      "sources": [
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/digest",
+        "generator-artifact/mode"
+      ]
+    },
+    "generator\\ output\\ exceeds\\ the\\ file\\ size\\ limit": {
+      "sources": [
+        "generator.text"
+      ],
+      "cases": [
+        "generator-artifact/file-bytes-above"
+      ]
+    },
+    "generator\\ output\\ exceeds\\ total\\ size\\ limit": {
+      "sources": [
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/total-bytes-above"
+      ]
+    },
+    "generator\\ output\\ file\\ count\\ exceeds\\ limit": {
+      "sources": [
+        "generator.changed",
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/changed-count-above",
+        "generator-artifact/count",
+        "generator-artifact/outputs-above"
+      ]
+    },
+    "generator\\ output\\ manifest\\ digest\\ mismatch": {
+      "sources": [
+        "generator.validate_artifact"
+      ],
+      "cases": [
+        "generator-artifact/output-manifest"
+      ]
+    },
+    "generator\\ output\\ must\\ be\\ text": {
+      "sources": [
+        "generator.text"
+      ],
+      "cases": [
+        "generator-artifact/control-text"
+      ]
+    },
+    "generator\\ path\\ must\\ be\\ a\\ canonical\\ relative\\ file\\ path": {
+      "sources": [
+        "generator.path_parts"
+      ],
+      "cases": [
+        "generator-artifact/component-bytes-above",
+        "generator-artifact/path-bytes-above",
+        "generator-artifact/path-control",
+        "generator-artifact/path-traversal"
+      ]
+    },
+    "identity_exceeds_summary_limit": {
+      "sources": [
+        "test_tool._summary_limit"
+      ],
+      "cases": [
+        "ending-summary/identity-over-limit"
+      ]
+    },
+    "incomplete\\ node\\ results": {
+      "sources": [
+        "forcing_rehearsal.unusable"
+      ],
+      "cases": [
+        "rehearsal-identity/unusable-incomplete"
+      ]
+    },
+    "invalid\\ evidence\\ selectors": {
+      "sources": [
+        "tools._selectors"
+      ],
+      "cases": [
+        "evidence-ledger/invalid-selectors-base",
+        "evidence-ledger/invalid-selectors-test"
+      ]
+    },
+    "invalid\\ evidence\\ state": {
+      "sources": [
+        "tools.Evidence.restore"
+      ],
+      "cases": [
+        "evidence-ledger/invalid-state-key",
+        "evidence-ledger/invalid-state-run",
+        "evidence-ledger/invalid-state-runs",
+        "evidence-ledger/invalid-state-tool"
+      ]
+    },
+    "invalid_ending": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/exit",
+        "ending-summary/key",
+        "ending-summary/status",
+        "ending-summary/succeeded"
+      ]
+    },
+    "invalid_log_receipt": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/log-bytes-above",
+        "ending-summary/log-sha",
+        "ending-summary/log-size-bool",
+        "ending-summary/log-size-changed",
+        "ending-summary/log-size-limit",
+        "ending-summary/log-size-negative",
+        "ending-summary/missing-log",
+        "ending-summary/stdout-bool",
+        "ending-summary/stdout-empty",
+        "ending-summary/stdout-int",
+        "ending-summary/stdout-list",
+        "ending-summary/stdout-null",
+        "ending-summary/stdout-string"
+      ]
+    },
+    "invalid_summary": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/json",
+        "ending-summary/shape-note",
+        "ending-summary/shape-status",
+        "ending-summary/shape-tests",
+        "ending-summary/shape-totals",
+        "ending-summary/symptom-missing",
+        "ending-summary/symptom-run-index",
+        "ending-summary/symptom-run-sha",
+        "ending-summary/symptom-run-summary",
+        "ending-summary/test-name",
+        "ending-summary/test-outcome",
+        "ending-summary/test-shape",
+        "ending-summary/totals-bool",
+        "ending-summary/totals-float",
+        "ending-summary/totals-keys",
+        "ending-summary/totals-negative"
+      ]
+    },
+    "machine_record_command_killed": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/private-killed"
+      ]
+    },
+    "machine_record_descriptor_unavailable": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/descriptor-unavailable"
+      ]
+    },
+    "machine_record_empty": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/private-empty"
+      ]
+    },
+    "machine_record_invalid_json": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/private-invalid-json",
+        "machine-record-fallback/private-multiple"
+      ]
+    },
+    "machine_record_io_failed": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/private-io"
+      ]
+    },
+    "machine_record_not_object": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/private-not-object"
+      ]
+    },
+    "machine_record_too_large": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/private-bytes-above",
+        "machine-record-fallback/private-oversized"
+      ]
+    },
+    "machine_record_unterminated": {
+      "sources": [
+        "pb_tests._json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/private-unterminated"
+      ]
+    },
+    "missing\\ completed,\\ verified\\ receipt:\\ status=.+;\\ .+": {
+      "sources": [
+        "forcing_rehearsal.unusable"
+      ],
+      "cases": [
+        "rehearsal-identity/unusable-missing-receipts"
+      ]
+    },
+    "missing\\ node\\ result\\ for\\ .+": {
+      "sources": [
+        "forcing_rehearsal.unusable"
+      ],
+      "cases": [
+        "rehearsal-identity/unusable-missing-node"
+      ]
+    },
+    "missing\\ symptom\\ run\\ receipt": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/symptom-missing"
+      ]
+    },
+    "missing_unique_summary": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/no-summary",
+        "ending-summary/two-summaries"
+      ]
+    },
+    "reserved\\ generator\\ import\\ path": {
+      "sources": [
+        "generator.path_parts"
+      ],
+      "cases": [
+        "generator-artifact/reserved-path"
+      ]
+    },
+    "stdout_record_command_killed": {
+      "sources": [
+        "pb_tests._stdout_json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-killed"
+      ]
+    },
+    "stdout_record_invalid_json": {
+      "sources": [
+        "pb_tests._stdout_json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-invalid-json"
+      ]
+    },
+    "stdout_record_io_failed": {
+      "sources": [
+        "pb_tests._stdout_json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-io"
+      ]
+    },
+    "stdout_record_not_object": {
+      "sources": [
+        "pb_tests._stdout_json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-not-object"
+      ]
+    },
+    "stdout_record_too_large": {
+      "sources": [
+        "pb_tests._stdout_json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-bytes-above",
+        "machine-record-fallback/stdout-oversized"
+      ]
+    },
+    "submission_refused_exit_.+": {
+      "sources": [
+        "pb_tests._json_command",
+        "pb_tests._stdout_json_command"
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-refused",
+        "machine-record-fallback/submission-refused"
+      ]
+    },
+    "symptom\\ run\\ receipt\\ changed": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/symptom-run-index",
+        "ending-summary/symptom-run-sha",
+        "ending-summary/symptom-run-summary"
+      ]
+    },
+    "unverified_receipt": {
+      "sources": [
+        "pb_tests._summary"
+      ],
+      "cases": [
+        "ending-summary/receipt-sha",
+        "ending-summary/receipt-type",
+        "ending-summary/result-bool",
+        "ending-summary/result-empty",
+        "ending-summary/result-int",
+        "ending-summary/result-list",
+        "ending-summary/result-null",
+        "ending-summary/result-string",
+        "ending-summary/verified"
+      ]
+    }
+  },
+  "dynamic_refusals": {
+    "generator.validate_artifact: artifact['message']": [
+      "generator-artifact/validate-failed"
+    ],
+    "pb_tests._json_command: cause": [
+      "machine-record-fallback/private-empty",
+      "machine-record-fallback/private-io"
+    ],
+    "pb_tests._stdout_json_command: cause": [
+      "machine-record-fallback/stdout-invalid-json",
+      "machine-record-fallback/stdout-io"
+    ],
+    "pb_tests._summary: cause": [
+      "ending-summary/key",
+      "ending-summary/stdout-null"
+    ]
+  },
+  "bounds": {
+    "generator.budget: 1 <= cpus <= 16": {
+      "values": [
+        1,
+        16
+      ],
+      "cases": [
+        "generator-artifact/budget-cpus-below",
+        "generator-artifact/budget-cpus-min",
+        "generator-artifact/budget-cpus-at",
+        "generator-artifact/budget-cpus-above"
+      ]
+    },
+    "generator.budget: 1 <= mem_gb <= 64": {
+      "values": [
+        1,
+        64
+      ],
+      "cases": [
+        "generator-artifact/budget-mem_gb-below",
+        "generator-artifact/budget-mem_gb-min",
+        "generator-artifact/budget-mem_gb-at",
+        "generator-artifact/budget-mem_gb-above"
+      ]
+    },
+    "generator.budget: 1 <= timeout_s <= MAX_TIMEOUT": {
+      "values": [
+        1,
+        600
+      ],
+      "cases": [
+        "generator-artifact/budget-timeout_s-below",
+        "generator-artifact/budget-timeout_s-min",
+        "generator-artifact/budget-timeout_s-at",
+        "generator-artifact/budget-timeout_s-above"
+      ]
+    },
+    "generator.changed: len(names) > MAX_OUTPUTS": {
+      "values": [
+        128
+      ],
+      "cases": [
+        "generator-artifact/changed-count-below",
+        "generator-artifact/changed-count-at",
+        "generator-artifact/changed-count-above"
+      ]
+    },
+    "generator.path_parts: len(name.encode()) > 3072": {
+      "values": [
+        3072
+      ],
+      "cases": [
+        "generator-artifact/path-bytes-at",
+        "generator-artifact/path-bytes-above"
+      ]
+    },
+    "generator.path_parts: len(part.encode()) > 255": {
+      "values": [
+        255
+      ],
+      "cases": [
+        "generator-artifact/component-bytes-at",
+        "generator-artifact/component-bytes-above"
+      ]
+    },
+    "generator.path_parts: ord(char) < 32": {
+      "values": [
+        32
+      ],
+      "cases": [
+        "generator-artifact/path-control",
+        "generator-artifact/verified-import"
+      ]
+    },
+    "generator.text: byte < 32": {
+      "values": [
+        32
+      ],
+      "cases": [
+        "generator-artifact/control-text",
+        "generator-artifact/allowed-text-controls"
+      ]
+    },
+    "generator.text: byte not in (9, 10, 13)": {
+      "values": [
+        9,
+        10,
+        13
+      ],
+      "cases": [
+        "generator-artifact/control-text",
+        "generator-artifact/allowed-text-controls"
+      ]
+    },
+    "generator.text: len(raw) > FILE_BYTES": {
+      "values": [
+        16777216
+      ],
+      "cases": [
+        "generator-artifact/file-bytes-below",
+        "generator-artifact/file-bytes-at",
+        "generator-artifact/file-bytes-above"
+      ]
+    },
+    "generator.validate_artifact: artifact['exit_code'] != 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "generator-artifact/validate-failed",
+        "generator-artifact/outputs-at"
+      ]
+    },
+    "generator.validate_artifact: entry['mode'] not in (420, 493)": {
+      "values": [
+        420,
+        493
+      ],
+      "cases": [
+        "generator-artifact/mode",
+        "generator-artifact/verified-import"
+      ]
+    },
+    "generator.validate_artifact: len(outputs) > MAX_OUTPUTS": {
+      "values": [
+        128
+      ],
+      "cases": [
+        "generator-artifact/outputs-below",
+        "generator-artifact/outputs-at",
+        "generator-artifact/outputs-above"
+      ]
+    },
+    "generator.validate_artifact: total > OUTPUT_BYTES": {
+      "values": [
+        33554432
+      ],
+      "cases": [
+        "generator-artifact/total-bytes-below",
+        "generator-artifact/total-bytes-at",
+        "generator-artifact/total-bytes-above"
+      ]
+    },
+    "pb_generators._artifact: 0 < log['bytes'] <= generator.ARTIFACT_BYTES": {
+      "values": [
+        0,
+        50331648
+      ],
+      "cases": [
+        "generator-artifact/artifact-bytes-below",
+        "generator-artifact/artifact-bytes-at",
+        "generator-artifact/artifact-bytes-above"
+      ]
+    },
+    "pb_generators._artifact: ending['exit_code'] != 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "generator-artifact/verified-import",
+        "generator-artifact/exit"
+      ]
+    },
+    "pb_generators._artifact: len(records) != 1": {
+      "values": [
+        1
+      ],
+      "cases": [
+        "generator-artifact/verified-import",
+        "generator-artifact/no-artifact",
+        "generator-artifact/two-artifacts"
+      ]
+    },
+    "pb_generators._artifact: re.fullmatch('[0-9a-f]{64}', evidence['receipt_sha256'])": {
+      "values": [
+        64
+      ],
+      "cases": [
+        "generator-artifact/verified-import",
+        "generator-artifact/receipt-sha"
+      ]
+    },
+    "pb_generators._artifact: stream.read(generator.ARTIFACT_BYTES + 1)": {
+      "values": [
+        50331649
+      ],
+      "cases": [
+        "generator-artifact/artifact-bytes-below",
+        "generator-artifact/artifact-bytes-at",
+        "generator-artifact/artifact-bytes-above"
+      ]
+    },
+    "pb_tests.TestSettings.__post_init__: re.fullmatch('(?:[\\\\w./:-]+@)?sha256:[0-9a-f]{64}', self.image)": {
+      "values": [
+        64
+      ],
+      "cases": [
+        "post-wait-consistency/settings-default",
+        "post-wait-consistency/settings-mutable-image"
+      ]
+    },
+    "pb_tests.TestSettings.__post_init__: v < 1": {
+      "values": [
+        1
+      ],
+      "cases": [
+        "post-wait-consistency/settings-default",
+        "post-wait-consistency/settings-cpus-zero",
+        "post-wait-consistency/settings-mem-bool"
+      ]
+    },
+    "pb_tests._failure_receipt: ending['attempt'] > 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "failure-receipt/published-record",
+        "failure-receipt/attempt-zero",
+        "failure-receipt/attempt-bool"
+      ]
+    },
+    "pb_tests._failure_receipt: len(raw) <= 2097152": {
+      "values": [
+        2097152
+      ],
+      "cases": [
+        "failure-receipt/record-bytes-below",
+        "failure-receipt/record-bytes-at",
+        "failure-receipt/record-bytes-above"
+      ]
+    },
+    "pb_tests._failure_receipt: peak >= 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "failure-receipt/published-record",
+        "failure-receipt/peak-negative",
+        "failure-receipt/peak-positive"
+      ]
+    },
+    "pb_tests._failure_receipt: re.fullmatch('[0-9a-f]{64}', generation)": {
+      "values": [
+        64
+      ],
+      "cases": [
+        "failure-receipt/published-record",
+        "failure-receipt/generation-case"
+      ]
+    },
+    "pb_tests._failure_receipt: re.fullmatch('[a-z][a-z0-9_]{0,127}', reason)": {
+      "values": [
+        0,
+        127
+      ],
+      "cases": [
+        "failure-receipt/reason-empty",
+        "failure-receipt/reason-bytes-127",
+        "failure-receipt/reason-bytes-128",
+        "failure-receipt/reason-long"
+      ]
+    },
+    "pb_tests._failure_receipt: stream.read(2097153)": {
+      "values": [
+        2097153
+      ],
+      "cases": [
+        "failure-receipt/record-bytes-below",
+        "failure-receipt/record-bytes-at",
+        "failure-receipt/record-bytes-above"
+      ]
+    },
+    "pb_tests._json_command: channel.read(2097153)": {
+      "values": [
+        2097153
+      ],
+      "cases": [
+        "machine-record-fallback/private-bytes-below",
+        "machine-record-fallback/private-bytes-at",
+        "machine-record-fallback/private-bytes-above"
+      ]
+    },
+    "pb_tests._json_command: fd <= 2": {
+      "values": [
+        2
+      ],
+      "cases": [
+        "machine-record-fallback/descriptor-unavailable",
+        "machine-record-fallback/supported-private-wins"
+      ]
+    },
+    "pb_tests._json_command: len(raw) > 2097152": {
+      "values": [
+        2097152
+      ],
+      "cases": [
+        "machine-record-fallback/private-bytes-below",
+        "machine-record-fallback/private-bytes-at",
+        "machine-record-fallback/private-bytes-above"
+      ]
+    },
+    "pb_tests._json_command: result.returncode < 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "machine-record-fallback/private-killed",
+        "machine-record-fallback/supported-private-wins"
+      ]
+    },
+    "pb_tests._machine_record_supported: len(raw) > 4096": {
+      "values": [
+        4096
+      ],
+      "cases": [
+        "machine-record-fallback/probe-bytes-below",
+        "machine-record-fallback/probe-bytes-at",
+        "machine-record-fallback/probe-bytes-above"
+      ]
+    },
+    "pb_tests._machine_record_supported: output.read(4097)": {
+      "values": [
+        4097
+      ],
+      "cases": [
+        "machine-record-fallback/probe-bytes-below",
+        "machine-record-fallback/probe-bytes-at",
+        "machine-record-fallback/probe-bytes-above"
+      ]
+    },
+    "pb_tests._machine_record_supported: raw.count(b'\\n') != 1": {
+      "values": [
+        1
+      ],
+      "cases": [
+        "machine-record-fallback/supported-private-wins",
+        "machine-record-fallback/two-lines",
+        "machine-record-fallback/no-newline"
+      ]
+    },
+    "pb_tests._machine_record_supported: value['machine_record_fd'] >= 1": {
+      "values": [
+        1
+      ],
+      "cases": [
+        "machine-record-fallback/supported-private-wins",
+        "machine-record-fallback/zero",
+        "machine-record-fallback/bool",
+        "machine-record-fallback/float"
+      ]
+    },
+    "pb_tests._priority: -10 <= priority <= 0": {
+      "values": [
+        -10,
+        0
+      ],
+      "cases": [
+        "post-wait-consistency/priority--11",
+        "post-wait-consistency/priority--10",
+        "post-wait-consistency/priority-0",
+        "post-wait-consistency/priority-1"
+      ]
+    },
+    "pb_tests._selectors: len(test) > 2048": {
+      "values": [
+        2048
+      ],
+      "cases": [
+        "post-wait-consistency/selectors-bytes-below",
+        "post-wait-consistency/selectors-bytes-at",
+        "post-wait-consistency/selectors-too-long"
+      ]
+    },
+    "pb_tests._selectors: len(tests) > 256": {
+      "values": [
+        256
+      ],
+      "cases": [
+        "post-wait-consistency/selectors-count-below",
+        "post-wait-consistency/selectors-count-at",
+        "post-wait-consistency/selectors-too-many"
+      ]
+    },
+    "pb_tests._stdout_json_command: len(raw) > 2097152": {
+      "values": [
+        2097152
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-bytes-below",
+        "machine-record-fallback/stdout-bytes-at",
+        "machine-record-fallback/stdout-bytes-above"
+      ]
+    },
+    "pb_tests._stdout_json_command: output.read(2097153)": {
+      "values": [
+        2097153
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-bytes-below",
+        "machine-record-fallback/stdout-bytes-at",
+        "machine-record-fallback/stdout-bytes-above"
+      ]
+    },
+    "pb_tests._stdout_json_command: result.returncode < 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "machine-record-fallback/stdout-killed",
+        "machine-record-fallback/exit-2-fallback"
+      ]
+    },
+    "pb_tests._summary: 0 <= log['bytes'] <= 1048576": {
+      "values": [
+        0,
+        1048576
+      ],
+      "cases": [
+        "ending-summary/log-bytes-below",
+        "ending-summary/log-bytes-at",
+        "ending-summary/log-bytes-above",
+        "ending-summary/log-size-negative"
+      ]
+    },
+    "pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 512)": {
+      "values": [
+        15872
+      ],
+      "cases": [
+        "ending-summary/summary-bytes-below",
+        "ending-summary/summary-bytes-at",
+        "ending-summary/summary-bytes-above"
+      ]
+    },
+    "pb_tests._summary: count < 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "ending-summary/executed",
+        "ending-summary/totals-negative",
+        "ending-summary/totals-bool"
+      ]
+    },
+    "pb_tests._summary: ending['attempt'] > 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "ending-summary/executed",
+        "ending-summary/attempt-bool-ignored"
+      ]
+    },
+    "pb_tests._summary: ending['exit_code'] != 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "ending-summary/executed",
+        "ending-summary/exit",
+        "ending-summary/exit-bool-accepted"
+      ]
+    },
+    "pb_tests._summary: len(records) != 1": {
+      "values": [
+        1
+      ],
+      "cases": [
+        "ending-summary/executed",
+        "ending-summary/no-summary",
+        "ending-summary/two-summaries"
+      ]
+    },
+    "pb_tests._summary: re.fullmatch('[0-9a-f]{64}', evidence['receipt_sha256'])": {
+      "values": [
+        64
+      ],
+      "cases": [
+        "ending-summary/executed",
+        "ending-summary/receipt-sha",
+        "ending-summary/receipt-type"
+      ]
+    },
+    "pb_tests._summary: re.fullmatch('[0-9a-f]{64}', generation)": {
+      "values": [
+        64
+      ],
+      "cases": [
+        "ending-summary/executed",
+        "ending-summary/generation-invalid-ignored"
+      ]
+    },
+    "pb_tests._summary: stream.read(1048577)": {
+      "values": [
+        1048577
+      ],
+      "cases": [
+        "ending-summary/log-bytes-below",
+        "ending-summary/log-bytes-at",
+        "ending-summary/log-bytes-above",
+        "ending-summary/log-size-negative"
+      ]
+    },
+    "test_tool.bounded: default limit=SUMMARY_BYTES - 2048": {
+      "values": [
+        14336
+      ],
+      "cases": [
+        "ending-summary/default-summary-bytes-below",
+        "ending-summary/default-summary-bytes-at",
+        "ending-summary/default-summary-bytes-above"
+      ]
+    },
+    "tools.Evidence.restore: -TEST_EVIDENCE:": {
+      "values": [
+        -10
+      ],
+      "cases": [
+        "evidence-ledger/restore-count-over-limit"
+      ]
+    },
+    "tools.Evidence.test_result: -TEST_EVIDENCE:": {
+      "values": [
+        -10
+      ],
+      "cases": [
+        "evidence-ledger/ten-entries-newest-kept"
+      ]
+    },
+    "tools.Evidence.test_result: len(json.dumps(entry).encode()) > TEST_EVIDENCE_ENTRY_BYTES": {
+      "values": [
+        16384
+      ],
+      "cases": [
+        "evidence-ledger/byte-bound-and-selector-identity"
+      ]
+    },
+    "tools.Evidence.test_result: len(json.dumps(runs).encode()) > TEST_EVIDENCE_BYTES": {
+      "values": [
+        65536
+      ],
+      "cases": [
+        "evidence-ledger/byte-bound-and-selector-identity"
+      ]
+    },
+    "tools.Evidence.test_result: len(runs) > 1": {
+      "values": [
+        1
+      ],
+      "cases": [
+        "evidence-ledger/byte-bound-and-selector-identity"
+      ]
+    },
+    "tools.Evidence.test_result: re.fullmatch('[0-9a-f]{64}', key)": {
+      "values": [
+        64
+      ],
+      "cases": [
+        "evidence-ledger/infra-retirement-and-roundtrip",
+        "evidence-ledger/test-run-origin-not-citable"
+      ]
+    }
+  }
+}

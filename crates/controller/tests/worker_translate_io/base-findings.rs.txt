@@ -1,0 +1,21 @@
+pub(crate) fn clipped(text: &str, cap: usize) -> String {
+    text.chars().take(cap).collect()
+}
+
+pub(crate) fn current_review<'a>(
+    feedback: &'a serde_json::Value,
+    round: u8,
+    head: Option<&'a str>,
+) -> CurrentReview<'a> {
+    let head = head.filter(|_| round == 1);
+    let findings = feedback
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|finding| {
+            finding["kind"] == "review_finding"
+                && head.is_some_and(|sha| finding["reviewed_sha"] == sha)
+        })
+        .collect();
+    CurrentReview { head, findings }
+}
