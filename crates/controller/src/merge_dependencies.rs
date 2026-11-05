@@ -769,7 +769,7 @@ mod tests {
                 node: root,
                 fact: Fact::PrMerged {
                     head: tl3_kernel::HeadId(1),
-                    approved: true,
+                    checks_passed: true,
                 },
             }),
         )
