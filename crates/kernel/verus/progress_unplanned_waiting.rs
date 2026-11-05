@@ -1,6 +1,6 @@
 //! #693 / #806 B1: arbitrary finite blocked prerequisite tables cannot admit.
-use super::*;
 use super::progress_unplanned::*;
+use super::*;
 
 verus! {
 /// #806: equality of every observable world field, including declaration storage.
@@ -18,12 +18,19 @@ pub(super) fn verify_waiting(mut world: World, blocker: usize) -> (result: World
             || world.dependencies@[blocker as int].status != DependencyStatus::Delivered,
     ensures unchanged(world, result), !result.nodes@[0].holds && !result.nodes@[0].pool
         && result.nodes@[0].ticket.is_none() && result.nodes@[0].run.is_none(),
+        result.nodes@[0].credit.withheld || result.nodes@[0].credit.start as int
+            + result.nodes@[0].credit.earned as int + result.nodes@[0].credit.added as int
+                == result.nodes@[0].credit.spent as int,
 {
     let ghost before = world;
     proof {
-        reveal(dependencies::delivered);
+        dependencies::delivered_definition(world.dependencies@, NodeId(0));
         assert(!dependencies::delivered(world.dependencies@, NodeId(0)));
         reveal(storage_ordered); checked_reserves(world); reveal(settle_ready);
+        world_checked_definition(world);
+        assert(dependencies::dependency_checked(world, world.dependencies@[blocker as int]));
+        dependencies::prerequisite_definition(world, NodeId(0));
+        reveal(node_checked); assert(node_checked(world, world.nodes@[0]));
         potential_member(world.nodes@, 0, world.nodes@.len(), |n: Node| ticket_capacity(n));
     }
     let delivered = world.dependencies_delivered(NodeId(0));
@@ -34,6 +41,7 @@ pub(super) fn verify_waiting(mut world: World, blocker: usize) -> (result: World
     assert(!moved);
     proof {
         reveal(advance_post); reveal(unchanged);
+        assert(world.nodes@ =~= before.nodes@);
         assert(unchanged(before, world));
         assert(out.len == 0);
     }

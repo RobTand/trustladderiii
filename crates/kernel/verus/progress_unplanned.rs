@@ -22,7 +22,7 @@ pub(super) open spec fn outside_event(n: Node) -> Event {
 }
 
 /// #806: the original small-counter assumptions imply all #805 reserves.
-proof fn original_bounds_supply_reserves(w: World)
+pub(super) proof fn original_bounds_supply_reserves(w: World)
     requires w.nodes@.len() == 2,
         w.next_ticket < 1099511627776u64, w.next_question < 1099511627776u64,
         forall|i: int| 0 <= i < 2 ==> w.nodes@[i].generation < 1099511627776u64
@@ -40,7 +40,7 @@ verus! {
 /// #806: real witness and real apply, even while the other root can still settle.
 pub(super) fn verify_outside(mut world: World) -> (result: World)
     requires scope(world), obstructed(world.nodes@[0]),
-    ensures result.nodes@[1] == world.nodes@[1],
+    ensures result.nodes@.len() == 2, result.nodes@[1] == world.nodes@[1],
         progress_measure(result) < progress_measure(world),
 {
     let ghost before = world;
@@ -49,6 +49,7 @@ pub(super) fn verify_outside(mut world: World) -> (result: World)
     }
     let event = world.witness();
     proof {
+        reveal(unplanned_first_selection);
         assert(event == Some(outside_event(before.nodes@[0])));
         reveal(progress_input); reveal(witness_event); reveal(chosen_for_node);
         assert(chosen_for_node(before, 0, event.unwrap()));

@@ -151,6 +151,19 @@ CASES = {
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
                     '//crates/kernel:verus_controller_boundary'),
+    'unplanned_selector_order': ('crates/kernel/src/witness.rs',
+                                 'if n.paused && !n.phase.is_stopping() {',
+                                 'if n.paused && !n.phase.is_stopping() && n.effect.is_none() {',
+                                 '//crates/kernel:verus_witness'),
+    'unplanned_admission': ('crates/kernel/src/ranks.rs',
+                            'set_phase(m, Phase::Planning { must_split: false });',
+                            'set_phase(m, Phase::Planning { must_split: true });',
+                            '//crates/kernel:verus_ranks'),
+    'unplanned_waiting': ('crates/kernel/src/scheduler.rs',
+                          'context.admit = w.dependencies_delivered(NodeId(i as u64)) && admits(w, n.repo);',
+                          'context.admit = admits(w, n.repo);',
+                          '//crates/kernel:verus_scheduler'),
+
 }
 
 

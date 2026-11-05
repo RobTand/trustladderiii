@@ -136,7 +136,7 @@ def verus_proofs():
             "command_helpers": ("kernel::command_helpers", 2),
             "continuations": ("kernel::continuations", 1),
             "checking": ("kernel::checking", 15),
-            "dependencies": ("kernel::dependencies", 35),
+            "dependencies": ("kernel::dependencies", 36),
             "progress": ("kernel::progress", 10),
             "scheduler": ("kernel::scheduler", 13),
             "steps": ("kernel::steps", 2),
@@ -158,6 +158,7 @@ def verus_proofs():
             "progress_unplanned": ("kernel::progress_unplanned", 2),
             "progress_unplanned_admission": ("kernel::progress_unplanned_admission", 1),
             "progress_unplanned_waiting": ("kernel::progress_unplanned_waiting", 1),
+            "progress_unplanned_witness": ("kernel::progress_unplanned_witness", 3),
         }
         for name, (module, count) in groups.items():
             verus_test(

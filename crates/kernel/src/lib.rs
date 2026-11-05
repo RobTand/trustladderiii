@@ -2033,3 +2033,24 @@ mod progress_unplanned_admission;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_unplanned_waiting.rs"]
 mod progress_unplanned_waiting;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned_witness.rs"]
+mod progress_unplanned_witness;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: the first Unplanned root wins the real selector's ordered outside branches.
+pub closed spec fn unplanned_first_selection(w: World, result: Option<Event>) -> bool {
+    (w.nodes@.len() > 0 && w.nodes@[0].phase == Phase::Unplanned
+        && progress_unplanned::obstructed(w.nodes@[0]))
+        ==> result == Some(progress_unplanned::outside_event(w.nodes@[0]))
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: public opaque domain for the complete original-domain cover checker.
+pub closed spec fn unplanned_check_domain(w: World) -> bool {
+    progress_unplanned_witness::check_domain(w)
+}
+}

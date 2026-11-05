@@ -774,6 +774,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+            result ==> final(node).phase == (Phase::Planning { must_split: false }),
     ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused || !context.admit {
@@ -902,6 +903,8 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
+            old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
+                ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {

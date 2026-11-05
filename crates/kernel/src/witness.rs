@@ -12,11 +12,14 @@ impl World {
     pub fn witness(&self) -> (result: Option<Event>) [
         requires world_checked(*self), fresh_commands(*self),
         ensures witness_selection(*self, result),
-    ] proof [reveal(world_checked); reveal(fresh_commands); reveal(witness_selection);] {
+            unplanned_first_selection(*self, result),
+    ] proof [reveal(world_checked); reveal(fresh_commands); reveal(witness_selection); reveal(outside_available); reveal(unplanned_first_selection);] {
         let mut i = 0usize;
         kernel_while! { (i < self.nodes.len()) [
             invariant i <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
                 world_checked(*self),
+                (i > 0 && self.nodes@.len() > 0) ==> !(self.nodes@[0].phase == Phase::Unplanned
+                    && progress_unplanned::obstructed(self.nodes@[0])),
                 forall|j: int| 0 <= j < self.nodes@.len() ==> self.nodes@[j].last_cmd < u64::MAX,
                 forall|j: int| 0 <= j < i ==> !outside_available(*self, j),
             decreases self.nodes.len() - i,
