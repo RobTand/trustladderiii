@@ -76,6 +76,7 @@ pub(super) fn verify_checked(w: &World) -> (result: ()) [
     ensures world_checked(*w),
 ] {
     let checked = w.check();
+    kernel_proof! { reveal(progress_gate_check_result); progress_gate_contracts::checked_result(*w, checked.is_ok()); }
     assert!(checked.is_ok());
 }
 }

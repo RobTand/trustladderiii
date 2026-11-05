@@ -2037,14 +2037,6 @@ mod progress_gate_classification;
 mod progress_gate_waiting;
 
 #[cfg(verus_keep_ghost)]
-verus! {
-/// #806: storage scope of the complete four-leaf gate checker bridge.
-pub closed spec fn progress_gate_domain(w: World) -> bool { progress_gate::domain(w) }
-/// #806: all production consistency checks in the four-leaf gate domain.
-pub closed spec fn progress_gate_accepted(w: World) -> bool { progress_gate::accepted(w) }
-}
-
-#[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_gate_permutation.rs"]
 mod progress_gate_permutation;
 
@@ -2059,3 +2051,15 @@ mod progress_gate_fixture;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_gate_covers.rs"]
 mod progress_gate_covers;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_contracts.rs"]
+mod progress_gate_contracts;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: opaque public checker clause; the four-leaf proof exposes it locally.
+pub closed spec fn progress_gate_check_result(w: World, ok: bool) -> bool {
+    progress_gate_contracts::checked(w, ok)
+}
+}

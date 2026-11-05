@@ -59,16 +59,8 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures match reply {
-            Reply::MakerDone { head } => old(w).nodes@[i as int].effect.is_none()
-                && old(w).nodes@[i as int].phase == Phase::Making
-                && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
-                && old(w).nodes@[i as int].run == Some(generation) ==>
-                final(w).nodes@[i as int] == progress_gate::maker_completed(old(w).nodes@[i as int], head)
-                && final(w).next_question == old(w).next_question
-                && final(w).file_sets@ == old(w).file_sets@ && *final(out) == *old(out),
-            _ => true,
-        },
+    ensures progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
+            generation, reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && generation == old(w).nodes@[i as int].generation
             && successful_reply_input(old(w).nodes@[i as int], reply)
@@ -98,7 +90,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal(reply_bounds); reveal(footprint::ordered_table);] {
+] proof [reveal(progress_gate_contracts::maker_reply); reveal(distance); reveal(reply_bounds); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_reply = *w }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
@@ -145,6 +137,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         _ => {
             reply_transition(w, i, reply, out);
             kernel_proof! {
+                reveal(progress_gate_contracts::maker_transition);
                 if let Reply::MakerDone { head } = reply {
                     if before_operation@.nodes@[i as int].effect.is_none() {
                         assert(w.nodes@[i as int] == progress_gate::maker_completed(before_operation@.nodes@[i as int], head));
@@ -235,13 +228,8 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures match reply {
-            Reply::MakerDone { head } => final(w).nodes@[i as int] == retirement::phased(
-                Node { head: Some(head), checked: None, ..old(w).nodes@[i as int] }, Phase::Checking)
-                && final(w).next_question == old(w).next_question
-                && final(w).file_sets@ == old(w).file_sets@ && *final(out) == *old(out),
-            _ => true,
-        },
+    ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
+            reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
@@ -249,7 +237,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance);] {
+] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),

@@ -53,20 +53,15 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         !matches!(reply, Reply::MakerNeedsFiles { .. } | Reply::IngestDone { .. }
             | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
-    ensures match reply {
-            Reply::MakerDone { head } => final(w).nodes@[i as int] == retirement::phased(
-                Node { head: Some(head), checked: None, ..old(w).nodes@[i as int] }, Phase::Checking)
-                && final(w).next_question == old(w).next_question
-                && final(w).file_sets@ == old(w).file_sets@ && *final(out) == *old(out),
-            _ => true,
-        },
+    ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
+            reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];

@@ -208,6 +208,7 @@ def verus_proofs():
             "reply_admission_on_reply": ("kernel::reply_admission#on_reply", 1),
             "reply_admission_files": ("kernel::reply_admission#reply_files", 1),
             "reply_admission_transition": ("kernel::reply_admission#reply_transition", 1),
+            "progress_gate_contracts": ("kernel::progress_gate_contracts", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

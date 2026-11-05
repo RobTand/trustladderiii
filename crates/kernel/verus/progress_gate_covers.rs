@@ -31,8 +31,28 @@ proof fn four_files(w: World)
 kernel_fn! {
 /// #806 covers at each width: no-witness waiters, all-Ready, all-Unplanned,
 /// full gate with W admitted maker runs, and actor3 relocation before real completion.
-fn original_covers(width: u8, case: u8) -> (result: ()) [
+fn original_covers(width: u8, case: u8) -> (result: (World, Option<Event>, Option<World>)) [
     requires width == 2 || width == 3, case < 4,
+    ensures input(result.0), world_checked(result.0), result.0.gates@[0].w == width,
+        match result.1 { Some(event) => classified(result.0, event), None => waiting(result.0) },
+        case < 2 ==> result.1.is_none() && result.2.is_none()
+            && waiting(result.0) && !settled_world(result.0),
+        case == 0 ==> forall|i: int| 0 <= i < 4 ==>
+            result.0.nodes@[i].phase == Phase::Ready(Resume::Making) && !result.0.nodes@[i].paused,
+        case == 1 ==> forall|i: int| 0 <= i < 4 ==>
+            result.0.nodes@[i].phase == Phase::Unplanned && !result.0.nodes@[i].paused,
+        case == 2 ==> result.1.is_some() && holders(result.0, 4) == width && runs(result.0, 4) == width
+            && forall|i: int| 0 <= i < 4 && result.0.nodes@[i].pool ==>
+                result.0.nodes@[i].phase == Phase::Making && !result.0.nodes@[i].paused
+                    && result.0.nodes@[i].run == Some(result.0.nodes@[i].generation),
+        case >= 2 ==> result.1.is_some() && result.2.is_some(),
+        match result.2 {
+            Some(after) => domain(after) && accepted(after) && world_checked(after)
+                && progress_measure(after) < progress_measure(result.0),
+            None => true,
+        },
+        case == 3 ==> result.0.nodes@[3].phase == Phase::Making
+            && result.0.nodes@[0].phase == Phase::Unplanned,
 ] proof [reveal(initial_node); reveal(accepted); reveal(retirement::node_rules);
     reveal_with_fuel(potential_prefix, 5);] {
     let a = make_leaf(if case == 0 { 0 } else if case == 2 { 2 } else { 3 }, 1, false, None);
@@ -49,6 +69,7 @@ fn original_covers(width: u8, case: u8) -> (result: ()) [
         }
         assert(input(w));
     }
+    verify_checked(&w);
     let event = verify_classification(&w);
     if case < 2 {
         assert!(event.is_none());
@@ -58,14 +79,33 @@ fn original_covers(width: u8, case: u8) -> (result: ()) [
                 w.nodes@[i].phase == if case == 0 { Phase::Ready(Resume::Making) } else { Phase::Unplanned } by {}
         }
         progress_gate_waiting::verify_waiting(&w);
+        (w, event, None)
     } else {
         assert!(event.is_some());
         kernel_proof! {
             if case == 2 { assert(holders(w, 4) == width && runs(w, 4) == width); }
         }
         let actor = if case == 3 { 3usize } else { 0usize };
+        let before = snapshot_world(&w);
+        kernel_proof! {
+            assert(before.file_sets@ == w.file_sets@);
+            assert forall|i: int| 0 <= i < 4 implies retirement::node_rules(before, before.nodes@[i]) by {
+                assert(retirement::node_rules(w, w.nodes@[i]));
+                footprint::storage_frame(w, before, w.nodes@[i].footprint, w.nodes@[i].footprint);
+            }
+            assert forall|a: int, b: int| 0 <= a < b < 4 implies pair(before, a, b) by {
+                assert(pair(w, a, b));
+                footprint::storage_frame(w, before, w.nodes@[a].footprint, w.nodes@[b].footprint);
+            }
+            assert(input(before));
+            progress::empty_edges(w); progress::empty_edges(before);
+            assert(progress_measure(before) == progress_measure(w));
+            input_scope(before);
+        }
+        verify_checked(&before);
         let swapped = progress_gate_permutation::swap_actor(w, actor);
-        let _after = progress_gate_maker::verify_maker(swapped);
+        let after = progress_gate_maker::verify_maker(swapped);
+        (before, event, Some(after))
     }
 }
 }

@@ -166,6 +166,11 @@ CASES = {
                    'm.head = Some(head);\n            m.checked = None;\n            set_phase(m, Phase::Checking);',
                    'm.head = Some(head);\n            m.checked = Some(head);\n            set_phase(m, Phase::Checking);',
                    '//crates/kernel:verus_work_replies'),
+    'gate_permutation_production': ('crates/kernel/src/checking.rs',
+                                    'self.check_node(&self.nodes[i])?;',
+                                    'self.check_node(&self.nodes[i])?;\n'
+                                    '            if i == 0 && self.nodes[i].phase == Phase::Making { return Err(Broken::Gate); }',
+                                    '//crates/kernel:verus_checking'),
 
 }
 
