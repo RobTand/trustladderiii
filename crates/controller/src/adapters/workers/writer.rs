@@ -414,6 +414,18 @@ pub fn checked_draft(
                 } else {
                     written.to_owned()
                 };
+                // #833: only the exact adapter-supplied resource names are trusted facts.
+                // Other references supplied by the writer still pass the normal checks.
+                let mut written = written;
+                if let Some(failure) = &resource_failure {
+                    written =
+                        written.replace(&failure.requested.to_string(), "the requested resource");
+                    if let crate::input_resources::Problem::KindMismatch { observed } =
+                        &failure.problem
+                    {
+                        written = written.replace(&observed.to_string(), "the observed resource");
+                    }
+                }
                 message::check_prose(&written, &policy).map(|_| text.text.clone())
             }
             _ => Err(vec![Violation::WrongReplyShape]),
@@ -422,10 +434,10 @@ pub fn checked_draft(
             Ok(mut text) => {
                 if let Some(failure) = &resource_failure {
                     // #833: identifying the resource is mandatory even when the writer omits it.
-                    text.push_str(&format!(
-                        "\n\n{}",
-                        crate::redaction::text(&failure.to_string())?
-                    ));
+                    let description = crate::redaction::text(&failure.to_string())?;
+                    if !text.contains(&description) {
+                        text.push_str(&format!("\n\n{description}"));
+                    }
                 }
                 if let Some(quote) = &change_quote {
                     // Indentation keeps Markdown inert; embedded markers must also be neutralised.

@@ -105,6 +105,12 @@ impl Controller {
         );
         let input_failure = crate::worker_inputs::retained(snapshot, commit, &delivery.key)?;
         crate::worker_inputs::append(&mut summary, input_failure.as_ref());
+        let resource_failure = if class == "not_found" {
+            crate::input_resources::current(snapshot, commit, node)?
+        } else {
+            None
+        };
+        crate::worker_inputs::append(&mut summary, resource_failure.as_ref());
         let mut post = delivery.clone();
         post.key = format!("incident:{id}");
         post.marker_key = None;
@@ -121,7 +127,7 @@ impl Controller {
         ));
         post.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title, request.repo.owner, request.repo.name, request.issue),
-            "signature":signature, "incident_id":id}));
+            "signature":signature, "incident_id":id,"input_resource_failure":resource_failure}));
         if let Some(operations) = &self.bootstrap.operations {
             post.repository = crate::Repository {
                 owner: operations.owner.clone(),
@@ -136,7 +142,18 @@ impl Controller {
             json!(Incident {
                 id: id.clone(),
                 node: Some(node),
-                input_failure: None,
+                input_failure: resource_failure.map(|failure| {
+                    crate::input_errors::InputFailure::resource(
+                        crate::input_errors::IssueTarget {
+                            repository: request.repo.clone(),
+                            issue: request.issue,
+                        },
+                        &request.title,
+                        node,
+                        class,
+                        failure,
+                    )
+                }),
                 open: true,
                 needs_rob,
                 blocking: false,

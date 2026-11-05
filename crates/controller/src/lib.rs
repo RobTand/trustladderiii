@@ -1319,6 +1319,33 @@ impl Controller {
                     }
                     match result {
                         Ok(completion) => {
+                            if matches!(
+                                delivery.output,
+                                DeliveryOutput::Effect {
+                                    kind: tl3_kernel::EffectKind::StartRun(_),
+                                    ..
+                                }
+                            ) && current.rows.iter().any(|row| {
+                                row.table == "input_resource_contexts"
+                                    && row.id == delivery.node().0.to_string()
+                            }) {
+                                // A successful input build retires its diagnostic, not any open incident.
+                                let snapshot = self.store.load()?;
+                                let mut commit = Commit::new(
+                                    format!(
+                                        "input-resource-ready:{}:{}",
+                                        effect.key,
+                                        snapshot.revision.get()
+                                    ),
+                                    json!({"input_resource_ready":effect.key}),
+                                    &snapshot,
+                                );
+                                commit.rows.push(RowChange::Delete {
+                                    table: "input_resource_contexts".into(),
+                                    id: delivery.node().0.to_string(),
+                                });
+                                self.store.commit(&commit)?;
+                            }
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }

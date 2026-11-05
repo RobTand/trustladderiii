@@ -86,15 +86,22 @@ pub(crate) fn github(error: tl3_github::Error, resource: Resource, installation:
     if error.failure_class().as_str() != "not_found" {
         return error.into();
     }
-    let requested = match &error {
-        tl3_github::Error::InstallationToken { .. } => {
-            Resource::GithubInstallation { installation }
+    fn requested(error: &tl3_github::Error, resource: Resource, installation: u64) -> Resource {
+        match error {
+            tl3_github::Error::InstallationToken { .. } => {
+                Resource::GithubInstallation { installation }
+            }
+            tl3_github::Error::CatchUp { endpoint, source } => requested(
+                source,
+                Resource::GithubEndpoint {
+                    path: endpoint.clone(),
+                },
+                installation,
+            ),
+            _ => resource,
         }
-        tl3_github::Error::CatchUp { endpoint, .. } => Resource::GithubEndpoint {
-            path: endpoint.clone(),
-        },
-        _ => resource,
-    };
+    }
+    let requested = requested(&error, resource, installation);
     Error::Permanent {
         class: "not_found",
         source: Box::new(LookupError {
@@ -196,4 +203,58 @@ pub(crate) fn current(
         .find(|row| row.table == "nodes" && row.id == id)
         .and_then(|row| row.value["generation"].as_u64());
     Ok((generation == Some(context.generation)).then_some(context.failure))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #833: token acquisition failures name the installation even inside catch-up reads.
+    #[test]
+    fn installation_404_keeps_its_identity_and_status_through_wrappers() {
+        let error = github(
+            tl3_github::Error::CatchUp {
+                endpoint: "repos/owner/sandbox/issues".into(),
+                source: Box::new(tl3_github::Error::InstallationToken {
+                    source: Box::new(tl3_github::Error::Http { status: 404 }),
+                }),
+            },
+            Resource::GithubIssue {
+                repository: "owner/sandbox".into(),
+                number: 12,
+            },
+            3,
+        );
+        assert_eq!(
+            of(&error).unwrap().requested,
+            Resource::GithubInstallation { installation: 3 }
+        );
+        assert!(error.is_github_not_found());
+    }
+
+    /// #833: endpoint provenance is structured metadata, rather than error-message parsing.
+    #[test]
+    fn catch_up_404_keeps_the_requested_endpoint() {
+        let error = github(
+            tl3_github::Error::CatchUp {
+                endpoint: "repos/owner/sandbox/issues/comments".into(),
+                source: Box::new(tl3_github::Error::Http { status: 404 }),
+            },
+            Resource::GithubEndpoint {
+                path: "repos/owner/sandbox".into(),
+            },
+            3,
+        );
+        let failure = of(&error).unwrap();
+        assert_eq!(
+            failure.requested,
+            Resource::GithubEndpoint {
+                path: "repos/owner/sandbox/issues/comments".into()
+            }
+        );
+        assert_eq!(
+            serde_json::from_value::<Failure>(serde_json::to_value(failure).unwrap()).unwrap(),
+            *failure
+        );
+    }
 }

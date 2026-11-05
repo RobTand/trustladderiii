@@ -60,9 +60,15 @@ impl World {
                 let body: Value = serde_json::from_slice(&request.body).unwrap();
                 return ResponseTemplate::new(201).set_body_json(json!({"id":99,"body":body["body"],"user":{"id":123,"login":"factory[bot]"},"created_at":"2026-11-05T00:00:00Z","updated_at":"2026-11-05T00:00:00Z","issue_url":"https://api.github.com/repos/owner/sandbox/issues/12"}));
             }
+            if path == "/repos/owner/sandbox/issues/2715" {
+                return ResponseTemplate::new(200).set_body_json(json!({"number":2715,"title":"A prerequisite PR","body":null,"state":"open","pull_request":{"url":"https://api.github.com/repos/owner/sandbox/pulls/2715"},"updated_at":"2026-11-05T00:00:00Z"}));
+            }
+            if path == "/repos/owner/sandbox/pulls/2715" {
+                return ResponseTemplate::new(200).set_body_json(json!({"number":2715,"user":{"id":42,"login":"owner"},"state":"open","merged_at":null,"head":{"ref":"topic","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":null},"base":{"ref":"main","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo":null},"updated_at":"2026-11-05T00:00:00Z"}));
+            }
             if matches!(path, "/repos/owner/sandbox/issues/12" | "/repos/owner/sandbox/issues/17" | "/repos/owner/sandbox/issues/2713" | "/repos/owner/sandbox/issues/2703") {
                 let number: u64 = path.rsplit('/').next().unwrap().parse().unwrap();
-                return ResponseTemplate::new(200).set_body_json(json!({"number":number,"title":"Cover scanned sources","body":"Depends on #2713 merging first; after #2703 merges; also #4040 and #4041.","state":"open","pull_request":null,"updated_at":"2026-11-05T00:00:00Z"}));
+                return ResponseTemplate::new(200).set_body_json(json!({"number":number,"title":"Cover scanned sources","body":"Depends on #2713 merging first; after #2703 merges; also #4040, #4041 and #2715.","state":"open","pull_request":null,"updated_at":"2026-11-05T00:00:00Z"}));
             }
             ResponseTemplate::new(404)
         }).mount(&server));
@@ -70,7 +76,7 @@ impl World {
         let mut db = support::Database::start();
         let settings = db.create("input_resources");
         let mut store = Store::open(&settings).unwrap();
-        store.put_worker_materials("0", &json!({"issue":{"title":"Cover scanned sources","body":"Depends on #2713 merging first; after #2703 merges; also #4040 and #4041."}})).unwrap();
+        store.put_worker_materials("0", &json!({"issue":{"title":"Cover scanned sources","body":"Depends on #2713 merging first; after #2703 merges; also #4040, #4041 and #2715."}})).unwrap();
         let repo = Repository {
             owner: "owner".into(),
             name: "sandbox".into(),
@@ -339,4 +345,71 @@ fn a_corrected_declaration_does_not_clear_an_unprobed_input_incident() {
         Phase::Auditing
     );
     assert_eq!(w.incidents().len(), 1);
+}
+
+/// Q59/#833: a genuine PR retains merge semantics after the canonical identity check.
+#[test]
+fn correct_pull_request_preserves_its_declared_kind() {
+    let mut w = World::new();
+    w.reply("pull_request", 2715);
+    assert_eq!(
+        w.controller.world().unwrap().nodes[0].phase,
+        Phase::Auditing
+    );
+    assert!(w.incidents().is_empty());
+    let snapshot = w.controller.snapshot().unwrap();
+    let declarations = &snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "merge_prerequisites")
+        .unwrap()
+        .value;
+    assert_eq!(declarations[0]["target"]["kind"], "PullRequest");
+    assert_eq!(declarations[0]["status"], "Pending");
+    let requests = w.runtime.block_on(w.server.received_requests()).unwrap();
+    let issue = requests
+        .iter()
+        .position(|r| r.url.path().ends_with("/issues/2715"))
+        .unwrap();
+    let pull = requests
+        .iter()
+        .position(|r| r.url.path().ends_with("/pulls/2715"))
+        .unwrap();
+    assert!(issue < pull);
+}
+
+/// Q7/Q59/#833: the inverse mismatch must not silently change close into merge semantics.
+#[test]
+fn an_issue_declaration_of_a_pull_request_also_fails_validation() {
+    let mut w = World::new();
+    w.reply("issue", 2715);
+    assert_eq!(w.controller.world().unwrap().nodes[0].generation, 1);
+    w.reply("issue", 2715);
+    assert!(w.controller.world().unwrap().nodes[0].waiting_incident);
+    let incidents = w.incidents();
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(
+        incidents[0]["input_failure"]["resource_failure"]["problem"]["observed"]["kind"],
+        "github_pull_request"
+    );
+}
+
+/// Q7/Q59/#833: a corrected retry can reach audit without accepting the invalid declaration.
+#[test]
+fn a_corrected_kind_on_the_validation_retry_reaches_audit() {
+    let mut w = World::new();
+    w.reply("pull_request", 2713);
+    let snapshot = w.controller.snapshot().unwrap();
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "briefs" || r.table == "merge_prerequisites")
+    );
+    w.reply("issue", 2713);
+    assert_eq!(
+        w.controller.world().unwrap().nodes[0].phase,
+        Phase::Auditing
+    );
+    assert!(w.incidents().is_empty());
 }
