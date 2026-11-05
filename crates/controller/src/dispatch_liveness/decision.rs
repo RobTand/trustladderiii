@@ -118,8 +118,9 @@ pub fn classify(wait: Wait, e: Evidence) -> DispatchStatus {
     match wait {
         Wait::Incident => DispatchStatus::Silent,
         Wait::Resume => {
-            if e.watch && e.process == ProcessEvidence::Live {
-                DispatchStatus::Dispatched(e.class)
+            let operation = operation_status(e);
+            if operation != DispatchStatus::Silent {
+                operation
             } else if e.paused {
                 DispatchStatus::Paused
             } else {
@@ -293,7 +294,7 @@ pub open spec fn classification(wait: Wait, e: Evidence) -> DispatchStatus {
     else if e.ending { DispatchStatus::Ending }
     else { match wait {
         Wait::Incident => DispatchStatus::Silent,
-        Wait::Resume => if e.watch && e.process == ProcessEvidence::Live { DispatchStatus::Dispatched(e.class) }
+        Wait::Resume => if operation_classification(e) != DispatchStatus::Silent { operation_classification(e) }
             else if e.paused { DispatchStatus::Paused } else { DispatchStatus::Silent },
         Wait::AgentPool => if e.ticket && e.obstruction { DispatchStatus::PoolWait } else { DispatchStatus::Silent },
         Wait::Effect(kind) => operation_classification(Evidence { class: delivery_contract(kind), ..e }),

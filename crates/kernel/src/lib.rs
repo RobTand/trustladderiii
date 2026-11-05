@@ -88,6 +88,9 @@ mod progress;
 #[cfg(verus_keep_ghost)]
 use progress::progress_measure;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/controller_dispatch.rs"]
+mod controller_dispatch;
+#[cfg(verus_keep_ghost)]
 mod progress_global;
 #[cfg(verus_keep_ghost)]
 mod progress_theorem;

@@ -1,17 +1,13 @@
 //! #817: actual Wait, EffectKind, classifier and repair decisions.
-extern crate alloc;
 use vstd::prelude::*;
-#[path = "../src/lib.rs"]
-mod kernel;
-pub use kernel::*;
-extern crate self as tl3_kernel;
 #[path = "../../controller/src/dispatch_liveness/decision.rs"]
 mod decision;
 #[path = "../../controller/src/dispatch_liveness/model.rs"]
 mod model;
 
 mod dispatch_theorems {
-    use super::*;
+    use super::{decision, model};
+    use crate::Wait;
     use decision::*;
     verus! {
     /// State-table Q7 / #816. K=1 recovery transaction after the immutable
@@ -37,15 +33,37 @@ mod dispatch_theorems {
         supervisor_ending(true, true)
     }
 
-    /// Q39 / pausing: unstarted tickets and pauses have no loss action.
+    /// Q39 / pausing: without an acknowledged start there is no loss action,
+    /// regardless of other sampled evidence. A blocked ticket remains a ticket.
     fn no_loss_before_start(e: Evidence) -> (result: Repair)
         requires !e.incident, !e.ending, e.quota_reset.is_none(), e.paused, e.ticket, e.obstruction,
             !e.watch,
-        ensures classification(Wait::Resume, e) == DispatchStatus::Paused,
-            classification(Wait::AgentPool, e) == DispatchStatus::PoolWait,
+        ensures classification(Wait::AgentPool, e) == DispatchStatus::PoolWait,
             result == Repair::Keep,
     {
         supervisor_ending(false, true)
+    }
+
+    /// Pausing row: an authorized pause with no operation evidence has no
+    /// deadline. These extra premises describe an unstarted pause, not a run
+    /// whose existing allowance must continue to cover its pool occupancy.
+    fn unstarted_pause_is_paused(e: Evidence) -> (result: DispatchStatus)
+        requires !e.incident, !e.ending, e.quota_reset.is_none(), e.paused,
+            !e.watch, !e.intent, !e.deadline,
+        ensures result == DispatchStatus::Paused,
+    {
+        classify(Wait::Resume, e)
+    }
+
+    /// Q39 / Pausing: an existing durable retry still covers a paused pool
+    /// occupant. Otherwise its ungranted neighbour would become silent.
+    fn paused_operation_retains_retry(e: Evidence) -> (result: DispatchStatus)
+        requires !e.incident, !e.ending, e.quota_reset.is_none(), e.paused,
+            e.class == DeliveryClass::Worker, e.process == ProcessEvidence::Unknown,
+            e.deadline,
+        ensures result == DispatchStatus::Retry(RetryPending::Allowance),
+    {
+        classify(Wait::Resume, e)
     }
 
     /// #816: all decisions preserve the original operation. No action in the
@@ -98,11 +116,10 @@ mod dispatch_theorems {
         assert(classification(Wait::WorkerReply, e) == DispatchStatus::Retry(RetryPending::Allowance));
         e.incident = true;
         assert(classification(Wait::Incident, e) == DispatchStatus::Incident);
-        e.incident = false; e.paused = true;
+        e.incident = false; e.paused = true; e.deadline = false;
         assert(classification(Wait::Resume, e) == DispatchStatus::Paused);
         e.ticket = true; e.obstruction = true;
         assert(classification(Wait::AgentPool, e) == DispatchStatus::PoolWait);
     }
     }
 }
-fn main() {}
