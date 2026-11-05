@@ -171,6 +171,10 @@ CASES = {
                               'Cont::Stop(_) | Cont::Nowhere => 2,',
                               'Cont::Stop(_) | Cont::Nowhere => 3,',
                               '//crates/kernel:verus_kernel_cont_rank'),
+    'facts_merge_unapproved': ('crates/kernel/src/facts.rs',
+                               '    if !approved {',
+                               '    if approved {',
+                               '//crates/kernel:verus_facts_merge'),
 }
 
 
