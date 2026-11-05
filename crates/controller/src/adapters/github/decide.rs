@@ -3,12 +3,16 @@ use super::*;
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicationRead {
     PrEvidence,
     OtherPermanent,
     Transient,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
     PermanentCompletion,
@@ -43,6 +47,8 @@ pub fn should_post(found: bool) -> bool {
     !found
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookAction {
     Ignore,
@@ -90,10 +96,10 @@ pub fn hook_action(outside_window: bool, status: Option<u16>) -> HookAction {
         out >= after,
         pending.is_none() ==> out == if newest < after { after } else { newest },
         match pending {
-            Some(id) => out == {
-                let before = if id == 0 { 0 } else { id - 1 };
-                let bounded = if newest < before { newest } else { before };
-                if bounded < after { after } else { bounded }
+            Some(id) => out as int == {
+                let before = if id == 0 { 0int } else { id as int - 1 };
+                let bounded = if (newest as int) < before { newest as int } else { before };
+                if bounded < after as int { after as int } else { bounded }
             },
             None => true,
         },

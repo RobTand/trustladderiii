@@ -1,6 +1,8 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plan {
     pub keep: Option<usize>,
