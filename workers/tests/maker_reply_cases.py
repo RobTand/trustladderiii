@@ -2,6 +2,8 @@
 from copy import deepcopy
 import ast
 import itertools
+import gzip
+import json
 from pathlib import Path
 
 def reference():
@@ -77,6 +79,15 @@ def vectors():
                 reply(f"{source.name}:{node.lineno}", {"goals": goals}, value)
             except (KeyError, TypeError):
                 continue
+    # Include actual generated replies from every recorded maker scenario, not
+    # only the dictionaries that can be evaluated from test source literals.
+    with gzip.open(Path(__file__).with_name("checker-vectors.json.gz"), "rt") as source:
+        recorded = json.load(source)
+    for case, calls in recorded.items():
+        for index, call in enumerate(calls):
+            document = call["document"]
+            if call["command"] == ["check-reply", "maker"] and document.get("operation", "check") == "check":
+                reply(f"recorded/{case}/{index}", document["inputs"], document["reply"])
     from message_invariants import request_123_handover, review_fix
     fixture = {"inputs": {"plan": {"checks": [], "files": []}, "goals": []}}
     incident, value = request_123_handover.__wrapped__(deepcopy(fixture))

@@ -1143,14 +1143,20 @@ filegroup(
     srcs = glob([
         "*.py",
         "fixtures/**",
-    ]) + ["reference/maker_before.py"],
+    ]) + [
+        "reference/maker_before.py",
+        ":checker_recordings",
+    ],
     visibility = ["//visibility:public"],
 )
 
 py_library(
     name = "maker_reply_cases",
     srcs = ["maker_reply_cases.py"],
-    data = ["reference/maker_before.py"],  # keep
+    data = [
+        "checker-vectors.json.gz",
+        "reference/maker_before.py",
+    ],  # keep
     visibility = ["//visibility:public"],
     deps = [":message_invariants"],
 )
