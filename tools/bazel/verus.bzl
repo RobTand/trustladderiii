@@ -204,6 +204,7 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
     if native.package_name() == "crates/controller-core":
         # Group F: H16/C4, production decisions and concrete branch witnesses.
         worker_event_groups = {
@@ -329,3 +330,18 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    # CC-P / H19: real adapter decision functions and non-vacuous protocol witnesses.
+    if native.package_name() == "crates/controller":
+        verus_test(
+            name = "verus_prismabuild",
+            src = "src/adapters/prismabuild/decide.rs",
+            srcs = ["src/adapters/prismabuild/decide.rs"],
+            expected_obligations = 23,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
