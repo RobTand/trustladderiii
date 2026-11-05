@@ -1674,3 +1674,9 @@ mod contracts_render;
 
 #[path = "contracts/patterns.rs"]
 mod contract_patterns;
+
+#[path = "contracts/request.rs"]
+mod request_contract;
+
+#[path = "contracts/postmortem.rs"]
+mod postmortem_contract;
