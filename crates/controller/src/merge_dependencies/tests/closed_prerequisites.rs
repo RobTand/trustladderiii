@@ -193,7 +193,13 @@ fn caught_up_closure_has_identical_text_and_html_status() {
 #[test]
 fn closed_pr_is_typed_and_displayed_without_changing_the_kernel_wait() {
     let mut db = Database::start();
-    let (_repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_pr");
+    let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_pr");
+    crate::adapters::github::set_fake_issue(
+        &repo.root.path().join("fakes"),
+        &serde_json::from_value(json!({"number":2761,"title":"Prerequisite PR","body":null,
+            "state":"open","updated_at":"2026-11-03T23:00:00Z","pull_request":{}}))
+        .unwrap(),
+    );
     let waiter = intake(&mut c, &repository, 42);
     ingest_brief_kind(&mut c, waiter, &[2761], "pull_request");
     reply(&mut c, waiter, Reply::AuditAgrees);

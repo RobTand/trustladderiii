@@ -481,6 +481,10 @@ impl Controller {
             return Ok(());
         }
         let prerequisites = prerequisites.unwrap();
+        // Q59/#833: also protect internal callers before any prerequisite read.
+        if prerequisites.len() > crate::contracts::roles::ingest_reply::MAX_MERGE_PREREQUISITES {
+            return Err(Error::Invalid("too many merge prerequisites"));
+        }
         let request = crate::request(snapshot, node)?;
         let requests = bindings(snapshot, commit)?;
         let materials = self
@@ -526,6 +530,11 @@ impl Controller {
                     "merge prerequisite quote does not match the source issue",
                 ));
             }
+            // Q59/#833: validate authoritative identity even when a retained fact is terminal.
+            let observed = self
+                .adapters
+                .get(executor::Upstream::GitHub)?
+                .prerequisite(&request.repo, kind, number)?;
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
             let status =
                 if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
@@ -536,9 +545,7 @@ impl Controller {
                     {
                         DependencyStatus::Delivered
                     } else {
-                        self.adapters
-                            .get(executor::Upstream::GitHub)?
-                            .prerequisite(&request.repo, kind, number)?
+                        observed
                     };
                     let status = if observed == DependencyStatus::Pending {
                         root.map_or(observed, |root| root_status(world, root))
