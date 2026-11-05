@@ -28,7 +28,7 @@ pub(crate) fn validate_raw_event(event: Event) -> Result<Event, &'static str> {
     }
 }
 
-/// #771 / command rows: typed steering uses the kernel's checked allocator.
+/// State-table "Counter headroom" / Command row: steering uses checked IDs.
 #[cfg_attr(
     verus_keep_ghost,
     vstd::prelude::verus_spec(result => ensures

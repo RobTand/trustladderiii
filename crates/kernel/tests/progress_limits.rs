@@ -1,4 +1,5 @@
-//! Counterexamples that constrain the unbounded progress claim in #771.
+//! State-table "Counter headroom": unrestricted kernel counterexamples outside
+//! the controller's enforced scope. Unbounded progress is tracked in #805.
 
 use tl3_kernel::*;
 
@@ -67,7 +68,7 @@ fn paused_unplanned(last_cmd: u64) -> World {
     world
 }
 
-/// State-table progress witness and Q27: exhausted command IDs refute #771's claim.
+/// State-table "Counter headroom": exhausted IDs refute unrestricted progress.
 #[test]
 fn max_command_id_refutes_the_unrestricted_progress_witness() {
     let world = paused_unplanned(u64::MAX);
@@ -84,7 +85,7 @@ fn max_command_id_refutes_the_unrestricted_progress_witness() {
     assert_eq!(after, world, "the kernel still ignores stale commands");
 }
 
-/// Facts and commands in every phase: even Stop cannot bypass an exhausted ID.
+/// State-table "Counter headroom": even Stop cannot bypass an exhausted ID.
 #[test]
 fn exhausted_command_ids_ignore_resume_stop_and_replacement() {
     let world = paused_unplanned(u64::MAX);
@@ -122,7 +123,7 @@ fn penultimate_command_id_still_has_a_progress_witness() {
     assert!(after.measure() < before);
 }
 
-/// #771 scoped progress: an exhausted node cannot supply a fresh command ID.
+/// State-table "Counter headroom": an exhausted node cannot supply a fresh ID.
 #[test]
 fn exhausted_command_witness_returns_none_without_overflow() {
     assert_eq!(paused_unplanned(u64::MAX).witness(), None);

@@ -561,7 +561,7 @@ fn exhausted_inputs_remain_queued_until_clearance_then_retry_in_order() {
     );
 }
 
-/// Q51 / #771: the new counter halt holds kernel operations, so a new release
+/// State-table "Counter headroom" / Q51: the halt holds kernel operations, so a new release
 /// clears it once through the same path as Rob's authorized clearance.
 #[test]
 fn new_release_clears_counter_halt_and_retries_retained_fact() {
