@@ -2656,8 +2656,19 @@ impl Controller {
                 && o.installation_id == repository.installation
                 && o.number == issue
         });
-        let request_incident = if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
-        {
+        enum OperationsCommand<'a> {
+            ClearIncident(&'a str),
+            ClearQuota(&'a str),
+        }
+        let body = comment.body.trim();
+        let command = body
+            .strip_prefix("clear incident ")
+            .map(OperationsCommand::ClearIncident)
+            .or_else(|| {
+                body.strip_prefix("clear quota ")
+                    .map(OperationsCommand::ClearQuota)
+            });
+        let request_incident = if let Some(OperationsCommand::ClearIncident(id)) = command {
             snapshot
                 .rows
                 .iter()
@@ -2704,7 +2715,7 @@ impl Controller {
         {
             return Ok(true);
         }
-        if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+        if let Some(OperationsCommand::ClearIncident(id)) = command
             && let Some(row) = snapshot
                 .rows
                 .iter()
@@ -2716,6 +2727,37 @@ impl Controller {
                 format!("incident-clear:{}:{id}", comment.id),
                 commit,
             )?;
+        }
+        if operations && let Some(OperationsCommand::ClearQuota(model)) = command {
+            commit.event_key = format!("model-quota-clear:{model}:{}", comment.id);
+            let configured = self
+                .adapters
+                .get(executor::Upstream::Workers)?
+                .configured_model(model);
+            let line = if !configured {
+                format!("{model} is not a configured model; no quota hold changed.")
+            } else if !snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "model_quotas" && row.id == model)
+            {
+                format!("no quota hold recorded for {model}")
+            } else {
+                let now = self.now_ms();
+                self.operator_clear_quota(snapshot, model, now, commit)?;
+                commit.rows.push(put(
+                    "model_quota_clears",
+                    model.into(),
+                    json!({
+                        "cleared_ms": now, "comment_id": comment.id, "operator": comment.user.id
+                    }),
+                ));
+                let at = chrono::DateTime::from_timestamp_millis(now as i64)
+                    .map(|at| at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| now.to_string());
+                format!("quota for {model} cleared by operator at {at}")
+            };
+            self.quota_clear_reply(snapshot, repository, issue, comment.id, line, commit);
         }
         commit.rows.push(put(
             "operations_comments",
@@ -2846,9 +2888,11 @@ impl Controller {
             }
             Observation::Queue(mut fact) => {
                 let identity = fact.identity();
-                if fact.recorded(snapshot)? {
+                let Some(translation) =
+                    tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
+                else {
                     return Ok(None);
-                }
+                };
                 let Some(node) = fact.node(snapshot)? else {
                     return Ok(None);
                 };
@@ -2964,7 +3008,7 @@ impl Controller {
                     Evidence::PushByOther { .. } => core::EvidenceKind::PushByOther,
                     _ => core::EvidenceKind::Other,
                 };
-                let kernel = match core::dispatch(route, kind) {
+                let kernel = match core::dispatch(translation, route, kind) {
                     Decision::Record => {
                         commit.rows.push(put("queue_facts", identity, value));
                         return Ok(None);
@@ -3096,9 +3140,11 @@ impl Controller {
                 issue,
                 comment,
             } => {
-                if comment.user.id == self.bootstrap.rob
-                    && self.bootstrap.repos.contains(&repository)
-                {
+                let author_matches = comment.user.id == self.bootstrap.rob;
+                if tl3_controller_core::translate_misc::admit_comment(
+                    author_matches,
+                    author_matches && self.bootstrap.repos.contains(&repository),
+                ) {
                     let id = format!(
                         "{}/{}/{}/{}",
                         repository.owner.to_ascii_lowercase(),
@@ -3106,12 +3152,15 @@ impl Controller {
                         repository.installation,
                         comment.id
                     );
-                    if !self.store.comment_retired(&id)?
-                        && !snapshot
-                            .rows
-                            .iter()
-                            .any(|row| row.table == "github_comments" && row.id == id)
-                    {
+                    let retired = self.store.comment_retired(&id)?;
+                    if tl3_controller_core::translate_misc::record_comment(
+                        retired,
+                        !retired
+                            && snapshot
+                                .rows
+                                .iter()
+                                .any(|row| row.table == "github_comments" && row.id == id),
+                    ) {
                         let value =
                             json!({"repository": repository, "issue": issue, "comment": comment});
                         commit
