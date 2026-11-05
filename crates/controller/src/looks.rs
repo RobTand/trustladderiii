@@ -24,6 +24,10 @@ pub(crate) struct AllowanceState {
     progress: Option<String>,
     progress_ms: u64,
     quota_ms: Option<u64>,
+    /// Q53 / #828: the adapter's earliest ladder retry, distinct from a
+    /// maintenance look that may run sooner to post an operations note.
+    #[serde(default)]
+    quota_retry_ms: Option<u64>,
     #[serde(default)]
     last_quota_ms: Option<u64>,
     #[serde(default)]
@@ -65,6 +69,7 @@ impl AllowanceState {
             progress: None,
             progress_ms: now,
             quota_ms: None,
+            quota_retry_ms: None,
             last_quota_ms: None,
             last_quota_model: None,
             unserved_since_ms: None,
@@ -715,6 +720,7 @@ impl Controller {
                 announced,
                 now,
             )?;
+            state.quota_retry_ms = Some(resume);
             if resume > now {
                 // #759: every model this step may use is out. Say so once
                 // when that has lasted LADDER_OUT_MS, so an outage can't wait silently.
@@ -766,6 +772,7 @@ impl Controller {
                 }
             }
             state.quota_ms = None;
+            state.quota_retry_ms = None;
             self.remove_hold(&state.delivery);
             self.save_allowance(state)?;
             return Ok(());
@@ -1553,6 +1560,7 @@ impl Controller {
             state.last_quota_ms = Some(reset_ms);
             state.last_quota_model = model.map(str::to_owned);
             state.quota_ms = Some(reset_ms);
+            state.quota_retry_ms = None;
             state.unserved_since_ms.get_or_insert(self.now_ms());
             // The look asks the adapter whether another model can take the step now.
             state.due_ms = Some(self.now_ms());
@@ -1853,6 +1861,98 @@ pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result
         .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
         .transpose()?;
     Ok(state.is_some_and(|s| s.quota_ms.is_some()))
+}
+
+/// Q53 / #828 and #817(c): a model-quota retry has a durable deadline and
+/// keeps the original attempt's idempotency key. Missing model/family means
+/// older evidence or unavailable configuration, never an inferred identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelQuotaHold {
+    pub key: String,
+    pub node: NodeId,
+    pub generation: u64,
+    pub role: tl3_kernel::Role,
+    pub model: Option<String>,
+    pub family: Option<String>,
+    pub reset_ms: u64,
+    pub retry_at_ms: u64,
+}
+
+/// Pure projection of the same allowance records used by `quota_waiting` and
+/// `look_state`. Configuration supplies family metadata only; it never decides
+/// whether an attempt is held or computes another retry deadline.
+pub fn model_quota_holds(
+    snapshot: &Snapshot,
+    models: Option<&tl3_config::Models>,
+) -> Result<Vec<ModelQuotaHold>> {
+    let mut holds = Vec::new();
+    for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
+        let state: AllowanceState = crate::decode_stored(row.value.clone())?;
+        let Out::Effect {
+            kind: tl3_kernel::EffectKind::StartRun(role),
+            ..
+        } = state.delivery.output
+        else {
+            continue;
+        };
+        let Some(reset_ms) = state.quota_ms else {
+            continue;
+        };
+        // Transport/API quota is a different wait, without a model ending.
+        if state.last_quota_ms.is_none() {
+            continue;
+        }
+        let ladder = models.map(|models| match role {
+            tl3_kernel::Role::Ingest => &models.ingest,
+            tl3_kernel::Role::Audit => &models.audit,
+            tl3_kernel::Role::Plan => &models.planner,
+            tl3_kernel::Role::Make => &models.maker,
+            tl3_kernel::Role::Review => &models.reviewer,
+        });
+        let family = ladder
+            .and_then(|ladder| {
+                ladder
+                    .iter()
+                    .find(|model| Some(&model.name) == state.last_quota_model.as_ref())
+            })
+            .map(|model| model.family.clone());
+        holds.push(ModelQuotaHold {
+            node: state.delivery.node(),
+            key: state.delivery.key,
+            generation: state.delivery.generation,
+            role,
+            model: state.last_quota_model,
+            family,
+            reset_ms,
+            retry_at_ms: state.quota_retry_ms.or(state.due_ms).unwrap_or(reset_ms),
+        });
+    }
+    Ok(holds)
+}
+
+impl ModelQuotaHold {
+    pub(crate) fn waiting_on(&self) -> String {
+        let role = match self.role {
+            tl3_kernel::Role::Ingest => "ingest",
+            tl3_kernel::Role::Audit => "audit",
+            tl3_kernel::Role::Plan => "planner",
+            tl3_kernel::Role::Make => "maker",
+            tl3_kernel::Role::Review => "reviewer",
+        };
+        let at = |ms| {
+            i64::try_from(ms)
+                .ok()
+                .and_then(chrono::DateTime::from_timestamp_millis)
+                .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
+                .unwrap_or_else(|| format!("{ms}ms since epoch"))
+        };
+        format!(
+            "model quota ({role}, {}) until {}; earliest retry {}",
+            self.model.as_deref().unwrap_or("model not recorded"),
+            at(self.reset_ms),
+            at(self.retry_at_ms)
+        )
+    }
 }
 
 /// The hold class of an enqueue that is waiting for required checks.

@@ -294,6 +294,8 @@ pub struct Request {
     pub maker_model: Option<String>,
     /// The open question's stored context, with the deciding worker's findings.
     pub question_context: Option<serde_json::Value>,
+    /// Q53 / #828: read from the allowance that holds the current attempt.
+    pub quota_hold: Option<crate::looks::ModelQuotaHold>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -516,6 +518,8 @@ fn card(
                 waiting_on(wait, node.phase),
                 ordinal(position)
             )
+        } else if let Some(hold) = request.quota_hold.filter(|_| wait == Wait::WorkerReply) {
+            plain(&hold.waiting_on())
         } else {
             waiting_on(wait, node.phase).into()
         },
@@ -823,6 +827,7 @@ impl Rows {
             return Ok(rows);
         }
         let world = crate::snapshot::decode(&snapshot)?;
+        let holds = crate::looks::model_quota_holds(&snapshot, None)?;
         let ids: Vec<_> = (0..world.nodes.len())
             .map(|index| NodeId(index as u64))
             .collect();
@@ -903,6 +908,14 @@ impl Rows {
                 issue: request.issue,
                 title: request.title,
                 question_post_failed,
+                quota_hold: holds
+                    .iter()
+                    .find(|hold| {
+                        hold.node == id
+                            && node.run == Some(hold.generation)
+                            && node.generation == hold.generation
+                    })
+                    .cloned(),
                 phase_since_ms: since.get(&index.to_string()).copied(),
                 progress: details.as_ref().and_then(|d| d.progress.clone()),
                 worker_failure: details.as_ref().and_then(|d| d.worker_failure.clone()),

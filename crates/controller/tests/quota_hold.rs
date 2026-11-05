@@ -264,6 +264,21 @@ fn quota_status_names_the_durable_hold_and_retry() {
     let key = f.held(false);
     let (_, hold) = f.hold().unwrap();
     assert_eq!(hold["quota_ms"], RESET);
+    let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    let holds = tl3_controller::looks::model_quota_holds(
+        &f.controller.snapshot().unwrap(),
+        Some(&config.models),
+    )
+    .unwrap();
+    let facts = holds.iter().find(|hold| hold.key == key).unwrap();
+    assert_eq!(facts.role, Role::Audit);
+    assert_eq!(facts.model.as_deref(), Some("alternate-model"));
+    assert_eq!(facts.family.as_deref(), Some("alternate"));
+    assert_eq!(facts.reset_ms, RESET);
+    assert_eq!(
+        facts.retry_at_ms, RESET,
+        "the maintenance look is not a retry deadline"
+    );
     let mut reader = Reader::open(&f.settings).unwrap();
     let view = status::load(&mut reader).unwrap();
     let wait = &view.requests[0].waiting_on;
@@ -286,6 +301,22 @@ fn quota_status_names_the_durable_hold_and_retry() {
     f.controller.look_due().unwrap();
     assert_eq!(f.attempt(&key), 1, "the original key resumes at reset");
     f.until(|f| f.controller.world().unwrap().nodes[0].phase != Phase::Auditing);
+}
+
+#[test]
+fn same_model_success_keeps_the_existing_durable_deadline() {
+    let mut f = Fixture::new();
+    let key = f.held(true);
+    f.success();
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 0, "slice A preserves Q53 scheduling");
+    let view = status::load(&mut Reader::open(&f.settings).unwrap()).unwrap();
+    assert!(
+        view.requests[0]
+            .waiting_on
+            .contains("model quota (audit, alternate-model)"),
+        "the allowance remains authoritative after the global model record clears"
+    );
 }
 
 #[test]
