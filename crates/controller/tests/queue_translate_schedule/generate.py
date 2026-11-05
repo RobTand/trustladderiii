@@ -40,7 +40,7 @@ def main():
     text = 'use super::*;\nuse adapters::mergify::Evidence;\nimpl QueueFactExt for adapters::mergify::QueueFact {\n'
     for name in methods:
         text += function(adapter, name).replace('pub(crate) fn', 'fn') + '\n'
-    (HERE / 'queue_fact.rs').write_text(text + '}\n')
+    (HERE / 'queue_fact.rs').write_text(text.rstrip() + '\n}\n')
     (HERE / 'base-adapter.rs.txt').write_text(adapter)
     core = subprocess.check_output(['git', 'show', f'{BASE}:crates/mergify/src/decide/translate.rs'], text=True)
     (HERE / 'base-core.rs').write_text(core)
@@ -49,7 +49,7 @@ def main():
     end = harness.index('trait QueueFactExt', start)
     (HERE / 'reference-evidence.rs').write_text(harness[start:end])
     findings = (ROOT / 'crates/controller/src/findings.rs').read_text()
-    (HERE / 'findings.rs').write_text('use serde::Serialize;\nuse tl3_controller::findings::{CiFailure, FailedTest};\npub use tl3_controller::findings::{QueueCiEvidence};\n' + findings[findings.index('#[derive(Serialize)]'):findings.index('pub(crate) struct CurrentReview')].replace('crate::contracts::MESSAGE_CHARS', 'tl3_controller::contracts::MESSAGE_CHARS'))
+    (HERE / 'findings.rs').write_text('use serde::Serialize;\npub use tl3_controller::findings::QueueCiEvidence;\nuse tl3_controller::findings::{CiFailure, FailedTest};\n' + findings[findings.index('#[derive(Serialize)]'):findings.index('pub(crate) struct CurrentReview')].replace('crate::contracts::MESSAGE_CHARS', 'tl3_controller::contracts::MESSAGE_CHARS').rstrip() + '\n')
     ci = (ROOT / 'crates/controller/src/adapters/mergify/ci_evidence.rs').read_text()
     (HERE / 'ci.rs').write_text('use super::*;\nuse findings::QueueCiEvidence;\n' + ci[ci.index('fn terminal_text'):ci.index('fn failures(')] + ci[ci.index('fn test_path'):ci.index('\n#[cfg(test)]')])
 

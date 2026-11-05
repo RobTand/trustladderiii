@@ -136,5 +136,4 @@ impl QueueFactExt for adapters::mergify::QueueFact {
             self.number
         )
     }
-
 }

@@ -1,6 +1,6 @@
 use serde::Serialize;
+pub use tl3_controller::findings::QueueCiEvidence;
 use tl3_controller::findings::{CiFailure, FailedTest};
-pub use tl3_controller::findings::{QueueCiEvidence};
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Kind {
@@ -94,4 +94,3 @@ pub(crate) fn check_report(
     }
     clipped(&lines.join("\n"), MAX_REPORT_CHARS)
 }
-
