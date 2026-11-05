@@ -6,7 +6,7 @@ mod witnesses {
     use super::looks_state::*;
     use vstd::prelude::*;
     verus! {
-    /// Q53/Q43/Q7, state-table.md:275,792-814 / #759: concrete witnesses for every D2 branch.
+    /// Q53/Q43/Q7, state-table.md:277,792-814 / #759: concrete witnesses for every D2 branch.
     /// Contracts are unbounded over their integer types; this lemma establishes reachability only.
     fn d2_witnesses() {
         let ready=quota_wait(10,10,Some(0),false,5);
@@ -48,6 +48,21 @@ mod witnesses {
         assert(initial && newer && !same);
         let replay=quota_replayed(Some(10),true,10);let other=quota_replayed(Some(10),false,10);let fresh=quota_replayed(None,true,10);
         assert(replay && !other && !fresh);
+        ladder_note_once(100, 20, 0, 10);
+    }
+
+    /// #759 / Q53, state-table.md:277,792: one note per unserved period, then wait only until the announced reset.
+    /// Universal over clock/deadline values. Progress resets the shell period in progress_allowance.
+    fn ladder_note_once(resume: u64, now: u64, since: u64, delay: u64)
+        requires resume > now, since as int + delay as int <= now as int,
+    {
+        let first = quota_wait(resume, now, Some(since), false, delay);
+        assert(first == QuotaWait::Notify { due: resume });
+        // The real shell sets ladder_out_noticed before writing the note.
+        let next = quota_wait(resume, now, Some(since), true, delay);
+        assert(next == QuotaWait::Wait { due: resume });
+        let reset = quota_wait(resume, resume, Some(since), true, delay);
+        assert(reset == QuotaWait::Resume);
     }
     }
 }

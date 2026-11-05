@@ -247,6 +247,7 @@ macro_rules! controller {
             fn ladder_out_note(&self, s: &AllowanceState, resume: u64, now: u64) -> Result<()> {
                 io::write("ladder_note", json!([s, resume, now]), |r| {
                     r.files.insert(format!("ladder-note/{}", s.delivery.key), serde_json::to_vec(&json!([resume, now])).unwrap());
+                    r.files.insert(format!("allowances/{}", s.delivery.key), serde_json::to_vec(s).unwrap());
                 })
             }
             fn remove_hold(&self, d: &Delivery) {

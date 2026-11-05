@@ -13,7 +13,7 @@ fn has(r: &io::Run, op: &str) -> bool {
 fn persisted(r: &io::Run) -> Value {
     serde_json::from_slice(&r.files["allowances/effect-1"]).unwrap()
 }
-/// Q53, state-table.md:275,792 / #759: wait only until reset or the one ladder-out note.
+/// Q53, state-table.md:277,792 / #759: wait only until reset or the one ladder-out note.
 #[test]
 fn mandatory_d2_quota_wait_and_ladder_bound() {
     for (since, noticed, note) in [
@@ -32,12 +32,29 @@ fn mandatory_d2_quota_wait_and_ladder_bound() {
         assert!(has(&r, "store.load") && has(&r, "quota_resume"));
         assert_eq!(has(&r, "ladder_note"), note);
         assert!(!has(&r, "look"));
-        if !note {
-            assert!(persisted(&r)["due_ms"].as_u64().unwrap() <= 4_000_000);
+        assert!(persisted(&r)["due_ms"].as_u64().unwrap() <= 4_000_000);
+        if note {
+            assert_eq!(persisted(&r)["ladder_out_noticed"], true);
+            let repeated = io::compare(&Schedule {
+                announced: Some(4_000_000),
+                since,
+                noticed,
+                entries: vec![Entry::State, Entry::State],
+                frames: vec![(0, 0); 64],
+                ..schedule()
+            });
+            assert_eq!(
+                repeated
+                    .trace
+                    .iter()
+                    .filter(|(op, _)| op == "ladder_note")
+                    .count(),
+                1
+            );
         }
     }
 }
-/// Q53 / state-table.md:275: quota recovery reads confirmed effects before resuming.
+/// Q53 / state-table.md:277: quota recovery reads confirmed effects before resuming.
 #[test]
 fn mandatory_d2_quota_resume() {
     for effect in [0, 1] {
@@ -151,7 +168,7 @@ fn mandatory_d2_declared_waits() {
     assert!(has(&r, "stop_stalled"));
     assert!(!has(&r, "look"));
 }
-/// Q53/#759, state-table.md:275,796: progress retires waits; quota replay never restarts the wait.
+/// Q53/#759, state-table.md:277,796: progress retires waits; quota replay never restarts the wait.
 #[test]
 fn mandatory_d2_progress_and_quota_allowances() {
     let r = io::compare(&Schedule {

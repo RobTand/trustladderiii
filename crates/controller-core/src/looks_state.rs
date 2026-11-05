@@ -18,8 +18,14 @@ pub enum QuotaWait {
     Notify { due: u64 },
 }
 
-/// Q53, state-table.md:275,792 / #759: wake at the earlier reset or one ladder-out bound.
+/// Q53, state-table.md:277,792 / #759: wake at the earlier reset or one ladder-out bound.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    (out == QuotaWait::Resume) == (resume <= now),
+    match out {
+        QuotaWait::Resume => true,
+        QuotaWait::Wait { due } => now < due && due <= resume,
+        QuotaWait::Notify { due } => due == resume && !noticed && since.is_some(),
+    },
     out == if resume <= now { QuotaWait::Resume } else {
         match since {
             Some(start) => if !noticed {
@@ -68,7 +74,7 @@ pub enum EntryAction {
     FinishStall,
     Look,
 }
-/// Q53 / state-table.md:275,796-814: quota recovery precedes stopping and the upstream read.
+/// Q53 / state-table.md:277,796-814: quota recovery precedes stopping and the upstream read.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if quota { EntryAction::ResumeQuota } else if stopping { EntryAction::FinishStall } else { EntryAction::Look },
 ))]
@@ -221,7 +227,7 @@ pub fn wait_action(status: WaitStatus, already_ended: bool) -> WaitAction {
     }
 }
 
-/// Q53, state-table.md:275,792: an announced quota never schedules before the sampled current time.
+/// Q53, state-table.md:277,792: an announced quota never schedules before the sampled current time.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == if reset > now { reset } else { now },))]
 pub fn quota_due(reset: u64, now: u64) -> u64 {
     if reset > now { reset } else { now }
@@ -239,7 +245,7 @@ pub fn progress_due(now: u64, silence: u64, no_progress: u64) -> u64 {
     })
 }
 
-/// Q53, state-table.md:275: a model's recorded quota reset only increases.
+/// Q53, state-table.md:277: a model's recorded quota reset only increases.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match previous { None => true, Some(old) => old < reset },))]
 pub fn record_quota(previous: Option<u64>, reset: u64) -> bool {
     match previous {
@@ -248,7 +254,7 @@ pub fn record_quota(previous: Option<u64>, reset: u64) -> bool {
     }
 }
 
-/// #759 / Q53, state-table.md:275: replaying the same model's same/older ending never restarts its wait.
+/// #759 / Q53, state-table.md:277: replaying the same model's same/older ending never restarts its wait.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (same_model && match previous { None => false, Some(old) => old >= reset }),))]
 pub fn quota_replayed(previous: Option<u64>, same_model: bool, reset: u64) -> bool {
     match previous {
