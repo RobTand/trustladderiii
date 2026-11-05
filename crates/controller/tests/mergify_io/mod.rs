@@ -299,30 +299,10 @@ macro_rules! run_entry {
         }
     };
 }
-#[path = "recovery_schedule_reference.rs"]
-mod recovery_reference;
-
-// CC-M2: keep the cdacce8f99 command reference independent of the extracted core.
+// CC-M2: waiting and command entries keep their own cdacce8f99 reference wiring.
+#[path = "reference-waiting-adapter.rs"]
 #[allow(clippy::needless_question_mark)]
-mod command_reference {
-    use super::recovery_reference as lifecycle;
-    adapter!();
-    include!("current.rs");
-    mod ci_evidence {
-        use crate::mergify_io::io::mock_std as std;
-        include!("current-ci.rs");
-    }
-    mod waiting {
-        include!("reference-waiting-cdacce8f99.rs");
-    }
-    mod head_checks {
-        include!("current-head.rs");
-    }
-    pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
-        let mut a = Adapter::new();
-        run_entry!(a, entry, d, None)
-    }
-}
+mod command_reference;
 
 // The mock store returns this module's Error directly; production converts StoreError.
 #[allow(clippy::needless_question_mark)]
