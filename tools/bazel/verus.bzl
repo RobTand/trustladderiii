@@ -326,6 +326,27 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/controller-core":
+        # S-once phase 1: real receipt admission and non-vacuous dispatch.
+        for name, module, count in [
+            ("guard", "translate#begin", 1),
+            ("guard_witnesses", "sonce_guard_witnesses", 2),
+        ]:
+            verus_test(
+                name = "verus_sonce_" + name,
+                src = "verus/sonce_guard.rs",
+                srcs = ["src/translate.rs"],
+                specs = ["verus/sonce_guard_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+    if native.package_name() == "crates/controller-core":
         # Group G2b: only WorkerReply/WorkerFailed translation decisions.
         translate_worker_groups = {
             "role": ("translate_worker#valid_role", 1),
