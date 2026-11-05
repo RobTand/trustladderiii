@@ -68,9 +68,9 @@ pub enum Failure {
     RunFailed,
 }
 
-/// Base 6ba8d25035, docs/state-table.md:139: stale replies are ignored.
-/// All accepted WorkerFailed classes route identically to RunFailed. This class
-/// independence is preserved existing behaviour (no rule); no credit decision
+/// Base 6ba8d25035, docs/state-table.md:139 defines current-operation staleness.
+/// Ignoring stale replies and routing all accepted WorkerFailed classes to
+/// RunFailed are preserved existing behaviour (no rule). No credit decision
 /// or retry decision is made here.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if run == Some(generation) && current == generation {
