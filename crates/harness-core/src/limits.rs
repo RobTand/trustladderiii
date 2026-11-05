@@ -48,6 +48,11 @@ pub mod arithmetic {
             else { a as int * b as int },
     ))]
     pub fn multiply_cost(a: u64, b: u64) -> u64 {
+        #[cfg(verus_keep_ghost)]
+        vstd::prelude::verus_exec_expr! { proof {
+            assert(a as int * b as int <= u128::MAX as int) by(nonlinear_arith)
+                requires a <= u64::MAX, b <= u64::MAX;
+        } }
         measured_bytes(a as u128 * b as u128)
     }
 

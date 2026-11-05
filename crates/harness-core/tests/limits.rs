@@ -86,7 +86,7 @@ fn regression(count: usize) -> bool {
 
 #[test]
 fn fifteen_plan_rows_and_explicit_coverage_partition() {
-    let root =
+    let mut root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/test-vectors/core/limits.json");
     if !root.is_file() {
         root = Path::new(&std::env::var("TEST_SRCDIR").unwrap())
