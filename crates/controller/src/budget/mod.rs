@@ -659,7 +659,7 @@ fn truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(v) => *v,
-        Value::Number(n) => n.as_f64() != Some(0.0),
+        Value::Number(_) => true, // RED: numeric decoding is implemented after parity fails.
         Value::String(s) => !s.is_empty(),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),

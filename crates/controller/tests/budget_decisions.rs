@@ -3,6 +3,64 @@ use proptest::prelude::*;
 use serde_json::json;
 use tl3_controller::budget::{Request, decide};
 
+/// #780: provider numeric cache metadata retains Python JSON truthiness.
+#[test]
+fn numeric_cache_truthiness_matches_python() {
+    for (forms, expected) in [
+        (
+            vec![
+                "0",
+                "-0",
+                "0.0",
+                "-0.0",
+                "0e0",
+                "0E+99",
+                "-0.00e-123",
+                "0e-999",
+                "1e-324",
+                "-1e-324",
+            ],
+            false,
+        ),
+        (
+            vec![
+                "1",
+                "-1",
+                "1.0",
+                "-1.0",
+                "1e0",
+                "-1E+99",
+                "0.01",
+                "5e-324",
+                "-5e-324",
+                "1e-320",
+                "1.7976931348623157e308",
+                "18446744073709551615",
+                "18446744073709551616",
+            ],
+            true,
+        ),
+    ] {
+        for form in forms {
+            for field in ["cache_read", "cache_creation"] {
+                let value = serde_json::from_str(form).unwrap();
+                let result = decide(Request::Account {
+                    usage: vec![json!({"input_tokens": 1, "input_token_details": {field: value}})],
+                    bound: 1,
+                    weights: [1.0, 1.25, 0.1],
+                    spent: 0,
+                    turns: 0,
+                    no_progress: 0,
+                    r#final: false,
+                    repairing: false,
+                })
+                .unwrap();
+                assert_eq!(result["cache_active"], json!(expected), "{field}: {form}");
+            }
+        }
+    }
+}
+
 proptest! {
     #[test]
     fn charge_preserves_binary64_rounding(tokens in any::<u32>(), read in any::<u32>(), creation in any::<u32>(), weights in prop::array::uniform3(0u64..10_000)) {

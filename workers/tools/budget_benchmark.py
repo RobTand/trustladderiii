@@ -78,7 +78,7 @@ def main():
                                 "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
                                cwd=root, env=environment, check=True, capture_output=True)
             git("init", "--quiet", "--template=")
-            (root / "sample.txt").write_text("bounded evidence\n" * (2000 if case == "compaction_many" else 1))
+            (root / "sample.txt").write_text("bounded evidence\n" * (2000 if case.startswith("compaction_many") else 1))
             git("add", ".")
             git("commit", "--quiet", "-m", "Base")
             inputs = {"brief": "Inspect the declared evidence.", "attempt": 1, "round": 0,
@@ -93,7 +93,8 @@ def main():
             if case != "final_only":
                 tokens = 110000 if case.startswith("compaction") else 1000
                 calls = [{"name": "read", "args": {"path": "sample.txt"}, "id": str(i), "type": "tool_call"}
-                         for i in range(16 if case == "compaction_many" else 1)]
+                         for i in range(50 if case == "compaction_many_50" else
+                                        16 if case == "compaction_many" else 1)]
                 if case == "compaction_arguments":
                     calls = [{"name": "write", "args": {"path": "sample.txt", "content": "long argument é\n" * 6000},
                               "id": "write", "type": "tool_call"}]
@@ -111,6 +112,12 @@ def main():
                 raise RuntimeError("maker visit did not finish")
         if state["record"]:
             calls = rows[begin:]
+            if case in {"compaction_many", "compaction_many_50"}:
+                # #780: at most one subprocess per tool-result checkpoint,
+                # plus 24 for a model boundary, including policy and cutoff.
+                count = 50 if case == "compaction_many_50" else 16
+                first = [r for r in calls if r["turn"] == 0]
+                assert len(first) <= count + 24, (count, Counter(r["kind"] for r in first))
             visits.append({"case": case, "repeat": repeat,
                            "calls_per_model_turn": [dict(Counter(r["kind"] for r in calls if r["turn"] == i))
                                                     for i in range(state["turn"] + 1)],
@@ -122,7 +129,8 @@ def main():
         for module in (exploration, forecast, session, maker):
             stack.enter_context(patch.object(module, "budget_check", measured))
         stack.enter_context(patch.object(exploration.ExplorationMiddleware, "wrap_model_call", model_turn))
-        for case in ("final_only", "read_then_final", "compaction", "compaction_arguments", "compaction_many"):
+        for case in ("final_only", "read_then_final", "compaction", "compaction_arguments",
+                     "compaction_many", "compaction_many_50"):
             state["record"] = False
             visit(case, -1)
             state["record"] = True
