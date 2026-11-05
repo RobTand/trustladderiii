@@ -1,6 +1,11 @@
 //! Which queue facts one read of a PR yields. The adapter performs each read
 //! these functions ask for, in the same order, and builds the facts.
 
+#[cfg(verus_keep_ghost)]
+use super::check::{grouping, kept};
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
 use super::check::{CheckView, Conclusion, Head, Status, newest_first};
 use super::observe::QueueState;
 
@@ -58,34 +63,46 @@ pub fn suites_completed(suites: &[Status]) -> bool {
 
 /// #447: every check on the head, other than Mergify's own, has completed.
 /// Until then a check suite read can't show a blocked queue.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == (forall|i: int| 0 <= i < checks@.len() ==> settled(checks@[i])),
+))]
 pub fn checks_settled(checks: &[CheckView]) -> bool {
     let mut i = 0;
-    while i < checks.len() {
+    decide_while! { (i < checks.len()) [
+        invariant i <= checks@.len(),
+            forall|j: int| 0 <= j < i ==> settled(checks@[j]),
+        decreases checks@.len() - i,
+    ] {
         let check = &checks[i];
         if check.head == Head::Current && !check.app.mergify_slug() && !check.completed() {
             return false;
         }
         i += 1;
-    }
+    } }
     true
 }
 
 /// #447: Mergify waits on queue conditions while every check suite on the
 /// head has completed, so nothing still running can meet them. `unmet` says
 /// the selected queue check names unmet conditions.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == (state == QueueState::Waiting && suites_completed && unmet),
+))]
 pub fn queue_blocked(state: QueueState, suites_completed: bool, unmet: bool) -> bool {
     state == QueueState::Waiting && suites_completed && unmet
 }
 
 /// #447: the newest check with each name on the head that failed, other than
 /// Mergify's own and the required contexts, which have their own facts.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == (kept(checks@, i as int, false) && failure(checks@[i as int])),
+))]
 pub fn blocking_failure(checks: &[CheckView], i: usize) -> bool {
-    newest_first(
-        checks,
-        i,
-        |check| check.head == Head::Current,
-        |a, b| a.name_key == b.name_key,
-    ) && {
+    let member = decide_predicate!(|check| check.head == Head::Current);
+    let same = decide_predicate!(|a, b| a.name_key == b.name_key);
+    let newest = newest_first(checks, i, member, same);
+    decide_proof! { assert(grouping(checks@, member, same, false)); assert(newest == kept(checks@, i as int, false)); }
+    newest && {
         let check = &checks[i];
         check.completed()
             && matches!(
@@ -106,24 +123,37 @@ pub fn blocking_failure(checks: &[CheckView], i: usize) -> bool {
 /// The merge commit's checks passed: the newest check per app and name on it
 /// exists and every one completed with a passing conclusion. `Head::Current`
 /// marks checks on the merge commit.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
+    ensures result == ((exists|i: int| kept(checks@, i, true))
+        && forall|i: int| kept(checks@, i, true) ==> passing(checks@[i])),
+))]
 pub fn checks_passed(checks: &[CheckView]) -> bool {
     let mut any = false;
     let mut i = 0;
-    while i < checks.len() {
-        if newest_first(
-            checks,
-            i,
-            |check| check.head == Head::Current,
-            |a, b| a.app_key == b.app_key && a.name_key == b.name_key,
-        ) {
+    decide_while! { (i < checks.len()) [
+        invariant i <= checks@.len(),
+            any == (exists|j: int| 0 <= j < i && kept(checks@, j, true)),
+            forall|j: int| 0 <= j < i && kept(checks@, j, true) ==> passing(checks@[j]),
+        decreases checks@.len() - i,
+    ] {
+        let member = decide_predicate!(|check| check.head == Head::Current);
+        let same = decide_predicate!(|a, b| a.app_key == b.app_key && a.name_key == b.name_key);
+        let newest = newest_first(checks, i, member, same);
+        decide_proof! { assert(grouping(checks@, member, same, true)); assert(newest == kept(checks@, i as int, true)); }
+        if newest {
             any = true;
             let check = &checks[i];
-            if !check.completed() || !check.conclusion.is_some_and(Conclusion::passing) {
+            if !check.completed() || !match check.conclusion { Some(conclusion) => conclusion.passing(), None => false } {
+                decide_proof! {
+                    assert(kept(checks@, i as int, true));
+                    assert(!passing(checks@[i as int]));
+                    assert(!(forall|j: int| kept(checks@, j, true) ==> passing(checks@[j])));
+                }
                 return false;
             }
         }
         i += 1;
-    }
+    } }
     any
 }
 
@@ -273,4 +303,23 @@ pub fn person_facts(events: &[IssueEvent], merged: bool) -> impl Iterator<Item =
         .iter()
         .filter(move |_| !merged)
         .filter_map(|event| person_fact(*event))
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #447/K-queue-blocked: only current non-Mergify checks must complete.
+pub open spec fn settled(c: CheckView) -> bool {
+    c.head != Head::Current || matches!(c.app, super::check::App::Mergify | super::check::App::MergifySlug)
+        || c.status == Status::Completed
+}
+/// #743/K-checks-passed: exactly success, skipped and neutral pass.
+pub open spec fn passing(c: CheckView) -> bool {
+    c.status == Status::Completed && matches!(c.conclusion, Some(Conclusion::Success | Conclusion::Skipped | Conclusion::Neutral))
+}
+/// #447/K-queue-blocked: required contexts and the Mergify slug have separate handling.
+pub open spec fn failure(c: CheckView) -> bool {
+    c.status == Status::Completed
+        && matches!(c.conclusion, Some(Conclusion::Failure | Conclusion::Cancelled | Conclusion::TimedOut | Conclusion::ActionRequired | Conclusion::StartupFailure))
+        && !matches!(c.app, super::check::App::Mergify | super::check::App::MergifySlug) && !c.required
+}
 }
