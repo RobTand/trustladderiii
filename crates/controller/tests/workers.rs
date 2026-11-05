@@ -1328,15 +1328,28 @@ fn killed_worker(settings: &tl3_config::Store) {
             if *node == delivery.node() && *generation == delivery.generation
                 && failure_class == "LostWorker"));
     fs::write(root.path().join("entered.release"), "go").unwrap();
-    supervisor.execute(&delivery).unwrap();
-    supervisor.execute(&delivery).unwrap();
-    assert_eq!(attempts(&root_for(&config, &delivery.key)), 2);
-    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    for _ in 0..2 {
+        assert!(failed(&supervisor.execute(&delivery).unwrap()));
+    }
+    assert_eq!(attempts(&root_for(&config, &delivery.key)), 1);
+    let mut retry = delivery.clone();
+    retry.key = "effect:0:2".into();
+    retry.generation += 1;
+    retry.output = Out::Effect {
+        node: delivery.node(),
+        seq: 2,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
+    supervisor.execute(&retry).unwrap();
+    supervisor.execute(&retry).unwrap();
+    assert_eq!(attempts(&root_for(&config, &retry.key)), 1);
+    assert!(!failed(&terminal(&mut supervisor, &retry)));
     assert_eq!(
         owner(settings)
             .query_one(
-                "SELECT count(*) FROM tl3_worker_runs WHERE run_key = $1",
-                &[&delivery.key]
+                "SELECT count(*) FROM tl3_worker_runs WHERE node_id = '0'",
+                &[]
             )
             .unwrap()
             .get::<_, i64>(0),
@@ -1816,23 +1829,38 @@ fn killed_supervisor(settings: &tl3_config::Store) {
         rx.try_recv().is_err(),
         "discard a valid reply without a recorded exit"
     );
+    // Q7 retries under a new operation; replaying the ended key cannot launch.
+    assert!(failed(&supervisor.execute(&run).unwrap()));
+    let mut retry = run.clone();
+    retry.key = "effect:0:2".into();
+    retry.generation += 1;
+    retry.output = Out::Effect {
+        node: run.node(),
+        seq: 2,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
     // The retry may start before the source drains the previous pidfd event.
-    supervisor.execute(&run).unwrap();
-    assert!(!failed(&terminal(&mut supervisor, &run)));
+    supervisor.execute(&retry).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &retry)));
     wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
-    let Input::Observation {
-        key,
-        observation: Observation::WorkerReply { .. },
-    } = rx.try_recv().unwrap()
-    else {
-        panic!("missing retried worker reply")
-    };
-    assert!(key.ends_with(":worker:1:0"));
-    assert!(rx.try_recv().is_err());
-    assert_eq!(attempts(&root_for(&config, &run.key)), 2);
+    let endings: Vec<_> = rx.try_iter().collect();
+    assert_eq!(endings.len(), 2);
+    assert!(endings.iter().any(|input| matches!(input,
+        Input::Observation { key, observation: Observation::WorkerFailed {
+            generation, failure_class, ..
+        }} if key == &format!("{}:worker:0:0", run.key)
+            && *generation == run.generation && failure_class == "LostWorker")));
+    assert!(endings.iter().any(|input| matches!(input,
+        Input::Observation { key, observation: Observation::WorkerReply {
+            generation, ..
+        }} if key == &format!("{}:worker:0:0", retry.key)
+            && *generation == retry.generation)));
+    assert_eq!(attempts(&root_for(&config, &run.key)), 1);
+    assert_eq!(attempts(&root_for(&config, &retry.key)), 1);
 }
 
 fn fake_stop(settings: &tl3_config::Store) {
