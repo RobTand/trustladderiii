@@ -148,7 +148,6 @@ filegroup(
     srcs = [
         "tl3_workers/_policy_identity.py",
         "tl3_workers/policy.json",
-        "tl3_workers/plan_rules.json",
     ],
     visibility = ["//visibility:public"],
 )
