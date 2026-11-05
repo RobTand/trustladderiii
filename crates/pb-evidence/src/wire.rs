@@ -48,6 +48,12 @@ impl<'de> Deserialize<'de> for Order {
             fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Order, E> {
                 Ok(Order::Leaf)
             }
+            fn visit_i128<E: serde::de::Error>(self, _: i128) -> Result<Order, E> {
+                Ok(Order::Leaf)
+            }
+            fn visit_u128<E: serde::de::Error>(self, _: u128) -> Result<Order, E> {
+                Ok(Order::Leaf)
+            }
             fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Order, E> {
                 Ok(Order::Leaf)
             }

@@ -302,7 +302,7 @@ for raw in dict.fromkeys(seeds):
         reasons.add(error.msg)
         text = oracle.PREFIX + raw
         compare({'ending': oracle.ending(text.encode()), 'log': text})
-assert reasons == {"Expecting value", "Extra data", "Expecting property name enclosed in double quotes", "Expecting ':' delimiter", "Expecting ',' delimiter", "Unterminated string starting at", "Invalid " + slash + "escape", "Invalid control character at", "Invalid " + slash + "uXXXX escape", "Unexpected UTF-8 BOM (decode using utf-8-sig)"}, reasons
+assert reasons == {"Illegal trailing comma before end of array", "Illegal trailing comma before end of object", "Expecting value", "Extra data", "Expecting property name enclosed in double quotes", "Expecting ':' delimiter", "Expecting ',' delimiter", "Unterminated string starting at", "Invalid " + slash + "escape", "Invalid control character at", "Invalid " + slash + "uXXXX escape", "Unexpected UTF-8 BOM (decode using utf-8-sig)"}, reasons
 print('PB_JSON_ORACLE ' + json.dumps({'cases': len(dict.fromkeys(seeds)), 'error_classes': sorted(reasons)}), file=sys.stderr)
 
 "#,

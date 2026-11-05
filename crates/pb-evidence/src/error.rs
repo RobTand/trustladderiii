@@ -198,7 +198,15 @@ impl JsonSyntax<'_> {
                             self.at += 1;
                             return Ok(());
                         }
-                        Some(b',') => self.at += 1,
+                        Some(b',') => {
+                            let comma = self.at;
+                            self.at += 1;
+                            self.space();
+                            if self.byte() == Some(b']') {
+                                return self
+                                    .fail("Illegal trailing comma before end of array", comma);
+                            }
+                        }
                         _ => return self.fail("Expecting ',' delimiter", self.at),
                     }
                 }
@@ -229,7 +237,15 @@ impl JsonSyntax<'_> {
                             self.at += 1;
                             return Ok(());
                         }
-                        Some(b',') => self.at += 1,
+                        Some(b',') => {
+                            let comma = self.at;
+                            self.at += 1;
+                            self.space();
+                            if self.byte() == Some(b'}') {
+                                return self
+                                    .fail("Illegal trailing comma before end of object", comma);
+                            }
+                        }
                         _ => return self.fail("Expecting ',' delimiter", self.at),
                     }
                 }
