@@ -61,6 +61,8 @@ mod continuations;
 use continuations::*;
 mod dependencies;
 pub use dependencies::Dependency;
+#[cfg(verus_keep_ghost)]
+mod progress;
 mod footprint;
 include!("headroom.rs");
 mod ids;

@@ -33,6 +33,12 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        (match fact {
+            Fact::Dependency { target, status: DependencyStatus::Delivered } =>
+                dependencies::delivery_input(*old(w), i as int, target),
+            _ => false,
+        } ==> progress::progress_measure(*final(w)) + 1 == progress::progress_measure(*old(w))
+            && dependencies::edges_indexable(*final(w))),
 ] proof [reveal(dependencies::dependency_frame);] {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),

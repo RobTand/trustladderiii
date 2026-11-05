@@ -102,6 +102,36 @@ pub(super) open spec fn dependency_frame(before: World, after: World, i: int) ->
             && after.nodes@[i as int].credit.spent == before.nodes@[i as int].credit.spent
 }
 
+/// Prerequisite delivery / #805: the real lookup has a pending row and every
+/// matching declaration passes the handler's guards. check_dependencies rejects
+/// duplicate keys; no world-size bound is imposed here.
+#[verifier::opaque]
+pub(super) open spec fn delivery_input(w: World, i: int, target: DependencyTarget) -> bool {
+    !(w.nodes@[i].phase is Closed) && target.number > 0
+        && (match target.request { None => true, Some(node) => node.0 < w.nodes@.len()
+            && w.nodes@[node.0 as int].repo == w.nodes@[i].repo })
+        && (exists|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(i as u64) && w.dependencies@[k].target == target
+            && !w.dependencies@[k].rejected && w.dependencies@[k].status == DependencyStatus::Pending)
+        && (forall|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(i as u64)
+            && w.dependencies@[k].target.kind == target.kind && w.dependencies@[k].target.number == target.number
+            ==> w.dependencies@[k].target == target && !w.dependencies@[k].rejected
+                && w.dependencies@[k].status == DependencyStatus::Pending)
+}
+
+/// #805: expose the concrete changed row across the actual handler boundary.
+#[verifier::opaque]
+pub(super) open spec fn delivery_changed(before: World, after: World, i: int,
+    target: DependencyTarget) -> bool {
+    exists|k: int| 0 <= k < before.dependencies@.len()
+        && before.dependencies@[k].node == NodeId(i as u64)
+        && before.dependencies@[k].target == target
+        && before.dependencies@[k].status == DependencyStatus::Pending
+        && after.dependencies@ == before.dependencies@.update(k, Dependency {
+            status: DependencyStatus::Delivered, rejected: false, ..before.dependencies@[k] })
+}
+
 pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
     recommends end <= seen.len(),
     decreases end,
@@ -568,12 +598,26 @@ impl World {
             edges_indexable(*old(self)), old(out).len < OUTBOX,
         ensures dependency_frame(*old(self), *final(self), i as int),
             final(out).len <= old(out).len + 1,
+            (status == DependencyStatus::Delivered && delivery_input(*old(self), i as int, target)
+                ==> delivery_changed(*old(self), *final(self), i as int, target)
+                    && progress::progress_measure(*final(self)) + 1 == progress::progress_measure(*old(self))
+                    && edges_indexable(*final(self))),
     ] {
+        kernel_snapshot! { before_delivery = *self }
         let Some((existing, dependency)) = self.prepare_dependency(i, target, status) else {
             kernel_proof! { reveal(dependency_frame); }
             return;
         };
         self.record_dependency(i, existing, dependency, out);
+        kernel_proof! {
+            if status == DependencyStatus::Delivered && delivery_input(before_delivery@, i as int, target) {
+                reveal(delivery_input);
+                let k = existing.unwrap() as int;
+                progress::delivery_rank_delta(before_delivery@, *self, i as int, k);
+                reveal(delivery_changed);
+                assert(before_delivery@.dependencies@[k].target == target);
+            }
+        }
     }
     }
 
@@ -587,7 +631,17 @@ impl World {
             Some((Some(index), _)) => index < self.dependencies@.len(),
             _ => true,
         },
-    ] {
+            (status == DependencyStatus::Delivered && delivery_input(*self, i as int, target)
+                ==> match result {
+                    Some((Some(k), d)) => k < self.dependencies@.len()
+                        && self.dependencies@[k as int].node == NodeId(i as u64)
+                        && self.dependencies@[k as int].target == target
+                        && self.dependencies@[k as int].status == DependencyStatus::Pending
+                        && d == (Dependency { status: DependencyStatus::Delivered, rejected: false,
+                            ..self.dependencies@[k as int] }),
+                    _ => false,
+                }),
+    ] proof [reveal(delivery_input);] {
         if target.number == 0 {
             return None;
         }
@@ -599,6 +653,11 @@ impl World {
         }
         let node = NodeId(i as u64);
         let existing = self.find_dependency(node, target.kind, target.number);
+        kernel_proof! {
+            if status == DependencyStatus::Delivered && delivery_input(*self, i as int, target) {
+                assert(existing is Some);
+            }
+        }
         if let Some(index) = existing {
             let previous = self.dependencies[index];
             if previous.rejected || previous.status != DependencyStatus::Pending {
@@ -640,6 +699,10 @@ impl World {
         requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
             match existing { None => true, Some(index) => index < old(self).dependencies@.len() },
         ensures dependency_frame(*old(self), *final(self), i as int),
+            final(self).dependencies@ == match existing {
+                Some(index) => old(self).dependencies@.update(index as int, dependency),
+                None => old(self).dependencies@.push(dependency),
+            },
             final(out).len <= old(out).len + 1,
     ] proof [reveal(dependency_frame);] {
         let node = NodeId(i as u64);

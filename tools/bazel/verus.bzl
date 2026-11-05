@@ -93,6 +93,7 @@ def verus_proofs():
             "continuations": ("kernel::continuations", 1),
             "checking": ("kernel::checking", 15),
             "dependencies": ("kernel::dependencies", 31),
+            "progress": ("kernel::progress", 8),
             "ranks": ("kernel::ranks", 30),
             "footprint": ("kernel::footprint", 21),
             "ids": ("kernel::ids", 6),
