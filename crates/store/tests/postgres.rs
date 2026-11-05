@@ -2229,6 +2229,7 @@ fn console_login_granted_before_migration(settings: &tl3_config::Store) {
 }
 
 /// #403: owed postmortems and code grades commit with the fact that makes them.
+/// State-table "Counter headroom": SQL defaults share rollback-safe identifiers.
 fn postmortem_records(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let mut listener = Listener::open(settings).unwrap();
@@ -2338,6 +2339,48 @@ fn postmortem_records(settings: &tl3_config::Store) {
             )
             .is_err(),
         "the share stays between 0 and 1"
+    );
+    // State-table "Counter headroom": implicit SQL allocation and the Rust
+    // commit path share one rollback-safe high-water mark.
+    let insert = "INSERT INTO tl3_postmortems
+        (node_id, trigger, reason, repo, issue, title, revision, owed_at)
+        SELECT node_id, 'sql-default', reason, repo, issue, title, revision, owed_at
+        FROM tl3_postmortems WHERE trigger = 'close' RETURNING id";
+    let previous: i64 = client
+        .query_one("SELECT MAX(id) FROM tl3_postmortems", &[])
+        .unwrap()
+        .get(0);
+    let sequence_before = client
+        .query_one(
+            "SELECT last_value, is_called FROM tl3_postmortems_id_seq",
+            &[],
+        )
+        .unwrap();
+    let mut transaction = client.transaction().unwrap();
+    let refused: i64 = transaction.query_one(insert, &[]).unwrap().get(0);
+    transaction.rollback().unwrap();
+    let committed: i64 = client.query_one(insert, &[]).unwrap().get(0);
+    assert!(
+        committed > previous,
+        "SQL defaults cannot reuse a committed ID"
+    );
+    assert_eq!(
+        refused, committed,
+        "rollback restores the default allocation"
+    );
+    let sequence_after = client
+        .query_one(
+            "SELECT last_value, is_called FROM tl3_postmortems_id_seq",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        sequence_before.get::<_, i64>(0),
+        sequence_after.get::<_, i64>(0)
+    );
+    assert_eq!(
+        sequence_before.get::<_, bool>(1),
+        sequence_after.get::<_, bool>(1)
     );
 }
 

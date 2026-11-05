@@ -384,7 +384,19 @@ impl Controller {
         row: &tl3_store::WorldRow,
         error: Error,
     ) -> Result<()> {
+        // Corrupt persisted state is fatal, not an upstream input failure.
+        crate::snapshot::decode(snapshot)?;
         let input: PendingKernelInput = crate::decode_stored(row.value.clone())?;
+        let scope = match &input {
+            PendingKernelInput::Intake { issue, .. } => format!(
+                "intake:{}/{}/{}:{}",
+                issue.owner.to_ascii_lowercase(),
+                issue.repo.to_ascii_lowercase(),
+                issue.installation,
+                issue.number
+            ),
+            _ => row.id.clone(),
+        };
         let (target, title, node) = match input {
             PendingKernelInput::Intake { issue, .. } => (
                 Some(IssueTarget {
@@ -415,7 +427,7 @@ impl Controller {
         let mut commit = Commit::new(format!("reject:{}", row.id), row.value.clone(), snapshot);
         self.input_failed(
             snapshot,
-            &row.id,
+            &scope,
             target,
             &title,
             node,

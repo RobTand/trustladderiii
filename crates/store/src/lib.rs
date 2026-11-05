@@ -215,6 +215,9 @@ pub enum SavePoint {
     CreditWritten,
     BeforeCommit,
     AfterCommit,
+    /// State-table "Counter headroom": one durable input publishes all helper
+    /// writes together. Its payload lists their point/key/event receipts.
+    InputAfterCommit,
     InternBeforeCommit,
     InternAfterCommit,
     ReceiveIngressBeforeCommit,
@@ -933,6 +936,20 @@ impl Store {
         self.input_active = false;
         let pending = std::mem::take(&mut self.input_boundaries);
         if accepted {
+            if !pending.is_empty() {
+                let members: Vec<_> = pending
+                    .iter()
+                    .map(|(point, key, event)| {
+                        serde_json::json!({"point": format!("{point:?}"), "key": key, "event": event})
+                    })
+                    .collect();
+                boundary(
+                    &mut self.boundary_hook,
+                    SavePoint::InputAfterCommit,
+                    "controller-input",
+                    &serde_json::json!({"boundaries": members}),
+                );
+            }
             for (point, key, event) in pending {
                 boundary(&mut self.boundary_hook, point, &key, &event);
             }
