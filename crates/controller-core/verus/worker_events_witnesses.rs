@@ -18,7 +18,7 @@ fn model_witnesses() {
 /// in source.rs parse_reply. Other precedence is preserved existing behaviour
 /// (no rule). Every outcome is reachable, without a stream-length bound.
 fn sequence_witnesses() {
-    let quota = WorkerEvent::Quota { model: QuotaModel::Grade, reset_ms: Some(1) };
+    let quota = WorkerEvent::Quota { model: QuotaModel::Grade, reset_ms: Some(1), facts: None };
     let out_5 = reply_step(quota, false, 3, 3);
     assert(out_5 == ReplyDecision::Quota);
     let out_6 = reply_step(quota, false, 1, 3);
@@ -35,11 +35,11 @@ fn sequence_witnesses() {
     assert(out_9 == ReplyDecision::Reply);
     let out_10 = reply_step(WorkerEvent::Progress { unit: ProgressUnit::ToolResult }, false, 3, 3);
     assert(out_10 == ReplyDecision::Progress);
-    let out_11 = reply_step(WorkerEvent::Quota { model: QuotaModel::Forbidden, reset_ms: Some(1) }, false, 3, 3);
+    let out_11 = reply_step(WorkerEvent::Quota { model: QuotaModel::Forbidden, reset_ms: Some(1), facts: None }, false, 3, 3);
     assert(out_11 == ReplyDecision::InvalidQuotaModel);
-    let out_12 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: None }, false, 3, 3);
+    let out_12 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: None, facts: None }, false, 3, 3);
     assert(out_12 == ReplyDecision::InvalidQuotaReset);
-    let out_13 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: Some(0) }, false, 3, 3);
+    let out_13 = reply_step(WorkerEvent::Quota { model: QuotaModel::Implicit, reset_ms: Some(0), facts: None }, false, 3, 3);
     assert(out_13 == ReplyDecision::InvalidQuotaReset);
 }
 /// State-table cdacce8f :147,800; Q43, #682/#691/#696. Full-width gate witnesses.
@@ -80,5 +80,21 @@ fn lifecycle_witnesses() {
     assert(out_28 == EndDecision::Retire);
     let out_29 = end_decision(Ending::Pending);
     assert(out_29 == EndDecision::KeepActive);
+}
+}
+
+verus! {
+/// Q53 / #759: executable witnesses reach announced, ceil, stale and probe branches.
+fn witness() {
+    let reset = announced(429, true, true, true, 1_000_125, false);
+    assert(reset == Some(1_000_125u64));
+    let rounded = announced(429, true, true, true, 1_000_125, true);
+    assert(rounded == Some(1_000_126u64));
+    let stale = announced(429, true, false, true, 1_000_125, false);
+    assert(stale == None::<u64>);
+    let short = probe(429, false, true);
+    assert(short == 120u64);
+    let unknown = probe(418, false, false);
+    assert(unknown == 0u64);
 }
 }
