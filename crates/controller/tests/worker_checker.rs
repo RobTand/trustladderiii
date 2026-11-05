@@ -18,11 +18,16 @@ fn recorded_worker_verdicts_match_the_real_rust_decisions() {
     let vectors: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(vectors.as_array().is_some_and(|rows| !rows.is_empty()));
     let actual = oracle::generate(serde_json::from_value(vectors.clone()).unwrap()).unwrap();
-    assert_eq!(
-        serde_json::to_value(actual).unwrap(),
-        vectors,
-        "run checker_stub.py --generate with the checker-vectors example"
-    );
+    let actual = serde_json::to_value(actual).unwrap();
+    let actual = actual.as_array().unwrap();
+    let expected = vectors.as_array().unwrap();
+    assert_eq!(actual.len(), expected.len());
+    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert_eq!(
+            actual, expected,
+            "checker row {index}: run checker_stub.py --generate with the checker-vectors example"
+        );
+    }
 }
 
 /// #807: the committed --check workflow must run, including the Rust example.
