@@ -264,7 +264,7 @@ impl Adapter {
         Ok(read("probe", json!(d.key))? & 1 == 0)
     }
     pub fn look(&self, d: &Delivery) -> Result<Look> {
-        Ok(match read("look", json!(d.key))? % 12 {
+        Ok(match read("look", json!(d.key))? % 14 {
             0 => Look::Pending,
             1 => Look::Healthy,
             2 => Look::Alive {
@@ -292,7 +292,9 @@ impl Adapter {
             },
             9 => Look::Found(Box::new(completion(1))),
             10 => Look::Found(Box::new(completion(2))),
-            _ => Look::Found(Box::new(completion(3))),
+            11 => Look::Found(Box::new(completion(3))),
+            12 => Look::Found(Box::new(queue_completion(true))),
+            _ => Look::Found(Box::new(queue_completion(false))),
         })
     }
     pub fn stop_stalled(&self, d: &Delivery) -> Result<Completion> {
@@ -330,6 +332,23 @@ impl Adapter {
             executor::WaitRecord::Ended
         })
     }
+}
+fn queue_completion(setup: bool) -> Completion {
+    use tl3_controller::adapters::mergify::{Evidence, QueueFact};
+    Completion::confirmed(vec![Observation::Queue(QueueFact {
+        repository: repository(),
+        number: 100,
+        evidence: if setup {
+            Evidence::ChecksUnavailable {
+                permissions: vec!["checks".into()],
+            }
+        } else {
+            Evidence::Merged {
+                head: "head".into(),
+                checks_passed: true,
+            }
+        },
+    })])
 }
 fn completion(code: u8) -> Completion {
     let mut c = Completion::confirmed(if code >= 2 {

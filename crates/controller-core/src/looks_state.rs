@@ -74,7 +74,7 @@ pub enum EntryAction {
     FinishStall,
     Look,
 }
-/// Q53 / state-table.md:277,796-814: quota recovery precedes stopping and the upstream read.
+/// Preserved existing behaviour (no rule): quota recovery precedes stopping and the upstream read.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if quota { EntryAction::ResumeQuota } else if stopping { EntryAction::FinishStall } else { EntryAction::Look },
 ))]
@@ -88,7 +88,7 @@ pub fn entry_action(quota: bool, stopping: bool) -> EntryAction {
     }
 }
 
-/// State-table.md:814 / #356: only an effect's repeated GitHub not-found becomes authoritative absence.
+/// Preserved existing behaviour (no rule): only an effect's repeated GitHub not-found becomes authoritative absence.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (github_404 && previous_not_found && effect),))]
 pub fn missing_is_absent(github_404: bool, previous_not_found: bool, effect: bool) -> bool {
     github_404 && previous_not_found && effect
@@ -114,7 +114,7 @@ pub struct ReadDecision {
     pub reset_failures: bool,
     pub clear_wait: bool,
 }
-/// Q7/Q43, state-table.md:270-275,800,814: waiting/pending/alive keep counters for their own handling.
+/// Preserved existing behaviour (no rule): waiting/pending/alive keep counters for their own handling.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out.reset_failures == (kind != LookKind::Waiting && kind != LookKind::Pending && kind != LookKind::Alive && kind != LookKind::Failed),
     out.clear_wait == (has_wait && kind != LookKind::Waiting),
@@ -137,7 +137,7 @@ pub enum FoundAction {
     Complete,
     Observe,
 }
-/// State-table.md:804 / #373: pending completion is acknowledged; changed facts on settled effects are observed once.
+/// Preserved existing behaviour (no rule): pending completions acknowledge; settled effects observe setup gaps or changed nonempty facts.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     (out == FoundAction::Complete) == pending,
     (out == FoundAction::Observe) == (!pending && (setup_gap || (changed && observations))),
@@ -166,7 +166,7 @@ pub enum AbsenceAction {
     Retry,
     Ignore,
 }
-/// State-table.md:814 / Q7 / #356: check waits do not spend retries; cancelling and settled effects cannot retry absence.
+/// State-table.md:551 at cdacce8f: waiting for required checks spends no retry. Other absence gates are preserved existing behaviour (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     (out == AbsenceAction::ReleaseHold) == checks_pending,
     (out == AbsenceAction::Retry) == (!checks_pending && (held || not_found) && pending && !cancelling && effect),
@@ -189,7 +189,7 @@ pub fn absence_action(
     }
 }
 
-/// #356/#373, state-table.md:814: a changed or timely alive look resets failures without reading the effect.
+/// #373: changed or timely alive looks reset the failure streak. Short-circuit effect-read placement is preserved existing behaviour (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (changed || if now >= progress { now - progress < allowance } else { allowance > 0 }),
 ))]
@@ -213,7 +213,8 @@ pub enum WaitAction {
     WatchEnded { start_clock: bool },
     Fail,
 }
-/// Q43, state-table.md:800,808-812: only the outside owner ends a wait; its first ending starts progress time once.
+/// Q43, state-table.md:800 at cdacce8f: only the outside owner's record ends a declared wait.
+/// The first ending starts progress time once, preserved existing behaviour (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == match status { WaitStatus::Alive => WaitAction::WatchAlive, WaitStatus::Ended => WaitAction::WatchEnded { start_clock: !already_ended }, WaitStatus::Failed => WaitAction::Fail },
 ))]
@@ -227,13 +228,13 @@ pub fn wait_action(status: WaitStatus, already_ended: bool) -> WaitAction {
     }
 }
 
-/// Q53, state-table.md:277,792: an announced quota never schedules before the sampled current time.
+/// Preserved existing behaviour (no rule): an announced quota never schedules before the sampled current time.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == if reset > now { reset } else { now },))]
 pub fn quota_due(reset: u64, now: u64) -> u64 {
     if reset > now { reset } else { now }
 }
 
-/// State-table.md:796 / #759: progress uses the earlier silence/no-progress allowance and a saturated clock sum.
+/// State-table.md:796 at cdacce8f: either silence or no-progress allowance triggers a look. Saturation is preserved existing behaviour (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == capped_add(now, if silence < no_progress { silence } else { no_progress }),
 ))]
@@ -245,7 +246,7 @@ pub fn progress_due(now: u64, silence: u64, no_progress: u64) -> u64 {
     })
 }
 
-/// Q53, state-table.md:277: a model's recorded quota reset only increases.
+/// Preserved existing behaviour (no rule): a model's recorded quota reset only increases.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match previous { None => true, Some(old) => old < reset },))]
 pub fn record_quota(previous: Option<u64>, reset: u64) -> bool {
     match previous {
@@ -254,7 +255,7 @@ pub fn record_quota(previous: Option<u64>, reset: u64) -> bool {
     }
 }
 
-/// #759 / Q53, state-table.md:277: replaying the same model's same/older ending never restarts its wait.
+/// Preserved existing behaviour (no rule): replaying a model's same/older ending never restarts its wait.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (same_model && match previous { None => false, Some(old) => old >= reset }),))]
 pub fn quota_replayed(previous: Option<u64>, same_model: bool, reset: u64) -> bool {
     match previous {

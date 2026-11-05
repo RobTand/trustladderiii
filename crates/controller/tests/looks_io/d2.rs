@@ -40,7 +40,9 @@ fn mandatory_d2_quota_wait_and_ladder_bound() {
                 since,
                 noticed,
                 entries: vec![Entry::State, Entry::State],
-                frames: std::iter::once((0, 1_000_000)).chain(std::iter::repeat_n((0, 0), 63)).collect(),
+                frames: std::iter::once((0, 1_000_000))
+                    .chain(std::iter::repeat_n((0, 0), 63))
+                    .collect(),
                 ..schedule()
             });
             assert_eq!(
@@ -54,7 +56,7 @@ fn mandatory_d2_quota_wait_and_ladder_bound() {
         }
     }
 }
-/// Q53 / state-table.md:277: quota recovery reads confirmed effects before resuming.
+/// Preserved existing behaviour (no rule): quota recovery reads confirmed effects before resuming.
 #[test]
 fn mandatory_d2_quota_resume() {
     for effect in [0, 1] {
@@ -115,7 +117,7 @@ fn mandatory_d2_each_look_and_not_found() {
         assert_eq!(has(&r, "remove_hold"), checks);
     }
 }
-/// #356/#373, state-table.md:814: a stalled pending effect retains failures; timely live reads clear them.
+/// #373: a stalled pending effect retains failures; timely live reads clear them.
 #[test]
 fn mandatory_d2_alive_allowance_and_effect_read() {
     for recent in [false, true] {
@@ -168,7 +170,7 @@ fn mandatory_d2_declared_waits() {
     assert!(has(&r, "stop_stalled"));
     assert!(!has(&r, "look"));
 }
-/// Q53/#759, state-table.md:277,796: progress retires waits; quota replay never restarts the wait.
+/// Preserved existing behaviour (no rule): progress retires waits; quota replay never restarts the wait.
 #[test]
 fn mandatory_d2_progress_and_quota_allowances() {
     let r = io::compare(&Schedule {
@@ -193,6 +195,42 @@ fn mandatory_d2_progress_and_quota_allowances() {
     assert_eq!(r.trace.iter().filter(|(op, _)| op == "clock").count(), 6);
     assert_eq!(persisted(&r)["last_quota_model"], Value::Null);
     assert!(r.files.contains_key("model_quotas/model-a"));
+}
+/// Preserved existing behaviour (no rule): setup gaps bypass completion deduplication, and changed settled facts are observed once.
+#[test]
+fn mandatory_d2_settled_completion_shapes() {
+    for look in [5, 9, 10, 11, 12, 13] {
+        for recorded in [0, 1] {
+            let r = io::compare(&Schedule {
+                entries: vec![Entry::State, Entry::State],
+                frames: vec![(0, 0); 64],
+                overrides: vec![
+                    ("look".into(), 0, look),
+                    ("look".into(), 1, look),
+                    ("store.effect".into(), 0, 1),
+                    ("store.effect".into(), 1, 1),
+                    ("queue.recorded".into(), 0, recorded),
+                    ("queue.recorded".into(), 1, recorded),
+                ],
+                ..schedule()
+            });
+            assert!(!has(&r, "complete"));
+            let observations = r
+                .trace
+                .iter()
+                .filter(|(op, _)| op == "queue_observation")
+                .count();
+            assert_eq!(
+                observations,
+                match look {
+                    5 | 9 => 0,
+                    12 if recorded == 0 => 2,
+                    _ => 1,
+                }
+            );
+            assert_eq!(has(&r, "queue.recorded"), look == 12);
+        }
+    }
 }
 /// D2 I/O fidelity: independent read responses and crash cuts at every recorded write.
 #[test]

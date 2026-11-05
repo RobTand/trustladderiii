@@ -318,10 +318,17 @@ trait LocalQueueFact {
 }
 impl LocalQueueFact for tl3_controller::adapters::mergify::QueueFact {
     fn setup(&self) -> bool {
-        false
+        use tl3_controller::adapters::mergify::Evidence;
+        matches!(
+            self.evidence,
+            Evidence::ChecksUnavailable { .. }
+                | Evidence::CheckMissing { .. }
+                | Evidence::CheckReported { .. }
+                | Evidence::QueueBlocked { .. }
+        )
     }
     fn recorded(&self, _: &Snapshot) -> Result<bool> {
-        Ok(false)
+        Ok(io::read("queue.recorded", json!(self))? & 1 != 0)
     }
 }
 #[path = "looks_io/d2.rs"]
