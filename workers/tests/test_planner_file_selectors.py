@@ -162,7 +162,8 @@ def test_nonexact_selectors_use_planner_chosen_base_nodes(planner_request, file_
 
 
 @pytest.mark.parametrize('at_base', [True, False], ids=['missing-from-worktree', 'only-in-worktree'])
-def test_selector_correction_uses_original_base(planner_request, file_plan, monkeypatch, at_base, request):
+def test_selector_correction_uses_original_base(planner_request, file_plan, monkeypatch, at_base, request,
+                                                checker_state_directory):
     import checker_stub
     from worker_process import git
     from tl3_workers import runtime
@@ -172,6 +173,7 @@ def test_selector_correction_uses_original_base(planner_request, file_plan, monk
                    'test_nonexact_selectors_use_planner_chosen_base_nodes[' + FILE + ']')
     monkeypatch.setitem(checker_stub.cases(), request.node.nodeid,
                         copy.deepcopy(checker_stub.cases()[budget_case]))
+    checker_stub.prepare_replay(request.node.nodeid, checker_state_directory / 'checker-cursor')
     root = Path(planner_request['worktree'])
     if not at_base:
         (root / FILE).unlink()
