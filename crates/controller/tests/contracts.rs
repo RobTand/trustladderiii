@@ -2029,3 +2029,53 @@ fn shared_reply_types_reject_unsupported_shapes_and_enforce_conditionals() {
             "receipt_sha256":"b".repeat(64),"log_sha256":"c".repeat(64),"attempt":null}]});
     assert!(serde_json::from_value::<TestRun>(run).is_err());
 }
+
+/// #819: anchored patterns and Unicode whitespace must accept the same wire strings.
+#[test]
+fn reply_leaf_parsers_follow_existing_schema_patterns() {
+    use contracts::roles::{
+        ingest_reply::IngestReply,
+        maker_reply::{GenerationReceipt, MakerReply},
+        writer_reply::Text,
+    };
+    fn compare<T: serde::de::DeserializeOwned>(role: &str, definition: Option<&str>, value: Value) {
+        assert_eq!(
+            serde_json::from_value::<T>(value.clone()).is_ok(),
+            shared_reply_validator(role, definition).is_valid(&value),
+            "{role} {definition:?}: {value:?}",
+        );
+    }
+    for text in [
+        "", " ", "\t", "\n", "\r", "\u{b}", "\u{c}", "\u{85}", "\u{a0}", "\u{1680}", "\u{2000}",
+        "\u{2001}", "\u{2002}", "\u{2003}", "\u{2004}", "\u{2005}", "\u{2006}", "\u{2007}",
+        "\u{2008}", "\u{2009}", "\u{200a}", "\u{2028}", "\u{2029}", "\u{202f}", "\u{205f}",
+        "\u{3000}", "\u{feff}", "\u{1c}", "line\n", "text",
+    ] {
+        compare::<Text>("writer", Some("text"), json!(text));
+        compare::<IngestReply>(
+            "ingest",
+            None,
+            json!({"kind":"brief","brief":"b","goals":[{
+            "description":"g","verification":"review","stage":"publishing",
+            "publication":{"non_draft":true,"body_lines":[text],"proof":false}
+        }],"memory_ids":[]}),
+        );
+    }
+    for suffix in ["", "\n", "\r\n", "\u{85}", "x"] {
+        compare::<MakerReply>(
+            "maker",
+            None,
+            json!({"kind":"done","head":format!("{}{suffix}","a".repeat(40)),
+            "self_check":[{"goal_id":"g","status":"met","evidence":"e"}]}),
+        );
+        compare::<MakerReply>(
+            "maker",
+            None,
+            json!({"kind":"blocked","report":"blocked",
+            "evidence":{"tool_error":format!("tool-error-1{suffix}"),"tool":"read","class":"EACCES"}}),
+        );
+        let mut receipt = shared_generation_receipt(0.5, 1, false);
+        receipt["action_key"] = json!(format!("{}{suffix}", "a".repeat(64)));
+        compare::<GenerationReceipt>("maker", Some("generation_receipt"), receipt);
+    }
+}

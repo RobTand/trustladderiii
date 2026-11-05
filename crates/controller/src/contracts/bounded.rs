@@ -896,6 +896,24 @@ impl JsonSchema for ReplyZero {
 
 // The pattern is also the parser's policy. These are the patterns already shipped in
 // reply schemas; no regex dependency enters the bottom contracts crate.
+// Match jsonschema-regex 0.46.10's translation of the published `\S`, including its
+// limited Unicode set. Rust's is_whitespace and the engine's optimized whitespace
+// path both use different sets; substituting either would change accepted replies.
+pub fn schema_pattern_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n'
+            | '\x0b'
+            | '\x0c'
+            | '\r'
+            | ' '
+            | '\u{00a0}'
+            | '\u{feff}'
+            | '\u{2003}'
+            | '\u{2029}'
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct ReplyText<const PATTERN: u8, const MIN: usize, const MAX: usize>(Text<MIN, MAX>);
@@ -922,9 +940,9 @@ impl<'de, const PATTERN: u8, const MIN: usize, const MAX: usize> Deserialize<'de
         let text = Text::<MIN, MAX>::deserialize(deserializer)?;
         let s = text.as_str();
         let valid = match PATTERN {
-            0 => s.chars().any(|c| !c.is_whitespace()),
+            0 => s.chars().any(|c| !schema_pattern_whitespace(c)),
             1 => {
-                s.chars().any(|c| !c.is_whitespace())
+                s.chars().any(|c| !schema_pattern_whitespace(c))
                     && !s.contains(['\r', '\n', '\u{85}', '\u{2028}', '\u{2029}'])
             }
             2 => !s.is_empty() && !s.contains(['\r', '\n']),
