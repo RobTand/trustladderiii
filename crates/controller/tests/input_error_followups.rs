@@ -236,6 +236,140 @@ fn exhausted_kernel_headroom_prevents_the_step_and_reports_the_counter() {
             && row.value["summary"] == "kernel counter headroom exhausted: next_seq"
     }));
 }
+
+/// #771 / facts are never dropped; Q27 halt approval is pending. Keep the
+/// original arrival order through exhaustion, restart, repair, and Rob's clear.
+#[test]
+fn exhausted_inputs_remain_queued_until_clearance_then_retry_in_order() {
+    let mut db = support::Database::start();
+    let settings = db.create("counter_inbox_retention");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    let next_seq = c.world().unwrap().nodes[0].next_seq;
+    seed_node_counter(&mut c, &settings, "next_seq", u64::MAX);
+    for (key, priority) in [
+        ("first", tl3_kernel::Priority::P1),
+        ("second", tl3_kernel::Priority::P2),
+    ] {
+        c.observe(
+            key,
+            Observation::Kernel(Event::Fact {
+                node: NodeId(0),
+                fact: tl3_kernel::Fact::Priority(priority),
+            }),
+        )
+        .unwrap();
+    }
+    assert!(c.drive_once().unwrap());
+    let pending = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "inbox")
+            .map(|r| r.id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        pending(&mut c),
+        ["external:first", "external:second"],
+        "exhaustion must retain facts"
+    );
+    let incidents = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| {
+                r.table == "incidents" && r.value["signature"]["class"] == "kernel_counter_headroom"
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(incidents(&mut c).len(), 1);
+    let incident = incidents(&mut c)[0].id.clone();
+    assert_eq!(
+        incidents(&mut c)[0].value["summary"],
+        "kernel counter headroom exhausted: next_seq"
+    );
+    drop(c);
+    let mut c = open(&settings, root.path());
+    drain(&mut c);
+    assert_eq!(pending(&mut c), ["external:first", "external:second"]);
+    assert_eq!(
+        incidents(&mut c).len(),
+        1,
+        "wakes and restart must deduplicate the incident"
+    );
+    // Clearance cannot create numeric headroom. Model an operator repair first.
+    seed_node_counter(&mut c, &settings, "next_seq", next_seq);
+    drain(&mut c);
+    assert_eq!(
+        c.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::Unranked,
+        "repair alone must not release the halt"
+    );
+    c.observe(
+        "clear-counter",
+        Observation::GitHubComment {
+            repository: boot().repos.remove(0),
+            issue: 12,
+            comment: tl3_github::Comment {
+                id: 900,
+                body: format!("clear incident {incident}"),
+                user: tl3_github::Actor {
+                    id: 42,
+                    login: "rob".into(),
+                },
+                created_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                updated_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
+            },
+        },
+    )
+    .unwrap();
+    for _ in 0..10 {
+        c.drive_once().unwrap();
+        if !pending(&mut c).contains(&"external:clear-counter".into()) {
+            break;
+        }
+    }
+    assert!(!incidents(&mut c)[0].value["open"].as_bool().unwrap());
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::P1
+    );
+    assert_eq!(pending(&mut c), ["external:second"]);
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::P2
+    );
+    assert!(pending(&mut c).is_empty());
+}
+
+/// #771: widening the serialized ledger reads old JSON unchanged, and the
+/// derived balance must contain the sum of all four full-width entries.
+#[test]
+fn serialized_world_accepts_old_and_full_width_credit_ledgers() {
+    let mut world = tl3_kernel::World::new(&[1], 1);
+    world
+        .nodes
+        .push(tl3_kernel::Node::new(tl3_kernel::RepoId(0)));
+    let mut encoded = serde_json::to_value(&world).unwrap();
+    for value in [u32::MAX as u64, u64::MAX] {
+        for field in ["start", "earned", "added", "spent"] {
+            encoded["nodes"][0]["credit"][field] = json!(value);
+        }
+        let restored: tl3_kernel::World = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&restored).unwrap(), encoded);
+        assert_eq!(
+            restored.nodes[0].credit.balance().to_string(),
+            (2 * value as i128).to_string()
+        );
+    }
+}
 struct BrokenLook {
     fake: adapters::workers::Fake,
     settings: tl3_config::Store,
