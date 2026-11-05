@@ -2,7 +2,8 @@
 
 from tl3_workers.roles.base import Role
 from tl3_workers.prerequisites import check_prerequisites
-from tl3_workers.evidence import preflight, preserve_verbatim
+from tl3_workers.evidence import preflight
+from tl3_workers.ingest_retention import preserve_verbatim
 from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.generated_scope import check_ingest_generation_scope
