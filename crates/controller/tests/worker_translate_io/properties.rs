@@ -72,7 +72,14 @@ fn production_and_reference_sources_are_pinned() {
         let changed = current.exists();
         if changed {
             let copy = std::fs::read_to_string(&current).unwrap();
-            let body = production.split("#[cfg(test)]").next().unwrap();
+            let body = if name == "plan-size" {
+                let start = production.find("pub(crate) fn validate_plan_size(").unwrap();
+                let helper = production[start..].find("fn ascii_json_bytes(").unwrap() + start;
+                let end = production[helper..].find("\n}\n").unwrap() + helper + 3;
+                &production[start..end]
+            } else {
+                production.split("#[cfg(test)]").next().unwrap()
+            };
             assert_eq!(copy.trim_end(), body.trim_end(), "current leaf drift: {name}");
         }
         for part in pin["parts"].as_array().unwrap() {
