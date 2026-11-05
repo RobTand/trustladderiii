@@ -289,7 +289,9 @@ fn fixed_seed_changing_reads_and_optional_fields() {
         let role=["ingest","audit","planner","maker","reviewer"][role];
         let mut s=schedule(role,reply(role));s.intern_failures=failures;
         s.documents=tape.iter().map(|v|match v {0=>Read::Store,1=>Read::Json,2=>Read::Value(Some(json!({}))),3=>Read::Value(Some(json!([{"kind":"review_finding","id":"f","reviewed_sha":OLD_HEAD,"report":"fix","goal_ids":["goal-1"]}]))),_=>Read::Value(None)}).collect();
-        if bits&1!=0 {s.head=None;}if bits&2!=0{s.round=1;}if bits&4!=0{s.run=None;}
+        if bits&1!=0 {s.head=None;}
+        if bits&2!=0{s.round=1;}
+        if bits&4!=0{s.run=None;}
         if let Observation::WorkerReply{reply,model,..}=&mut s.observation {
             if bits&8!=0 {*model=None;}
             if role=="reviewer"&&bits&1!=0 {*reply=json!({"verdict":"changes","blocking_findings":blockers(1+tape.len(),1+usize::from(bits)*200),"findings":[]});}
@@ -519,10 +521,8 @@ fn mandatory_all_reply_outcomes_and_plan_budget() {
             "Already recorded",
             "A violation"
         ])))];
-        if optional {
-            if let Observation::WorkerReply { reply, .. } = &mut s.observation {
-                reply["memory_ids"] = json!(["safe-memory"]);
-            }
+        if optional && let Observation::WorkerReply { reply, .. } = &mut s.observation {
+            reply["memory_ids"] = json!(["safe-memory"]);
         }
         assert!(routed(&s).result.to_string().contains("PlanCantMeet"));
     }
