@@ -45,7 +45,7 @@ pub mod snapshot {
         }
     }
     pub fn decode(_snapshot: &super::tl3_store::Snapshot) -> crate::Result<World> {
-        let closed = crate::io::sample("snapshot.decode") % 2 == 0;
+        let closed = crate::io::sample("snapshot.decode").is_multiple_of(2);
         Ok(World {
             nodes: vec![Node {
                 phase: Phase(closed),
@@ -221,7 +221,7 @@ fn differential_io_schedules() {
     let mut runner = TestRunner::new(Config {
         cases: 128,
         max_shrink_iters: 2048,
-        rng_seed: RngSeed::Fixed(730_19),
+        rng_seed: RngSeed::Fixed(73_019),
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(path))),
         ..Config::default()
     });
