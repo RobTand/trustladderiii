@@ -82,7 +82,13 @@ _WAVE_B_ENTRIES = {
         "tags": ["rust", "wave-b-selector-identity"],
     },
     # limits (S4)
-    "limits": _WAVE_B_STUB,
+    "limits": {
+        "srcs": ["tests/limits.rs"],
+        "crate_root": "tests/limits.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde_json"],
+        "data": ["//harness:core_vectors", "tests/fixtures/limits/delay.json"],
+        "tags": ["wave-b-plan-only", "rust"],
+    },
     # red-match (S4)
     "red-match": {
         "srcs": [":sources"],
@@ -109,6 +115,7 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
+    "tl3-controller/quota_hold": 16,
     "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,

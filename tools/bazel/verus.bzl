@@ -200,6 +200,19 @@ def verus_proofs():
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
+            name = "verus_quota_wake",
+            src = "proofs/quota_wake.rs",
+            srcs = ["src/quota_wake.rs"],
+            specs = ["proofs/quota_wake_spec.rs"],
+            expected_obligations = 3,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
             name = "verus_budget_cutoff",
             src = "proofs/budget_cutoff.rs",
             srcs = ["src/budget/cutoff.rs"],
@@ -416,6 +429,22 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
+        # #835: independent groups over the real limits source, with witnesses.
+        for group, count in [("arithmetic", 5), ("line", 3), ("accumulation", 8), ("delay", 2)]:
+            verus_test(
+                name = "verus_limits_" + group,
+                src = "verus/limits_" + group + ".rs",
+                srcs = ["src/limits.rs"],
+                module = "limits::" + group,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
 
     if native.package_name() == "crates/controller-core":
         # Group G2a: current-generation rebase replies, over the real core.
