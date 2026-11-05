@@ -146,9 +146,12 @@ def main():
     ):
         raise SystemExit('baseline did not verify; mutant rejection would be ambiguous')
     for name, filename, old, new, *scope in CASES:
-        if filename == 'lib.rs' and old not in (kernel / 'src/lib.rs').read_text():
-            if old in (kernel / 'src/events.rs').read_text():
-                filename = 'events.rs'
+        if scope:
+            owners = [path for path in (kernel / 'src').glob('*.rs')
+                      if f'fn {scope[0]}(' in path.read_text()]
+            if len(owners) != 1:
+                raise SystemExit(f'{name}: function must have exactly one executable owner')
+            filename = owners[0].name
         if args.case and name not in args.case:
             continue
         with tempfile.TemporaryDirectory(prefix=f't771-{name}-') as scratch:
@@ -174,10 +177,8 @@ def main():
             # that body against its contract; unscoped seeds still recheck all.
             selected = None
             if scope and not args.full_mutants:
-                module = {'events.rs': 'kernel::events',
-                          'ranks.rs': 'kernel::ranks',
-                          'dependencies.rs': 'kernel::dependencies',
-                          'footprint.rs': 'kernel::footprint'}.get(filename, 'kernel')
+                module = 'kernel' if filename in {'lib.rs', 'headroom.rs'} else (
+                    'kernel::' + Path(filename).stem)
                 selected = (module, scope[0])
             result = verify(args.verifier, args.sysroot, copy / 'verus/progress.rs', selected)
             print(f'CASE {name} source_sha256={digest} target={selected} '

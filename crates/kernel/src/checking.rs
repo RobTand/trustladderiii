@@ -17,7 +17,7 @@ impl World {
             invariant i <= w.nodes.len(), settle_ready(w), out.len == 0,
                 w.nodes@ == self.nodes@, w.gates@ == self.gates@,
                 w.pool_capacity == self.pool_capacity, w.dependencies@ == self.dependencies@,
-                w.next_ticket == self.next_ticket, w.file_sets@ == self.file_sets@,
+                w.next_ticket == self.next_ticket,
                 forall|j: int| 0 <= j < i ==> !movable(*self, j),
             decreases w.nodes.len() - i,
         ] {
@@ -28,7 +28,7 @@ impl World {
             if advance(&mut w, i, &mut out) { return false; }
             kernel_proof! {
                 movable_frame(*self, before_probe@, i as int);
-                reveal(settle_ready); reveal(scheduling_safe);
+                reveal(advance_post); reveal(settle_ready); reveal(scheduling_safe);
             }
             i += 1;
         } }
@@ -79,7 +79,7 @@ impl World {
         // Locks are the footprints of holders in the same repo.
         let mut i = 0;
         kernel_while! { (i < self.nodes.len()) [
-            invariant i <= self.nodes.len(),
+            invariant i <= self.nodes.len(), footprint::ordered_table(*self),
                 forall|j: int| 0 <= j < self.nodes@.len() ==> node_checked(*self, self.nodes@[j]),
             decreases self.nodes.len() - i,
         ] {
@@ -88,6 +88,7 @@ impl World {
                 let mut j = 0;
                 kernel_while! { (j < i) [
                     invariant j <= i < self.nodes.len(), n == self.nodes@[i as int],
+                        footprint::ordered_table(*self),
                         forall|k: int| 0 <= k < self.nodes@.len() ==> node_checked(*self, self.nodes@[k]),
                     decreases i - j,
                 ] {
