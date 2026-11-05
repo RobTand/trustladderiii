@@ -64,8 +64,11 @@ fn producer_overrides_preserve_retained_phases() {
             report["results"][0] = cases[0].clone();
         }
         let bytes = raw(&report);
-        recorded_io::reset(bytes.clone(), 0);
-        let old = normalized(before::run(ending(&bytes), &job));
+        let (old, _) = recorded_io::run(
+            vec![],
+            vec![recorded_io::Step::Bytes(bytes.clone())],
+            || normalized(before::run(ending(&bytes), &job)),
+        );
         let new = normalized(Ok(evaluate(&job, &report)));
         assert_eq!(new, old, "producer override selected={selected}");
         assert_eq!(new["class"], Value::Null);
@@ -251,66 +254,7 @@ fn retained_boundary_checks_campaign_flags_and_forced_heads() {
     assert!(rejudged(&typed, &job));
 }
 
-mod recorded_io {
-    use std::{cell::RefCell, io};
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(super) enum Call {
-        Open,
-        Limit(u64),
-        Read,
-    }
-    #[derive(Default)]
-    struct Recording {
-        bytes: Vec<u8>,
-        fail: u8,
-        calls: Vec<Call>,
-    }
-    thread_local! { static STATE: RefCell<Recording> = RefCell::new(Recording::default()); }
-    pub(super) fn reset(bytes: Vec<u8>, fail: u8) {
-        STATE.with(|state| {
-            *state.borrow_mut() = Recording {
-                bytes,
-                fail,
-                calls: vec![],
-            }
-        });
-    }
-    pub(super) fn calls() -> Vec<Call> {
-        STATE.with(|state| state.borrow().calls.clone())
-    }
-    pub(super) struct File {
-        limit: u64,
-    }
-    impl File {
-        pub(super) fn open(_path: &std::path::Path) -> io::Result<Self> {
-            STATE.with(|state| {
-                let mut state = state.borrow_mut();
-                state.calls.push(Call::Open);
-                if state.fail == 1 {
-                    return Err(io::Error::other("recorded open failure"));
-                }
-                Ok(Self { limit: u64::MAX })
-            })
-        }
-        pub(super) fn take(mut self, limit: u64) -> Self {
-            STATE.with(|state| state.borrow_mut().calls.push(Call::Limit(limit)));
-            self.limit = limit;
-            self
-        }
-        pub(super) fn read_to_end(self, bytes: &mut Vec<u8>) -> io::Result<usize> {
-            STATE.with(|state| {
-                let mut state = state.borrow_mut();
-                state.calls.push(Call::Read);
-                if state.fail == 2 {
-                    return Err(io::Error::other("recorded read failure"));
-                }
-                let count = state.bytes.len().min(self.limit as usize);
-                bytes.extend_from_slice(&state.bytes[..count]);
-                Ok(count)
-            })
-        }
-    }
-}
+mod recorded_io;
 
 fn normalized(value: Result<CheckEvidence>) -> Value {
     match value {
@@ -321,35 +265,44 @@ fn normalized(value: Result<CheckEvidence>) -> Value {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(96))]
-    /// #822 extraction: the verbatim old shell and new shell sample one bounded read identically.
-    /// There are no clocks or durable writes in this function, hence no write crash points.
+    #![proptest_config(ProptestConfig::with_cases(128))]
+    /// #822 extraction: execute both production shells against per-call File schedules.
+    /// No clocks or durable writes occur here, so there is no persisted crash state.
     #[test]
     fn evidence_io_schedule_matches_before_extraction(
-        pre_existing in any::<bool>(), fail in 0u8..3,
-        changed_read in prop::collection::vec(any::<u8>(), 0..64),
-        transport_valid in any::<bool>(), alter_bytes in any::<bool>(),
+        shape in 0u8..6, opens in prop::collection::vec(any::<bool>(), 0..5),
+        reads in prop::collection::vec((0u8..5, prop::collection::vec(any::<u8>(), 0..96)), 0..8),
+        transport_valid in any::<bool>(),
     ) {
-        let (job, report) = if pre_existing { fixture("error", "assertion", true, true) }
-            else { fixture("passed", "passed", true, false) };
+        let (job, mut report) = match shape {
+            0 => fixture("error", "assertion", true, true),
+            1 => fixture("passed", "passed", true, false),
+            2 => fixture("no-report", "passed", false, false),
+            3 => fixture("passed", "error", false, false),
+            4 => fixture("added-name", "passed", true, false),
+            _ => fixture("skipped", "passed", false, false),
+        };
+        if shape == 1 {
+            report["results"][0]["tests"][0]["phases"] = json!({"head": phases("passed", false)});
+        }
         let original = raw(&report);
-        let observed = if alter_bytes { changed_read } else { original.clone() };
+        let schedule: Vec<_> = reads.into_iter().map(|(kind, bytes)| match kind {
+            0 | 1 => recorded_io::Step::Bytes(original.clone()),
+            2 => recorded_io::Step::Bytes(bytes),
+            3 => recorded_io::Step::Bytes(vec![]),
+            _ => recorded_io::Step::Fail,
+        }).collect();
         let make_ending = || {
             let mut ending = ending(&original);
             if !transport_valid { ending.result.as_mut().unwrap().verified = false; }
             ending
         };
-        recorded_io::reset(observed.clone(), fail);
-        let old = normalized(before::run(make_ending(), &job));
-        let old_calls = recorded_io::calls();
-        recorded_io::reset(observed, fail);
-        let new = normalized(evidence_with_read(make_ending(), &job, |log| {
-            let mut bytes = Vec::new();
-            recorded_io::File::open(&log.path)?.take(log.bytes + 1).read_to_end(&mut bytes)?;
-            Ok(bytes)
-        }));
+        let (old, old_calls) = recorded_io::run(opens.clone(), schedule.clone(),
+            || normalized(before::run(make_ending(), &job)));
+        let (new, new_calls) = recorded_io::run(opens, schedule,
+            || normalized(evidence(make_ending(), &job)));
+        prop_assert_eq!(old_calls, new_calls);
         prop_assert_eq!(old, new);
-        prop_assert_eq!(old_calls, recorded_io::calls());
     }
 }
 
@@ -373,8 +326,11 @@ fn campaign_planned_proof_requires_positive_ordinary_head() {
     assert!(evaluate(&job, &report).1);
     report["results"][0]["tests"][0]["head"] = json!("error");
     let bytes = raw(&report);
-    recorded_io::reset(bytes.clone(), 0);
-    let old = normalized(before::run(ending(&bytes), &job));
+    let (old, _) = recorded_io::run(
+        vec![],
+        vec![recorded_io::Step::Bytes(bytes.clone())],
+        || normalized(before::run(ending(&bytes), &job)),
+    );
     assert_eq!(normalized(Ok(evaluate(&job, &report))), old);
     assert!(parse(&bytes, &job).is_none());
     assert_eq!(old["class"], Value::Null);
