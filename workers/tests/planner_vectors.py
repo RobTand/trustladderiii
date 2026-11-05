@@ -83,6 +83,8 @@ def exception(error, *, observation=False):
         result.update(local=error.local, violations=deepcopy(error.violations),
                       node_ids=packed(error.node_ids), draft=deepcopy(error.draft),
                       mismatch=packed({name: getattr(error, name) for name in mismatch_fields()}))
+        if hasattr(error, 'repair_text'):
+            result['repair_text'] = error.repair_text
     if hasattr(error, 'result'):
         result['result'] = deepcopy(error.result)
     return result
@@ -375,6 +377,8 @@ def strings(document):
         values.extend(error.get('violations', []))
         if error:
             values.append(error['message'])
+            if error.get('repair_text') is not None:
+                values.append(error['repair_text'])
         returned = unpacked(result.get('return'))
         if isinstance(returned, list) and all(isinstance(item, str) for item in returned):
             values.extend(returned)

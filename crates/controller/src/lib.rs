@@ -3221,7 +3221,12 @@ impl Controller {
                 let Some(n) = world.nodes.get(node.0 as usize) else {
                     return Ok(None);
                 };
-                if !n.adopted || commit_sha(snapshot, n.head) != Some(sha.as_str()) {
+                use tl3_controller_core::translate_checks::{Preparation, preparation};
+                if preparation(
+                    n.adopted,
+                    n.adopted && commit_sha(snapshot, n.head) == Some(sha.as_str()),
+                ) == Preparation::Ignore
+                {
                     return Ok(None);
                 }
                 let id = node.0.to_string();
@@ -3262,13 +3267,20 @@ impl Controller {
                     && let Some(mut fixes) = self
                         .store
                         .worker_document(&node.0.to_string(), "review_fixes")?
-                    && fixes["head_sha"].as_str() == commit_sha(snapshot, n.head)
+                    && let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
+                        set_reviewed,
+                        replace_tests,
+                    } = tl3_controller_core::translate_checks::plan_update(
+                        fixes["head_sha"].as_str() == commit_sha(snapshot, n.head),
+                        run.reviewed_sha.is_some(),
+                        run.reproducing_unavailable.is_some(),
+                    )
                 {
                     fixes["head_sha"] = json!(sha);
-                    if let Some(reviewed) = &run.reviewed_sha {
+                    if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
                         fixes["reviewed_sha"] = json!(reviewed);
                     }
-                    if let Some(reason) = &run.reproducing_unavailable {
+                    if replace_tests && let Some(reason) = &run.reproducing_unavailable {
                         for finding in fixes["findings"].as_array_mut().unwrap() {
                             if finding.get("tests").is_some() {
                                 finding.as_object_mut().unwrap().remove("tests");
@@ -3307,7 +3319,14 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
-                if n.job == Some(generation) && n.generation == generation && exact_head {
+                let decision = tl3_controller_core::translate_checks::checks_reply(
+                    n.job,
+                    n.generation,
+                    generation,
+                    exact_head,
+                    pass,
+                );
+                if decision.record {
                     let prefix = format!("{}:", node.0);
                     let earlier: Vec<_> = snapshot
                         .rows
@@ -3368,7 +3387,7 @@ impl Controller {
                     generation,
                     reply: Reply::ChecksDone {
                         report,
-                        pass: pass && exact_head,
+                        pass: decision.pass,
                         in_footprint,
                     },
                 }
@@ -3856,7 +3875,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
@@ -3880,7 +3907,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }

@@ -532,6 +532,16 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   adds no work generation, model-ladder retry or automatic restart. See the
   authoritative Planning section in `docs/state-table.md`.
 
+  [Rob's Q27/Q54 approval on #809, 2026-11-05](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239)
+  adds missing citations of existing required maker or checking goals to this
+  exception. Review-verified goals still need check coverage. The repair may
+  only add the named uncovered goal ids to existing checks, preserving every
+  existing citation and every other declaration. It shares the same single
+  correction allowance, including format repair. Stop evidence retains the full
+  uncovered ids and descriptions and the correction attempt count. Only
+  descriptions may be clipped in the bounded repair message; if the ids and
+  instructions do not fit, correction is terminal.
+
   The recorded stop steps are `checks_failed`, `changes_requested`,
   `ci_failed`, `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
   `reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
