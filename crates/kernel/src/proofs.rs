@@ -1435,21 +1435,6 @@ proof!(
     3,
     check_unplanned_waiting::<1>()
 );
-proof!(progress_from_publishing, check_witness(Phase::Publishing));
-proof!(progress_from_queued, check_witness(Phase::Queued));
-proof!(progress_from_rebasing, check_witness(Phase::Rebasing));
-proof!(
-    progress_from_awaiting_rob,
-    check_witness(Phase::AwaitingRob)
-);
-proof!(
-    progress_from_stopping,
-    check_witness(Phase::Stopping(kani::any()))
-);
-proof!(
-    progress_from_closed,
-    check_witness(Phase::Closed(kani::any()))
-);
 
 proof!(apply_new_adoption, {
     let repo = kani::any();

@@ -85,6 +85,12 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("progress_from_making", "progress_phase_witness"),
     ("progress_from_checking", "progress_phase_witness"),
     ("progress_from_reviewing", "progress_phase_witness"),
+    ("progress_from_publishing", "progress_phase_late_cover"),
+    ("progress_from_queued", "progress_phase_late_cover"),
+    ("progress_from_rebasing", "progress_phase_late_cover"),
+    ("progress_from_awaiting_rob", "progress_phase_late_cover"),
+    ("progress_from_stopping", "progress_phase_late_cover"),
+    ("progress_from_closed", "progress_phase_late_cover"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.
