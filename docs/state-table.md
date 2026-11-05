@@ -276,6 +276,9 @@ Keep every run's report and receipt bound to the exact base, head, selectors, de
 - A leaf whose operation waits on an incident gives back its slot and files. It waits in Ready, and resumes at the same step.
 - When a model reports quota, the step moves at once to the next model in its role's ladder that hasn't reported quota since its announced reset. This spends no credit and counts no failure. Each model's quota-limited state is recorded with its reset time. The step waits only when every model in its ladder is out, and then for the earliest announced reset. A wait for a model no longer configured for that step ends when tl3d opens with the new config (Q53, approved by Rob, 2026-11-01).
 
+Q53 amended under Q27, approved by [Rob on #828](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499): A quota wait may end early on evidence that the same model is working again. A later successful call on the same model and family is a wake-up event, alongside the announced reset. When a reset hint is unusually far out, a bounded hourly probe replaces trusting the hint. The re-dispatch uses the attempt's idempotency key. Probes permit at most one in flight per model and family and at most one launch per hour, with the reservation surviving restart. The configured trusted horizon is `[limits] model_quota_horizon_secs`, default 21,600 seconds, so ordinary within-day resets remain trusted while multi-day hints receive an hourly check.
+
+
 Code computes a signature for each failure from the upstream's error class, and uses it only to group incidents.
 
 **Environment blockers,** as Rob approved on 2026-11-01 (Q50):
@@ -789,7 +792,7 @@ The postmortem lane falls back down its ladder like any other role (Q53), amende
 From slice two on:
 
 - Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39). How rank combines with priority is decided when slice two starts.
-- A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it (Q53).
+- A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it. A later successful call on the same model and family also wakes the held attempt by its idempotency key; an unusually far reset uses the bounded hourly probe above (Q53, [approved Q27 amendment](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499)).
 
 ## Looks and stalls
 

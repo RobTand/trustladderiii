@@ -63,6 +63,19 @@ def verus_proofs():
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
+            name = "verus_quota_wake",
+            src = "proofs/quota_wake.rs",
+            srcs = ["src/quota_wake.rs"],
+            specs = ["proofs/quota_wake_spec.rs"],
+            expected_obligations = 3,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
             name = "verus_budget_cutoff",
             src = "proofs/budget_cutoff.rs",
             srcs = ["src/budget/cutoff.rs"],

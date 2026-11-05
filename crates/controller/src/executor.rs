@@ -468,11 +468,8 @@ pub trait Executor {
         Ok(announced)
     }
     /// Q53 / #828: identity of the model a quota probe would actually launch.
-    fn quota_probe_model(
-        &mut self,
-        _delivery: &Delivery,
-    ) -> Result<Option<crate::looks::QuotaModel>> {
-        Ok(None)
+    fn quota_candidates(&mut self, _delivery: &Delivery) -> Result<Vec<crate::looks::QuotaModel>> {
+        Ok(vec![])
     }
     /// Success proves that the exact stalled attempt has ended.
     fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {

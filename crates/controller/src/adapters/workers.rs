@@ -1117,6 +1117,40 @@ impl Supervisor {
 
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         request["prompt"] = crate::prompts::for_run(&mut store, &delivery.key, role)?;
+        // Q53 / #828: family belongs to this dispatched attempt, even if config
+        // changes before its completion arrives. Persist before launching it.
+        if let Some(name) = request["model"]["name"].as_str() {
+            let models = [
+                &self.models.ingest,
+                &self.models.audit,
+                &self.models.planner,
+                &self.models.maker,
+                &self.models.reviewer,
+                &self.models.rebaser,
+                &self.models.comment_classifier,
+                &self.models.writer,
+                &self.models.postmortem,
+            ];
+            if let Some(model) = models
+                .into_iter()
+                .flatten()
+                .find(|model| model.name == name)
+            {
+                let snapshot = store.load()?;
+                let id = serde_json::to_string(&(&delivery.key, attempt_number))?;
+                let mut commit = tl3_store::Commit::new(
+                    format!("model-attempt:{id}"),
+                    json!({"model_attempt": id}),
+                    &snapshot,
+                );
+                commit.rows.push(crate::put(
+                    "model_attempts",
+                    id,
+                    json!({"model": name, "family": model.family.to_ascii_lowercase()}),
+                ));
+                store.commit(&commit)?;
+            }
+        }
         store.claim_worker(
             &delivery.key,
             &delivery.node().0.to_string(),
@@ -1227,20 +1261,19 @@ impl Executor for Supervisor {
         self.launch(delivery, true).map(Some)
     }
 
-    fn quota_probe_model(
-        &mut self,
-        delivery: &Delivery,
-    ) -> Result<Option<crate::looks::QuotaModel>> {
+    fn quota_candidates(&mut self, delivery: &Delivery) -> Result<Vec<crate::looks::QuotaModel>> {
         let role =
             protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
         let mut store = Store::open(&self.store)?;
         let snapshot = store.load()?;
         let candidates = self.candidates(delivery, role, &mut store, &snapshot)?;
-        let model = candidates[0];
-        Ok(Some(crate::looks::QuotaModel {
-            model: model.name.clone(),
-            family: model.family.to_ascii_lowercase(),
-        }))
+        Ok(candidates
+            .into_iter()
+            .map(|model| crate::looks::QuotaModel {
+                model: model.name.clone(),
+                family: model.family.to_ascii_lowercase(),
+            })
+            .collect())
     }
 
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {

@@ -79,11 +79,11 @@ impl Executor for Audit {
     ) -> tl3_controller::Result<u64> {
         self.0.quota_resume_ms(d, reset, now)
     }
-    fn quota_probe_model(
+    fn quota_candidates(
         &mut self,
         d: &Delivery,
-    ) -> tl3_controller::Result<Option<tl3_controller::looks::QuotaModel>> {
-        self.0.quota_probe_model(d)
+    ) -> tl3_controller::Result<Vec<tl3_controller::looks::QuotaModel>> {
+        self.0.quota_candidates(d)
     }
     fn resume_after_quota(&mut self, d: &Delivery) -> tl3_controller::Result<Option<Completion>> {
         self.0.resume_after_quota(d)

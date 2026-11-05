@@ -1544,7 +1544,11 @@ impl Controller {
             .filter(|e| e.facts.outcome == "quota" && Some(e.facts.model.as_str()) == model)
             .and_then(|e| e.facts.finished_ms);
         let attempt = ending.as_ref().map(|e| e.attempt);
-        let family = model.and_then(|model| self.quota_family(model));
+        let family = model.and_then(|model| {
+            attempt
+                .and_then(|attempt| self.attempt_family(snapshot, key, attempt, model))
+                .or_else(|| self.quota_family(model))
+        });
         self.release_model_probe(snapshot, key, attempt, commit)?;
         let cleared = model.zip(family.as_deref()).zip(finished_ms).is_some_and(
             |((model, family), finished_ms)| {
@@ -1579,6 +1583,17 @@ impl Controller {
                 && state.last_quota_model.as_deref() == model
             {
                 return Ok(());
+            }
+            if state
+                .last_quota_ms
+                .is_some_and(|hint| hint <= self.now_ms())
+                && state
+                    .last_quota_attempt
+                    .zip(attempt)
+                    .is_some_and(|(old, new)| new > old)
+                && state.quota_probe_model.is_some()
+            {
+                self.overdue_model_quota(snapshot, &state, commit)?;
             }
             state.last_quota_ms = Some(reset_ms);
             state.last_quota_model = model.map(str::to_owned);
@@ -2104,6 +2119,9 @@ pub(crate) fn incident_summary(
         "upstream_server" => "reported a service error",
         "invalid_response" => "returned an unreadable response",
         "quota" => "reached its usage allowance",
+        "model_quota_hint_expired" => {
+            "still reports model quota after its announced reset; bounded hourly probes continue"
+        }
         "message_rejected" => "could not prepare a readable message",
         "prerequisite_number" => {
             "sent a merge prerequisite update missing its issue or pull request number"

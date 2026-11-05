@@ -55,6 +55,31 @@ impl Controller {
                 "model quota horizon must be positive",
             ));
         }
+        let mut families = std::collections::BTreeMap::new();
+        for model in [
+            &models.ingest,
+            &models.audit,
+            &models.planner,
+            &models.maker,
+            &models.reviewer,
+            &models.rebaser,
+            &models.comment_classifier,
+            &models.writer,
+            &models.postmortem,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let family = model.family.to_ascii_lowercase();
+            if families
+                .insert(&model.name, family.clone())
+                .is_some_and(|old| old != family)
+            {
+                return Err(crate::Error::Invalid(
+                    "one model name has conflicting families",
+                ));
+            }
+        }
         self.quota_models = Some(models.clone());
         self.quota_horizon_ms = horizon.as_millis().min(u128::from(u64::MAX)) as u64;
         Ok(())
@@ -77,6 +102,24 @@ impl Controller {
         .flatten()
         .find(|model| model.name == name)
         .map(|model| model.family.to_ascii_lowercase())
+    }
+
+    pub(super) fn attempt_family(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        attempt: i64,
+        model: &str,
+    ) -> Option<String> {
+        let id = serde_json::to_string(&(key, attempt)).expect("attempt identity serializes");
+        snapshot
+            .rows
+            .iter()
+            .find(|row| {
+                row.table == "model_attempts" && row.id == id && row.value["model"] == model
+            })
+            .and_then(|row| row.value["family"].as_str().map(str::to_owned))
+            .or_else(|| self.quota_family(model))
     }
 
     /// Imported completion facts are authoritative even for a reply whose node moved on.
@@ -143,7 +186,9 @@ impl Controller {
         let Some(finished_ms) = ending.facts.finished_ms else {
             return Ok(());
         };
-        let Some(family) = self.quota_family(&ending.facts.model) else {
+        let Some(family) =
+            self.attempt_family(snapshot, &ending.key, ending.attempt, &ending.facts.model)
+        else {
             return Ok(());
         };
         let identity = QuotaModel {
@@ -160,11 +205,30 @@ impl Controller {
         }) {
             return Ok(());
         }
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "model_quota_incidents" && row.id == id)
+            && let Some(id) = row.value["incident"].as_str()
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "incidents" && row.id == id)
+        {
+            let mut incident: Incident = crate::decode_stored(row.value.clone())?;
+            if incident.open && !incident.needs_rob {
+                incident.open = false;
+                commit
+                    .rows
+                    .push(put("incidents", id.into(), json!(incident)));
+            }
+        }
         commit.rows.push(put(
             "model_successes",
             id,
             json!({"identity": identity, "finished_ms": finished_ms}),
         ));
+        let mut cleared_model = false;
         for row in snapshot
             .rows
             .iter()
@@ -178,6 +242,7 @@ impl Controller {
                     quota_ms,
                 )
             }) {
+                cleared_model = true;
                 commit.rows.push(RowChange::Delete {
                     table: row.table.clone(),
                     id: row.id.clone(),
@@ -186,15 +251,22 @@ impl Controller {
         }
         for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
             let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            let ladder_available = cleared_model
+                && self
+                    .adapters
+                    .adapter(&state.delivery)?
+                    .quota_candidates(&state.delivery)?
+                    .contains(&identity);
             if state.quota_ms.is_some()
-                && state.last_quota_finished_ms.is_some_and(|quota_ms| {
-                    clears_hold(
-                        state.last_quota_model.as_deref() == Some(&identity.model),
-                        state.last_quota_family.as_deref() == Some(&identity.family),
-                        finished_ms,
-                        quota_ms,
-                    )
-                })
+                && (ladder_available
+                    || state.last_quota_finished_ms.is_some_and(|quota_ms| {
+                        clears_hold(
+                            state.last_quota_model.as_deref() == Some(&identity.model),
+                            state.last_quota_family.as_deref() == Some(&identity.family),
+                            finished_ms,
+                            quota_ms,
+                        )
+                    }))
             {
                 state.due_ms = Some(self.now_ms());
                 state.quota_retry_ms = state.due_ms;
@@ -246,6 +318,51 @@ impl Controller {
         Ok(())
     }
 
+    pub(super) fn overdue_model_quota(
+        &self,
+        snapshot: &Snapshot,
+        state: &AllowanceState,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let Some(identity) = &state.quota_probe_model else {
+            return Ok(());
+        };
+        let scope = format!("model-quota:{}", identity.key());
+        let request = crate::request(snapshot, state.delivery.node())?;
+        self.input_failed(
+            snapshot,
+            &scope,
+            Some(crate::input_errors::IssueTarget {
+                repository: request.repo,
+                issue: request.issue,
+            }),
+            &request.title,
+            Some(state.delivery.node()),
+            Upstream::Workers,
+            crate::Error::Permanent {
+                class: "model_quota_hint_expired",
+                source: Box::new(crate::Error::Invalid("quota probe failed after reset")),
+            },
+            commit,
+        )?;
+        if let Some(id) = commit.rows.iter().rev().find_map(|row| match row {
+            RowChange::Put { table, id, value }
+                if table == "incidents"
+                    && value["signature"]["class"] == "model_quota_hint_expired" =>
+            {
+                Some(id.clone())
+            }
+            _ => None,
+        }) {
+            commit.rows.push(put(
+                "model_quota_incidents",
+                identity.key(),
+                json!({"incident": id}),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn quota_retry(
         &mut self,
         state: &mut AllowanceState,
@@ -261,17 +378,28 @@ impl Controller {
         let Some(identity) = self
             .adapters
             .adapter(&state.delivery)?
-            .quota_probe_model(&state.delivery)?
+            .quota_candidates(&state.delivery)?
+            .into_iter()
+            .next()
         else {
             return Ok(Some(resume));
         };
         let snapshot = self.store.load()?;
+        let outstanding = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "model_quota_probes")
+            .map(|row| crate::decode_stored::<Probe>(row.value.clone()))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .any(|probe| probe.identity == identity && probe.owner.is_some());
         // Success cleared this model, so ordinary work can resume immediately.
         if !snapshot
             .rows
             .iter()
             .any(|row| row.table == "model_quotas" && row.id == identity.model)
             && resume <= now
+            && !outstanding
         {
             return Ok(Some(now));
         }
