@@ -47,15 +47,15 @@ pub enum Resolution<F> {
     Absent,
 }
 
-/// State-table docs/state-table.md:542-550 on cdacce8f, #373/#608: only Confirmed yields a confirmed receipt; conflict and progress retain their flags.
+/// State-table docs/state-table.md:533-547 on cdacce8f, #373/#608: only Confirmed yields a confirmed receipt; conflict and progress retain their flags.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures match result {
             Complete::Confirmed { progress, conflict } => matches!(out, Resolution::Found { ack: Ack::Confirmed, conflict: c, progress: p } if c == conflict && p == (progress && observed)),
             Complete::Retryable => matches!(out, Resolution::Found { ack: Ack::Retryable, conflict: false, progress: false }),
-            Complete::Permanent(f) => matches!(out, Resolution::Found { ack: Ack::Permanent(g), conflict: false, progress: false } if g == f),
+            Complete::Permanent(f) => matches!(out, Resolution::Found { ack: Ack::Permanent(g), conflict: false, progress: false } if g === f),
             Complete::Pending => matches!(out, Resolution::Pending),
             Complete::Absent => matches!(out, Resolution::Absent),
         },))]
-pub fn resolve<F: PartialEq>(result: Complete<F>, observed: bool) -> Resolution<F> {
+pub fn resolve<F>(result: Complete<F>, observed: bool) -> Resolution<F> {
     match result {
         Complete::Confirmed { progress, conflict } => Resolution::Found {
             ack: Ack::Confirmed,
@@ -87,7 +87,7 @@ pub enum Receipt {
     Absent,
 }
 
-/// #760, state-table Publishing step 4 at docs/state-table.md:550 on cdacce8f: confirmation comes from a Found local receipt.
+/// #760, state-table Publishing step 4 at docs/state-table.md:533-535 on cdacce8f: confirmation comes from a Found local receipt.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == matches!(receipt, Receipt::Found),))]
 pub fn confirmed(receipt: Receipt) -> bool {
     matches!(receipt, Receipt::Found)
@@ -99,14 +99,14 @@ pub fn head(equal: bool) -> Head {
     if equal { Head::Current } else { Head::Other }
 }
 
-/// #373, state-table Publishing conflict at docs/state-table.md:555 on cdacce8f: only mergeable=false is a conflict here.
+/// #373, state-table Publishing conflict at docs/state-table.md:539 on cdacce8f: only mergeable=false is a conflict here.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == matches!(mergeable, Some(false)),))]
 pub fn conflicts(mergeable: Option<bool>) -> bool {
     matches!(mergeable, Some(false))
 }
 
 /// None requests the hold projection; a merge must skip that projection entirely.
-/// #608, docs/state-table.md:674 on cdacce8f: a merge wins over a human hold and skips its read.
+/// #608, docs/state-table.md:666 on cdacce8f: a merge wins over a human hold and skips its read.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == if matches!(queue, Queue::Merged) { Some(false) } else { unresolved },))]
 pub fn held(queue: Queue, unresolved: Option<bool>) -> Option<bool> {
     if matches!(queue, Queue::Merged) {
@@ -132,7 +132,7 @@ pub enum PersonEvidence {
     Other,
 }
 
-/// #373, docs/state-table.md:676-677 on cdacce8f: only person dequeue/close evidence carries a hold event.
+/// #373, docs/state-table.md:668-669 on cdacce8f: only person dequeue/close evidence carries a hold event.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match evidence { PersonEvidence::Dequeued(id) | PersonEvidence::Closed(id) => Some(id), PersonEvidence::Other => None },))]
 pub fn person_event(evidence: PersonEvidence) -> Option<u64> {
     match evidence {
@@ -323,7 +323,6 @@ pub enum CheckComparison {
     BothPresent { fields: [bool; 10] },
 }
 
-/// #608/#760: metadata arriving after intent cannot establish queue acceptance.
 /// #608/#760: late completed_at/check_suite metadata does not acknowledge acceptance. The ten remaining upstream field equalities decide.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match comparison {
             CheckComparison::BothMissing => false,
