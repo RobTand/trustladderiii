@@ -1,4 +1,4 @@
-load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 # gazelle:resolve py _pytest.assertion.rewrite @tl3_pip//pytest
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
@@ -319,12 +319,12 @@ tl3_py_test(
 )
 
 # #835: boundary fixtures remain beside the Rust fixtures; execute the Python edge here.
-py_test(
+tl3_py_test(
     name = "test_limits_boundary",
-    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
-    main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
-    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
-    deps = ["//harness/src/tl3_harness"],
     size = "small",
     timeout = "short",
+    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
+    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
+    main = "../../crates/harness-core/tests/fixtures/limits/test_boundary.py",
+    deps = ["//harness/src/tl3_harness"],
 )
