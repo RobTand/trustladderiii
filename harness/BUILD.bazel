@@ -1,6 +1,11 @@
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
+    name = "core_vectors",
+    srcs = glob(["test-vectors/core/*.json"]),
+)
+
+filegroup(
     name = "project_files",
     srcs = [
         "pyproject.toml",
