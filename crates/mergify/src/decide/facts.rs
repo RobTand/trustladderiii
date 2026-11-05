@@ -365,16 +365,12 @@ pub fn person_facts(events: &[IssueEvent], merged: bool) -> PersonFacts<'_> {
     let mut merge_seen = merged;
     if !merged {
         let mut i = 0;
-        decide_while! { (i < events.len()) [
-            invariant i <= events@.len(),
-            invariant_except_break !merge_seen,
-                forall|j: int| 0 <= j < i ==> events@[j].kind != EventKind::Merged,
-            ensures merge_seen == (exists|j: int| 0 <= j < events@.len() && events@[j].kind == EventKind::Merged),
+        decide_while! { (i < events.len() && !merge_seen) [
+            invariant i <= events@.len(), merge_seen == (exists|j: int| 0 <= j < i && events@[j].kind == EventKind::Merged),
             decreases events@.len() - i,
         ] {
             if events[i].kind == EventKind::Merged {
                 merge_seen = true;
-                break;
             }
             i += 1;
         } }

@@ -54,9 +54,8 @@ safety_qualification.CASES = {'q52': ('crates/mergify/src/decide/translate.rs',
                   'let mut merge_seen = false;',
                   '//crates/mergify:verus_check_facts'),
  'queue_report_eager': ('crates/mergify/src/decide/facts.rs',
-                        'Some(infra) => infra,\n                None => ci_infra(check),',
-                        'Some(infra) => { let _ = ci_infra(check); infra },\n'
-                        '                None => ci_infra(check),',
+                        'Some(infra) => infra,',
+                        'Some(infra) => { let _ = ci_infra(check); infra },',
                         '//crates/mergify:verus_check_facts')}
 
 if __name__ == '__main__':
