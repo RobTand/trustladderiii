@@ -440,6 +440,11 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                     || support
                         .iter()
                         .any(|unit| !identity.support_sha256.contains_key(unit.as_str()))
+                    // Campaigns bypass judge replay but retain the old planned-proof head guard.
+                    || (check.declared_symptom.is_some()
+                        && result.tests.iter().any(|test| {
+                            test.passed && !matches!(test.head, Outcome::Passed)
+                        }))
                 {
                     return None;
                 }
