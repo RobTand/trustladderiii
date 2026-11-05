@@ -1,0 +1,5 @@
+            Observation::ScratchSaved { .. }
+            | Observation::ScratchPruned { .. }
+            | Observation::TraceLogsCapped { .. } => {
+                return Ok(None);
+            }

@@ -1,0 +1,26 @@
+            Observation::RebaseConflict {
+                node,
+                generation,
+                head,
+                target,
+                files,
+            } => {
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("rebase observation has no request"))?;
+                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                {
+                    return Ok(None);
+                }
+                commit.rows.push(put(
+                    "rebase_conflicts",
+                    node.0.to_string(),
+                    json!({"head": head, "target": target, "files": files}),
+                ));
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RebaseNeedsChanges,
+                }
+            }
