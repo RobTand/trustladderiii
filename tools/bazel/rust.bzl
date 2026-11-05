@@ -65,7 +65,12 @@ _WAVE_B_ENTRIES = {
     # limits (S4)
     "limits": _WAVE_B_STUB,
     # red-match (S4)
-    "red-match": _WAVE_B_STUB,
+    "red-match": {
+        "srcs": [":sources"],
+        "crate_root": "tests/red_match.rs",
+        "deps": [":tl3_harness_core"] + all_crate_deps(normal = True),
+        "tags": ["rust", "wave-b-entry-point"],
+    },
 }
 
 # rust_gate.py runs the controller's github binary as two timed groups.
