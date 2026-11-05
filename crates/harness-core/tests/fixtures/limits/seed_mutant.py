@@ -4,10 +4,17 @@ from pathlib import Path
 
 MUTANTS = {
     'arithmetic': ('measured_bytes(a as u128 + b as u128)', 'measured_bytes(a as u128)'),
+    'conversion': ('if bytes > COST_CAP as u128 {\n            COST_CAP',
+                   'if bytes > COST_CAP as u128 {\n            0'),
+    'multiplication': ('measured_bytes(a as u128 * b as u128)',
+                       'measured_bytes(a as u128 + b as u128)'),
     'line': ('collection <= MAX_REPORT_LINE_BYTES && largest_phase <= MAX_REPORT_LINE_BYTES',
              'collection < MAX_REPORT_LINE_BYTES && largest_phase <= MAX_REPORT_LINE_BYTES'),
     'accumulation': ('multiply_cost(if forced { 3 } else { 2 },',
                      'multiply_cost(if forced { 2 } else { 2 },'),
+    'result': ('bytes <= MAX_RESULT_BYTES\n', 'bytes < MAX_RESULT_BYTES\n'),
+    'proof-reserve': ('add_cost(65536, bytes)', 'add_cost(65535, bytes)'),
+    'symptom-reserve': ('cost = add_cost(cost, 384 * 1024);', 'cost = add_cost(cost, 0);'),
     'delay': ('&& exhausted == (bits == 0x4024000000000000)\n',
               '&& exhausted != (bits == 0x4024000000000000)\n'),
 }

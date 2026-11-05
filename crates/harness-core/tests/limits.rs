@@ -224,9 +224,7 @@ fn delay_receipt_boundary_fixtures() {
     .unwrap();
     let mut mismatches = Vec::new();
     for row in fixture.as_array().unwrap() {
-        let accepted = serde_json::from_str::<Value>(row["json"].as_str().unwrap())
-            .ok()
-            .and_then(|value| decode_delay_budget(&value))
+        let accepted = decode_delay_budget(row["json"].as_str().unwrap())
             .is_some_and(|(bits, exhausted)| delay_budget_consistent(bits, exhausted));
         let expected = row["valid"].as_bool().unwrap();
         if accepted != expected {

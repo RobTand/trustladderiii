@@ -241,15 +241,18 @@ pub mod delay {
 }
 pub use delay::delay_budget_consistent;
 
-/// #835 boundary conversion only. Shape and exact JSON types precede bit decoding.
+/// #835 boundary conversion only. Preserve the number lexeme until correctly
+/// rounded decoding; serde_json's default f64 parser can round a value below 10
+/// up to 10. Shape and exact JSON types precede the bit-domain decision.
 /// This predicate is not wired into shared DelayBudget admission in this slice.
 #[cfg(not(verus_keep_ghost))]
-pub fn decode_delay_budget(value: &serde_json::Value) -> Option<(u64, bool)> {
-    let object = value.as_object()?;
+pub fn decode_delay_budget(raw: &str) -> Option<(u64, bool)> {
+    let object: std::collections::BTreeMap<String, &serde_json::value::RawValue> =
+        serde_json::from_str(raw).ok()?;
     if object.len() != 2 {
         return None;
     }
-    let seconds = object.get("applied_seconds")?.as_number()?.as_f64()?;
-    let exhausted = object.get("exhausted")?.as_bool()?;
+    let seconds = object.get("applied_seconds")?.get().parse::<f64>().ok()?;
+    let exhausted = serde_json::from_str::<bool>(object.get("exhausted")?.get()).ok()?;
     Some((seconds.to_bits(), exhausted))
 }

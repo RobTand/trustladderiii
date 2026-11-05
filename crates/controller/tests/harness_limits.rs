@@ -330,10 +330,16 @@ fn proof_json_spacing_and_absent_costs_remain_caller_specific() {
     ] {
         let wire =
             serde_json::to_string(&json!({"applied_seconds":number,"exhausted":false})).unwrap();
-        let value: Value = serde_json::from_str(&wire).unwrap();
-        let (bits, exhausted) = limits::decode_delay_budget(&value).unwrap();
+        let (bits, exhausted) = limits::decode_delay_budget(&wire).unwrap();
         assert_eq!(bits, number.to_bits(), "{wire}");
         assert!(!exhausted);
+    }
+    for exhausted in [false, true] {
+        let wire = format!("{{\"applied_seconds\":9.999999999999999,\"exhausted\":{exhausted}}}");
+        let (bits, decoded_exhausted) = limits::decode_delay_budget(&wire).unwrap();
+        assert_eq!(bits, 0x4023ffffffffffff);
+        assert_eq!(decoded_exhausted, exhausted);
+        assert_eq!(limits::delay_budget_consistent(bits, exhausted), !exhausted);
     }
 }
 
