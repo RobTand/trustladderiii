@@ -229,22 +229,27 @@ JSON line per run.
 Kani is being retired in favour of Verus (#806); this gate shrinks as harnesses are ported.
 
 The Gate's `Kani` job runs `tools/ci/kani_gate.py pr`. The required `Rust`
-check needs it. On a kernel source or manifest change, a root `Cargo.toml`
-change, a toolchain change, or a change to the gate's own files, it proves the
+check needs it. On a kernel source or manifest change, a kernel path dependency
+change, a root `Cargo.toml` or `Cargo.lock` change, a toolchain change, or a change to the gate's own files, it proves the
 PR tier. Other changes run no proofs. The queue-aware base and head determine
 which files changed. Verus proofs continue to gate through Bazel.
 
 `tools/ci/kani-budgets.json` records measurements and each harness's tier.
 The budget builder assigns `pr` to harnesses measured at most 600 seconds and
 `nightly` to the rest. Tier changes require remeasurement and the builder.
-Historical entries for removed harnesses are harmless. The gate discovers
-remaining harnesses from `crates/kernel/src/proofs.rs`.
+The gate discovers remaining harnesses across the kernel's Rust files, including
+`proofs/mod.rs` and literal `#[path]` modules. Removing a harness also requires
+removing its budget entry in the same change. A shrunken or empty inventory with
+unmatched budget entries fails. Cargo metadata supplies the path dependency
+closure; if unavailable, the gate conservatively triggers on Rust crate changes.
 
 The planner packs harnesses by measured time and peak memory onto BuildBuddy
 runners with 8 CPUs and 176 GB. Each shard installs Rust 1.99.1 and Kani 0.68.0,
 shares codegen, and reserves each running harness's measured peak plus 20%.
 The PR tier targets at most 30 minutes of wall time, including setup.
 It stops at the first failing proof and cancels sibling shards.
+The PR coordinator has a 50-minute deadline and its workflow has a 55-minute
+timeout, within Mergify's 60-minute window. Nightly retains its longer deadline.
 
 A proof passes only with exit 0, `VERIFICATION:- SUCCESSFUL`, and every cover
 satisfied. A missing verdict, unsatisfied cover, shard error, or hard timeout

@@ -38,7 +38,8 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(kani_gate.triggered({path, 'docs/a.md'}), [path])
 
-    def test_a_change_outside_the_kernel_runs_no_proof(self):
+    @patch.object(kani_gate, 'kernel_dependencies', return_value=['crates/kernel/'])
+    def test_a_change_outside_the_kernel_runs_no_proof(self, metadata):
         for path in ['crates/controller/src/lib.rs', 'crates/kernel/README.md',
                      'crates/kernel/tests/scenarios.rs', 'crates/kernel/run.py',
                      'crates/kernel/tools/dependency_mutants.py', 'workers/src/tl3_workers/maker.py',
@@ -48,7 +49,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_harnesses_are_read_from_the_proof_macro(self):
         source = 'proof!(a, check());\nproof!(\n    b_two,\n    3,\n    check()\n);\n  proof!(c, x);\n'
-        self.assertEqual(kani_gate.harnesses(source), ['a', 'b_two'])
+        self.assertEqual(kani_gate.harnesses(source), ['a', 'b_two', 'c'])
         self.assertEqual(kani_gate.harnesses(''), [])
         for broken in ['proof!(a, x);\nproof!(a, y);\n']:
             with self.assertRaises(kani_gate.KaniError):
@@ -97,7 +98,7 @@ class SelectionTests(unittest.TestCase):
                 target.write_text('proof!(kept, check());\n')
                 (src / 'lib.rs').write_text(
                     'mod proofs;\n' if layout == 'proofs/mod.rs' else f'#[path = "{layout}"]\nmod proofs;\n')
-                with patch.object(kani_gate, 'ROOT', root), patch.object(kani_gate, 'PROOFS', src / 'proofs.rs'):
+                with patch.object(kani_gate, 'ROOT', root):
                     self.assertEqual(kani_gate.harnesses(), ['kept'])
 
     def test_missing_inventory_requires_matching_budget_retirement(self):

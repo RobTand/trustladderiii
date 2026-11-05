@@ -317,6 +317,7 @@ tl3_py_test(
     srcs = ["test_kani_gate.py"],
     deps = [
         ":kani_gate",
+        ":remote_gate",
         "@tl3_pip//pyyaml",
     ],
 )

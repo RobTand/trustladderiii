@@ -44,18 +44,17 @@ import urllib.request
 from child_env import child_env
 
 ROOT = Path(__file__).resolve().parents[2]
-PROOFS = ROOT / 'crates/kernel/src/proofs.rs'
 BUDGETS = Path(__file__).with_name('kani-budgets.json')
 SCHEMA = 'tl3.kani-shard.v1'
 RESULT = 'kani-shard.json'
 KANI_VERSION = '0.68.0'
 RUST_VERSION = '1.99.1'
 # A change matching any of these can change a proof's verdict or how the gate
-# proves it. fnmatch's * also crosses '/'. The kernel has no non-optional
-# dependencies and Kani builds it without features, so Cargo.lock is excluded.
+# proves it. fnmatch's * also crosses '/'. Dependencies are added from Cargo
+# metadata, including optional, build, dev and target-specific dependencies.
 TRIGGERS = [
     'crates/kernel/src/*', 'crates/kernel/Cargo.toml', 'crates/kernel/build.rs',
-    'Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml',
+    'Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml',
     'tools/ci/kani_gate.py', 'tools/ci/test_kani_gate.py', 'tools/ci/kani-budgets.json',
     'tools/ci/remote_gate.py', 'tools/ci/child_env.py',
     '.github/workflows/gate.yml', '.github/workflows/kani-nightly.yml',
@@ -86,6 +85,7 @@ PENDING = {
 # Shards beyond the account's concurrent quota queue, so the job waits for
 # about three runner hours in total.
 WAIT_MINUTES = 180
+PR_WAIT_MINUTES = 50
 # Assumed for a harness with no measurement yet. It runs alone on its runner.
 UNMEASURED_SECONDS = 1800.0
 # Measured peaks repeat closely from run to run; 20% headroom lets four of the
@@ -121,16 +121,71 @@ class KaniError(RuntimeError):
 
 
 def harnesses(source=None):
-    """Every harness the kernel declares, in source order."""
-    text = (PROOFS.read_text() if PROOFS.exists() else '') if source is None else source
-    names = re.findall(r'^proof!\(\s*(\w+),', text, re.M)
+    """Read kernel Rust files, including moved modules and literal #[path] files.
+
+    Scan conservatively rather than interpreting Rust cfg/module syntax. The
+    budget inventory must match, so an unrecognized layout fails closed.
+    """
+    if source is None:
+        pending = sorted((ROOT / 'crates/kernel').rglob('*.rs'))
+        seen, sources = set(), []
+        while pending:
+            path = pending.pop(0).resolve()
+            if path in seen:
+                continue
+            if not path.is_relative_to(ROOT.resolve()):
+                raise KaniError(f'proof module outside the checkout: {path}')
+            seen.add(path)
+            text = path.read_text()
+            sources.append(text)
+            for relative in re.findall(r'#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]', text):
+                target = path.parent / relative
+                if target.is_file():
+                    pending.append(target)
+        source = '\n'.join(sources)
+    names = re.findall(r'^\s*proof!\(\s*(\w+),', source, re.M)
+    names += re.findall(r'#\[kani::proof\]\s*(?:#\[[^\]]*\]\s*)*(?:pub\s+)?fn\s+(\w+)', source)
     if len(names) != len(set(names)):
         raise KaniError('could not list the kernel proof harnesses')
     return names
 
 
+def kernel_dependencies():
+    """Derive local dependency directories without fetching or compiling crates.
+
+    --no-deps describes workspace packages, including their declared paths. If
+    Cargo or a dependency description is unavailable, selection runs all proofs.
+    """
+    try:
+        result = subprocess.run(['cargo', 'metadata', '--no-deps', '--locked', '--offline',
+                                 '--format-version=1'], cwd=ROOT, check=True, capture_output=True,
+                                text=True, timeout=30, env=child_env())
+        packages = {Path(p['manifest_path']).parent.resolve(): p
+                    for p in json.loads(result.stdout)['packages']}
+        pending, seen = [(ROOT / 'crates/kernel').resolve()], set()
+        while pending:
+            path = pending.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            package = packages[path]
+            pending.extend(Path(dep['path']).resolve() for dep in package['dependencies'] if dep.get('path'))
+        return [path.relative_to(ROOT.resolve()).as_posix() + '/' for path in seen]
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return None
+
+
 def triggered(changed):
-    return sorted(path for path in changed if any(fnmatch(path, pattern) for pattern in TRIGGERS))
+    direct = {path for path in changed if any(fnmatch(path, pattern) for pattern in TRIGGERS)}
+    if direct == set(changed):
+        return sorted(direct)
+    dependencies = kernel_dependencies()
+    if dependencies is None:
+        print('Kani: dependency metadata unavailable; conservatively proving the PR tier', flush=True)
+        return sorted(direct | {path for path in changed if path.startswith('crates/')
+                                or path.endswith(('.rs', '/Cargo.toml'))})
+    dependencies = [path for path in dependencies if path != 'crates/kernel/']
+    return sorted(direct | {path for path in changed if any(path.startswith(dep) for dep in dependencies)})
 
 
 def changed_files(base, head):
@@ -580,84 +635,92 @@ def prove(client, args, names, budgets, sleep=time.sleep):
     results, errors, invocations, finished = {}, [], {}, set()
     lock = threading.Lock()
     failed = threading.Event()
-    deadline = time.monotonic() + WAIT_MINUTES * 60
-    for index, shard in enumerate(shards):
-        invocation_id = client.call('Run', run_request(args, index, shard, args.timeout),
-                                    timeout=600).get('invocationId')
-        if not invocation_id:
-            raise KaniError('BuildBuddy Run returned no invocation id')
-        invocations[invocation_id] = shard
-        with invocation_path().open('a') as handle:
-            handle.write(invocation_id + '\n')
-        print(f'Kani shard {index}: {len(shard)} harnesses: '
-              f'https://app.buildbuddy.io/invocation/{invocation_id}', flush=True)
-
-    def follow(invocation_id):
-        shard = invocations[invocation_id]
-        try:
-            invocation = remote_gate.wait(client, invocation_id, deadline, handle_signals=False)
-            raw = remote_gate.fetch(client, invocation, RESULT)
-            record = check_shard(raw, args.head, shard)
-            if record.get('error'):
-                raise KaniError(record['error'])
-            reported = record['results']
-        except (KaniError, remote_gate.RemoteError) as error:
-            recovered = None
-            if args.mode == 'nightly' and len(shard) == 1 and budgets.get(shard[0], {}).get('pending'):
-                try:
-                    recovered = pending_runner_result(client, invocation_id, shard[0])
-                except (remote_gate.RemoteError, ValueError):
-                    pass
-            if recovered is not None:
-                with lock:
-                    results[shard[0]] = {**recovered, 'invocation': invocation_id}
-                    finished.add(invocation_id)
-                return
-            with lock:
-                errors.append(f'{invocation_id}: {error}')
-                finished.add(invocation_id)
-            failed.set()
-            return
-        with lock:
-            finished.add(invocation_id)
-            for name in shard:
-                results[name] = reported.get(name) or {
-                    'name': name, 'verdict': 'MISSING', 'reason': 'no result reported'}
-                results[name]['invocation'] = invocation_id
-            if any(not acceptable(pending_result(name, results[name], budgets, args.mode)) for name in shard):
-                failed.set()
 
     def interrupted(signum, _frame):
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, signal.SIG_IGN)
-        cancel_recorded(client)
         raise SystemExit(128 + signum)
 
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
-    # Daemon threads: after a fail-fast cancel, nothing waits for the others.
-    threads = [threading.Thread(target=follow, args=(invocation_id,), daemon=True)
-               for invocation_id in invocations]
     try:
+        deadline = time.monotonic() + (PR_WAIT_MINUTES if args.mode == 'pr' else WAIT_MINUTES) * 60
+        for index, shard in enumerate(shards):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise KaniError('Kani coordinator deadline expired during submission')
+            runner_minutes = min(args.timeout, PR_WAIT_MINUTES) if args.mode == 'pr' else args.timeout
+            invocation_id = client.call('Run', run_request(args, index, shard, runner_minutes),
+                                        timeout=min(600, remaining)).get('invocationId')
+            if not invocation_id:
+                raise KaniError('BuildBuddy Run returned no invocation id')
+            invocations[invocation_id] = shard
+            with invocation_path().open('a') as handle:
+                handle.write(invocation_id + '\n')
+            print(f'Kani shard {index}: {len(shard)} harnesses: '
+                  f'https://app.buildbuddy.io/invocation/{invocation_id}', flush=True)
+
+        def follow(invocation_id):
+            shard = invocations[invocation_id]
+            try:
+                invocation = remote_gate.wait(client, invocation_id, deadline, handle_signals=False)
+                raw = remote_gate.fetch(client, invocation, RESULT)
+                record = check_shard(raw, args.head, shard)
+                if record.get('error'):
+                    raise KaniError(record['error'])
+                reported = record['results']
+            except (KaniError, remote_gate.RemoteError) as error:
+                recovered = None
+                if args.mode == 'nightly' and len(shard) == 1 and budgets.get(shard[0], {}).get('pending'):
+                    try:
+                        recovered = pending_runner_result(client, invocation_id, shard[0])
+                    except (remote_gate.RemoteError, ValueError):
+                        pass
+                if recovered is not None:
+                    with lock:
+                        results[shard[0]] = {**recovered, 'invocation': invocation_id}
+                        finished.add(invocation_id)
+                    return
+                with lock:
+                    errors.append(f'{invocation_id}: {error}')
+                failed.set()
+                return
+            with lock:
+                finished.add(invocation_id)
+                for name in shard:
+                    results[name] = reported.get(name) or {
+                        'name': name, 'verdict': 'MISSING', 'reason': 'no result reported'}
+                    results[name]['invocation'] = invocation_id
+                if any(not acceptable(pending_result(name, results[name], budgets, args.mode)) for name in shard):
+                    failed.set()
+
+        # Daemon threads: after a fail-fast cancel, nothing waits for the others.
+        threads = [threading.Thread(target=follow, args=(invocation_id,), daemon=True)
+                   for invocation_id in invocations]
         for thread in threads:
             thread.start()
         while any(thread.is_alive() for thread in threads):
             if failed.is_set() and args.mode == 'pr':
                 # Fail fast: the gate already fails, so free the executors.
                 print('Kani: a shard failed; cancelling the others', flush=True)
-                with lock:
-                    done = set(finished)
-                cancel_recorded(client, skip=done)
                 break
-            sleep(5)
+            if time.monotonic() >= deadline:
+                errors.append('Kani coordinator deadline expired')
+                break
+            sleep(min(5, max(0, deadline - time.monotonic())))
+        with lock:
+            for invocation_id, shard in invocations.items():
+                for name in shard:
+                    results.setdefault(name, {'name': name, 'verdict': 'NOT_RUN', 'invocation': invocation_id,
+                                              'reason': 'its shard did not report'})
+            return results, list(errors)
     finally:
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
-    with lock:
-        for invocation_id, shard in invocations.items():
-            for name in shard:
-                results.setdefault(name, {'name': name, 'verdict': 'NOT_RUN', 'invocation': invocation_id,
-                                          'reason': 'its shard did not report'})
-        return results, list(errors)
+        with lock:
+            done = set(finished)
+        try:
+            cancel_recorded(client, skip=done)
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
 
 
 def summarize(mode, head, selection, results, errors):
@@ -696,6 +759,10 @@ def gate_main(args):
     output.mkdir(parents=True, exist_ok=True)
     names = harnesses()
     budgets = load_budgets()
+    retired = set(budgets) - set(names)
+    if retired:
+        raise KaniError('proof inventory lost harnesses; retire their budget entries in the same change: '
+                        + ', '.join(sorted(retired)))
     if args.mode == 'pr':
         trigger = triggered(changed_files(args.base, args.head))
         if not trigger:
@@ -750,10 +817,16 @@ def report(summary, repository, token, run_url, opener=urllib.request.urlopen):
             return json.load(response)
 
     text = f'The nightly Kani run failed: {run_url}\n\n{summary}\n'
-    for issue in call('GET', 'issues?state=open&per_page=100&creator=github-actions%5Bbot%5D'):
-        if issue.get('title') == ISSUE_TITLE and 'pull_request' not in issue:
-            call('POST', f'issues/{issue["number"]}/comments', {'body': text})
-            return issue['number']
+    page = 1
+    while True:
+        issues = call('GET', f'issues?state=open&per_page=100&creator=github-actions%5Bbot%5D&page={page}')
+        for issue in issues:
+            if issue.get('title') == ISSUE_TITLE and 'pull_request' not in issue:
+                call('POST', f'issues/{issue["number"]}/comments', {'body': text})
+                return issue['number']
+        if len(issues) < 100:
+            break
+        page += 1
     return call('POST', 'issues', {'title': ISSUE_TITLE, 'body': text})['number']
 
 
