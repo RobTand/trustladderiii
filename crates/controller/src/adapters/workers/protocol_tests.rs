@@ -1,6 +1,184 @@
 use super::*;
 use serde_json::json;
 
+fn checked_plan_reply() -> Value {
+    json!({"kind":"cant_meet", "report":"Named plan-check objections remain.",
+        "files":["greeting.py"], "forecast":ingest(1)["forecast"],
+        "violations":["A named rule remains unsatisfied."]})
+}
+
+fn plan_check_provenance(
+    class: crate::contracts::plan_check::ObjectionClass,
+) -> crate::contracts::plan_check::PlanCheckProvenance {
+    use crate::contracts::plan_check::*;
+    PlanCheckProvenance {
+        objections: vec![PlanObjection {
+            class,
+            rule: "check.named_rule".into(),
+            items: vec!["check-1".into()],
+            diagnostic: "The original check obligation remains unsatisfied.".into(),
+        }],
+        repair: PlanRepair::Attempted,
+    }
+}
+
+fn planning_world(fail_fast: bool, retries: u8) -> tl3_kernel::World {
+    use tl3_kernel::*;
+    fn confirm(world: &mut World) {
+        for _ in 0..32 {
+            let Some(effect) = world.nodes[0].effect else {
+                return;
+            };
+            *world = step(
+                world.clone(),
+                Event::Ack {
+                    node: NodeId(0),
+                    seq: effect.seq,
+                    ack: Ack::Confirmed,
+                },
+            )
+            .0;
+        }
+        panic!("fixture did not finish confirming effects");
+    }
+    let mut world = World::new(&[1], 1);
+    world.fail_fast = fail_fast;
+    world = step(
+        world,
+        Event::NewRequest {
+            repo: RepoId(0),
+            priority: Priority::Unranked,
+        },
+    )
+    .0;
+    confirm(&mut world);
+    for reply in [Reply::IngestDone { size: 1 }, Reply::AuditAgrees] {
+        let generation = world.nodes[0].generation;
+        world = step(
+            world,
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply,
+            },
+        )
+        .0;
+        confirm(&mut world);
+    }
+    world.nodes[0].plan_retries = retries;
+    assert!(matches!(world.nodes[0].phase, Phase::Planning { .. }));
+    assert!(world.valid());
+    world
+}
+
+fn assert_plan_check_stops(class: crate::contracts::plan_check::ObjectionClass) {
+    use crate::contracts::plan_check::*;
+    use tl3_kernel::*;
+    for fail_fast in [false, true] {
+        for retries in [0, 1] {
+            for repair in [
+                PlanRepair::Attempted,
+                PlanRepair::Unavailable {
+                    reason: RepairUnavailable::Disabled,
+                },
+            ] {
+                let mut provenance = plan_check_provenance(class);
+                provenance.repair = repair;
+                let MappedReply::Kernel(reply) =
+                    map_reply_with_plan_check("planner", &checked_plan_reply(), Some(&provenance))
+                        .unwrap()
+                else {
+                    panic!("expected kernel reply")
+                };
+                let before = planning_world(fail_fast, retries);
+                let generation = before.nodes[0].generation;
+                let (after, out) = step(
+                    before.clone(),
+                    Event::Reply {
+                        node: NodeId(0),
+                        generation,
+                        reply,
+                    },
+                );
+                assert!(
+                    matches!(
+                        after.nodes[0].phase,
+                        Phase::Stopping(Outcome::Stopped) | Phase::Closed(Outcome::Stopped)
+                    ),
+                    "fail_fast={fail_fast}, retries={retries}, repair={repair:?}: {:?}",
+                    after.nodes[0].phase
+                );
+                assert_eq!(after.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
+                assert_eq!(after.nodes[0].question, None);
+                assert_eq!(after.next_question, before.next_question);
+                assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
+                assert_eq!(after.nodes[0].plan_retries, retries);
+                assert!(!out.iter().any(|out| matches!(
+                    out,
+                    Out::Notice {
+                        notice: Notice::Ask { .. },
+                        ..
+                    }
+                )));
+                assert!(after.valid());
+            }
+        }
+    }
+}
+
+#[test]
+fn plan_check_rejected_never_asks_or_retries() {
+    assert_plan_check_stops(crate::contracts::plan_check::ObjectionClass::Other);
+}
+
+#[test]
+fn plan_check_needs_split_never_asks_or_retries() {
+    assert_plan_check_stops(crate::contracts::plan_check::ObjectionClass::SizeExecutionFit);
+}
+
+#[test]
+fn plan_check_without_provenance_preserves_the_legacy_fallback() {
+    assert!(matches!(
+        map_reply("planner", &checked_plan_reply()).unwrap(),
+        MappedReply::Kernel(Reply::PlanCantMeet)
+    ));
+    let mut forged = checked_plan_reply();
+    forged["plan_check"] = serde_json::to_value(plan_check_provenance(
+        crate::contracts::plan_check::ObjectionClass::Other,
+    ))
+    .unwrap();
+    assert!(map_reply("planner", &forged).is_err());
+}
+
+#[test]
+fn plan_check_keeps_ordinary_split_and_cant_meet_owner_paths() {
+    use tl3_kernel::*;
+    for (reply, kind) in [
+        (Reply::PlanSplit, QKind::NeedsSplitting),
+        (Reply::PlanCantMeet, QKind::CantMeet),
+    ] {
+        let before = planning_world(false, 1);
+        let generation = before.nodes[0].generation;
+        let (after, out) = step(
+            before,
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply,
+            },
+        );
+        assert_eq!(after.nodes[0].phase, Phase::AwaitingRob);
+        assert_eq!(after.nodes[0].question.unwrap().kind, kind);
+        assert!(out.iter().any(|out| matches!(
+            out,
+            Out::Notice {
+                notice: Notice::Ask { .. },
+                ..
+            }
+        )));
+    }
+}
+
 fn ingest(tokens: u64) -> Value {
     json!({
         "kind": "brief", "brief": "Fix greeting.",

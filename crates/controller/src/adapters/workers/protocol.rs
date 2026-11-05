@@ -39,6 +39,14 @@ pub(crate) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
 }
 
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
+    map_reply_with_plan_check(role, reply, None)
+}
+
+pub(crate) fn map_reply_with_plan_check(
+    role: &str,
+    reply: &Value,
+    _provenance: Option<&crate::contracts::plan_check::PlanCheckProvenance>,
+) -> Result<MappedReply> {
     let validator = validator(role, "reply")?;
     if !validator.is_valid(reply) {
         return Err(Error::Invalid("worker reply breaks role schema"));
