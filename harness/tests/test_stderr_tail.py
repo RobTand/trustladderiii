@@ -39,7 +39,7 @@ def test_early_exit_keeps_cause_outside_test_messages(tmp_path, monkeypatch, cod
     b'x' * 32768 + b'last diagnostic\n',
     b'\xff\xfe\x00\x1b\r\tbad utf8\nlast diagnostic\n',
     ('\u202e\u0085\u2028\U0001f600' * 8192 + '\nlast diagnostic\n').encode(),
-])
+], ids=['total', 'line', 'invalid-utf8', 'unicode'])
 def test_total_line_and_encoding_bounds(tmp_path, monkeypatch, payload):
     # The payload is a file so Linux's argv limit cannot hide the real failure.
     path = tmp_path / 'stderr.bin'
