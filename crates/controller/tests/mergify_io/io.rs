@@ -1066,3 +1066,75 @@ fn base64(s: &str) -> String {
     }
     out
 }
+
+// ctrl-core C1: direct evaluate inputs share the existing recorded leaf boundary.
+pub(super) fn c1_pull() -> PullRequest {
+    pull(&Frame {
+        word: 0,
+        elapsed_ms: 0,
+    })
+}
+pub(super) fn c1_check(
+    id: u64,
+    name: &str,
+    app: Option<(u64, &str)>,
+    conclusion: Option<&str>,
+    current: bool,
+) -> CheckRun {
+    let mut value = check(
+        &Frame {
+            word: 0,
+            elapsed_ms: 0,
+        },
+        false,
+    );
+    value.id = id;
+    value.name = name.into();
+    value.app = app.map(|(id, slug)| tl3_github::CheckApp {
+        id,
+        slug: slug.into(),
+    });
+    value.conclusion = conclusion.map(str::to_owned);
+    if !current {
+        value.head_sha = "other".into();
+    }
+    value
+}
+pub(super) fn c1_evaluate(s: &Schedule, execute: impl Fn(bool) -> Value) -> Value {
+    let record = |new| {
+        init(s.clone(), None);
+        let result = execute(new);
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    };
+    let old = record(false);
+    let new = record(true);
+    assert_eq!(old, new, "C1 evaluate divergence: {s:?}");
+    assert_eq!(old.writes, 0, "evaluate must have no write/crash boundary");
+    new.result
+}
+pub(super) fn c1_require_order(s: &Schedule, e: Entry, ops: &[&str]) {
+    let trace = run(s, e, false, None);
+    let mut next = 0;
+    for call in &trace.calls {
+        if next < ops.len() && call.op == ops[next] {
+            next += 1;
+        }
+    }
+    assert_eq!(
+        next,
+        ops.len(),
+        "mandatory ordered calls missed: {trace:#?}"
+    );
+}
+pub(super) fn c1_require_error(s: &Schedule, e: Entry, expected: &str) {
+    assert_eq!(run(s, e, false, None).result["error"], json!(expected));
+}

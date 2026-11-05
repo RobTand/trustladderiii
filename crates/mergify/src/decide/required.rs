@@ -221,7 +221,7 @@ pub fn record(before: Summary, item: Contribution) -> Summary {
         Failure::None
     };
     Summary {
-        ready: before.ready || item == Contribution::Passed,
+        ready: before.ready && item == Contribution::Passed,
         failure,
     }
 }

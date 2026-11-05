@@ -845,3 +845,384 @@ mod properties {
         );
     }
 }
+
+// ctrl-core C1: isolated direct evaluators reuse the entire pinned head-check shell.
+mod required_c1 {
+    use super::*;
+    use io::{Entry, Frame, Profile, Schedule};
+    use proptest::{
+        prelude::*,
+        test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
+    };
+
+    macro_rules! evaluator {
+        ($module:ident, $source:literal) => {
+            mod $module {
+                use super::*;
+                use crate::mergify_io::io::mock_std as std;
+                adapter!();
+                impl Adapter {
+                    fn fence(&mut self, delivery: &Delivery) -> Result<()> {
+                        if delivery.epoch < self.epoch {
+                            return Err(Error::Invalid("Mergify effect epoch is fenced"));
+                        }
+                        self.records.fence(delivery.epoch)?;
+                        self.epoch = delivery.epoch;
+                        Ok(())
+                    }
+                }
+                fn lifecycle_head(current: bool) -> tl3_mergify::decide::Head {
+                    if current { tl3_mergify::decide::Head::Current } else { tl3_mergify::decide::Head::Other }
+                }
+                fn lifecycle_error(failure: lifecycle::Failure) -> Error { Error::Invalid(failure.class()) }
+                mod head_checks {
+                    include!($source);
+                    pub(super) fn run(required: &[(String, Option<u64>)], checks: &[CheckRun], unavailable: &[String]) -> Value {
+                        let pull = io::c1_pull();
+                        let rules = tl3_github::RequiredChecks {
+                            checks: required.iter().map(|(context, app)| tl3_github::RequiredStatusCheck {
+                                context: context.clone(), integration_id: *app,
+                            }).collect(),
+                            unavailable: unavailable.to_vec(),
+                        };
+                        match Runtime.block_on(evaluate(&GitHub::new(), "owner/sandbox", &pull, rules, checks)) {
+                            Ok(result) => json!({"ready":result.ready, "unavailable":result.unavailable, "missing":result.missing,
+                                "reported":result.reported, "evidence":result.evidence(&pull), "infra":result.infrastructure()}),
+                            Err(error) => json!({"error":error.to_string()}),
+                        }
+                    }
+                    pub(super) fn annotations(values: &[CheckAnnotation]) -> bool { runner_failure(values) }
+                }
+                pub(super) fn run(required: &[(String, Option<u64>)], checks: &[CheckRun], unavailable: &[String]) -> Value {
+                    head_checks::run(required, checks, unavailable)
+                }
+                pub(super) fn annotations(values: &[tl3_github::CheckAnnotation]) -> bool { head_checks::annotations(values) }
+            }
+        };
+    }
+    evaluator!(old, "reference-head.rs");
+    evaluator!(new, "current-head.rs");
+
+    fn stable(profile: Profile) -> Schedule {
+        Schedule {
+            profile,
+            initial: 0,
+            frames: vec![],
+            appears_at: usize::MAX,
+            write_results: vec![],
+            overrides: vec![],
+            file_results: vec![],
+        }
+    }
+    fn over(s: &mut Schedule, op: &str, suffix: &str, nth: usize, word: u16) {
+        s.overrides.push(io::ReadOverride {
+            op: op.into(),
+            suffix: suffix.into(),
+            nth,
+            frame: Frame {
+                word,
+                elapsed_ms: 0,
+            },
+        });
+    }
+    fn evaluate(s: &Schedule, rules: &[(String, Option<u64>)], checks: &[CheckRun]) -> Value {
+        io::c1_evaluate(s, |current| {
+            if current {
+                new::run(rules, checks, &[])
+            } else {
+                old::run(rules, checks, &[])
+            }
+        })
+    }
+    fn runner() -> TestRunner {
+        TestRunner::new(Config {
+            cases: 128,
+            max_shrink_iters: 2048,
+            rng_seed: RngSeed::Fixed(0x0075_1760_2026),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/mergify_io/proptest-regressions.txt"
+            )))),
+            ..Config::default()
+        })
+    }
+
+    /// Q52 / #447 / #2705: both refused status reads reach unavailable, without claiming absence.
+    #[test]
+    fn mandatory_required_statuses_403_and_404() {
+        for (word, status) in [(256, 403), (288, 404)] {
+            let mut s = stable(Profile::Classic);
+            over(&mut s, "github.statuses", "@head", 0, word);
+            io::compare(&s, Entry::Read).unwrap();
+            io::require_ops(&s, Entry::Read, &["github.statuses"]);
+            let result = evaluate(&s, &[("CI".into(), None)], &[]);
+            assert_eq!(
+                result["unavailable"],
+                json!([format!("Commit statuses: read unavailable (HTTP {status})")])
+            );
+            assert_eq!(result["missing"], json!([]));
+            // Existing base behavior, retained for Q27: unknown absence stays ready.
+            assert_eq!(result["ready"], true);
+        }
+    }
+    /// Q27 red reproduction: run explicitly; extraction must not fix this policy gap.
+    #[test]
+    #[ignore = "base defect: unreadable required classic context can be ready; Q27 decision required"]
+    fn required_status_unavailable_must_not_be_ready_red_reproduction() {
+        let mut s = stable(Profile::Classic);
+        over(&mut s, "github.statuses", "@head", 0, 256);
+        assert_eq!(evaluate(&s, &[("CI".into(), None)], &[])["ready"], false);
+    }
+    /// Q52 / #447: passing classic statuses count; error/failure count as Tests.
+    #[test]
+    fn mandatory_required_classic_status() {
+        let s = stable(Profile::Classic);
+        let result = evaluate(&s, &[("CI".into(), None)], &[]);
+        assert_eq!(result["ready"], false);
+        assert_eq!(result["infra"], false);
+        assert_eq!(result["evidence"]["CiFailed"]["check"], 1);
+        let mut s = s;
+        over(&mut s, "github.statuses", "@head", 0, 2);
+        assert_eq!(evaluate(&s, &[("CI".into(), None)], &[])["ready"], true);
+    }
+    /// Q47 / #2705: Actions annotations are read only on completed failure.
+    #[test]
+    fn mandatory_required_runner_failure_and_annotation_gate() {
+        let s = stable(Profile::Rerun);
+        let check = io::c1_check(10, "CI", Some((1, "github-actions")), Some("failure"), true);
+        let result = evaluate(&s, &[("CI".into(), Some(1))], &[check]);
+        assert_eq!(result["infra"], true);
+        io::compare(&s, Entry::Rerun).unwrap();
+        io::require_ops(&s, Entry::Rerun, &["github.annotations", "github.rerun"]);
+        for (slug, conclusion, pending) in [
+            ("other", Some("failure"), false),
+            ("github-actions", Some("success"), false),
+            ("github-actions", Some("failure"), true),
+        ] {
+            let mut s = stable(Profile::Plain);
+            over(&mut s, "github.annotations", "", 0, 256);
+            let mut check = io::c1_check(10, "CI", Some((1, slug)), conclusion, true);
+            if pending {
+                check.status = "in_progress".into();
+            }
+            let result = evaluate(&s, &[("CI".into(), Some(1))], &[check]);
+            assert!(
+                result.get("error").is_none(),
+                "annotations were read despite gate: {result}"
+            );
+        }
+    }
+    /// Q47 / #2705: a code failure wins, independently of sorted app order.
+    #[test]
+    fn mandatory_required_tests_over_infra() {
+        for (tests, infra) in [(1, 2), (2, 1)] {
+            let checks = [
+                io::c1_check(11, "CI", Some((tests, "other")), Some("failure"), true),
+                io::c1_check(
+                    12,
+                    "CI",
+                    Some((infra, "github-actions")),
+                    Some("timed_out"),
+                    true,
+                ),
+            ];
+            let result = evaluate(&stable(Profile::Plain), &[("CI".into(), None)], &checks);
+            assert_eq!(result["infra"], false);
+            assert_eq!(result["evidence"]["CiFailed"]["check"], 11);
+        }
+    }
+    /// Q52: keys, first equal ID, head filter and last failing payload are observable.
+    #[test]
+    fn mandatory_required_newest_per_key() {
+        let checks = [
+            io::c1_check(10, "CI", Some((1, "other")), Some("failure"), true),
+            io::c1_check(11, "CI", Some((1, "other")), Some("success"), true),
+            io::c1_check(11, "CI", Some((1, "other")), Some("failure"), true),
+            io::c1_check(12, "CI", Some((1, "other")), Some("failure"), false),
+        ];
+        let result = evaluate(&stable(Profile::Plain), &[("CI".into(), Some(1))], &checks);
+        assert_eq!(result["ready"], true);
+        let other_app = io::c1_check(1, "CI", Some((2, "other")), Some("failure"), true);
+        let result = evaluate(
+            &stable(Profile::Plain),
+            &[("CI".into(), None)],
+            &[checks[1].clone(), other_app],
+        );
+        assert_eq!(result["evidence"]["CiFailed"]["check"], 1);
+    }
+    /// #2705: no matching suite, stale final read and the fence are all reached.
+    #[test]
+    fn mandatory_required_rerun_no_suite_writable_and_fence() {
+        let mut s = stable(Profile::Rerun);
+        over(&mut s, "github.runs", "@head", 0, 2);
+        io::compare(&s, Entry::Rerun).unwrap();
+        io::c1_require_error(
+            &s,
+            Entry::Rerun,
+            "required check has no matching head workflow run",
+        );
+        io::require_count(&s, Entry::Rerun, "github.rerun", 0);
+        for word in [1, 2, 4] {
+            let mut s = stable(Profile::Rerun);
+            over(&mut s, "github.pull", "#100", 2, word);
+            io::compare(&s, Entry::Rerun).unwrap();
+            io::c1_require_error(&s, Entry::Rerun, "PR changed before workflow rerun");
+            io::require_count(&s, Entry::Rerun, "github.rerun", 0);
+        }
+        let s = stable(Profile::Rerun);
+        io::compare(&s, Entry::Rerun).unwrap();
+        io::c1_require_order(
+            &s,
+            Entry::Rerun,
+            &[
+                "github.runs",
+                "file.read",
+                "github.pull",
+                "file.read",
+                "file.create",
+                "file.fsync",
+                "file.rename",
+                "file.fsync",
+                "github.rerun",
+                "file.create",
+                "file.rename",
+                "file.fsync",
+            ],
+        );
+        let mut waiting = s.clone();
+        over(&mut waiting, "github.runs", "@head", 0, 1);
+        io::compare(&waiting, Entry::Rerun).unwrap();
+        io::require_count(&waiting, Entry::Rerun, "github.rerun", 0);
+        io::require_count(&waiting, Entry::Rerun, "file.read", 1);
+    }
+    /// #2705: read/execute entry points retain their head_checks::read gates.
+    #[test]
+    fn mandatory_required_read_and_execute_paths() {
+        let s = stable(Profile::Label);
+        io::compare(&s, Entry::Execute).unwrap();
+        io::require_ops(
+            &s,
+            Entry::Execute,
+            &["github.requirements", "github.add_label"],
+        );
+        let mut s = stable(Profile::Rerun);
+        over(&mut s, "github.annotations", "/10", 0, 1);
+        io::compare(&s, Entry::Execute).unwrap();
+        io::require_ops(
+            &s,
+            Entry::Execute,
+            &["github.requirements", "github.checks", "github.annotations"],
+        );
+    }
+
+    /// Parser conformance covers arbitrary Unicode, truncations, suffixes, mixed
+    /// levels and multiple annotations against the pinned production parser.
+    #[test]
+    fn required_annotation_parser_proptest() {
+        let prefixes = [
+            "The runner has lost communication with the server",
+            "The job was not acquired by Runner of type",
+            "The job was abandoned as the runner did not pick it up",
+            "The job was not started because recent account payments have failed",
+        ];
+        let text = prop_oneof![
+            any::<String>(),
+            (0usize..4, any::<String>())
+                .prop_map(move |(i, suffix)| format!("{}{suffix}", prefixes[i])),
+            (0usize..4, 0usize..80)
+                .prop_map(move |(i, len)| prefixes[i].chars().take(len).collect::<String>())
+        ];
+        let annotation = (
+            prop_oneof![
+                Just("failure".to_owned()),
+                Just("warning".to_owned()),
+                any::<String>()
+            ],
+            text,
+        )
+            .prop_map(|(annotation_level, message)| tl3_github::CheckAnnotation {
+                annotation_level,
+                message,
+            });
+        runner()
+            .run(&prop::collection::vec(annotation, 0..32), |annotations| {
+                prop_assert_eq!(
+                    old::annotations(&annotations),
+                    new::annotations(&annotations)
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+    /// Independent varying upstream status/annotation tapes plus arbitrary
+    /// required rules and check payloads; full result and recorded trace agree.
+    #[test]
+    fn required_evaluate_schedules() {
+        let check = (
+            0u64..8,
+            0u8..3,
+            0u8..4,
+            0u8..12,
+            any::<bool>(),
+            any::<bool>(),
+        )
+            .prop_map(|(id, name, app, conclusion, current, pending)| {
+                let names = ["CI", "other", ""];
+                let conclusions = [
+                    None,
+                    Some("success"),
+                    Some("failure"),
+                    Some("neutral"),
+                    Some("skipped"),
+                    Some("cancelled"),
+                    Some("timed_out"),
+                    Some("startup_failure"),
+                    Some("action_required"),
+                    Some("stale"),
+                    Some("new_conclusion"),
+                    Some(""),
+                ];
+                let app = match app {
+                    0 => None,
+                    1 => Some((1, "github-actions")),
+                    2 => Some((2, "other")),
+                    _ => Some((1, "other")),
+                };
+                let mut check = io::c1_check(
+                    id,
+                    names[usize::from(name)],
+                    app,
+                    conclusions[usize::from(conclusion)],
+                    current,
+                );
+                if pending {
+                    check.status = "in_progress".into();
+                }
+                check
+            });
+        let rule = (
+            0usize..3,
+            prop_oneof![Just(None), Just(Some(1)), Just(Some(2))],
+        )
+            .prop_map(|(name, app)| (["CI", "other", ""][name].to_owned(), app));
+        let strategy = (
+            prop::collection::vec(rule, 0..8),
+            prop::collection::vec(check, 0..24),
+            prop::collection::vec(any::<u16>(), 0..32),
+        );
+        runner()
+            .run(&strategy, |(rules, checks, words)| {
+                let mut s = stable(Profile::Classic);
+                s.frames = words
+                    .into_iter()
+                    .map(|word| Frame {
+                        word,
+                        elapsed_ms: 0,
+                    })
+                    .collect();
+                evaluate(&s, &rules, &checks);
+                Ok(())
+            })
+            .unwrap();
+    }
+}
