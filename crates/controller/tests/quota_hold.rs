@@ -143,7 +143,7 @@ else:
         let mut commit = Commit::new("fixture:briefs", json!({}), &snapshot);
         for node in ["0", "1"] {
             store.put_worker_materials(node, &json!({"issue":{"number":42,"title":"quota wait","body":"audit","comments":[]},"repo":{"readme":"fixture","file_list":["greeting.py"]}})).unwrap();
-            commit.rows.push(RowChange::Put { table:"briefs".into(), id:node.into(), value:json!({"kind":"brief","brief":"audit","goals":[],"files":[],"memory_ids":[],"evidence_contract":[]}) });
+            commit.rows.push(RowChange::Put { table:"briefs".into(), id:node.into(), value:json!({"kind":"brief","brief":"audit","goals":[{"description":"Audit the greeting.","verification":"test"}],"files":["greeting.py"],"memory_ids":[],"evidence_contract":[]}) });
         }
         store.commit(&commit).unwrap();
         Self {
