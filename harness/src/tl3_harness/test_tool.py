@@ -403,6 +403,8 @@ def main():
         result = infrastructure("Test infrastructure failed before a complete report was available.")
     if Path('proof.json').is_file():
         result['proof'] = json.loads(Path('proof.json').read_text())
+    from .supervision import model_result
+    result = model_result(result)
     result = bounded(result) if args.declared_symptom else action_summary(result)
     print(PREFIX + json.dumps(result), flush=True)
 

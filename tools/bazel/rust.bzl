@@ -88,6 +88,7 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_environment_incidents",
     "test_test_harness_summary",
     "test_test_redaction_adapter",
     "test_test_redaction_generated",

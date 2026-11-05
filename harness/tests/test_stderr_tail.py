@@ -1,5 +1,7 @@
 """#826: launcher stderr is bounded operator evidence, never a test verdict."""
 import json
+import contextlib
+import io
 import sys
 import tempfile
 import tracemalloc
@@ -26,16 +28,23 @@ def command(source):
 def observe(tmp_path, monkeypatch, source):
     monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
     monkeypatch.setattr(test_tool, 'container_command', lambda *args: command(source))
-    return test_tool.run_current(tmp_path, IMAGE, ())
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = test_tool.run_current(tmp_path, IMAGE, ())
+    sys.stdout.write(output.getvalue())
+    records = [json.loads(line.removeprefix(supervision.FAILURE_PREFIX))
+               for line in output.getvalue().splitlines() if line.startswith(supervision.FAILURE_PREFIX)]
+    return result, records[-1] if records else None
 
 
 @pytest.mark.parametrize('code,outcome', [(125, 'setup_failure'), (1, 'unknown_incomplete')])
 def test_early_exit_keeps_cause_outside_test_messages(tmp_path, monkeypatch, code, outcome):
-    result = observe(tmp_path, monkeypatch, f'import os; os.write(2, {CAUSE.encode()!r}); os._exit({code})')
+    result, diagnostic = observe(tmp_path, monkeypatch, f'import os; os.write(2, {CAUSE.encode()!r}); os._exit({code})')
     assert result['status'] == 'infrastructure_error'
     assert result['execution']['outcome'] == outcome
-    assert result['execution'].get('stderr_tail') == CAUSE, 'the container failure cause was discarded'
+    assert diagnostic.get('stderr_tail') == CAUSE, 'the container failure cause was discarded'
     assert CAUSE not in result['message']
+    assert 'stderr_tail' not in json.dumps(result)
     assert result['tests'] == []
 
 
@@ -51,8 +60,8 @@ def test_total_line_and_encoding_bounds(tmp_path, monkeypatch, payload):
     path = tmp_path / 'stderr.bin'
     path.write_bytes(payload)
     source = f'import os; os.write(2, open({str(path)!r}, "rb").read()); os._exit(125)'
-    result = observe(tmp_path, monkeypatch, source)
-    tail = result['execution'].get('stderr_tail', '')
+    result, diagnostic = observe(tmp_path, monkeypatch, source)
+    tail = diagnostic.get('stderr_tail', '')
     assert tail.endswith('last diagnostic\n'), 'the newest stderr must survive clipping'
     assert len(tail.encode('utf-8')) <= 16_384
     assert len(tail) <= 1024
@@ -81,7 +90,7 @@ os._exit(125)
             _, peak = tracemalloc.get_traced_memory()
         assert records == 128, 'stderr must not block stdout'
         assert len(retained) <= 16_384
-        assert failure.as_json().get('stderr_tail', '').endswith('last diagnostic\n')
+        assert failure.operator_json().get('stderr_tail', '').endswith('last diagnostic\n')
         assert peak < 1_048_576, f'8 MiB of stderr grew host Python memory to {peak} bytes'
     finally:
         tracemalloc.stop()
@@ -90,7 +99,7 @@ os._exit(125)
 def test_success_records_no_stderr_diagnostic(tmp_path, monkeypatch, capsys):
     source = ('import os; os.write(2, b"startup warning"); '
               'os.write(1, b\'{"event":"start","schema":1}\\n{"event":"finish","exit_code":0}\\n\')')
-    result = observe(tmp_path, monkeypatch, source)
+    result, diagnostic = observe(tmp_path, monkeypatch, source)
     assert result['status'] == 'completed'
     assert 'execution' not in result
     assert 'startup warning' not in json.dumps(result)
@@ -115,22 +124,22 @@ def test_checking_logs_diagnostics_without_maker_feedback(tmp_path, monkeypatch,
 
 def test_stderr_activity_does_not_extend_progress_allowance(tmp_path, monkeypatch):
     monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 1}')
-    result = observe(tmp_path, monkeypatch, "import os\nwhile True: os.write(2, b'no progress\\n' * 1024)")
+    result, diagnostic = observe(tmp_path, monkeypatch, "import os\nwhile True: os.write(2, b'no progress\\n' * 1024)")
     assert result['execution']['outcome'] == 'unknown_incomplete'
     assert result['execution']['termination_reason'] == 'no_progress'
-    assert 'no progress' in result['execution'].get('stderr_tail', '')
+    assert 'no progress' in diagnostic.get('stderr_tail', '')
 
 
 def test_stdout_eof_still_drains_stderr(tmp_path, monkeypatch):
-    result = observe(tmp_path, monkeypatch,
+    result, diagnostic = observe(tmp_path, monkeypatch,
                      f"import os; os.close(1); os.write(2, b'x' * 262144 + b'\\n{CAUSE}'); os._exit(1)")
-    assert result['execution'].get('stderr_tail', '').endswith(CAUSE)
+    assert diagnostic.get('stderr_tail', '').endswith(CAUSE)
 
 
 def test_repeated_failures_fit_the_existing_result_log_headroom(tmp_path, monkeypatch, capsys):
     for _ in range(32):
-        result = observe(tmp_path, monkeypatch, "import os; os.write(2, b'x' * 16384); os._exit(125)")
-        assert result['execution']['stderr_tail']
+        result, diagnostic = observe(tmp_path, monkeypatch, "import os; os.write(2, b'x' * 16384); os._exit(125)")
+        assert diagnostic['stderr_tail']
     logged = capsys.readouterr().out
     assert logged.startswith('TL3_EXECUTION_FAILURE ')
     assert len(logged.encode()) <= 16_384

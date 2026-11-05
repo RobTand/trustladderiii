@@ -110,3 +110,14 @@ fn worker_identity_matches_the_rust_build() {
         std::fs::read_to_string(directory.join("_policy_identity.py")).unwrap()
     );
 }
+
+/// #826: the portable pytest edge is pinned to the authoritative Rust policy too.
+#[test]
+fn harness_policy_matches_the_rust_build() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../harness/src/tl3_harness/_redaction_policy.py");
+    assert_eq!(
+        redaction::generated_harness_policy(),
+        std::fs::read_to_string(path).unwrap()
+    );
+}

@@ -81,3 +81,27 @@ def test_detached_exporter_loads_the_bound_policy():
     assert result.returncode == 2
     assert 'usage: tracing.py' in result.stderr
     assert 'redaction policy' not in result.stderr.lower()
+
+
+def test_shared_redactor_matches_pre_extraction_reference():
+    """#826: moving the matcher keeps its policy reads and observable text unchanged."""
+    from tl3_workers import tracing
+    source = Path(__file__).with_name('fixtures') / 'stderr-redactor-before.txt'
+    reference = {'__name__': 'stderr_reference', '__file__': tracing.__file__}
+    exec(compile(source.read_text(), str(source), 'exec'), reference)
+    from redaction_branches import original_inputs, branch_inputs
+    inputs = original_inputs() + branch_inputs() + [
+        'password: zE9!pR4#cV7$ ' + '.' * 499,
+        'password:\nzE9!pR4#cV7$ ' + '.' * 490 + '\n' + '.' * 512,
+        'password: ' + 'v' * 20000 + '\nordinary cause\n',
+    ]
+    before, after = reference['Redactor'](None), tracing.Redactor(None)
+    for text in inputs:
+        assert before.text(text, limit=len(text)) == after.text(text, limit=len(text))
+
+
+def test_harness_policy_matches_the_verified_worker_policy():
+    """#826: a staged pytest harness cannot silently use a different Rust policy."""
+    from tl3_harness import redaction
+    from tl3_workers import tracing
+    assert redaction.POLICY == tracing.load_policy()

@@ -599,6 +599,9 @@ def test_stderr_capture_redacts_before_clipping_and_trace(boundary, tmp_path, mo
     records = [json.loads(line.removeprefix(supervision.FAILURE_PREFIX))
                for line in capsys.readouterr().out.splitlines() if line.startswith(supervision.FAILURE_PREFIX)]
     assert records, 'operator diagnostic was lost'
+    from tl3_workers.contracts import validate
+    for record in records:
+        validate('execution-failure', record)
     assert secret not in json.dumps(records), 'capture clipping erased the credential label'
     assert secret not in Redactor(None).text(json.dumps(records)), 'trace sees an unlabeled secret'
     assert 'stderr_tail' not in json.dumps(result), 'operator stderr reached a model-facing summary'

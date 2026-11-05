@@ -11,6 +11,7 @@ import uuid
 
 from .limits import MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES
 from .report import decode
+from .redaction import Redactor
 
 
 MAX_STDERR_BYTES = 16_384
@@ -20,6 +21,23 @@ FAILURE_PREFIX = 'TL3_EXECUTION_FAILURE '
 # Share the existing result envelope's headroom across all failed trees in one action.
 MAX_STDERR_LOG_BYTES = 16_384
 _stderr_log_bytes = 0
+_redactor = Redactor(None)
+
+
+def safe_stderr(text):
+    # Match on all retained context, before sanitizing or removing any characters.
+    text = _redactor.window(text, 0, len(text))
+    text = ''.join(c if c == '\n' or c.isprintable() else '?' for c in text)
+    return '\n'.join(line[-MAX_STDERR_LINE_CHARS:] for line in text.split('\n'))[-MAX_STDERR_CHARS:]
+
+
+def model_result(value):
+    """Operator diagnostics never cross the model tool boundary, including nested runs."""
+    if isinstance(value, dict):
+        return {key: model_result(item) for key, item in value.items() if key != 'stderr_tail'}
+    if isinstance(value, list):
+        return [model_result(item) for item in value]
+    return value
 
 
 class ExecutionOutcome(StrEnum):
@@ -43,14 +61,15 @@ class ExecutionFailure(Exception):
                   'termination_reason': self.termination_reason, 'test_started': self.test_started}
         if self.test is not None:
             result['test'] = self.test[:2048]
-        if self.stderr_tail:
-            result['stderr_tail'] = self.stderr_tail
         return result
+
+    def operator_json(self):
+        return {**self.as_json(), 'stderr_tail': safe_stderr(self.stderr_tail)}
 
     def log(self):
         global _stderr_log_bytes
         if self.stderr_tail:
-            line = FAILURE_PREFIX + json.dumps(self.as_json()) + '\n'
+            line = FAILURE_PREFIX + json.dumps(self.operator_json()) + '\n'
             size = len(line.encode())
             if _stderr_log_bytes + size <= MAX_STDERR_LOG_BYTES:
                 _stderr_log_bytes += size
@@ -84,6 +103,8 @@ class Supervised:
         self.exit_code = None
         self.container = None
         self.stderr_tail = b''
+        self.stderr_diagnostic = ''
+        self.stderr_boundary = False
         command = list(command)
         if command[:2] == ['docker', 'run']:
             self.container = 'tl3-test-' + uuid.uuid4().hex
@@ -104,11 +125,18 @@ class Supervised:
                             'container_start' if setup else 'unknown', 'incomplete_report')
 
     def failure(self, outcome, phase, reason):
-        # This pytest I/O edge records text only; it makes no ownership or verdict decision.
-        text = self.stderr_tail.decode('utf-8', errors='replace')
-        text = ''.join(c if c == '\n' or c.isprintable() else '?' for c in text)
-        text = '\n'.join(line[-MAX_STDERR_LINE_CHARS:] for line in text.split('\n'))[-MAX_STDERR_CHARS:]
-        return ExecutionFailure(outcome, phase, reason, stderr_tail=text)
+        return ExecutionFailure(outcome, phase, reason, stderr_tail=self.stderr_diagnostic)
+
+    def capture_stderr(self, chunk):
+        context = self.stderr_tail + chunk
+        # A prior byte cut may have removed a credential's label or token prefix.
+        # Omit that entire incomplete line until its newline, even if it looks harmless.
+        visible = context.partition(b'\n')[2] if self.stderr_boundary else context
+        self.stderr_diagnostic = safe_stderr(visible.decode('utf-8', errors='replace'))
+        # The shared redactor saw the complete retained context before this byte cut.
+        if len(context) > MAX_STDERR_BYTES:
+            self.stderr_boundary = True
+        self.stderr_tail = context[-MAX_STDERR_BYTES:]
 
     def records(self):
         deadline = time.monotonic() + self.allowance
@@ -129,7 +157,7 @@ class Supervised:
                     if key.fileobj is self.child.stderr:
                         chunk = os.read(key.fd, MAX_STDERR_BYTES)
                         if chunk:
-                            self.stderr_tail = (self.stderr_tail + chunk)[-MAX_STDERR_BYTES:]
+                            self.capture_stderr(chunk)
                         else:
                             ready.unregister(key.fileobj)
                 if not any(key.fileobj is self.child.stdout for key, _ in events):
