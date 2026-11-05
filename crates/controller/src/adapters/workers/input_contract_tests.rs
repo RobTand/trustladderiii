@@ -1,4 +1,5 @@
 use super::*;
+use crate as controller_under_test;
 use crate::git_tests::{Repo, documents, git, support::Database};
 use tl3_kernel::{Command as KernelCommand, Fact, NodeId, Notice, Phase, Priority, RepoId, World};
 

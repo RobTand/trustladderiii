@@ -4,6 +4,7 @@ mod support;
 use resource_world::World;
 use serde_json::{Value, json};
 use support::Database;
+use tl3_controller as controller_under_test;
 use tl3_controller::adapters::workers::writer::{WriteRequest, Writer, WriterReply};
 use tl3_github::message::Policy;
 use tl3_kernel::Phase;

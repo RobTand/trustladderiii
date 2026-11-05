@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use super::controller_under_test as tl3_controller;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
