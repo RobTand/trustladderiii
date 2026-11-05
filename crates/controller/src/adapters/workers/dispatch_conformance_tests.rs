@@ -450,10 +450,22 @@ fn schedule(
                     );
                     let (tx, rx) = crate::sync::mpsc::channel();
                     replay.poll_once(&mut store, &tx).unwrap();
-                    assert!(rx.try_iter().any(|input| matches!(input,
-                        crate::cli::Input::Observation { key: recovered, observation: value }
-                        if recovered == key && serde_json::to_value(&value).unwrap() == serde_json::to_value(&observation).unwrap())),
-                        "ingress was not replayable from durable evidence");
+                    let mut recovered = false;
+                    while let Ok(input) = rx.try_recv() {
+                        if let crate::cli::Input::Observation {
+                            key: replay_key,
+                            observation: value,
+                        } = input
+                        {
+                            recovered |= replay_key == key
+                                && serde_json::to_value(&value).unwrap()
+                                    == serde_json::to_value(&observation).unwrap();
+                        }
+                    }
+                    assert!(
+                        recovered,
+                        "ingress was not replayable from durable evidence"
+                    );
                 }
                 controller.observe(&key, observation).unwrap();
                 checkpoint!();
@@ -547,7 +559,7 @@ fn reference_model_regressions_conform_to_store_faults_and_restarts() {
     for (i, actions) in regressions.iter().enumerate() {
         schedule(actions, &[true], i, &mut database);
     }
-    #[derive(Deserialize)]
+    #[derive(serde::Deserialize)]
     struct RestartRegression {
         actions: Vec<u8>,
         restarts: Vec<bool>,
