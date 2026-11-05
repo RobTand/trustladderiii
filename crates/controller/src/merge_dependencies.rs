@@ -994,6 +994,7 @@ mod tests {
                 node,
                 generation,
                 role: "ingest".into(),
+                plan_check: None,
                 model: None,
                 reply: json!({"kind":"brief", "brief":"Implement after prerequisites merge", "goals":[{"description":"Implement", "verification":"test"}], "memory_ids":[], "files":[], "forecast":{"tokenizer":"o200k_base", "brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}, "merge_prerequisites": numbers.iter().map(|n| json!({"kind":"issue", "number":n,"source_quote":quote})).collect::<Vec<_>>()}),
             },

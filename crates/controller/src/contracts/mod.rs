@@ -30,10 +30,20 @@ pub struct Generated {
 
 /// Every file this module generates.
 pub fn generated() -> Vec<Generated> {
-    vec![Generated {
+    let mut files = vec![Generated {
         path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
         text: render(&check_report_schema()),
-    }]
+    }];
+    files.push(Generated {
+        path: format!("{SCHEMA_DIRECTORY}/plan-check-provenance.json"),
+        text: render(
+            &SchemaSettings::draft2020_12()
+                .into_generator()
+                .into_root_schema_for::<plan_check::PlanCheckProvenance>()
+                .to_value(),
+        ),
+    });
+    files
 }
 
 /// The harness check report's schema: self-contained, with every definition in `$defs`.

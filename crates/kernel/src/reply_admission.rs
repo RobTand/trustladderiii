@@ -10,7 +10,8 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
             footprint::valid_footprint(*w, footprint),
-        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet) => true,
+        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
         (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
             footprint::valid_footprint(*w, files),
@@ -30,7 +31,8 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) => w.has_footprint(*footprint),
-        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet) => true,
+        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
         (Phase::Making, Reply::MakerNeedsFiles { files, .. }) => w.has_footprint(*files),
         (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
@@ -87,6 +89,18 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+            && old(w).nodes@[i as int].phase is Planning
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+            && old(w).nodes@[i as int].run == Some(generation) ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::PlanCantMeet)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && n.plan_retries == old(w).nodes@[i as int].plan_retries
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
 ] proof [reveal(distance); reveal(reply_bounds); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_reply = *w }
     let n = &w.nodes[i];
@@ -226,11 +240,22 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+            && old(w).nodes@[i as int].phase is Planning ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::PlanCantMeet)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && n.plan_retries == old(w).nodes@[i as int].plan_retries
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
 ] proof [reveal(distance);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
-        Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
+        Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan(w, i, reply, out),
         _ => reply_work(w, i, reply, out),
     }
 }

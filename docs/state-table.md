@@ -314,6 +314,15 @@ slot is reserved or consumed (#642).
 
 **Stop for TL3 review:** go to Stopping(Stopped) and record the failing step on the node. Spend nothing and ask Rob nothing. The closing summary names the step and its evidence and, as for any stop, says to comment `restart` and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator.
 
+Under Rob's [#832 Q27 decision](https://github.com/RobTand/trustladderiii/issues/832),
+a completed, code-owned plan-check rejection stops for TL3 review under both
+`fail_fast` settings. A size or execution-fit result records that decomposition
+is required and uses the same question-free stop in part 1; no child executes.
+Both endings retain objection and repair-attempt evidence and spend no credit.
+The worker's one constrained correction remains in its existing run and
+format-repair allowance. Work-failure retries, genuine owner decisions,
+protected-path handling and Q50 infrastructure recovery retain their paths.
+
 The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
 `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
 `reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
@@ -433,11 +442,19 @@ still judge actual Q55 proof.
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
+| Named plan-check objection remains, or correction exceeds its footprint (#832) | Code-owned provenance records another-class objection and the repair attempt or its unavailability; either `fail_fast` value | Stop for TL3 review | Record the objections and repair evidence. No question, ladder retry or credit charge. |
+| Only named size/execution-fit objections remain (#832 part 1) | Code-owned provenance records the repair attempt or its unavailability; either `fail_fast` value | Stop for TL3 review, with split required | Retain original obligations, forecasts and any proposed pieces. Record that decomposition is required; no child executes and no question is created. |
 | Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a completed plan that breaks a rule as can't meet, so a rule-breaking completed plan arrives here and stops at once. Only the bounded draft correction described above may precede completion. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |
 | Plan breaks a rule | Second time | AwaitingRob(can't meet, continue to Planning) | |
+
+The #832 endings apply only to typed provenance emitted by worker code beside
+its reply. With no such provenance, the existing mapping of `violations` to
+PlanCantMeet and all ordinary rows above remain unchanged. Worker emission is
+part 2. The controller's separate late check-plan-size refusal remains an open
+lead decision and keeps its existing behavior for replies without provenance.
 
 Q57 closes with reason `protected_paths`. Its summary names those paths, says
 the work belongs outside TL3, leaves the issue open and offers `restart` after

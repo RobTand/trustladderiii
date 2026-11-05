@@ -341,6 +341,7 @@ pub(super) fn parse_reply(
         generation: delivery.generation,
         role: role.into(),
         reply: reply.ok_or(Error::Invalid("worker reply is missing"))?,
+        plan_check: None,
         model: None,
     })
 }

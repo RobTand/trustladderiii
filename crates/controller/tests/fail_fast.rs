@@ -323,7 +323,7 @@ fn plan_cant_meet_stops_with_the_planners_report_and_no_rerun() {
                             reply: serde_json::json!({"kind":"cant_meet", "files":["value.py"],
                                 "report":"The goal needs a schema change outside the plan.",
                                 "violations":[], "forecast":forecast}),
-                            model: None,
+                            plan_check: None, model: None,
                         };
                     }
                 }
@@ -470,7 +470,7 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
                     generation: d.generation,
                     role: role.into(),
                     reply,
-                    model: None,
+                    plan_check: None, model: None,
                 }];
             },
         )
@@ -886,6 +886,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                             generation: d.generation,
                             role: "maker".into(),
                             reply: json!({"kind":"done","head":"b".repeat(40),"self_check":checks}),
+                            plan_check: None,
                             model: None,
                         },
                     ]));
@@ -906,6 +907,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                     generation: d.generation,
                     role: role.into(),
                     reply,
+                    plan_check: None,
                     model: None,
                 }]))
             } else {

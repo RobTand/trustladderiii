@@ -204,6 +204,7 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
                 generation: original.generation,
                 role: "ingest".into(),
                 reply,
+                plan_check: None,
                 model: None,
             },
         )

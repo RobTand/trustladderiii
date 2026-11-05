@@ -184,6 +184,9 @@ pub enum Observation {
         /// The model that ran, so review can stay a different family (Q53).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// #832: emitted by worker code beside the model's reply, never inside it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan_check: Option<crate::contracts::plan_check::PlanCheckProvenance>,
     },
     Kernel(Event),
     /// Commands carry intent; steering allocates their kernel command ID.
@@ -600,6 +603,7 @@ mod observation_shapes {
                 generation: 3,
                 role: "maker".into(),
                 reply: json!({"kind": "done"}),
+                plan_check: None,
                 model: None,
             }),
             json!({"WorkerReply": {"node": 0, "generation": 3, "role": "maker",

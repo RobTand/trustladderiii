@@ -179,6 +179,60 @@ fn plan_check_keeps_ordinary_split_and_cant_meet_owner_paths() {
     }
 }
 
+#[test]
+fn plan_check_event_metadata_survives_without_changing_the_model_reply() {
+    use crate::contracts::plan_check::*;
+    let delivery: crate::executor::Delivery = serde_json::from_value(json!({
+        "key":"plan-check", "epoch":1, "generation":3,
+        "output":{"Effect":{"node":0,"kind":{"StartRun":"Plan"},"seq":1,"head":null}},
+        "head_sha":null,"repository":{"owner":"owner","name":"repo","installation":1},
+        "issue":832,"pull_request":null,"paths":["greeting.py"],"attempt":1,"round":0,"checks":null
+    }))
+    .unwrap();
+    let inputs = json!({"protected_paths":[], "forecast":{
+        "fit_tokens":100,"context_tokens":150,"overhead_tokens":{"prompt":0}}});
+    for class in [ObjectionClass::Other, ObjectionClass::SizeExecutionFit] {
+        let provenance = plan_check_provenance(class);
+        let reply = checked_plan_reply();
+        let bytes = format!(
+            "{}\n",
+            json!({"event":"reply", "role":"planner",
+            "reply":reply, "plan_check":provenance})
+        );
+        let crate::executor::Observation::WorkerReply {
+            reply: checked,
+            plan_check,
+            ..
+        } = super::super::source::parse_reply(bytes.as_bytes(), &delivery, &inputs).unwrap()
+        else {
+            panic!("expected worker reply")
+        };
+        assert_eq!(plan_check.as_ref(), Some(&provenance));
+        assert!(checked.get("plan_check").is_none());
+        assert!(matches!(
+            map_reply_with_plan_check("planner", &checked, plan_check.as_ref()).unwrap(),
+            MappedReply::Kernel(Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+        ));
+    }
+}
+
+#[test]
+fn plan_check_mixed_objections_stop_and_empty_provenance_is_invalid() {
+    use crate::contracts::plan_check::*;
+    let mut provenance = plan_check_provenance(ObjectionClass::SizeExecutionFit);
+    provenance
+        .objections
+        .extend(plan_check_provenance(ObjectionClass::Other).objections);
+    assert!(matches!(
+        map_reply_with_plan_check("planner", &checked_plan_reply(), Some(&provenance)).unwrap(),
+        MappedReply::Kernel(Reply::PlanCheckRejected)
+    ));
+    provenance.objections.clear();
+    assert!(
+        map_reply_with_plan_check("planner", &checked_plan_reply(), Some(&provenance)).is_err()
+    );
+}
+
 fn ingest(tokens: u64) -> Value {
     json!({
         "kind": "brief", "brief": "Fix greeting.",

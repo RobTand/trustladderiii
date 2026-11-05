@@ -56,7 +56,10 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd, final(m).review_stop == Some(step),
-] {
+        !(old(m).phase is Closed || old(m).phase is Stopping) ==>
+            final(m).phase == Phase::Stopping(Outcome::Stopped) && final(m).question.is_none(),
+        final(m).plan_retries == old(m).plan_retries,
+] proof [reveal(retirement::stopped);] {
     m.review_stop = Some(step);
     enter_stopping(m, Outcome::Stopped);
 }

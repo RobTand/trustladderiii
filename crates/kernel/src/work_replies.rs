@@ -9,7 +9,8 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-        matches!(reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
+        matches!(reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
@@ -17,6 +18,16 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+            && old(w).nodes@[i as int].phase is Planning ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::PlanCantMeet)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && n.plan_retries == old(w).nodes@[i as int].plan_retries
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
     kernel_proof! { footprint::inline_is_valid(*w, 1); }
     match reply {
@@ -36,6 +47,12 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
         }
         Reply::PlanSplit => ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out),
         Reply::PlanCantMeet => plan_retry(w, i, true, out),
+        Reply::PlanCheckRejected => {
+            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);
+        }
+        Reply::PlanCheckNeedsSplit => {
+            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);
+        }
         _ => {}
     }
 }
@@ -52,7 +69,8 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         old(w).next_question < u64::MAX,
         !matches!(reply, Reply::MakerNeedsFiles { .. } | Reply::IngestDone { .. }
             | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
-            | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
+            | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,

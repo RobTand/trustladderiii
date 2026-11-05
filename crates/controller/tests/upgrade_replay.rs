@@ -200,6 +200,7 @@ fn replays_of_other_shapes_keep_the_receipt_and_conflicts_name_the_key() {
         generation,
         role: "maker".into(),
         reply: json!({"kind": "done"}),
+        plan_check: None,
         model: None,
     };
     controller

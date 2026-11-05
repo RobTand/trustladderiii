@@ -645,7 +645,7 @@ fn decode_event(value: Value, role: Option<&str>, postmortem: bool, inputs: &Val
             model: quota_model(postmortem, field),
             reset_ms: value["reset_ms"].as_u64(),
         }
-    } else if size == 3
+    } else if size == 3 + usize::from(value.get("plan_check").is_some())
         && value["event"] == "reply"
         && value["role"].as_str() == role
         && role.is_some()
@@ -685,6 +685,7 @@ pub(super) fn parse_reply(
     let role = protocol::delivery_role(delivery)
         .ok_or(Error::Invalid("worker output without supported start"))?;
     let mut reply = None;
+    let mut plan_check = None;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
         let parsed = parse_event(line, Some(role), delivery.is_postmortem(), inputs)?;
         match reply_step(
@@ -715,6 +716,12 @@ pub(super) fn parse_reply(
             ReplyDecision::Reply => (),
         }
         let value = parsed.value;
+        if let Some(provenance) = value.get("plan_check") {
+            plan_check = Some(serde_json::from_value::<
+                crate::contracts::plan_check::PlanCheckProvenance,
+            >(provenance.clone())?);
+            protocol::map_reply_with_plan_check(role, &value["reply"], plan_check.as_ref())?;
+        }
         if delivery.is_classifier() {
             protocol::validate_classification(inputs, &value["reply"])?;
         } else if delivery.is_postmortem() {
@@ -761,6 +768,7 @@ pub(super) fn parse_reply(
         role: role.into(),
         reply: reply.ok_or(Error::Invalid("worker reply is missing"))?,
         model: None,
+        plan_check,
     })
 }
 

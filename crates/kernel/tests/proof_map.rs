@@ -55,6 +55,9 @@ const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
 
 // #806: these names retain their event/phase coverage after Kani retirement.
 const VERUS_RETIREMENTS: &[(&str, &str)] = &[
+    // #832: new semantic replies are covered by Verus; Kani stays frozen.
+    ("apply_plan_check_rejected", "plan_check"),
+    ("apply_plan_check_needs_split", "plan_check"),
     ("apply_incident_cleared", "facts_incident_cleared"),
     ("apply_pr_dequeued", "facts_pr_dequeued"),
     (

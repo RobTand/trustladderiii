@@ -163,6 +163,7 @@ fn maker_replies(c: &mut Controller, reply: &Value, count: usize) {
                 generation,
                 role: "maker".into(),
                 reply: reply.clone(),
+                plan_check: None,
                 model: None,
             },
         )
