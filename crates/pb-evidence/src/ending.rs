@@ -188,10 +188,14 @@ pub fn before_bound(ending: &PbEnding, key: &str, raw: &[u8]) -> Result<Value> {
     finish_parts(ending, key, raw, false, true)
 }
 
-pub fn decorate(mut result: Value, key: &str, receipt: Value) -> Value {
-    result["action_key"] = json!(key);
-    result["receipts"] = json!([receipt]);
-    result
+pub fn decorate(
+    mut result: serde_json::Map<String, Value>,
+    key: &str,
+    receipt: serde_json::Map<String, Value>,
+) -> Value {
+    result.insert("action_key".into(), json!(key));
+    result.insert("receipts".into(), json!([receipt]));
+    Value::Object(result)
 }
 
 fn finish_parts(
@@ -298,7 +302,14 @@ fn finish_parts(
         Ok(if separate {
             json!([result, receipt])
         } else {
-            decorate(result, key, receipt)
+            decorate(
+                result
+                    .as_object()
+                    .expect("validated summary object")
+                    .clone(),
+                key,
+                receipt.as_object().expect("receipt object").clone(),
+            )
         })
     };
     decide().map_err(|error| {

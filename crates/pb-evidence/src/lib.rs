@@ -33,9 +33,9 @@ pub enum Request {
         before_bound: bool,
     },
     SummaryDecorate {
-        result: Value,
+        result: serde_json::Map<String, Value>,
         key: String,
-        receipt: Value,
+        receipt: serde_json::Map<String, Value>,
     },
     GeneratorStart {
         ending: PbEnding,
