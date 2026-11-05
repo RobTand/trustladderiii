@@ -8,3 +8,4 @@
 pub mod translate;
 pub mod translate_arms;
 pub mod worker_events;
+pub mod translate_checks;
