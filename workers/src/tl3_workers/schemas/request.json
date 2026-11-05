@@ -3,8 +3,15 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/request.json",
   "type": "object",
   "properties": {
-    "mlflow": {"type": ["object", "null"]},
-    "trace": {"type": "object"},
+    "mlflow": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "trace": {
+      "type": "object"
+    },
     "protocol": {
       "const": 1,
       "type": "integer"
@@ -67,14 +74,31 @@
       ],
       "additionalProperties": false
     },
-    "hindsight_key_file": {"type": ["string", "null"], "pattern": "^/"},
+    "hindsight_key_file": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^/"
+    },
     "key_file": {
       "type": "string",
       "pattern": "^/"
     },
-    "test_cpus": {"type": "integer", "minimum": 1},
-    "silence_secs": {"type": "integer", "minimum": 1, "description": "The agent worker silence allowance in seconds; the maker retro stays inside half of it."},
-    "no_progress_secs": {"type": "integer", "minimum": 1, "description": "The agent worker no-progress allowance in seconds; the maker retro stays inside half of it."},
+    "test_cpus": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "silence_secs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The agent worker silence allowance in seconds; the maker retro stays inside half of it."
+    },
+    "no_progress_secs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The agent worker no-progress allowance in seconds; the maker retro stays inside half of it."
+    },
     "inputs": {
       "type": "object"
     },
@@ -96,22 +120,50 @@
     "prompt": {
       "type": "object",
       "properties": {
-        "version": {"type": "integer", "minimum": 1},
-        "text": {"type": "string", "minLength": 1}
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
       },
-      "required": ["version", "text"],
+      "required": [
+        "version",
+        "text"
+      ],
       "additionalProperties": false
     },
     "memory": {
       "type": "object",
       "properties": {
-        "summary_file": {"type": "string", "pattern": "^/"},
-        "repo": {"type": "string"},
-        "issue": {"type": "integer", "minimum": 1},
-        "request": {"type": "string"},
-        "epoch": {"type": "integer", "minimum": 0}
+        "summary_file": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request": {
+          "type": "string"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
-      "required": ["summary_file", "repo", "issue", "request", "epoch"],
+      "required": [
+        "summary_file",
+        "repo",
+        "issue",
+        "request",
+        "epoch"
+      ],
       "additionalProperties": false
     }
   },
