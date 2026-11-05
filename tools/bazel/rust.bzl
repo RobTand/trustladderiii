@@ -40,7 +40,11 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {"crates/harness-core": ["//harness:core_vectors"]}
+_RUNTIME = {"crates/harness-core": [
+    "//harness:core_vectors",
+    "//harness:test-vectors/summary/python-envelope.json",
+    "//harness:test-vectors/summary/python-numbers.json",
+]}
 
 # Wave B entry points in crates/harness-core (#818). Each port replaces or removes only its
 # own entry, so parallel ports never share a hunk. Keep the comment line above each entry.
@@ -58,9 +62,25 @@ _WAVE_B_ENTRIES = {
     # finish-teardown (#822)
     "finish-teardown": _WAVE_B_STUB,
     # summary-bound (#823)
-    "summary-bound": _WAVE_B_STUB,
+    "summary-bound": {
+        "srcs": ["tests/summary_bound.rs", "tests/summary_bound/reference.rs", "tests/summary_bound/conformance.rs"],
+        "crate_root": "tests/summary_bound.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
+        "data": [
+            "//harness:core_vectors",
+            "//harness:test-vectors/summary/python-envelope.json",
+            "//harness:test-vectors/summary/python-numbers.json",
+        ],
+        "tags": ["rust", "wave-b-summary-bound"],
+    },
     # selector-identity (#823)
-    "selector-identity": _WAVE_B_STUB,
+    "selector-identity": {
+        "srcs": ["tests/selector_identity.rs"],
+        "crate_root": "tests/selector_identity.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
+        "data": ["//harness:core_vectors"],
+        "tags": ["rust", "wave-b-selector-identity"],
+    },
     # limits (S4)
     "limits": _WAVE_B_STUB,
     # red-match (S4)
@@ -110,6 +130,7 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_harness_summary",
     "test_test_redaction_adapter",
     "test_test_redaction_generated",
     "test_test_redaction_parity",
@@ -136,6 +157,7 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_harness_summary": ["//workers/tests:fixtures", "//workers/tests:harness_io_schedule"],
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
