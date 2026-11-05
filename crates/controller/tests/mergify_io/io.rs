@@ -1138,3 +1138,14 @@ pub(super) fn c1_require_order(s: &Schedule, e: Entry, ops: &[&str]) {
 pub(super) fn c1_require_error(s: &Schedule, e: Entry, expected: &str) {
     assert_eq!(run(s, e, false, None).result["error"], json!(expected));
 }
+pub(super) fn c1_require_read_count(s: &Schedule, e: Entry, suffix: &str, expected: usize) {
+    let trace = run(s, e, false, None);
+    assert_eq!(
+        trace
+            .calls
+            .iter()
+            .filter(|call| call.op == "file.read" && call.args.ends_with(suffix))
+            .count(),
+        expected
+    );
+}

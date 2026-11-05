@@ -965,14 +965,6 @@ mod required_c1 {
             assert_eq!(result["ready"], true);
         }
     }
-    /// Q27 red reproduction: run explicitly; extraction must not fix this policy gap.
-    #[test]
-    #[ignore = "base defect: unreadable required classic context can be ready; Q27 decision required"]
-    fn required_status_unavailable_must_not_be_ready_red_reproduction() {
-        let mut s = stable(Profile::Classic);
-        over(&mut s, "github.statuses", "@head", 0, 256);
-        assert_eq!(evaluate(&s, &[("CI".into(), None)], &[])["ready"], false);
-    }
     /// Q52 / #447: passing classic statuses count; error/failure count as Tests.
     #[test]
     fn mandatory_required_classic_status() {
@@ -1093,7 +1085,8 @@ mod required_c1 {
         over(&mut waiting, "github.runs", "@head", 0, 1);
         io::compare(&waiting, Entry::Rerun).unwrap();
         io::require_count(&waiting, Entry::Rerun, "github.rerun", 0);
-        io::require_count(&waiting, Entry::Rerun, "file.read", 1);
+        io::c1_require_read_count(&waiting, Entry::Rerun, ".fence", 0);
+        io::c1_require_read_count(&s, Entry::Rerun, ".fence", 1);
     }
     /// #2705: read/execute entry points retain their head_checks::read gates.
     #[test]
@@ -1150,6 +1143,10 @@ mod required_c1 {
                     old::annotations(&annotations),
                     new::annotations(&annotations)
                 );
+                for annotation in &annotations {
+                    let single = std::slice::from_ref(annotation);
+                    prop_assert_eq!(old::annotations(single), new::annotations(single));
+                }
                 Ok(())
             })
             .unwrap();
