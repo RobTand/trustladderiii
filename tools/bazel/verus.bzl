@@ -553,6 +553,32 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+    if native.package_name() == "crates/controller-core":
+        # H18: real retain/curate decisions, split by decision family.
+        memory_retain_groups = {
+            "qualification": ("memory_retain::qualification", 3),
+            "identity": ("memory_retain::identity", 1),
+            "bounds": ("memory_retain::bounds", 2),
+            "classification": ("memory_retain::classification", 1),
+            "completion": ("memory_retain::completion", 3),
+            "witnesses": ("memory_retain_witnesses", 7),
+        }
+        for name, (module, count) in memory_retain_groups.items():
+            verus_test(
+                name = "verus_memory_retain_" + name,
+                src = "verus/memory_retain.rs",
+                srcs = ["src/memory_retain.rs"],
+                specs = ["verus/memory_retain_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     # #819: selected-release prompt identity and cache-control policy.
     if native.package_name() == "crates/controller":
         verus_test(
