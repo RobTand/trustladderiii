@@ -73,7 +73,7 @@ CASES = [
     ('incident_generation', 'lib.rs', 'set_phase(m, Phase::Ready(r));',
      'let _ = r;', 'raise_incident'),
     ('run_retry_bound', 'lib.rs', 'm.generation += 1;', 'm.generation += 3;', 'run_failed'),
-    ('delivery_retry_bound', 'lib.rs', 'm.generation += 1;', 'm.generation += 3;', 'delivery_failed'),
+    ('delivery_retry_bound', 'lib.rs', 'm.generation += 1;', 'm.generation += 3;', 'failed_delivery_node'),
     ('prerequisite_query', 'dependencies.rs',
      'd.rejected || d.status != DependencyStatus::Delivered',
      'd.rejected && d.status != DependencyStatus::Delivered', 'dependencies_delivered'),
