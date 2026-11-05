@@ -644,10 +644,21 @@ def pytest_configure(config):
 def worker_teardown_exhausted(error):
     """Stopping xdist workers needs a new thread. Code under test that exhausts
     the container's pid limit makes that fail after every result (#799)."""
-    return (str(error) == "can't start new thread"
+    return (type(error) is RuntimeError and str(error) == "can't start new thread"
             and any(frame.f_code.co_name == "teardown_nodes"
                     and Path(frame.f_code.co_filename).match("xdist/workermanage.py")
                     for frame, _ in walk_tb(error.__traceback__)))
+
+
+def run_pytest(reporter, arguments):
+    try:
+        return int(pytest.main(arguments, plugins=[reporter]))
+    except BaseException as error:
+        if reporter.finished is not None and worker_teardown_exhausted(error):
+            return reporter.finished
+        # The finish record precedes later hooks, including the checkout's. Their
+        # uncaught exit would be 1, which a finish record of failed tests matches.
+        return int(pytest.ExitCode.INTERNAL_ERROR)
 
 
 def main():
@@ -695,21 +706,16 @@ def main():
             # Pytest owns the short plugin name "runner". Use the mounted package's name.
             os.environ['PYTHONPATH'] = str(harness.parent)
             worker_plugin = ['-p', f'{harness.name}.runner']
-        try:
-            return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
-                                    "--", *(tests or ["."])], plugins=[reporter]))
-        except RuntimeError as error:
-            if reporter.finished is None or not worker_teardown_exhausted(error):
-                raise
-            return reporter.finished
+        return run_pytest(reporter, ["--rootdir=.", "-p", "xdist.plugin", *worker_plugin, "-n", str(parallel),
+                                     "--", *(tests or ["."])])
     if summary:
-        return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[reporter]))
+        return run_pytest(reporter, ["--rootdir=.", "--", *(tests or ["."])])
     files = sorted({test.split("::")[0] for test in tests if Path(test.split("::")[0]).is_file()})
     if not files:
         reporter.emit(event="collection", tests=[])
         reporter.pytest_sessionfinish(5)
         return 5
-    return int(pytest.main(["--rootdir=.", "--continue-on-collection-errors", *files], plugins=[reporter]))
+    return run_pytest(reporter, ["--rootdir=.", "--continue-on-collection-errors", *files])
 
 
 if __name__ == "__main__":
