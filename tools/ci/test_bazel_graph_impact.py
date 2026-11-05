@@ -246,6 +246,32 @@ class BazelGraphTests(unittest.TestCase):
         entries = self.crate_entry(count=2, max_fanout=0)
         self.assertEqual(self.check_crate(head, entries, base)['errors'], [])
 
+    def renamed_crate_graphs(self, origin_package):
+        origin = f'{origin_package}:src/old.rs'
+        destination = '//crates/controller-core:src/renamed.rs'
+        first, second = '//tests:first', '//tests:second'
+        base = adapter.from_deps({first: [origin], second: [], origin: []},
+                                 [first, second], [origin])
+        head = adapter.from_deps({first: [destination], second: [destination], destination: []},
+                                 [first, second], [destination])
+        for graph, source in ((base, origin), (head, destination)):
+            graph['source_identities'] = {source: 'byte-identical'}
+            graph['crate_packages'] = {'tl3-controller-core': '//crates/controller-core'}
+        return base, head, origin, destination
+
+    def test_crate_fanout_credit_survives_same_package_rename(self):
+        base, head, origin, destination = self.renamed_crate_graphs('//crates/controller-core')
+        result = self.check_crate(head, self.crate_entry(max_fanout=2), base)
+        self.assertEqual(result['source_moves'], {destination: origin})
+        self.assertEqual(result['errors'], [])
+
+    def test_crate_fanout_credit_rejects_cross_package_rename(self):
+        base, head, origin, destination = self.renamed_crate_graphs('//crates/other')
+        result = self.check_crate(head, self.crate_entry(max_fanout=2), base)
+        self.assertEqual(result['source_moves'], {destination: origin})
+        self.assertTrue(any(f'existing source fanout grew: {origin} +1' in error
+                            for error in result['errors']), result['errors'])
+
     def test_crate_does_not_double_discount_moved_sources(self):
         base, head = self.crate_graph(0), self.crate_graph(other=True)
         old = '//crates/controller:src/lib.rs'
