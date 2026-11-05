@@ -20,10 +20,28 @@ use tl3_controller::contracts::{self, Check, CheckReport, CheckResult};
 const FIX: &str = "bazel run --config=remote //crates/controller:tl3-contracts-schemas";
 
 // The committed generated files, compiled in so the check stays hermetic.
-const COMMITTED: &[(&str, &str)] = &[(
-    "workers/src/tl3_workers/schemas/check-report.json",
-    include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
-)];
+const COMMITTED: &[(&str, &str)] = &[
+    (
+        "workers/src/tl3_workers/schemas/check-report.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/ingest-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/ingest-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/classifier-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/classifier-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/maker-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/maker-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/writer-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/writer-reply.json"),
+    ),
+];
 
 #[test]
 fn generated_schemas_match_committed() {
@@ -1705,4 +1723,309 @@ fn report_versions_are_written_by_the_action_and_checked_by_the_controller() {
         "base": request["base"], "head": request["head"], "reviewed": request["reviewed"],
         "results": vector["results"]});
     assert!(serde_json::from_value::<CheckReport>(future).is_err());
+}
+
+// #819 P1b-0: every shared role type must serialize into the unchanged wire schema.
+fn shared_reply_validator(role: &str, definition: Option<&str>) -> &'static jsonschema::Validator {
+    static VALIDATORS: std::sync::OnceLock<
+        std::collections::BTreeMap<String, jsonschema::Validator>,
+    > = std::sync::OnceLock::new();
+    let validators = VALIDATORS.get_or_init(|| {
+        let schemas: &[(&str, &str)] = &[
+            (
+                "audit-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/audit-input.json"),
+            ),
+            (
+                "audit-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/audit-reply.json"),
+            ),
+            (
+                "budget-wire.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/budget-wire.json"),
+            ),
+            (
+                "check-report.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
+            ),
+            (
+                "classifier-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/classifier-input.json"),
+            ),
+            (
+                "classifier-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/classifier-reply.json"),
+            ),
+            (
+                "decision-context.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/decision-context.json"),
+            ),
+            (
+                "ingest-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/ingest-input.json"),
+            ),
+            (
+                "ingest-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/ingest-reply.json"),
+            ),
+            (
+                "maker-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/maker-input.json"),
+            ),
+            (
+                "maker-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/maker-reply.json"),
+            ),
+            (
+                "planner-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/planner-input.json"),
+            ),
+            (
+                "planner-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/planner-reply.json"),
+            ),
+            (
+                "postmortem-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/postmortem-input.json"),
+            ),
+            (
+                "postmortem-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/postmortem-reply.json"),
+            ),
+            (
+                "request.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/request.json"),
+            ),
+            (
+                "reviewer-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
+            ),
+            (
+                "reviewer-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/reviewer-reply.json"),
+            ),
+            (
+                "writer-input.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/writer-input.json"),
+            ),
+            (
+                "writer-reply.json",
+                include_str!("../../../workers/src/tl3_workers/schemas/writer-reply.json"),
+            ),
+        ];
+        let mut registry = jsonschema::Registry::new();
+        for (name, text) in schemas {
+            registry = registry
+                .add(
+                    format!("{}{name}", contracts::SCHEMA_BASE),
+                    serde_json::from_str::<Value>(text).unwrap(),
+                )
+                .unwrap();
+        }
+        let registry = registry.prepare().unwrap();
+        [
+            ("ingest", None),
+            ("ingest", Some("tool_capability")),
+            ("ingest", Some("evidence_contract")),
+            ("ingest", Some("proof_obligation")),
+            ("classifier", None),
+            ("maker", None),
+            ("writer", None),
+            ("maker", Some("generation_receipt")),
+            ("maker", Some("test_run")),
+            ("writer", Some("text")),
+            ("writer", Some("options")),
+        ]
+        .into_iter()
+        .map(|(role, definition)| {
+            let suffix = definition
+                .map(|name| format!("#/$defs/{name}"))
+                .unwrap_or_default();
+            let key = format!("{role}{suffix}");
+            let validator = jsonschema::options()
+                .with_registry(&registry)
+                .build(
+                    &json!({"$ref":format!("{}{role}-reply.json{suffix}",contracts::SCHEMA_BASE)}),
+                )
+                .unwrap();
+            (key, validator)
+        })
+        .collect()
+    });
+    let suffix = definition
+        .map(|name| format!("#/$defs/{name}"))
+        .unwrap_or_default();
+    &validators[&format!("{role}{suffix}")]
+}
+
+fn shared_sound<T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug>(
+    value: Value,
+    validator: &jsonschema::Validator,
+) {
+    assert!(validator.is_valid(&value), "invalid test input: {value}");
+    let typed: T = serde_json::from_value(value.clone()).unwrap_or_else(|error| {
+        panic!("schema-valid shared type failed to parse: {error}: {value}")
+    });
+    let encoded = serde_json::to_value(&typed).unwrap();
+    assert!(
+        validator.is_valid(&encoded),
+        "typed serialization breaks the schema: {encoded}"
+    );
+    assert_eq!(encoded, value);
+    assert_eq!(serde_json::from_value::<T>(encoded).unwrap(), typed);
+}
+
+fn receipt_budget() -> Value {
+    json!({"cpus":1,"mem_gb":1,"timeout_s":60,"outer_timeout_s":120})
+}
+fn shared_generation_receipt(seconds: f64, count: u64, cache: bool) -> Value {
+    let phase = json!({"seconds":seconds,"outcome":"completed","scope":"startup_and_command"});
+    json!({"action_key":"a".repeat(64),"artifact_sha256":"b".repeat(64),"receipt_sha256":"c".repeat(64),
+        "output_manifest":"d".repeat(64),"input_tree":"a".repeat(40),"output_tree":"b".repeat(40),
+        "status":"completed","exit_code":0.0,"command":"python3 generate.py","argv":["python3","generate.py"],
+        "identity":{"implementation":"tl3-generator-v4","image":"image","budget":receipt_budget()},
+        "output_count":count,"budget":receipt_budget(),"phase":"completed",
+        "timings":{"preparation":phase,"container":phase,"validation":phase,"cleanup":phase,"total_seconds":seconds},
+        "inner":{"status":"completed","exit_code":0},
+        "outer":{"status":if cache {"cache_hit"} else {"executed"},"exit_code":0,"elapsed_s":seconds}})
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 96, rng_seed: RngSeed::Fixed(819), .. ProptestConfig::default() })]
+    #[test]
+    fn p_schema_sound_ingest_and_shared_evidence(suffix in ".{0,60}", early in any::<bool>(), publishing in any::<bool>(), source in any::<bool>()) {
+        use contracts::roles::ingest_reply::{IngestReply, ToolCapability, EvidenceContract, ProofObligation};
+        let text=format!("e{suffix}");
+        let capability=json!({"tool":"run_tests","executor":"prismabuild","runner_features":["tests"],"artifacts":["receipt"],"methods":[],"protected_files":[]});
+        shared_sound::<ToolCapability>(capability.clone(),shared_reply_validator("ingest",Some("tool_capability")));
+        let mut requirement=capability; requirement["requirement"]=json!(text);
+        requirement["provenance"]=if source {json!({"kind":"source","source":"issue","quote":text})} else {json!({"kind":"method"})};
+        let evidence=json!([requirement]);
+        shared_sound::<EvidenceContract>(evidence.clone(),shared_reply_validator("ingest",Some("evidence_contract")));
+        let proof=json!({"kind":"assertion","observer":"new","subjects":["tests/test_a.py::test_a"],"source":"issue","quote":text});
+        shared_sound::<ProofObligation>(proof.clone(),shared_reply_validator("ingest",Some("proof_obligation")));
+        let mut goal=json!({"description":text,"verification":"test","proof_obligation":proof});
+        if publishing { goal["stage"]=json!("publishing");goal["publication"]=json!({"non_draft":true,"body_lines":[],"proof":false}); }
+        let reply=if early {json!({"kind":"early_end","outcome":"duplicate","reason":text,"evidence_contract":evidence})}
+            else {json!({"kind":"brief","brief":text,"goals":[goal],"memory_ids":[],"evidence_contract":evidence})};
+        shared_sound::<IngestReply>(reply,shared_reply_validator("ingest",None));
+    }
+    #[test]
+    fn p_schema_sound_classifier(suffix in ".{0,60}", choice in 0u8..13, credit in 1u64..=100) {
+        use contracts::roles::classifier_reply::ClassifierReply;
+        let text=format!("c{suffix}");
+        let reply=match choice {
+            0 => json!({"kind":"change_request","new_text":text,"supersedes":["id"]}),
+            1..=5 => json!({"kind":(["stop","restart","pause","resume","remark"][(choice-1) as usize])}),
+            6 => json!({"kind":"unsure","question":"One line?"}),
+            7 => json!({"kind":"complaint","summary":"One line","revert":true}),
+            8 => json!({"kind":"answer","question_id":text,"answer":"stop","decision":{"allowed_scope":[],"restrictions":[text]}}),
+            9 => json!({"kind":"answer","question_id":text,"answer":"change_request","new_text":text}),
+            10 => json!({"kind":"answer","question_id":text,"answer":"try_again","guidance":text}),
+            11 => json!({"kind":"answer","question_id":text,"answer":"add_credit","amount":credit}),
+            _ => json!({"kind":"reconcile_decisions","assessments":[{"id":text,"contradicted":true,"reason":text}]}),
+        };
+        shared_sound::<ClassifierReply>(reply,shared_reply_validator("classifier",None));
+    }
+    #[test]
+    fn p_schema_sound_generation_receipt_and_test_run(seconds in 0.0f64..1000.0, count in 0u64..=128, cache in any::<bool>(), repeat in 1u64..=10, parallel in select(vec![0,2,3,4]), optional in any::<bool>(), proof in proof_receipt(), exit in any::<i64>()) {
+        use contracts::roles::maker_reply::{GenerationReceipt, TestRun};
+        let mut receipt=shared_generation_receipt(seconds,count,cache);
+        if optional {
+            receipt["identity"]["implementation"]=json!("tl3-generator-v3");
+            receipt["budget"]=json!({"cpus":16.0,"mem_gb":64.0,"timeout_s":600.0,"outer_timeout_s":660.0});
+            receipt["identity"]["budget"]=json!({"cpus":1.0,"mem_gb":1.0,"timeout_s":1.0,"outer_timeout_s":61.0});
+            receipt["outer"]["elapsed_s"]=Value::Null;
+            for (phase,outcome) in [("preparation","failed"),("container","timeout"),("validation","skipped"),("cleanup","completed")] {
+                receipt["timings"][phase]["outcome"]=json!(outcome);
+                receipt["timings"][phase].as_object_mut().unwrap().remove("scope");
+            }
+        }
+        shared_sound::<GenerationReceipt>(receipt,shared_reply_validator("maker",Some("generation_receipt")));
+        let mut tests=json!({"tests":["tests/test_a.py::test_a"],"base":false,"repeat":repeat,"parallel":parallel,"status":"completed",
+            "tree":"a".repeat(40),"fresh":true,"totals":{"passed":1,"failed":0,"error":0,"skipped":0},
+            "receipts":[{"action_key":"a".repeat(64),"status":"executed","exit_code":exit,"receipt_sha256":"b".repeat(64),"log_sha256":"c".repeat(64)}]});
+        if optional {
+            tests["tests_identity"]=json!({"schema":"tl3.selectors.v1","count":256.0,"sha256":"a".repeat(64),"prefix":["é".repeat(120),"b","c"]});
+            tests["tests_omitted"]=json!(256.0);
+            tests["base_semantics"]=json!(if cache {"untouched_base"} else {"base_subject_head_observer"});
+            tests["proof"]=proof;
+            tests["execution"]=json!({"outcome":"test_timeout","phase":if cache {"test_run"} else {"cleanup"},"termination_reason":"no_progress","test_started":true,"test":"é".repeat(2048)});
+            tests["runs"]=json!([{"run":repeat,"status":"completed","totals":{"passed":u64::MAX,"failed":0.0,"error":0,"skipped":0}}]);
+            tests["receipts"][0]["attempt"]=json!(1.0);
+            tests["receipts"][0]["generation"]=json!("a".repeat(64));
+            tests["receipts"][0]["status"]=json!("cache_hit");
+        }
+        shared_sound::<TestRun>(tests,shared_reply_validator("maker",Some("test_run")));
+    }
+    #[test]
+    fn p_schema_sound_maker_root_and_writer_root(choice in 0u8..7, suffix in ".{0,60}", fits in any::<bool>()) {
+        use contracts::roles::{maker_reply::MakerReply,writer_reply::WriterReply};
+        let text=format!("r{suffix}");
+        let reply=match choice {
+            0 => json!({"kind":"done","head":"a".repeat(40),"self_check":[{"goal_id":text,"status":"met","evidence":text}]}),
+            1 => json!({"kind":"done","head":"b".repeat(64),"self_check":[{"goal_id":text,"status":"not_met","why":text}]}),
+            2 => json!({"kind":"done","head":"a".repeat(40),"self_check":[{"goal_id":text,"status":"pending","why":text}]}),
+            3 => json!({"kind":"needs_files","files":[{"path":"file.py","why":text}],"fits":fits}),
+            4 => json!({"kind":"cant_meet","report":text,"unfinished_obligations":[text]}),
+            5 => json!({"kind":"blocked","report":text,"evidence":{"action_key":"a".repeat(64),"class":"test_infrastructure"}}),
+            _ => json!({"kind":"out_of_room"}),
+        };
+        shared_sound::<MakerReply>(reply,shared_reply_validator("maker",None));
+        let writer=if fits {json!({"text":text})} else {json!({"request_quote":text,"obstacle":text,
+            "options":[{"action":"retry","outcome":text},{"action":"stop","outcome":text}],
+            "recommended_option":0.0,"recommendation_reason":text,"how_to_answer":text,"decision":text})};
+        shared_sound::<WriterReply>(writer,shared_reply_validator("writer",None));
+    }
+    #[test]
+    fn p_schema_sound_writer_text_and_options(suffix in ".{0,60}", count in 2usize..=3) {
+        use contracts::roles::writer_reply::{Text,Options};
+        let text=format!("w{suffix}");
+        shared_sound::<Text>(json!(text),shared_reply_validator("writer",Some("text")));
+        let options=Value::Array((0..count).map(|i|json!({"action":format!("{text}{i}"),"outcome":text})).collect());
+        shared_sound::<Options>(options,shared_reply_validator("writer",Some("options")));
+    }
+}
+
+#[test]
+fn shared_reply_types_reject_unsupported_shapes_and_enforce_conditionals() {
+    use contracts::roles::{
+        classifier_reply::ClassifierReply,
+        ingest_reply::IngestReply,
+        writer_reply::{Options, Text},
+    };
+    for value in [
+        json!({"kind":"brief","brief":"b","goals":[{"description":"g","verification":"test","stage":"publishing"}],"memory_ids":[]}),
+        json!({"kind":"brief","brief":"b","goals":[{"description":"g","verification":"test","publication":{"non_draft":true,"body_lines":[],"proof":false}}],"memory_ids":[]}),
+    ] {
+        assert!(serde_json::from_value::<IngestReply>(value).is_err());
+    }
+    for value in [
+        json!({"kind":"complaint","summary":"two\nlines","revert":false}),
+        json!({"kind":"answer","question_id":"q","answer":"add_credit","amount":101}),
+        json!({"kind":"stop","extra":true}),
+        json!({"kind":"change_request","new_text":"change","supersedes":null}),
+    ] {
+        assert!(serde_json::from_value::<ClassifierReply>(value).is_err());
+    }
+    assert!(serde_json::from_value::<Text>(json!(" ")).is_err());
+    assert!(serde_json::from_value::<Options>(json!([{"action":"one","outcome":"one"}])).is_err());
+
+    use contracts::roles::maker_reply::{GenerationReceipt, TestRun};
+    let mut receipt = shared_generation_receipt(0.5, 128, true);
+    receipt["outer"]["elapsed_s"] = Value::Null;
+    shared_sound::<GenerationReceipt>(
+        receipt.clone(),
+        shared_reply_validator("maker", Some("generation_receipt")),
+    );
+    receipt["outer"]
+        .as_object_mut()
+        .unwrap()
+        .remove("elapsed_s");
+    assert!(serde_json::from_value::<GenerationReceipt>(receipt).is_err());
+    let run = json!({"tests":[],"base":false,"repeat":1.0,"parallel":0.0,"status":"completed",
+        "tree":"a".repeat(40),"fresh":false,"totals":{"passed":0,"failed":0,"error":0,"skipped":0},
+        "receipts":[{"action_key":"a".repeat(64),"status":"cache_hit","exit_code":-1.0,
+            "receipt_sha256":"b".repeat(64),"log_sha256":"c".repeat(64),"attempt":null}]});
+    assert!(serde_json::from_value::<TestRun>(run).is_err());
 }

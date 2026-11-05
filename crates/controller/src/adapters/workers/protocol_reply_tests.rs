@@ -48,10 +48,10 @@ proptest! {
 }
 
 #[test]
-fn audit_schema_is_byte_identical() {
+fn ingest_schema_is_byte_identical() {
     assert_eq!(
-        crate::contracts::roles::audit_reply::schema_text(),
-        include_str!("../../../../../workers/src/tl3_workers/schemas/audit-reply.json")
+        crate::contracts::roles::ingest_reply::schema_text(),
+        include_str!("../../../../../workers/src/tl3_workers/schemas/ingest-reply.json")
     );
 }
 
@@ -64,14 +64,6 @@ fn classifier_schema_is_byte_identical() {
 }
 
 #[test]
-fn ingest_schema_is_byte_identical() {
-    assert_eq!(
-        crate::contracts::roles::ingest_reply::schema_text(),
-        include_str!("../../../../../workers/src/tl3_workers/schemas/ingest-reply.json")
-    );
-}
-
-#[test]
 fn maker_schema_is_byte_identical() {
     assert_eq!(
         crate::contracts::roles::maker_reply::schema_text(),
@@ -80,25 +72,54 @@ fn maker_schema_is_byte_identical() {
 }
 
 #[test]
-fn postmortem_schema_is_byte_identical() {
-    assert_eq!(
-        crate::contracts::roles::postmortem_reply::schema_text(),
-        include_str!("../../../../../workers/src/tl3_workers/schemas/postmortem-reply.json")
-    );
-}
-
-#[test]
-fn reviewer_schema_is_byte_identical() {
-    assert_eq!(
-        crate::contracts::roles::reviewer_reply::schema_text(),
-        include_str!("../../../../../workers/src/tl3_workers/schemas/reviewer-reply.json")
-    );
-}
-
-#[test]
 fn writer_schema_is_byte_identical() {
     assert_eq!(
         crate::contracts::roles::writer_reply::schema_text(),
         include_str!("../../../../../workers/src/tl3_workers/schemas/writer-reply.json")
+    );
+}
+
+#[test]
+fn shared_types_round_trip_the_controller_reply_corpus() {
+    use crate::contracts::roles::{
+        classifier_reply::ClassifierReply, ingest_reply::IngestReply, maker_reply::MakerReply,
+    };
+    fn check<T: serde::Serialize + serde::de::DeserializeOwned>(reply: &Value) {
+        let typed: T = serde_json::from_value(reply.clone()).unwrap();
+        assert_eq!(serde_json::to_value(typed).unwrap(), *reply);
+    }
+    let corpus = include_str!("../../../tests/fixtures/worker-replies-d8e4f2a8.jsonl");
+    let mut counts = [0usize; 3];
+    for line in corpus.lines() {
+        let record: Value = serde_json::from_str(line).unwrap();
+        for event in record["stdout"].as_array().unwrap() {
+            if event["event"] != "reply" {
+                continue;
+            }
+            let role = event["role"].as_str().unwrap();
+            let reply = &event["reply"];
+            if !validator(role, "reply").unwrap().is_valid(reply) {
+                continue;
+            }
+            match role {
+                "ingest" => {
+                    check::<IngestReply>(reply);
+                    counts[0] += 1;
+                }
+                "classifier" => {
+                    check::<ClassifierReply>(reply);
+                    counts[1] += 1;
+                }
+                "maker" => {
+                    check::<MakerReply>(reply);
+                    counts[2] += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        counts.iter().all(|n| *n > 0),
+        "missing corpus role: {counts:?}"
     );
 }
