@@ -158,10 +158,10 @@ def test_no_change_done_recovers_through_protocol(tmp_path, maker_request):
 
 
 def test_review662_reproduction_cannot_omit_assertion_reason(review_fix):
-    from tl3_harness import HarnessInputError
+    from tl3_workers.reply_check import ReplyViolation
     inputs, reply = review_fix
     reply['reproductions'][0].pop('proof', None)
-    with pytest.raises(HarnessInputError, match='proof|reason'):
+    with pytest.raises(ReplyViolation, match='proof|reason'):
         maker._check_reply(inputs, reply)
 
 

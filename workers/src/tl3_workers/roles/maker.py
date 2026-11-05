@@ -23,7 +23,7 @@ from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.pb_generators import make_generator_tool
-from tl3_workers import retro
+from tl3_workers import retro, reply_check
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import _parts, build_tools
@@ -47,48 +47,15 @@ def _check_inputs(inputs):
 
 
 def _check_reply(inputs, reply):
-    if reply["kind"] == "done":
-        goals = [goal["id"] for goal in inputs["goals"]]
-        checked = [check["goal_id"] for check in reply["self_check"]]
-        if len(checked) != len(goals) or set(checked) != set(goals):
-            raise ValueError("self-check must cover every goal exactly once")
-        stages = {goal["id"]: goal.get("stage", "maker") for goal in inputs["goals"]}
-        for check in reply["self_check"]:
-            if stages[check["goal_id"]] == "maker":
-                if check["status"] != "met":
-                    raise ValueError("done requires every maker goal to be met")
-            elif check["status"] != "pending":
-                raise ValueError("downstream goals must remain pending for their owning stage")
-        findings = {item["id"] for item in inputs.get("current_review_findings", [])}
-        reproductions = reply.get("reproductions", [])
-        mapped = [item["finding_id"] for item in reproductions]
-        if len(mapped) != len(findings) or set(mapped) != findings:
-            raise ValueError("reproductions must cover each current review finding exactly once")
-        from tl3_harness import Check, HarnessInputError, Kind, Proof
-        for item in reproductions:
-            if "tests" in item:
-                if 'proof' not in item:
-                    raise HarnessInputError('A reproduction needs proof.red_message for its assertion RED.')
-                Check(item["finding_id"], Kind.REPRODUCING, tuple(item["tests"]),
-                      proof=Proof.parse(item['proof']))
-    elif reply["kind"] == "needs_files":
-        for item in reply["files"]:
-            if not _parts(item["path"]):
-                raise ValueError("expected a requested file")
+    reply_check.check_reply("maker", inputs, reply)
 
 
 def _checking_handoff(inputs, head, tree):
-    """Describe pending ordinary proof, never infer it from development receipts."""
-    if not inputs.get("check_base_sha"):
-        return None
-    checks = [{"name": check["name"], "tests": check["tests"], "mode": "base_subject_head_observer"}
-              for check in inputs["plan"]["checks"] if check["kind"] == "demonstrating"
-              and check.get("forcing") is None
-              and check.get("declared_symptom") is None]
-    if not checks:
-        return None
-    return {"base_sha": inputs.get("check_base_sha"), "head_sha": head, "head_tree": tree,
-            "status": "pending", "owner": "checking", "checks": checks}
+    document = reply_check.run_check(["check-reply", "maker"], {
+        "operation": "handoff", "inputs": inputs, "head": head, "tree": tree})
+    if not isinstance(document, dict) or "handoff" not in document:
+        raise reply_check.ReplyCheckInfrastructureError("reply validator returned invalid output")
+    return document["handoff"]
 
 
 def _git(request, *args, check=True, index=None):

@@ -29,10 +29,13 @@ pub struct Generated {
 
 /// Every file this module generates.
 pub fn generated() -> Vec<Generated> {
-    vec![Generated {
-        path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
-        text: render(&check_report_schema()),
-    }]
+    vec![
+        crate::maker_reply::generated(),
+        Generated {
+            path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
+            text: render(&check_report_schema()),
+        },
+    ]
 }
 
 /// The harness check report's schema: self-contained, with every definition in `$defs`.

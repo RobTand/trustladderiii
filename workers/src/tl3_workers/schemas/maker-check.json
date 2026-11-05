@@ -1,0 +1,269 @@
+{
+  "$defs": {
+    "Finding": {
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "Goal": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "stage": {
+          "default": "maker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "Inputs": {
+      "properties": {
+        "check_base_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current_review_findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "goals": {
+          "items": {
+            "$ref": "#/$defs/Goal"
+          },
+          "type": "array"
+        },
+        "plan": {
+          "$ref": "#/$defs/Plan"
+        }
+      },
+      "type": "object"
+    },
+    "Operation": {
+      "enum": [
+        "check",
+        "handoff"
+      ],
+      "type": "string"
+    },
+    "Plan": {
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/PlannedCheck"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "PlannedCheck": {
+      "properties": {
+        "declared_symptom": true,
+        "forcing": true,
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tests": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "tests",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "Reply": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "done",
+              "type": "string"
+            },
+            "reproductions": {
+              "items": {
+                "$ref": "#/$defs/Reproduction"
+              },
+              "type": "array"
+            },
+            "self_check": {
+              "items": {
+                "$ref": "#/$defs/SelfCheck"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "self_check"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "files": {
+              "items": {
+                "$ref": "#/$defs/RequestedFile"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "needs_files",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "files"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "cant_meet",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "blocked",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "out_of_room",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Reproduction": {
+      "properties": {
+        "finding_id": {
+          "type": "string"
+        },
+        "proof": {
+          "default": null
+        },
+        "tests": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "finding_id"
+      ],
+      "type": "object"
+    },
+    "RequestedFile": {
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "SelfCheck": {
+      "properties": {
+        "goal_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal_id",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-check.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "This command reads only these facts from the full role documents. WR2/WR3 own\nthe complete role contracts; their additional fields deliberately pass through.",
+  "properties": {
+    "head": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "inputs": {
+      "$ref": "#/$defs/Inputs"
+    },
+    "operation": {
+      "$ref": "#/$defs/Operation"
+    },
+    "reply": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Reply"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tree": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "inputs"
+  ],
+  "title": "Request",
+  "type": "object"
+}

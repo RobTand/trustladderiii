@@ -5,6 +5,19 @@ use crate::{
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
+pub(crate) fn exact_coverage<'a>(
+    expected: impl Iterator<Item = &'a str>,
+    actual: impl Iterator<Item = &'a str>,
+) -> bool {
+    let expected: Vec<_> = expected.collect();
+    let actual: Vec<_> = actual.collect();
+    crate::maker_reply::decision::exact_coverage(
+        expected.len() as u64,
+        actual.len() as u64,
+        expected.iter().collect::<BTreeSet<_>>() == actual.iter().collect::<BTreeSet<_>>(),
+    )
+}
+
 pub(crate) struct Fixes {
     pub checks: Vec<Check>,
     pub evidence: Value,
@@ -19,7 +32,11 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
         .as_array()
         .cloned()
         .unwrap_or_default();
-    if findings.len() != mappings.len() {
+    if !crate::maker_reply::decision::exact_coverage(
+        findings.len() as u64,
+        mappings.len() as u64,
+        true,
+    ) {
         return Err(Error::Invalid(
             "reproductions must cover every current finding",
         ));
@@ -86,7 +103,7 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
     })
 }
 
-fn exact_pytest_node_id(test: &str) -> bool {
+pub(crate) fn exact_pytest_node_id(test: &str) -> bool {
     let mut parts = test.split("::");
     let path = parts.next().unwrap_or_default();
     let names = parts.collect::<Vec<_>>();

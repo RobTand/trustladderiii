@@ -36,6 +36,9 @@ pub fn generate(mut vectors: Vec<Vector>) -> Result<Vec<Vector>> {
                     serde_json::value::to_raw_value(&Response { result })?
                 }
             }
+            ["check-reply", "maker"] => serde_json::value::to_raw_value(
+                &tl3_controller::maker_reply::decide(&vector.document)?,
+            )?,
             ["check-reply", role] => {
                 let inputs = &vector.document["inputs"];
                 let reply = &vector.document["reply"];

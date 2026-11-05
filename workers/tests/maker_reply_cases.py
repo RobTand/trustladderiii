@@ -2,9 +2,7 @@
 from copy import deepcopy
 import ast
 import itertools
-import json
 from pathlib import Path
-import sys
 
 def reference():
     namespace = {"__name__": "tl3_workers.roles.maker_before"}
@@ -74,6 +72,18 @@ def vectors():
                 reply(f"{source.name}:{node.lineno}", {"goals": goals}, value)
             except (KeyError, TypeError):
                 continue
+    from message_invariants import request_123_handover, review_fix
+    fixture = {"inputs": {"plan": {"checks": [], "files": []}, "goals": []}}
+    incident, value = request_123_handover.__wrapped__(deepcopy(fixture))
+    reply("request_123/pending", incident["inputs"], value)
+    changed = deepcopy(value)
+    changed["self_check"][-1]["status"] = "met"
+    reply("request_123/future-proof", incident["inputs"], changed)
+    review_inputs, value = review_fix.__wrapped__(deepcopy(fixture))
+    reply("review662/declaration", review_inputs, value)
+    missing = deepcopy(value)
+    missing["reproductions"][0].pop("proof")
+    reply("review662/missing-red-message", review_inputs, missing)
     checks = [{"name": "ordinary", "tests": ["a.py::test_a"], "kind": "demonstrating"},
               {"name": "regression", "tests": ["a.py::test_b"], "kind": "regression"},
               {"name": "forced", "tests": ["a.py::test_c"], "kind": "demonstrating", "forcing": {}},
@@ -84,7 +94,3 @@ def vectors():
             rows.append({"operation": "handoff", "name": f"handoff/{base_sha}/{count}", "inputs": data,
                          "handoff": old["_checking_handoff"](data, "head", "tree")})
     return rows
-
-
-if __name__ == "__main__":
-    json.dump(vectors(), sys.stdout, ensure_ascii=False)

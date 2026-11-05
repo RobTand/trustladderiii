@@ -69,13 +69,6 @@ def test_runs_before_a_later_edit_are_not_evidence_for_the_head(maker_request, m
     assert reply["checking_handoff"]["status"] == "pending"
 
 
-@pytest.mark.parametrize("special", [{"forcing": {"symptom": "Q55"}}])
-def test_ordinary_handoff_never_substitutes_for_forced_proof(maker_request, special):
-    inputs = maker_request["inputs"]
-    inputs["check_base_sha"] = "a" * 40
-    inputs["plan"]["checks"][0].update(special)
-    assert maker._checking_handoff(inputs, "b" * 40, "c" * 40) is None
-
 
 def test_test_evidence_is_bounded():
     # #432: entries, selectors and strings are capped, and the worker keeps the whole list small.
