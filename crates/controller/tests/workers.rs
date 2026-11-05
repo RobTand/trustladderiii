@@ -883,6 +883,8 @@ fn quota_replays(database: &mut Database) {
 fn quota_fallbacks(database: &mut Database) {
     quota_planner_fallback(database);
     quota_whole_ladder(database);
+    quota_operator_clear(database, false);
+    quota_operator_clear(database, true);
 }
 
 fn quota_planner_fallback(database: &mut Database) {
@@ -893,6 +895,25 @@ fn quota_planner_fallback(database: &mut Database) {
 fn quota_whole_ladder(database: &mut Database) {
     quota_ladder::whole_ladder_waits(&database.create("quota_whole_ladder"));
     println!("test quota_whole_ladder_waits_for_earliest_reset ... ok");
+}
+
+fn quota_operator_clear(database: &mut Database, non_last: bool) {
+    quota_ladder::operator_clear_resumes(
+        &database.create(if non_last {
+            "operator_non_last"
+        } else {
+            "operator_clear"
+        }),
+        non_last,
+    );
+    println!(
+        "test quota_operator_clear_{} ... ok",
+        if non_last {
+            "non_last_rung"
+        } else {
+            "eligible_ladder_only"
+        }
+    );
 }
 
 fn quota_removed_models(database: &mut Database) {
@@ -3135,6 +3156,12 @@ fn run_default() {
     });
     shard.run(WorkerGroup::QuotaFallbacks, || {
         quota_whole_ladder(fixture.database());
+    });
+    shard.run(WorkerGroup::QuotaOperatorClear, || {
+        quota_operator_clear(fixture.database(), false);
+    });
+    shard.run(WorkerGroup::QuotaOperatorNonLast, || {
+        quota_operator_clear(fixture.database(), true);
     });
     shard.run(WorkerGroup::QuotaRemoved, || {
         quota_removed_model(fixture.database());
