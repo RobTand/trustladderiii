@@ -183,6 +183,21 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
+        # ctrl-core A1: shell residue, with no contract changes to enqueue::decide.
+        verus_test(
+            name = "verus_completion",
+            src = "proofs/completion.rs",
+            srcs = ["src/decide/completion.rs"],
+            specs = ["proofs/completion_spec.rs"],
+            expected_obligations = 44,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
