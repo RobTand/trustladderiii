@@ -5,6 +5,6 @@
   },
   "crate:tl3-contracts": {
     "reason": "planner-contracts #730/#819: Rust-sourced wire contracts (tl3-contracts) linked by tl3-controller; schema generation adds contract sources",
-    "sources": 7
+    "sources": 11
   }
 }
