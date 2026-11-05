@@ -11,8 +11,8 @@
   },
   "crate:tl3-harness-core": {
     "reason": "Wave B harness decision crate for #730 (#824).",
-    "sources": 19,
-    "max_fanout": 97
+    "sources": 21,
+    "max_fanout": 100
   },
   "crate:tl3-pb-evidence": {
     "reason": "planner-contracts #730/#821: Rust PB result decisions (tl3-pb-evidence) linked by tl3-controller's tl3 CLI for check-pb",

@@ -1,0 +1,100 @@
+{
+  "generation_evidence": {
+    "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "output_manifest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "input_tree": "1111111111111111111111111111111111111111",
+    "output_tree": "2222222222222222222222222222222222222222",
+    "status": "completed",
+    "exit_code": 0,
+    "command": "generate",
+    "argv": [
+      "generate"
+    ],
+    "identity": {
+      "implementation": "tl3-generator-v4",
+      "image": "",
+      "budget": {
+        "cpus": 1,
+        "mem_gb": 1,
+        "timeout_s": 1,
+        "outer_timeout_s": 61
+      }
+    },
+    "output_count": 0,
+    "budget": {
+      "cpus": 1,
+      "mem_gb": 1,
+      "timeout_s": 1,
+      "outer_timeout_s": 61
+    },
+    "timings": {
+      "preparation": {
+        "seconds": 0,
+        "outcome": "completed"
+      },
+      "container": {
+        "seconds": 0,
+        "outcome": "completed"
+      },
+      "validation": {
+        "seconds": 0,
+        "outcome": "completed"
+      },
+      "cleanup": {
+        "seconds": 0,
+        "outcome": "completed"
+      },
+      "total_seconds": 0
+    },
+    "phase": "completed",
+    "inner": {
+      "status": "completed",
+      "exit_code": 0
+    },
+    "outer": {
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_s": null
+    }
+  },
+  "test_evidence": [
+    {
+      "tests": [
+        "test.py"
+      ],
+      "base": false,
+      "repeat": 1,
+      "parallel": 0,
+      "status": "completed",
+      "tree": "2222222222222222222222222222222222222222",
+      "fresh": true,
+      "totals": {
+        "passed": 1,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "receipts": [
+        {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    }
+  ],
+  "review_fixes": {
+    "reviewed_sha": "3333333333333333333333333333333333333333",
+    "findings": [
+      {
+        "id": "fix-1",
+        "report": "Fix the behavior",
+        "reason": "Reviewed manually"
+      }
+    ]
+  }
+}
