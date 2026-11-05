@@ -2023,3 +2023,6 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+mod allocation_stopping_lemmas;

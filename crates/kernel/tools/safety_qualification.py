@@ -151,6 +151,10 @@ CASES = {
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
                     '//crates/kernel:verus_controller_boundary'),
+    'allocation_stopping_outcome': ('crates/kernel/src/allocation.rs',
+                                     'm.phase = Phase::Stopping(Outcome::Merged);',
+                                     'm.phase = Phase::Stopping(Outcome::Stopped);',
+                                     '//crates/kernel:verus_allocation_enter_stopping'),
 }
 
 

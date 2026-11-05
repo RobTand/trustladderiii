@@ -198,6 +198,9 @@ def verus_proofs():
             "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
+            "allocation_stopping_active_distance": ("kernel::allocation_stopping_lemmas#active_distance_lower", 1),
+            "allocation_stopping_distance": ("kernel::allocation_stopping_lemmas#stopping_distance", 1),
+            "allocation_stopping_progress": ("kernel::allocation_stopping_lemmas#stopping_progress", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
