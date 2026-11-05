@@ -1,7 +1,7 @@
 use crate::contracts::inputs::{self as wire, value as input_value};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{collections::BTreeSet, sync::LazyLock};
 use tl3_github::message::{self, Draft, OptionDraft, Policy, Violation};
 

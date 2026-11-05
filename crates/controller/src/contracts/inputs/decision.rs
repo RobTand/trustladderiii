@@ -15,7 +15,6 @@ pub struct Context {
 #[serde(deny_unknown_fields)]
 pub struct Decision {
     pub id: String,
-    #[serde(deserialize_with = "crate::contracts::bounded::required_nullable")]
     #[schemars(required)]
     pub source_comment: Option<String>,
     #[schemars(with = "std::collections::BTreeMap<String, Value>")]
@@ -24,7 +23,6 @@ pub struct Decision {
     pub allowed_scope: Vec<String>,
     pub restrictions: Vec<String>,
     pub origin_request_version: u64,
-    #[serde(deserialize_with = "crate::contracts::bounded::required_nullable")]
     #[schemars(required)]
     pub superseded_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

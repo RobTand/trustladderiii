@@ -532,7 +532,7 @@ impl Supervisor {
                 self.protected_paths
                     .for_repository(&delivery.repository, &self.planning.protected_paths)?,
                 ingest,
-                forecast,
+                forecast.clone(),
             );
             planner.always_tests = Some(self.images.additional_tests(&delivery.repository).always);
             inputs = value(planner)?;
