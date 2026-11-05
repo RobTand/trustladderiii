@@ -291,7 +291,7 @@ def observation_cases(recorder, inputs, forecast, execution):
             with patch.object(Worktree, '_file', failing_file_close):
                 base(node)
 
-            # The immutable base lacks this test, but local correction reads HEAD.
+            # #831: the immutable base lacks the test that exists only at HEAD.
             recorder.node, recorder.ordinal = 'extra/local-base-sha-asymmetry', 0
             path.write_text('def test_only_at_head(): pass\n')
             head_node = 'tests/test_base.py::test_only_at_head'
@@ -566,6 +566,16 @@ def generate(selection=None):
             pass
     document = {'format': 'tl3.planner-vectors.v1', 'cases': recorder.cases,
                 'scenarios': recorder.scenarios, 'english': heuristics(), 'globs': globs()}
+    divergences = {
+        'extra/local-base-sha-asymmetry#3': 'Reject the worktree-only selector using the immutable base.',
+        'extra/corrections#43': 'Read the edit declaration size limit from the immutable base file.',
+    }
+    for case in document['cases']:
+        if case['id'] in divergences:
+            case['intended_divergence'] = {
+                'issue': 'https://github.com/RobTand/trustladderiii/issues/831',
+                'reason': divergences[case['id']],
+            }
     # Persist diagnostics even on a failing source scenario, but never claim drift
     # success or publish it as the committed oracle until every scenario passes.
     document['source_exit'] = int(status)
