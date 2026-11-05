@@ -55,6 +55,14 @@ mod witnesses {
         let owner = stall_action(StallUpstream::PrismaBuild, true);
         assert(!moving && stall && requeue == StallAction::Requeue && unfinished == StallAction::Unfinished);
         assert(worker == StallAction::StopWorker && owner == StallAction::Ignore);
+        let mut selected = FailureCount { failures: 0, incidents: 2, raise: false };
+        let mut other = FailureCount { failures: 1, incidents: 7, raise: true };
+        q7_effect_frame(&mut selected, &mut other);
+        assert(selected.failures == 1 && other.failures == 1 && other.incidents == 7 && other.raise);
+        let cycle = q7_failure_cycle(0, 1000);
+        let clearances = q7_clearance_cycle(1000);
+        assert(cycle.raise && cycle.incidents == 1 && clearances.0 && !clearances.1 && !clearances.2);
+
     }
 
     /// Q7, state-table.md:270-275,309: induction step for any previously accumulated incident count.

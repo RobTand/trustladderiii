@@ -39,3 +39,16 @@ silence-period deduplication, maintenance, postmortems, incident notices and
 refused-command hold. Each comparison includes every reachable crash cut.
 
 Run `//crates/controller:test_test_looks_io` alone on BuildBuddy.
+
+
+D1 r1 extends the recorder beyond the original restricted projection. Completion
+observations vary between empty and a kernel fact, and incident rows vary between
+an effect incident and a kernel incident with no effect. `observe` persists the
+observation identity and payload, runs the real `tl3_kernel::step` for kernel
+observations, and records the resulting node incident state and kernel outputs.
+The kernel itself is unchanged. Queued fixture nodes let the mandatory tests
+assert both the first stall transition and the already-waiting guard. The
+Rob-authorized `clear_incident` route remains covered by the real-controller
+scenario because lib.rs is owned by group G. A second allowance input exercises
+per-effect counter isolation. Every new recorded write participates in the same
+before/after crash sweep. No verbatim-body name list changes were needed for r1.
