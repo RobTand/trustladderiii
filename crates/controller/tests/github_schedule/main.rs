@@ -218,9 +218,6 @@ pub use tl3_controller::{
     Error, evidence, executor, publication_failure, redaction, steering, worker_inputs,
 };
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
-    serde_json::from_value(value).map_err(Error::StoredJson)
-}
 mod workers {
     pub mod writer {
         pub use tl3_controller::adapters::workers::writer::*;

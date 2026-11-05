@@ -88,7 +88,7 @@ impl GitHub {
             return Err(tl3_github::Error::Transport);
         }
         // The real list/sort/delete path has its own HTTP differential test.
-        if value % 5 == 0 {
+        if value.is_multiple_of(5) {
             return Ok(None);
         }
         if value % 5 == 3 {
@@ -133,7 +133,7 @@ impl GitHub {
             return Err(tl3_github::Error::Transport);
         }
         Ok(serde_json::from_value(json!({"number":number,"title":format!("Request {value}"),"body":format!("Text {value}"),
-            "state":if value%2==0 {"open"} else {"closed"},"state_reason":null,"updated_at":"2026-10-30T00:00:00Z"})).unwrap())
+            "state":if value.is_multiple_of(2) {"open"} else {"closed"},"state_reason":null,"updated_at":"2026-10-30T00:00:00Z"})).unwrap())
     }
     pub fn close_issue(
         &self,
@@ -189,7 +189,7 @@ impl GitHub {
         issue: u64,
     ) -> std::result::Result<Vec<tl3_github::IssueActivity>, tl3_github::Error> {
         let value = sample(json!(["issue_events", repo, issue]));
-        Ok(vec![serde_json::from_value(json!({"id":1,"event":"closed","actor":{"id":99,"login":if value%2==0 {"factory[bot]"} else {"human"}},
+        Ok(vec![serde_json::from_value(json!({"id":1,"event":"closed","actor":{"id":99,"login":if value.is_multiple_of(2) {"factory[bot]"} else {"human"}},
             "created_at":"2026-10-30T00:00:00Z","label":null})).unwrap()])
     }
     pub fn reopen_issue(

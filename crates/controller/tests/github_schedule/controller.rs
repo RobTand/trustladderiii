@@ -144,7 +144,7 @@ fn delivery(case: u8) -> Delivery {
                     kind: kinds[usize::from(case - 19)],
                     cont: Cont::Nowhere,
                     cost: 0,
-                    clarified: case % 2 == 0,
+                    clarified: case.is_multiple_of(2),
                 });
                 delivery.question_context =
                     Some(json!({"findings":{"report":"The action failed."}}));

@@ -10,7 +10,7 @@ impl VPath {
         Self(self.0.with_extension(extension))
     }
     pub fn exists(&self) -> bool {
-        sample(json!(["exists", self.0])) % 2 == 0
+        sample(json!(["exists", self.0])).is_multiple_of(2)
     }
 }
 pub struct File(VPath);
