@@ -130,7 +130,7 @@ pub fn last_event(events: &[u64]) -> u64 {
     best
 }
 
-/// Preserved existing behaviour (no rule): intent is durably saved before the fence and following label/command dispatch.
+/// #751 K-write-ahead and #760 I/O-order fidelity: intent is durably saved before the fence and following label/command dispatch.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out.0 == IntentEffect::Save && out.1 == IntentEffect::Fence,))]
 pub fn intent() -> (IntentEffect, IntentEffect) {
     (IntentEffect::Save, IntentEffect::Fence)

@@ -69,7 +69,7 @@ pub fn policy(matches: &[bool]) -> Option<usize> {
     None
 }
 
-/// Preserved existing behaviour (no rule): healing requires an open, unmerged PR.
+/// #447 self-heal on open: healing requires an open, unmerged PR.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (open && !merged),))]
 pub fn available(open: bool, merged: bool) -> bool {
     open && !merged
@@ -93,7 +93,7 @@ pub fn needs_phase(gaps_empty: bool, pending: bool) -> bool {
     !gaps_empty || pending
 }
 
-/// Preserved existing behaviour (no rule): only Publishing/Queued permit a heal.
+/// #447 self-heal on open in Publishing or Queued: only these phases permit a heal.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == !matches!(current, Phase::Other),))]
 pub fn phase(current: Phase) -> bool {
     !matches!(current, Phase::Other)

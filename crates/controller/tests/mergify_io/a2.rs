@@ -399,20 +399,28 @@ fn mandatory_a2_shell_confirmed_receipts() {
         }
         let r = compare(&s, Entry::Execute, A2Config::default(), false);
         assert_eq!(r["result"]["completion"]["ack"], "Confirmed", "{r:#}");
-        assert_eq!(
-            file(&r, ".json").unwrap()["deliveries"],
-            u64::from(missing),
-            "{r:#}"
-        );
+        assert_eq!(file(&r, ".json").unwrap()["deliveries"], 1, "{r:#}");
         assert_eq!(count(&r, "github.add_label"), 0);
         assert_eq!(count(&r, "github.command"), 0);
+        let writes = r["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["op"] == "file.rename" && c["args"].as_str().unwrap().ends_with(".json"))
+            .count();
+        assert_eq!(writes, 1 + usize::from(missing));
     }
+    let mut existing = schedule(Profile::Active);
+    over(&mut existing, "file.read", ".json", 0, 2);
+    let r = compare(&existing, Entry::Execute, A2Config::default(), false);
+    assert_eq!(file(&r, ".json").unwrap()["deliveries"], 0);
+    assert_eq!(count(&r, "file.rename"), 0);
     let mut s = schedule(Profile::Plain);
     over(&mut s, "github.checks", "", 2, 1024);
     let r = compare(&s, Entry::Execute, A2Config::default(), false);
     assert_eq!(r["result"]["completion"]["ack"], "Confirmed", "{r:#}");
     assert_eq!(file(&r, ".applied"), Some(json!(true)));
-    assert_eq!(file(&r, ".json").unwrap()["deliveries"], 1, "{r:#}");
+    assert_eq!(file(&r, ".json").unwrap()["deliveries"], 2, "{r:#}");
 }
 /// #760: changed final head re-runs completion after intent, before applied.
 #[test]
@@ -457,4 +465,15 @@ fn mandatory_a2_shell_heal_error_shapes() {
         let r = compare(&s, Entry::Read, A2Config::default(), true);
         assert!(r["result"].get("error").is_some(), "{r:#}");
     }
+}
+
+/// Preserved existing behaviour (no rule): fresh attempts retain Ready when the independently read issue gains the queue label.
+#[test]
+fn mandatory_a2_shell_new_attempt_ready() {
+    let mut s = schedule(Profile::Plain);
+    over(&mut s, "github.issue", "", 1, 1);
+    let r = compare(&s, Entry::Execute, A2Config::default(), false);
+    assert_eq!(file(&r, ".intent").unwrap()["requeue"], "Sending", "{r:#}");
+    assert_eq!(count(&r, "github.command"), 1, "{r:#}");
+    assert_eq!(count(&r, "github.add_label"), 0);
 }
