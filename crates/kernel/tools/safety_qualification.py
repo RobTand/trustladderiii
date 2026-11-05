@@ -56,6 +56,21 @@ def run(workspace, target, name):
     return statuses, text
 
 
+def libtest_summaries(log):
+    summaries = []
+    for line in log.splitlines():
+        marker = line.find('] {')
+        if marker < 0:
+            continue
+        try:
+            event = json.loads(line[marker + 2:])
+        except ValueError:
+            continue
+        if event.get('type') == 'suite':
+            summaries.append(event)
+    return summaries
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('case', choices=CASES)
@@ -71,7 +86,8 @@ def main():
         if proof:
             assert 'VERUS_PROOF' in log
         else:
-            assert re.search(r'test result: ok\. [1-9][0-9]* passed', log), (
+            assert any(event.get('event') == 'ok' and event.get('passed', 0) > 0
+                       for event in libtest_summaries(log)), (
                 'controller qualification must execute nonzero tests')
         path = workspace.root / filename
         source = path.read_text()
@@ -90,7 +106,8 @@ def main():
             )), 'mutant must fail a real proof obligation'
             assert re.search(r'verification results:: [0-9]+ verified, [1-9][0-9]* errors', log)
         else:
-            assert 'test result: FAILED' in log and 'panicked at' in log, (
+            assert any(event.get('event') == 'failed' and event.get('failed', 0) > 0
+                       for event in libtest_summaries(log)) and 'panicked at' in log, (
                 'boundary mutant must fail an executed assertion, not compilation')
         verdicts, failed = bazel_gate.classify([target], statuses, {target})
         assert verdicts['rust'] == 'fail' and failed['rust'] == [target]
