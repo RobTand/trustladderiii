@@ -1474,3 +1474,63 @@ pub(super) mod c1_payloads {
         run
     }
 }
+
+// ctrl-core A2: configurable entry runner; the real old/current shells remain separate.
+pub(super) fn a2_compare(s: &Schedule, execute: impl Fn(bool, &Delivery) -> Value) -> Value {
+    // Install the existing crash-only panic hook before exercising custom entries.
+    let _ = run(s, Entry::Read, false, None);
+    let record = |new, cut| {
+        init(s.clone(), cut);
+        let d = serde_json::from_value(delivery_value("enqueue-1")).unwrap();
+        let result = match catch_unwind(AssertUnwindSafe(|| execute(new, &d))) {
+            Ok(value) => value,
+            Err(error) if error.is::<Crash>() => json!("crash"),
+            Err(error) => ::std::panic::resume_unwind(error),
+        };
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    };
+    let old = record(false, None);
+    let new = record(true, None);
+    assert_eq!(old, new, "A2 differential divergence: {s:?}");
+    for write in 0..old.writes {
+        for after in [false, true] {
+            let cut = Some(Cut { write, after });
+            assert_eq!(
+                record(false, cut),
+                record(true, cut),
+                "A2 crash divergence: {s:?}, {cut:?}"
+            );
+        }
+    }
+    json!({
+        "result":new.result,
+        "calls":new.calls.iter().map(|c|json!({"op":c.op,"args":c.args})).collect::<Vec<_>>(),
+        "files":new.files.iter().map(|(p,b)|(p.clone(),String::from_utf8_lossy(b).into_owned())).collect::<BTreeMap<_,_>>(),
+        "comparisons":1+2*new.writes,
+    })
+}
+
+// A2 initial durable state is installed before any shell operation, on both sides.
+pub(super) fn a2_seed_heal(same_head: bool, reran: bool) {
+    let key = "body-heal:owner/sandbox#100";
+    let path = format!(
+        "root/{}.body-heal",
+        key.bytes().map(|b| format!("{b:02x}")).collect::<String>()
+    );
+    with(|r| {
+        r.files.insert(
+            path,
+            serde_json::to_vec(&json!({"head":if same_head {"head"} else {"old"},"reran":reran}))
+                .unwrap(),
+        );
+    });
+}
