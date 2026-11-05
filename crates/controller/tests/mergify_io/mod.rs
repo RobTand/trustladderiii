@@ -286,6 +286,7 @@ macro_rules! adapter {
 macro_rules! run_entry {
     ($a:ident, $entry:ident, $d:ident, $waiting:expr) => {
         match $entry {
+            io::Entry::Webhook | io::Entry::CatchUp | io::Entry::QueueFacts => $a.routing($entry),
             io::Entry::Read => {
                 match (|| { let snapshot=$a.snapshot()?; $a.read($d, snapshot.as_ref()) })() {
                     Ok((state, facts)) => json!({"state":format!("{:?}",state.state),"pull":state.pull_request,"facts":facts}),
@@ -1953,3 +1954,6 @@ fn a2_boundary_helpers_are_production_source() {
         );
     }
 }
+
+// A3 ingress routing uses independently compiled real old/current shell bodies.
+mod a3;

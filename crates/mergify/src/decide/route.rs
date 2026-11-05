@@ -17,7 +17,7 @@ pub mod queue {
     pub fn setup(permissions_empty: bool, missing_empty: bool) -> Setup {
         Setup {
             unavailable: !permissions_empty,
-            missing_suites: false, // Red: missing-suite gate stub.
+            missing_suites: !missing_empty,
         }
     }
     /// #447, docs/state-table.md:545,578: blocked suites are read only for settled Waiting with unmet conditions.

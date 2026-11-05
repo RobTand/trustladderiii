@@ -1,3 +1,4 @@
+use tl3_mergify::decide::route;
 use tl3_mergify::decide::{heal as heal_core, plan as execute_core};
 use super::*;
 use crate::mergify_io::io::mock_std as std;
@@ -784,7 +785,8 @@ async fn queue_facts(
             head_checks::evaluate(github, &repo_name, pull, requirements, &state.check_runs)
                 .await?;
         head_infrastructure = checks.infrastructure();
-        if !checks.unavailable.is_empty() {
+        let setup = route::queue::setup(checks.unavailable.is_empty(), checks.missing.is_empty());
+        if setup.unavailable {
             facts.push(QueueFact {
                 repository: repo.clone(),
                 number: pull.number,
@@ -795,7 +797,7 @@ async fn queue_facts(
         }
         // Q52: once every suite on the head has completed, no app is still
         // working on it, so a missing required context will not report.
-        if !checks.missing.is_empty() {
+        if setup.missing_suites {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
             if facts::suites_completed(&suite_statuses(&suites)) {
                 facts.extend(checks.missing.iter().map(|required| QueueFact {
@@ -810,21 +812,17 @@ async fn queue_facts(
         }
         // #447: Mergify waits on a condition nothing still running can meet,
         // such as PrismaBuild's scopes after its pr-gate failed.
-        if state.state == QueueState::Waiting
-            && checks_settled(state)
-            && state
+        if route::queue::blocked_suites(
+            state.state == QueueState::Waiting,
+            checks_settled(state),
+            state
                 .check
                 .as_ref()
-                .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty())
-        {
+                .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty()),
+        ) {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
             let completed = facts::suites_completed(&suite_statuses(&suites));
-            let required: Vec<_> = checks
-                .missing
-                .iter()
-                .chain(&checks.reported)
-                .cloned()
-                .collect();
+            let required = route::queue::required(checks.missing.clone(), checks.reported.clone());
             if let Some((conditions, failed)) = queue_blocked(state, completed, &required) {
                 facts.push(QueueFact {
                     repository: repo.clone(),
@@ -839,7 +837,7 @@ async fn queue_facts(
         }
         facts.extend(
             open.iter()
-                .filter(|required| checks.reported.contains(required))
+                .filter(|required| route::queue::reported(true, checks.reported.contains(required)))
                 .map(|required| QueueFact {
                     repository: repo.clone(),
                     number: pull.number,
@@ -855,11 +853,12 @@ async fn queue_facts(
                 number: pull.number,
                 evidence,
             };
-            if !snapshot
-                .map(|snapshot| fact.recorded(snapshot))
-                .transpose()?
-                .unwrap_or(false)
-            {
+            if route::queue::emit(
+                snapshot
+                    .map(|snapshot| fact.recorded(snapshot))
+                    .transpose()?
+                    .unwrap_or(false),
+            ) {
                 if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
                     *details =
                         ci_evidence::read_checks(github, &repo_name, &state.check_runs).await;
@@ -882,7 +881,9 @@ async fn queue_facts(
                 completed: check.status == "completed",
                 concluded: check.conclusion.is_some(),
                 merged_title: check.output.as_ref().is_some_and(|output| {
-                    output.title.as_deref() == Some("Merged via merge queue")
+                    route::queue::merged_title(
+                        output.title.as_deref() == Some("Merged via merge queue"),
+                    )
                 }),
             });
             let checks_passed = match facts::merged_plan(
@@ -939,11 +940,12 @@ async fn queue_facts(
             number: pull.number,
             evidence,
         };
-        if !snapshot
-            .map(|snapshot| fact.recorded(snapshot))
-            .transpose()?
-            .unwrap_or(false)
-        {
+        if route::queue::emit(
+            snapshot
+                .map(|snapshot| fact.recorded(snapshot))
+                .transpose()?
+                .unwrap_or(false),
+        ) {
             if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
                 *details = ci_evidence::read_queue(github, &full_name(repo), state).await;
             }
@@ -957,11 +959,12 @@ pub(crate) fn queue_blocked(
     suites_completed: bool,
     required: &[RequiredCheck],
 ) -> Option<(Vec<String>, Vec<String>)> {
-    let conditions = if state.state == QueueState::Waiting && suites_completed {
-        tl3_mergify::unmet_conditions(state.check.as_ref()?)
-    } else {
-        vec![]
-    };
+    let conditions =
+        if route::queue::conditions(state.state == QueueState::Waiting, suites_completed) {
+            tl3_mergify::unmet_conditions(state.check.as_ref()?)
+        } else {
+            vec![]
+        };
     if !facts::queue_blocked(state.state, suites_completed, !conditions.is_empty()) {
         return None;
     }
@@ -1316,3 +1319,5 @@ fn heal_record(saved: &BodyHeal, head: &str) -> heal_core::Record {
         reran: saved.reran,
     }
 }
+
+impl Adapter { fn routing(&self, entry: io::Entry) -> Value { super::a3::default_run(entry,true) } }

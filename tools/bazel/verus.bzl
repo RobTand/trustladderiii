@@ -162,7 +162,7 @@ def verus_proofs():
         )
 
         # ctrl-core A3: separate routing families over the real production module.
-        for name, count in [("queue", 9), ("webhook", 13), ("projection", 9), ("failure", 2)]:
+        for name, count in [("queue", 10), ("webhook", 16), ("projection", 12), ("failure", 2)]:
             verus_test(
                 name = "verus_route_" + name,
                 src = "proofs/route.rs",

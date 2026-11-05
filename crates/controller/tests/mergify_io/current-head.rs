@@ -28,20 +28,27 @@ impl Checks {
     }
 
     pub(super) fn evidence(&self, pull: &PullRequest) -> Option<Evidence> {
-        let (check, completed_at, infra) = match self.failure.as_ref()? {
-            Failure::Tests {
+        let failure = match self.failure.as_ref() {
+            Some(Failure::Tests {
                 check,
                 completed_at,
-            } => (*check, completed_at.clone(), false),
-            Failure::Infrastructure(checks) => {
+            }) => Some(route::failure::Failure::Tests((
+                *check,
+                completed_at.clone(),
+            ))),
+            Some(Failure::Infrastructure(checks)) => {
                 let check = &checks[0];
-                (
+                Some(route::failure::Failure::Infrastructure((
                     check.id,
                     check.completed_at.map(|time| time.to_rfc3339()),
-                    true,
-                )
+                )))
             }
+            None => None,
         };
+        let route::failure::Evidence {
+            value: (check, completed_at),
+            infra,
+        } = route::failure::evidence(failure)?;
         Some(Evidence::CiFailed {
             check,
             completed_at,

@@ -28,6 +28,7 @@ pub(super) enum Profile {
     MergeFalse,
     Draft,
     Missing,
+    Routing,
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Entry {
@@ -38,6 +39,9 @@ pub(super) enum Entry {
     Waiting,
     Command,
     Rerun,
+    Webhook,
+    CatchUp,
+    QueueFacts,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Frame {
@@ -714,7 +718,7 @@ impl GitHub {
         n: u64,
     ) -> ::std::result::Result<PullRequest, ::tl3_github::Error> {
         let f = github_frame("github.pull", &format!("{repo}#{n}"))?;
-        let p = pull(&f);
+        let p = a3_value("github.pull", pull(&f));
         returned(&p);
         Ok(p)
     }
@@ -745,6 +749,7 @@ impl GitHub {
         } else {
             vec![]
         };
+        let e = a3_value("github.events", e);
         returned(&e);
         Ok(e)
     }
@@ -794,6 +799,7 @@ impl GitHub {
         if f.word & 512 != 0 {
             c.push(check(&f, false));
         }
+        let c = a3_value("github.checks", c);
         returned(&c);
         Ok(c)
     }
@@ -822,6 +828,7 @@ impl GitHub {
             },
             unavailable: vec![],
         };
+        let result = a3_requirements(result);
         returned(
             &json!({"checks":result.checks.iter().map(|c|json!({"context":c.context,"integration_id":c.integration_id})).collect::<Vec<_>>(),"unavailable":result.unavailable}),
         );
@@ -952,6 +959,7 @@ impl GitHub {
     ) -> ::std::result::Result<Vec<::tl3_github::CheckSuite>, ::tl3_github::Error> {
         let f = github_frame("github.suites", &format!("{repo}@{head}"))?;
         let result=vec![serde_json::from_value(json!({"id":1,"head_sha":head,"status":if f.word&1!=0 {"in_progress"}else{"completed"},"conclusion":"success"})).unwrap()];
+        let result = a3_value("github.suites", result);
         returned(&result);
         Ok(result)
     }
@@ -1533,4 +1541,97 @@ pub(super) fn a2_seed_heal(same_head: bool, reran: bool) {
                 .unwrap(),
         );
     });
+}
+
+// A3 routing entries have no durable writes; compare the full recorded outputs.
+pub(super) fn a3_compare(s: &Schedule, execute: impl Fn(bool) -> Value) -> Value {
+    let record = |new| {
+        init(s.clone(), None);
+        let result = execute(new);
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    };
+    let old = record(false);
+    let new = record(true);
+    assert_eq!(old, new, "A3 routing differential divergence: {s:?}");
+    assert_eq!(old.writes, 0, "routing must have no durable/crash boundary");
+    json!({"result":new.result,"calls":new.calls.iter().map(|c|json!({"op":c.op,"args":c.args,"result":String::from_utf8_lossy(&c.result)})).collect::<Vec<_>>()})
+}
+
+// A3 payloads change only the requested leaf response, before it is recorded.
+#[derive(Default)]
+struct A3Responses {
+    values: BTreeMap<String, Vec<Value>>,
+    reads: BTreeMap<String, usize>,
+}
+thread_local! { static A3_RESPONSES: RefCell<A3Responses> = RefCell::new(A3Responses::default()); }
+pub(super) fn a3_payloads<T>(
+    values: BTreeMap<String, Vec<Value>>,
+    execute: impl FnOnce() -> T,
+) -> T {
+    struct Reset(A3Responses);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            A3_RESPONSES.with(|v| *v.borrow_mut() = ::std::mem::take(&mut self.0));
+        }
+    }
+    let _reset = Reset(A3_RESPONSES.with(|v| {
+        v.replace(A3Responses {
+            values,
+            reads: BTreeMap::new(),
+        })
+    }));
+    execute()
+}
+fn a3_next(op: &str) -> Option<Value> {
+    A3_RESPONSES.with(|v| {
+        let mut state = v.borrow_mut();
+        let i = *state.reads.entry(op.into()).or_default();
+        *state.reads.get_mut(op).unwrap() += 1;
+        state
+            .values
+            .get(op)
+            .and_then(|values| values.get(i).or_else(|| values.last()))
+            .cloned()
+    })
+}
+fn a3_value<T: serde::de::DeserializeOwned>(op: &str, default: T) -> T {
+    a3_next(op).map_or(default, |value| serde_json::from_value(value).unwrap())
+}
+fn a3_requirements(default: RequiredChecks) -> RequiredChecks {
+    #[derive(Deserialize)]
+    struct Wire {
+        checks: Vec<RequiredStatusCheck>,
+        unavailable: Vec<String>,
+    }
+    a3_next("github.requirements").map_or(default, |value| {
+        let wire: Wire = serde_json::from_value(value).unwrap();
+        RequiredChecks {
+            checks: wire.checks,
+            unavailable: wire.unavailable,
+        }
+    })
+}
+pub(super) fn a3_queue(unmet: bool) -> CheckRun {
+    let mut value = check(
+        &Frame {
+            word: 0,
+            elapsed_ms: 0,
+        },
+        true,
+    );
+    let payload=json!({"version":1,"state":"waiting","required_conditions":[{"matched":!unmet,"description":"status-success=scope","note":"unmet"}]}).to_string();
+    value.output.as_mut().unwrap().summary = Some(format!(
+        "<span itemprop=\"mergify.v1.{}\"></span>",
+        base64(&payload)
+    ));
+    value
 }
