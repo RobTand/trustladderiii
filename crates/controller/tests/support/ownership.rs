@@ -1,4 +1,11 @@
+#[cfg(loom)]
+#[allow(dead_code)]
+#[path = "../../../store/tests/support/mod.rs"]
+mod database;
+#[cfg(not(loom))]
 use crate::support::Database;
+#[cfg(loom)]
+use database::Database;
 use std::{
     process::Child,
     sync::{Mutex, MutexGuard, OnceLock},

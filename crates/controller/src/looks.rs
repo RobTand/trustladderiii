@@ -18,6 +18,8 @@ const LADDER_OUT_REASON: &str = "model_ladder_unavailable";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AllowanceState {
     pub delivery: Delivery,
+    #[serde(default)]
+    pub maintenance: bool,
     due_ms: Option<u64>,
     progress: Option<String>,
     progress_ms: u64,
@@ -58,6 +60,7 @@ impl AllowanceState {
     pub(crate) fn new(delivery: Delivery, now: u64, delay: u64) -> Self {
         Self {
             delivery,
+            maintenance: false,
             due_ms: Some(now.saturating_add(delay)),
             progress: None,
             progress_ms: now,
@@ -585,6 +588,29 @@ impl Controller {
         now: u64,
     ) -> Result<()> {
         state.due_ms = None;
+        if state.maintenance {
+            let incident = state.incident.as_ref().and_then(|id| {
+                snapshot
+                    .rows
+                    .iter()
+                    .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
+            });
+            if let Some(row) = incident {
+                let incident: Incident = crate::decode_stored(row.value.clone())?;
+                if !incident.needs_rob {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
+                        Ok(true) => self.probe_passed(Some(state), state.incident.as_deref())?,
+                        Ok(false) | Err(_) => self.rearm(state),
+                    }
+                }
+            }
+            self.save_allowance(state)?;
+            return Ok(());
+        }
         if let Some(id) = &state.incident
             && let Some(row) = snapshot
                 .rows
@@ -1689,7 +1715,14 @@ impl Controller {
                 .rows
                 .iter()
                 .any(|r| r.table == "watches" && r.id == row.id);
-            if !pending && !watched && !incident_open {
+            let maintenance_pending = state.maintenance
+                && snapshot.rows.iter().any(|r| {
+                    (r.table == crate::approval_delivery::REPAIRS
+                        && state.delivery.key == format!("approval-repair:{}", r.id))
+                        || (r.table == "github_message_reconciliations"
+                            && state.delivery.key == format!("github-cleanup:{}", r.id))
+                });
+            if !pending && !watched && !incident_open && !maintenance_pending {
                 if state.external_wait.is_some()
                     && !self.retire_wait(snapshot, &state.delivery, &mut commit)?
                 {
@@ -1769,6 +1802,7 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
         crate::Error::CounterExhausted(_) => "kernel_counter_headroom",
         crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
         crate::Error::ChecksPending => CHECKS_PENDING,
+        crate::Error::ApprovalAmbiguous => crate::approval_delivery::AMBIGUOUS,
         crate::Error::RedactionInfra(_) => "redaction_infra",
         crate::Error::Quota { .. } => "quota",
         crate::Error::Permanent { class, .. } => class,
@@ -1801,7 +1835,10 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
 
 pub(crate) fn outage_waiting(snapshot: &Snapshot, key: &str) -> bool {
     snapshot.rows.iter().any(|r| {
-        r.table == "incidents" && r.value["open"] == true && r.value["effect"].as_str() == Some(key)
+        r.table == "incidents"
+            && r.value["open"] == true
+            && r.value["effect"].as_str() == Some(key)
+            && r.value["signature"]["class"] != crate::approval_delivery::AMBIGUOUS
     })
 }
 

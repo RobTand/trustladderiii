@@ -529,6 +529,16 @@ fn queued_for_clock(
     config: Bootstrap,
     clock: Option<head_checks::Clock>,
 ) -> Controller {
+    // A restarted fixture waits for the old backend's claim to end, without polling.
+    let mut barrier = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .dbname(&settings.database)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    support::controller_restart::wait_for_owner_release(&mut barrier);
     let repository = config.repos[0].clone();
     let mut registry = adapters::simulation(root).unwrap();
     let mut adapter = api

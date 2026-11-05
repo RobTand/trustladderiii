@@ -56,6 +56,20 @@ impl Executor for Spy {
         let _: Result<()> = self.hit("app_login", installation.to_string());
         Some(self.name.into())
     }
+    fn reconcile_message(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        self.hit(
+            "reconcile_message",
+            format!(
+                "{}/{}#{issue}:{}",
+                repository.owner, repository.name, comment.id
+            ),
+        )
+    }
     fn prerequisite(
         &mut self,
         repository: &tl3_controller::Repository,
@@ -85,6 +99,10 @@ impl Executor for Spy {
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile", delivery.key.clone())
+    }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        let _: Result<()> = self.hit("repair_approval", delivery.key.clone());
+        Ok((Reconciliation::Pending, Some(7)))
     }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile_cancellation", delivery.key.clone())
@@ -225,6 +243,17 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.issue(&question.repository, 17).is_err());
+        let comment: tl3_github::Comment = serde_json::from_value(serde_json::json!({
+            "id": 766, "body": "message", "user": {"id": 99, "login": "app[bot]"},
+            "created_at": "2026-11-04T00:00:00Z", "updated_at": "2026-11-04T00:00:00Z",
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/17"
+        }))
+        .unwrap();
+        assert!(
+            router
+                .reconcile_message(&question.repository, 17, &comment)
+                .is_err()
+        );
         assert!(
             router
                 .prerequisite(
@@ -255,6 +284,14 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 ),
                 (
                     primary,
+                    "reconcile_message",
+                    format!(
+                        "{}/{}#17:766",
+                        question.repository.owner, question.repository.name
+                    ),
+                ),
+                (
+                    primary,
                     "prerequisite",
                     format!(
                         "{}/{}#17:Issue",
@@ -280,6 +317,13 @@ fn assert_delivery_methods(
     assert!(router.execute(d).is_err());
     assert!(router.observations(d).is_err());
     assert!(router.reconcile(d).is_err());
+    let (repaired, copies) = router.repair_approval(d).unwrap();
+    assert!(matches!(repaired, Reconciliation::Pending));
+    assert_eq!(
+        copies,
+        Some(7),
+        "the router must retain copy-count evidence"
+    );
     assert!(router.reconcile_cancellation(d).is_err());
     assert!(router.look(d).is_err());
     assert!(router.probe(d).is_err());
@@ -294,6 +338,7 @@ fn assert_delivery_methods(
             "execute",
             "observations",
             "reconcile",
+            "repair_approval",
             "reconcile_cancellation",
             "look",
             "probe",
