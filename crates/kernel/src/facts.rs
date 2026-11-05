@@ -36,6 +36,12 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        retirement_retry::selected(fact) ==> final(w).nodes@[i as int]
+            == retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).0,
+        retirement_retry::selected(fact) ==> final(w).next_question as int == old(w).next_question as int
+            + if retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement_retry::selected(fact) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         retirement::selected(fact) ==> final(w).next_question == old(w).next_question,
         retirement::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         retirement::selected(fact) ==> final(w).nodes@[i as int]
@@ -123,6 +129,12 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        retirement_retry::selected(fact) ==> final(w).nodes@[i as int]
+            == retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).0,
+        retirement_retry::selected(fact) ==> final(w).next_question as int == old(w).next_question as int
+            + if retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement_retry::selected(fact) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         retirement::selected(fact) ==> final(w).next_question == old(w).next_question,
         retirement::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         retirement::selected(fact) ==> final(w).nodes@[i as int]
@@ -139,57 +151,15 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             _ => true,
         },
 ] proof [reveal(retry_bounds); reveal(retirement::fact_frame); reveal(distance);
-    reveal(retirement::fact_node); reveal(retirement::stopped);] {
+] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
-        Fact::Priority(priority) => {
-            if !w.nodes[i].phase.is_closed() {
-                w.nodes[i].priority = priority;
-            }
-        }
-        Fact::PrClosedByPerson => {
-            let m = &mut w.nodes[i];
-            if !m.pr_open {
-                return;
-            }
-            m.pr_open = false;
-            if !m.phase.is_stopping() && !m.phase.is_closed() {
-                notice(out, i, Notice::Note(NoteKind::PrClosed));
-                enter_stopping(m, Outcome::Stopped);
-            }
-        }
+        Fact::Priority(_) | Fact::PrClosedByPerson => declaration_fact(w, i, fact, out),
         Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
-        Fact::PushByOther { head } => {
-            let m = &w.nodes[i];
-            if !m.had_pr {
-                return;
-            }
-            notice(out, i, Notice::Note(NoteKind::OutsidePush));
-            let published = matches!(
-                m.phase,
-                Phase::Publishing | Phase::Queued | Phase::Ready(Resume::Publishing)
-            );
-            if published {
-                update_recheck_head(&mut w.nodes[i], head);
-                recheck(w, i, Phase::Ready(Resume::Checking), out);
-            }
-        }
+        Fact::PushByOther { head } => outside_push(w, i, head, out),
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
-        Fact::Conflict => {
-            let m = &mut w.nodes[i];
-            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
-                set_phase(m, Phase::Rebasing);
-            }
-        }
-        Fact::UpstreamStalled => {
-            let m = &mut w.nodes[i];
-            if m.phase != Phase::Queued || m.waiting_incident {
-                return;
-            }
-            m.run_incidents = (m.run_incidents + 1).min(2);
-            let needs_rob = m.run_incidents >= 2;
-            raise_incident(w, i, needs_rob, out);
-        }
+        Fact::Conflict => declaration_fact(w, i, fact, out),
+        Fact::UpstreamStalled => upstream_stalled(w, i, out),
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
 }
@@ -327,7 +297,10 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         infra ==> final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra }),
         infra ==> final(w).next_question == old(w).next_question,
         infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);] {
+        final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).0,
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);reveal(retirement_retry::fact_result); ] {
     let m = &mut w.nodes[i];
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
@@ -419,6 +392,157 @@ fn infrastructure_retry(m: &mut Node) -> (result: Option<bool>) [
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
         Some(needs_rob)
+    }
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: original upstream-stall arm, kept in executable order.
+/// One event, no loop: saturation and incident escalation cancel the old effect.
+pub(super) fn upstream_stalled(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::UpstreamStalled),
+        final(w).next_question == old(w).next_question,
+        final(w).dependencies@ == old(w).dependencies@,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retirement::incident);] {
+    let m = &mut w.nodes[i];
+    if m.phase != Phase::Queued || m.waiting_incident {
+        return;
+    }
+    m.run_incidents = (m.run_incidents + 1).min(2);
+    let needs_rob = m.run_incidents >= 2;
+    raise_incident(w, i, needs_rob, out);
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: original outside-push arm; notice precedes head update and recheck.
+pub(super) fn outside_push(w: &mut World, i: usize, head: HeadId, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::PushByOther { head }, old(w).fail_fast, old(w).next_question).0,
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::PushByOther { head }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        final(w).dependencies@ == old(w).dependencies@,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement_retry::fact_result); reveal(retry_bounds);] {
+    let m = &w.nodes[i];
+    if !m.had_pr {
+        return;
+    }
+    notice(out, i, Notice::Note(NoteKind::OutsidePush));
+    let published = matches!(
+        m.phase,
+        Phase::Publishing | Phase::Queued | Phase::Ready(Resume::Publishing)
+    );
+    if published {
+        update_recheck_head(&mut w.nodes[i], head);
+        recheck(w, i, Phase::Ready(Resume::Checking), out);
+    }
+}
+}
+
+kernel_fn! {
+/// State-table priority, PR closure and conflict rows / #806.
+/// Original arms in executable order; split from dispatch to bound solver context.
+pub(super) fn declaration_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict),
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], fact),
+        final(w).next_question == old(w).next_question,
+        final(w).dependencies@ == old(w).dependencies@,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        fact is Priority ==> *final(out) == *old(out),
+] proof [reveal(retirement::fact_frame);] {
+    match fact {
+        Fact::Priority(_) => priority_fact(w, i, fact, out),
+        Fact::PrClosedByPerson => pr_closed_fact(w, i, fact, out),
+        Fact::Conflict => conflict_fact(w, i, fact, out),
+        _ => {},
+    }
+}
+}
+
+kernel_fn! {
+/// State-table Fact::Priority(_) / #806: unchanged arm with its exact node and output frame.
+pub(super) fn priority_fact(w: &mut World, i: usize, fact: Fact, _out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(_out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        matches!(fact, Fact::Priority(_)),
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], fact),
+        final(w).next_question == old(w).next_question,
+        final(w).dependencies@ == old(w).dependencies@,
+        retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
+        fact is Priority ==> *final(_out) == *old(_out),
+] proof [reveal(retirement::fact_frame);] {
+    if let Fact::Priority(priority) = fact {
+        kernel_proof! { reveal(retirement::fact_node); }
+        if !w.nodes[i].phase.is_closed() {
+            w.nodes[i].priority = priority;
+        }
+    }
+}
+}
+
+kernel_fn! {
+/// State-table Fact::PrClosedByPerson / #806: unchanged arm with its exact node and output frame.
+pub(super) fn pr_closed_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        matches!(fact, Fact::PrClosedByPerson),
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], fact),
+        final(w).next_question == old(w).next_question,
+        final(w).dependencies@ == old(w).dependencies@,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        fact is Priority ==> *final(out) == *old(out),
+] proof [reveal(retirement::fact_frame);] {
+    if let Fact::PrClosedByPerson = fact {
+        kernel_proof! { reveal(retirement::fact_node); }
+        let m = &mut w.nodes[i];
+        if !m.pr_open {
+            return;
+        }
+        m.pr_open = false;
+        if !m.phase.is_stopping() && !m.phase.is_closed() {
+            notice(out, i, Notice::Note(NoteKind::PrClosed));
+            enter_stopping(m, Outcome::Stopped);
+        }
+    }
+}
+}
+
+kernel_fn! {
+/// State-table Fact::Conflict / #806: unchanged arm with its exact node and output frame.
+pub(super) fn conflict_fact(w: &mut World, i: usize, fact: Fact, _out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(_out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        matches!(fact, Fact::Conflict),
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], fact),
+        final(w).next_question == old(w).next_question,
+        final(w).dependencies@ == old(w).dependencies@,
+        retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
+        fact is Priority ==> *final(_out) == *old(_out),
+] proof [reveal(retirement::fact_frame);] {
+    if let Fact::Conflict = fact {
+        kernel_proof! { reveal(retirement::fact_node); }
+        let m = &mut w.nodes[i];
+        if matches!(m.phase, Phase::Publishing | Phase::Queued) {
+            set_phase(m, Phase::Rebasing);
+        }
     }
 }
 }

@@ -33,6 +33,8 @@ mod ranks;
 use ranks::advance_node;
 #[cfg(verus_keep_ghost)]
 use ranks::*;
+mod gate_transition;
+use gate_transition::*;
 
 mod checking;
 mod events;
@@ -40,14 +42,32 @@ mod events;
 #[path = "../verus/retirement.rs"]
 mod retirement;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_gate.rs"]
+mod retirement_gate;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_gate_witness.rs"]
+mod retirement_gate_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_merge_waiting_witness.rs"]
 mod retirement_merge_waiting_witness;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_merge_witness.rs"]
 mod retirement_merge_witness;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_publishing.rs"]
+mod retirement_publishing;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry.rs"]
+mod retirement_retry;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry_witness.rs"]
+mod retirement_retry_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_terminal_fact_witness.rs"]
 mod retirement_terminal_fact_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_wide.rs"]
+mod retirement_wide;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_witness.rs"]
 mod retirement_witness;
@@ -57,8 +77,14 @@ verus! {
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
 /// #806: complete acceptance predicate, equivalent to the real checker in this domain.
 pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
+/// #806: domain covering appended requests and four-node gate constructions.
+pub closed spec fn retirement_wide_domain(w: World) -> bool { retirement_wide::domain(w) }
+/// #806: complete production consistency on the widened finite construction.
+pub closed spec fn retirement_wide_accepted(w: World) -> bool { retirement_wide::accepted(w) }
 }
 use events::*;
+mod snapshot;
+use snapshot::*;
 mod allocation;
 use allocation::*;
 mod reply_admission;
@@ -523,6 +549,7 @@ impl Credit {
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
                 final(self).withheld == old(self).withheld,
+                *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
         ] {
             self.spent += cost;
         }
@@ -832,49 +859,6 @@ pub struct World {
     /// requests too.
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub fail_fast: bool,
-}
-
-kernel_fn! {
-/// #771: an observational world snapshot, including every interned file list.
-/// Copy fields keep their values; nested vectors keep their element sequences.
-fn snapshot_world(world: &World) -> (result: World) [
-    ensures (settle_ready(*world) ==> settle_ready(result)),
-        result.nodes@ == world.nodes@, result.gates@ == world.gates@,
-        result.dependencies@ == world.dependencies@,
-        result.file_sets@.len() == world.file_sets@.len(),
-        forall|i: int| 0 <= i < world.file_sets@.len()
-            ==> result.file_sets@[i]@ == world.file_sets@[i]@,
-        result.pool_capacity == world.pool_capacity,
-        result.next_ticket == world.next_ticket, result.next_question == world.next_question,
-        result.fail_fast == world.fail_fast,
-] {
-    let mut file_sets: Vec<Vec<FileId>> = Vec::new();
-    let mut index = 0usize;
-    kernel_while! { (index < world.file_sets.len()) [
-        invariant index <= world.file_sets.len(), file_sets@.len() == index,
-            forall|i: int| 0 <= i < index ==> file_sets@[i]@ == world.file_sets@[i]@,
-        decreases world.file_sets.len() - index,
-    ] {
-        file_sets.push(world.file_sets[index].clone());
-        index += 1;
-    } }
-    let result = World {
-        nodes: world.nodes.clone(), gates: world.gates.clone(),
-        dependencies: world.dependencies.clone(), file_sets,
-        pool_capacity: world.pool_capacity, next_ticket: world.next_ticket,
-        next_question: world.next_question, fail_fast: world.fail_fast,
-    };
-    kernel_proof! {
-        if settle_ready(*world) {
-            assert forall|j: int| 0 <= j < result.nodes@.len() implies
-                footprint::valid_footprint(result, result.nodes@[j].footprint) by {
-                footprint::valid_under_table_growth(*world, result, result.nodes@[j].footprint);
-            }
-            reveal(footprint::ordered_table);
-        }
-    }
-    result
-}
 }
 
 #[cfg_attr(

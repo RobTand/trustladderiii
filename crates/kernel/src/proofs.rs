@@ -1142,13 +1142,6 @@ proof!(
 
 // Applying each event variant.
 proof!(
-    apply_new_request,
-    check_apply(Event::NewRequest {
-        repo: kani::any(),
-        priority: kani::any()
-    })
-);
-proof!(
     apply_ingest_done,
     check_apply(reply(Reply::IngestDone { size: kani::any() }))
 );
@@ -1333,18 +1326,6 @@ proof!(apply_ack_body_policy_refused, {
         );
     }
 });
-proof!(
-    apply_outside_push,
-    check_apply(fact(Fact::PushByOther { head: kani::any() }))
-);
-proof!(
-    apply_ci_failed,
-    check_apply(fact(Fact::CiFailed { infra: kani::any() }))
-);
-proof!(
-    apply_upstream_stalled,
-    check_apply(fact(Fact::UpstreamStalled))
-);
 proof!(apply_stop, check_apply(command(Command::Stop)));
 proof!(apply_pause, check_apply(command(Command::Pause)));
 proof!(apply_resume, check_apply(command(Command::Resume)));
@@ -1466,19 +1447,6 @@ proof!(
     check_witness(Phase::Closed(kani::any()))
 );
 
-proof!(apply_new_adoption, {
-    let repo = kani::any();
-    let after = check_apply(Event::NewAdoption {
-        repo,
-        head: HeadId(7),
-        priority: kani::any(),
-    });
-    kani::cover!(
-        repo.index().is_some_and(|r| r < after.gates.len()),
-        "new adoption retains the requested head"
-    );
-});
-
 fn adoption_preparation() -> World {
     let w = any_world(Some(Phase::Making));
     let n = &w.nodes[0];
@@ -1598,86 +1566,6 @@ fn gate_world_with_waiters(width: u8, first: Option<Phase>, waiting_only: bool) 
     }
     kani::assume(w.consistent());
     w
-}
-
-fn check_gate_grant(width: u8) {
-    let before = gate_world(width);
-    kani::assume(matches!(before.nodes[0].phase, Phase::Ready(_)));
-    let n = before.nodes[0];
-    let mut after = before.clone();
-    let mut out = Outbox::new();
-    let changed = advance(&mut after, 0, &mut out);
-    require_consistent(&after);
-    let holders = before.nodes.iter().filter(|n| n.holds).count();
-    kani::cover!(
-        after.nodes[0].holds && holders == usize::from(width - 1),
-        "last available slot granted"
-    );
-    kani::cover!(
-        n.ticket.is_some() && !n.paused && !slot_free(&before, 0),
-        "full gate or overlapping footprint blocks"
-    );
-    kani::cover!(
-        n.ticket.is_some() && !n.paused && slot_free(&before, 0) && !first_in_line(&before, 0),
-        "older ticket keeps its place"
-    );
-    let mut older_blocked = false;
-    for j in 1..before.nodes.len() {
-        let other = before.nodes[j];
-        if matches!(other.phase, Phase::Ready(_)) && !other.paused {
-            if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
-                if theirs < mine {
-                    older_blocked |= !slot_free(&before, j);
-                    let runnable = slot_free(&before, j) && first_in_line(&before, j);
-                    if runnable || !before.footprints_disjoint(other.footprint, n.footprint) {
-                        assert!(
-                            !after.nodes[0].holds,
-                            "a runnable or overlapping older ticket prevents this grant"
-                        );
-                    }
-                    if after.nodes[0].holds {
-                        assert!(!runnable);
-                        assert!(before.footprints_disjoint(other.footprint, n.footprint));
-                    }
-                }
-            }
-        }
-    }
-    kani::cover!(
-        after.nodes[0].holds && older_blocked,
-        "a truly disjoint younger leaf passes a file-blocked older waiter"
-    );
-    kani::cover!(
-        n.ticket.is_some()
-            && !n.paused
-            && slot_free(&before, 0)
-            && before.nodes.iter().enumerate().any(|(j, older)| {
-                j != 0
-                    && matches!(older.phase, Phase::Ready(_))
-                    && older
-                        .ticket
-                        .is_some_and(|theirs| theirs < n.ticket.unwrap())
-                    && !slot_free(&before, j)
-                    && !before.footprints_disjoint(older.footprint, n.footprint)
-            })
-            && !after.nodes[0].holds,
-        "a file-blocked older waiter prevents a younger leaf taking another needed file"
-    );
-    assert_eq!(&after.nodes[1..], &before.nodes[1..]);
-    if after.nodes[0].holds {
-        assert!(slot_free(&before, 0) && first_in_line(&before, 0) && !n.paused);
-        assert!(after.nodes[0].ticket.is_none());
-    } else {
-        assert!(!after.nodes[0].pool);
-        if n.ticket.is_some() && !n.paused {
-            assert_eq!(after.nodes[0].ticket, n.ticket);
-        }
-    }
-    if changed {
-        assert!(after.nodes[0].settle_rank() < n.settle_rank());
-    }
-    check_nodes(&before, &after);
-    check_outputs(&before, &after, &out, None);
 }
 
 fn check_gate_planning(width: u8) {
@@ -1893,8 +1781,6 @@ fn check_gate_resume_progress(width: u8) {
     kani::cover!(true, "resuming lowers the gate world's measure");
 }
 
-proof!(gate_grant_w2, check_gate_grant(2));
-proof!(gate_grant_w3, check_gate_grant(3));
 proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
 proof!(gate_progress_w2, check_gate_progress(2));
@@ -1942,50 +1828,6 @@ fn publishing_ci_transition(infra: bool) -> (World, World) {
     }
     (before, after)
 }
-
-fn check_publishing_ci_tests() {
-    let (before, after) = publishing_ci_transition(false);
-    let b = &before.nodes[0];
-    let n = &after.nodes[0];
-    assert_ne!(n.phase, Phase::Publishing);
-    // Compare the credit ladder with the existing Queued rule.
-    let mut queued = before.clone();
-    queued.nodes[0].phase = Phase::Queued;
-    queued.nodes[0].pos = 0;
-    queued.nodes[0].effect = None;
-    apply(
-        &mut queued,
-        fact(Fact::CiFailed { infra: false }),
-        &mut Outbox::new(),
-    );
-    assert_eq!(n.credit, queued.nodes[0].credit);
-    assert_eq!(n.round, queued.nodes[0].round);
-    assert_eq!(n.attempt, queued.nodes[0].attempt);
-    assert!(
-        n.round != b.round
-            || n.credit.spent > b.credit.spent
-            || n.question.is_some()
-            || n.review_stop.is_some()
-    );
-    kani::cover!(
-        before.fail_fast
-            && b.round == 1
-            && b.review_stop.is_none()
-            && n.review_stop == Some(ReviewStop::CiFailed),
-        "fail_fast stops for TL3 review"
-    );
-    kani::cover!(b.round == 0 && n.round == 1, "a free fix round");
-    kani::cover!(
-        b.round == 1 && n.credit.spent > b.credit.spent,
-        "a paid next attempt"
-    );
-    kani::cover!(
-        b.round == 1 && !b.credit.can_spend(1) && n.phase == Phase::AwaitingRob,
-        "exhausted credit asks Rob"
-    );
-    kani::cover!(b.effect.is_some(), "an enqueue is cancelled");
-}
-proof!(apply_publishing_ci_tests, check_publishing_ci_tests());
 
 // Q54: one proof per event that can reach a retry, in the phase that accepts it.
 proof!(

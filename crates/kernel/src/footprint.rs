@@ -74,6 +74,28 @@ pub(super) proof fn storage_frame(before: World, after: World, a: Footprint, b: 
 
 }
 
+/// Q30 / #806: empty file storage forces valid handles to use inline bitsets.
+/// The gate harness's original representation therefore has symmetric exclusion.
+pub(super) proof fn inline_disjoint_symmetric(world: World, a: Footprint, b: Footprint)
+    requires world.file_sets@.len() == 0, valid_footprint(world, a), valid_footprint(world, b),
+    ensures disjoint(world, a, b) == disjoint(world, b, a),
+{
+    reveal(valid_footprint); reveal(disjoint);
+    match (a.0, b.0) {
+        (Repr::Inline(left), Repr::Inline(right)) => {
+            assert(left & right == right & left) by (bit_vector);
+        },
+        _ => {},
+    }
+}
+
+/// Q30 / #806: exact inline exclusion for the original four-file witnesses.
+pub(super) proof fn inline_disjoint(world: World, a: u64, b: u64)
+    ensures disjoint(world, inline_footprint(a), inline_footprint(b)) == (a & b == 0),
+{
+    reveal(disjoint); reveal(inline_footprint);
+}
+
 /// #771: stored file lists are strictly increasing, as produced by the interner.
 pub open spec fn ordered(files: Seq<FileId>) -> bool {
     forall|i: int, j: int| 0 <= i < j < files.len() ==> files[i].0 < files[j].0

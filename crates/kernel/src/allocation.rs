@@ -229,6 +229,7 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
 ] {
     let id = w.next_question;
     w.next_question += 1;

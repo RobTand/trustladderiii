@@ -553,6 +553,27 @@ pub(super) open spec fn settle_shape(n: Node) -> bool {
         && (n.phase is Stopping && n.pos >= 4 ==> !n.holds)
 }
 
+/// Q30/Q39 / #806: expose the exact mathematical ranks to the independently
+/// gated real slot transition, without trusting an opaque rank identity.
+pub(super) proof fn rank_definitions(n: Node)
+    ensures node_distance(n) == distance(n), pending_rank(n) == {
+
+    if n.phase is Closed { 0nat }
+    else if n.waiting_incident { if n.ticket.is_some() { 1 } else { 0 } }
+    else if n.effect.is_some() { 0 }
+    else if pause_due(n) { 3 }
+    else { match current_item(n) {
+        Some(Item::Start(_) | Item::Slot) => match (n.paused, n.ticket) {
+            (false, None) => 2,
+            (true, Some(_)) => 1,
+            _ => 0,
+        },
+        _ => 0,
+    } }
+    },
+{
+}
+
 /// #771: exact enabling condition of the executable local dispatcher.
 /// This observes the agenda and scheduler decisions; it defines no replacement
 /// transition relation and is checked against every production case body.
@@ -789,42 +810,6 @@ kernel_fn! {
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    fn advance_slot(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
-        requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
-            !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Slot),
-        ensures (!result ==> final(_out).len == old(_out).len),
-            advance_post(*old(node), *final(node),
-            *old(next_ticket), *final(next_ticket), result),
-            result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
-        let n = *node;
-        let Phase::Ready(r) = n.phase else {
-            return false;
-        };
-        if n.paused {
-            if n.ticket.is_some() {
-                node.ticket = None;
-                return true;
-            }
-            return false;
-        }
-        if n.ticket.is_none() {
-            take_ticket_node(node, next_ticket);
-            return true;
-        }
-        if context.slot {
-            let m = &mut *node;
-            m.holds = true;
-            set_phase(m, r.phase());
-            return true;
-        }
-        false
-    }
-}
-
-kernel_fn! {
-    /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_release(node: &mut Node, _next_ticket: &mut u64,
         _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
@@ -902,6 +887,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
+            (old(node).phase == Phase::Ready(Resume::Making) && old(node).pos == 0 && !old(node).waiting_incident && old(node).effect.is_none()) ==> {
+                *final(node) == retirement_gate::slot_node(*old(node), *old(next_ticket), context.slot)
+                    && *final(next_ticket) == retirement_gate::slot_ticket(*old(node), *old(next_ticket))
+                    && *final(out) == *old(out)
+                    && result == retirement_gate::slot_changed(*old(node), context.slot)
+            },
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {

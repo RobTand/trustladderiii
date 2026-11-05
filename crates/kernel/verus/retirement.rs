@@ -117,7 +117,7 @@ verus! {
 pub(super) open spec fn selected(fact: Fact) -> bool {
     matches!(fact, Fact::IncidentCleared { .. } | Fact::PrDequeuedByPerson
         | Fact::CiFailed { infra: true } | Fact::PrMerged { .. }
-        | Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict)
+        | Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict | Fact::UpstreamStalled)
 }
 
 /// State-table fact rows: complete node update, checked against the real handler.
@@ -155,6 +155,13 @@ pub(super) open spec fn fact_node(n: Node, fact: Fact) -> Node {
                 let closed_pr = Node { pr_open: false, ..n };
                 if n.phase is Stopping || n.phase is Closed { closed_pr }
                 else { stopped(closed_pr, Outcome::Stopped) }
+            }
+        },
+        Fact::UpstreamStalled => {
+            if n.phase != Phase::Queued || n.waiting_incident { n }
+            else {
+                let count = if n.run_incidents < 2 { (n.run_incidents + 1) as u8 } else { 2u8 };
+                incident(Node { run_incidents: count, ..n }, count >= 2)
             }
         },
         Fact::Conflict => {
@@ -217,7 +224,7 @@ pub(super) proof fn node_frame(before: World, after: World, n: Node)
 /// State-table fact rows / #806: all per-node consistency and check_nodes rules.
 /// One event, no unwind: the real handler has no loop. Counters need only one increment.
 pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
-    requires node_rules(w, n), selected(fact), fact_pre(n, fact), node_headroom(n),
+    requires node_rules(w, n), selected(fact), node_headroom(n),
     ensures node_rules(w, fact_node(n, fact)),
         fact_node(n, fact).proposed == n.proposed,
         n.adopted ==> fact_node(n, fact).adopted,
@@ -245,7 +252,7 @@ pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
         Fact::PrDequeuedByPerson => {},
         Fact::CiFailed { infra: true } => {},
         Fact::PrMerged { .. } => {},
-        Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict => {},
+        Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict | Fact::UpstreamStalled => {},
         _ => {},
     }
 }

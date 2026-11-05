@@ -56,6 +56,7 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd, final(m).review_stop == Some(step),
+        *final(m) == retirement::stopped(Node { review_stop: Some(step), ..*old(m) }, Outcome::Stopped),
 ] {
     m.review_stop = Some(step);
     enter_stopping(m, Outcome::Stopped);
@@ -73,7 +74,10 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+        final(w).nodes@[i as int] == retirement_retry::failed(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
+        final(w).next_question as int == old(w).next_question as int + if old(w).nodes@[i as int].round != 0 && retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds); reveal(retirement_retry::failed); ] {
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
@@ -98,46 +102,18 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+        final(w).nodes@[i as int] == retirement_retry::rung(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds); reveal(retirement_retry::rung); ] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
         stop_for_review(m, step);
     } else if m.attempt < 3 {
-        m.attempt += 1;
-        m.review_restarted = false;
-        m.round = 0;
-        if m.credit.can_spend(1) {
-            m.credit.spend(1);
-            set_phase(m, Phase::Making);
-        } else {
-            ask_rob(
-                w,
-                i,
-                QKind::OutOfCredit,
-                Cont::Ready(Resume::Making),
-                1,
-                out,
-            );
-        }
+        next_attempt(w, i, step, out);
     } else if !m.replanned {
-        m.replanned = true;
-        m.holds = false;
-        if m.credit.can_spend(1) {
-            m.credit.spend(1);
-            m.plan_retries = 0;
-            set_phase(m, Phase::Planning { must_split: false });
-            notice(out, i, Notice::Note(NoteKind::Replanned));
-        } else {
-            ask_rob(
-                w,
-                i,
-                QKind::OutOfCredit,
-                Cont::Planning { must_split: false },
-                1,
-                out,
-            );
-        }
+        replan_after_fix(w, i, step, out);
     } else {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
     }
@@ -225,19 +201,149 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
+        (target == Phase::Ready(Resume::Checking) && retirement_retry::published_source(old(w).nodes@[i as int]))
+            ==> final(w).nodes@[i as int]
+            == retirement_retry::rechecked(old(w).nodes@[i as int], target, old(w).next_question),
+        final(w).next_question as int == old(w).next_question as int
+            + if old(w).nodes@[i as int].rechecks >= FREE_RECHECKS && !retirement_retry::can_pay(old(w).nodes@[i as int]) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+ ] proof [reveal(retry_bounds);] {
     kernel_snapshot! { before_recheck = *w }
+    let free = increment_rechecks(&mut w.nodes[i]);
+    kernel_proof! {
+        reveal(distance);
+        assert(distance(w.nodes@[i as int]) == distance(before_recheck@.nodes@[i as int]));
+    }
+    recheck_transition(w, i, target, free, out);
+    kernel_proof! {
+        reveal(retirement_retry::rechecked);
+    }
+}
+}
+
+kernel_fn! {
+/// Q54 / #806: unchanged ladder branch, separately verified over the real writes.
+pub(super) fn next_attempt(w: &mut World, i: usize, _step: ReviewStop, out: &mut Outbox) -> (result: ()) [
+    requires old(w).nodes@[i as int].attempt < 3,
+        i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).nodes@[i as int] == retirement_retry::rung(old(w).nodes@[i as int], false, old(w).next_question, _step),
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::rung_asks(old(w).nodes@[i as int], false) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before = *w }
     let m = &mut w.nodes[i];
+    m.attempt += 1;
+    m.review_restarted = false;
+    m.round = 0;
+    if m.credit.can_spend(1) {
+        m.credit.spend(1);
+        set_phase(m, Phase::Making);
+    } else {
+        ask_rob(
+            w,
+            i,
+            QKind::OutOfCredit,
+            Cont::Ready(Resume::Making),
+            1,
+            out,
+        );
+    }
+
+    kernel_proof! {
+        assert(w.nodes@[i as int] == retirement_retry::rung(before@.nodes@[i as int], false, before@.next_question, _step)) by {
+            reveal(retirement_retry::rung);
+        }
+    }
+
+}
+}
+
+kernel_fn! {
+/// Q54 / #806: unchanged ladder branch, separately verified over the real writes.
+pub(super) fn replan_after_fix(w: &mut World, i: usize, _step: ReviewStop, out: &mut Outbox) -> (result: ()) [
+    requires old(w).nodes@[i as int].attempt >= 3 && !old(w).nodes@[i as int].replanned,
+        i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).nodes@[i as int] == retirement_retry::rung(old(w).nodes@[i as int], false, old(w).next_question, _step),
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::rung_asks(old(w).nodes@[i as int], false) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before = *w }
+    let m = &mut w.nodes[i];
+    m.replanned = true;
+    m.holds = false;
+    if m.credit.can_spend(1) {
+        m.credit.spend(1);
+        m.plan_retries = 0;
+        set_phase(m, Phase::Planning { must_split: false });
+        notice(out, i, Notice::Note(NoteKind::Replanned));
+    } else {
+        ask_rob(
+            w,
+            i,
+            QKind::OutOfCredit,
+            Cont::Planning { must_split: false },
+            1,
+            out,
+        );
+    }
+
+    kernel_proof! {
+        assert(w.nodes@[i as int] == retirement_retry::rung(before@.nodes@[i as int], false, before@.next_question, _step)) by {
+            reveal(retirement_retry::rung);
+        }
+    }
+
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: original saturated counter and free-allowance comparison.
+pub(super) fn increment_rechecks(m: &mut Node) -> (result: bool) [
+    ensures *final(m) == (Node { rechecks: if old(m).rechecks < 255 { (old(m).rechecks + 1) as u8 } else { 255u8 }, ..*old(m) }),
+        result == (final(m).rechecks <= FREE_RECHECKS),
+        result == (old(m).rechecks < FREE_RECHECKS),
+] {
     m.rechecks = m.rechecks.saturating_add(1);
-    let free = m.rechecks <= FREE_RECHECKS;
+    m.rechecks <= FREE_RECHECKS
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: original recheck branch after its counter increment, preserving call order.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(60))]
+pub(super) fn recheck_transition(w: &mut World, i: usize, target: Phase, free: bool,
+    out: &mut Outbox) -> (result: ()) [
+    requires free == (old(w).nodes@[i as int].rechecks <= FREE_RECHECKS), !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Rebasing
+            && target == Phase::Checking
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        matches!(target, Phase::Checking | Phase::Ready(Resume::Checking)) ==> final(w).nodes@[i as int] == retirement_retry::recheck_core(old(w).nodes@[i as int], target, free, old(w).next_question),
+        final(w).next_question as int == old(w).next_question as int
+            + if !free && !retirement_retry::can_pay(old(w).nodes@[i as int]) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before = *w }
+    let m = &mut w.nodes[i];
     if free || m.credit.can_spend(1) {
-        if !free {
-            m.credit.spend(1);
-        }
-        if !target.holding() {
-            m.holds = false;
-        }
-        set_phase(m, target);
+        continue_recheck(m, target, free);
     } else {
         ask_rob(
             w,
@@ -252,16 +358,88 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
             out,
         );
     }
-    kernel_proof! {
-        assert(w.nodes@.len() == before_recheck@.nodes@.len());
-        assert forall|j: int| 0 <= j < before_recheck@.nodes@.len() && j != i implies
-            w.nodes@[j] == before_recheck@.nodes@[j] by {}
-        assert(w.nodes@[i as int].generation as int
-            <= before_recheck@.nodes@[i as int].generation as int + 1);
-        assert(w.nodes@[i as int].credit.spent as int
-            <= before_recheck@.nodes@[i as int].credit.spent as int + 1);
-        assert(w.next_question as int <= before_recheck@.next_question as int + 1);
-    }
 
+    kernel_proof! {
+        if matches!(target, Phase::Checking | Phase::Ready(Resume::Checking)) {
+        assert(w.nodes@[i as int] == retirement_retry::recheck_core(before@.nodes@[i as int], target, free, before@.next_question)) by {
+            reveal(retirement_retry::recheck_core); reveal(retirement_retry::continued);
+        }
+        }
+    }
+    kernel_proof! { if ordinary_await(before@.nodes@[i as int]) && before@.nodes@[i as int].phase == Phase::Rebasing && target == Phase::Checking {
+        retirement_retry::recheck_distance(before@.nodes@[i as int], target, free, before@.next_question);
+    } }
+
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: the real paid/free continuation writes. The complete field frame
+/// keeps the exact update tractable without a whole-Node equality query.
+pub(super) fn continue_recheck(m: &mut Node, target: Phase, free: bool) -> (result: ()) [
+    requires !(target is Closed), old(m).generation < u64::MAX, old(m).credit.spent < u64::MAX,
+    ensures final(m).phase == (target),
+        final(m).pos == (0),
+        final(m).repo == (old(m).repo),
+        final(m).footprint == (old(m).footprint),
+        final(m).generation == ((old(m).generation + 1) as u64),
+        final(m).next_seq == (old(m).next_seq),
+        final(m).effect == (match old(m).effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None }),
+        final(m).run == (old(m).run),
+        final(m).job == (old(m).job),
+        final(m).pool == (old(m).pool),
+        final(m).ticket == (None),
+        final(m).holds == (if holding(target) { old(m).holds } else { false }),
+        final(m).paused == (old(m).paused),
+        final(m).last_cmd == (old(m).last_cmd),
+        final(m).question == (old(m).question),
+        final(m).attempt == (old(m).attempt),
+        final(m).round == (old(m).round),
+        final(m).replanned == (old(m).replanned),
+        final(m).plan_retries == (old(m).plan_retries),
+        final(m).audit_rounds == (old(m).audit_rounds),
+        final(m).early_end == (old(m).early_end),
+        final(m).run_failures == (old(m).run_failures),
+        final(m).run_incidents == (old(m).run_incidents),
+        final(m).fx_failures == (old(m).fx_failures),
+        final(m).fx_incidents == (old(m).fx_incidents),
+        final(m).waiting_incident == (old(m).waiting_incident),
+        final(m).incident_needs_rob == (old(m).incident_needs_rob),
+        final(m).proposed == (old(m).proposed),
+        final(m).adopted == (old(m).adopted),
+        final(m).head == (old(m).head),
+        final(m).checked == (old(m).checked),
+        final(m).approved == (old(m).approved),
+        final(m).merged == (old(m).merged),
+        final(m).pr_open == (old(m).pr_open),
+        final(m).had_pr == (old(m).had_pr),
+        final(m).worktree == (old(m).worktree),
+        final(m).rechecks == (old(m).rechecks),
+        final(m).review_restarted == (old(m).review_restarted),
+        final(m).credit == (if free { old(m).credit } else { Credit { spent: (old(m).credit.spent + 1) as u64, ..old(m).credit } }),
+        final(m).priority == (old(m).priority),
+        final(m).review_stop == (old(m).review_stop),
+        final(m).planning_started == (old(m).planning_started),
+        final(m).waiting_prerequisite == (old(m).waiting_prerequisite),
+] {
+    if !free { m.credit.spend(1); }
+    finish_recheck(m, target);
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: the existing hold release immediately followed by phase change.
+/// Separate from the optional debit to keep independent branch queries small.
+pub(super) fn finish_recheck(m: &mut Node, target: Phase) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+    ensures *final(m) == (Node {
+        holds: if holding(target) { old(m).holds } else { false },
+        generation: (old(m).generation + 1) as u64, phase: target, pos: 0, ticket: None,
+        effect: match old(m).effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None },
+        ..*old(m)
+    }),
+] {
+    if !target.holding() { m.holds = false; }
+    set_phase(m, target);
 }
 }
