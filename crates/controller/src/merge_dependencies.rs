@@ -599,16 +599,13 @@ impl Controller {
         fact: ExternalFact,
         commit: &mut Commit,
     ) -> Result<()> {
-        if fact.number == 0
-            || !self
-                .bootstrap
-                .repos
-                .iter()
-                .any(|repo| same_repository(repo, &fact.repository))
-        {
-            return Err(Error::Invalid(
-                "merge prerequisite fact is outside served repositories",
-            ));
+        // App installations also deliver updates for operations-only repositories.
+        // Ignore queued updates from those repositories, including older inbox rows.
+        if !self.bootstrap.repos.contains(&fact.repository) {
+            return Ok(());
+        }
+        if fact.number == 0 {
+            return Err(Error::PrerequisiteNumber);
         }
         let before = world.clone();
         let fact = retain_fact(snapshot, commit, fact)?;
@@ -1017,6 +1014,80 @@ mod tests {
                 number,
                 status,
             }),
+        );
+    }
+
+    #[test]
+    fn queued_unserved_prerequisites_are_consumed_without_incidents() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "unserved_prerequisite");
+        for (index, repository) in [
+            Repository {
+                name: "operations".into(),
+                ..repo.clone()
+            },
+            Repository {
+                installation: repo.installation + 1,
+                ..repo.clone()
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            c.observe(
+                &format!("unserved-{index}"),
+                Observation::Prerequisite(ExternalFact {
+                    repository,
+                    kind: PrerequisiteKind::Issue,
+                    number: 810,
+                    status: DependencyStatus::Delivered,
+                }),
+            )
+            .unwrap();
+            assert!(c.drive_once().unwrap());
+        }
+        let snapshot = c.snapshot().unwrap();
+        assert!(!snapshot.rows.iter().any(|r| r.table == "inbox"));
+        assert!(
+            !snapshot.rows.iter().any(|r| r.table == "incidents"),
+            "unserved updates raised setup incidents"
+        );
+        assert!(
+            !snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "prerequisite_facts")
+        );
+        assert!(c.world().unwrap().nodes.is_empty());
+    }
+
+    #[test]
+    fn malformed_prerequisites_name_the_missing_number() {
+        let mut db = Database::start();
+        let (_repo, mut c, repo) = fixture(&mut db, "malformed_prerequisite");
+        c.observe(
+            "missing-number",
+            Observation::Prerequisite(ExternalFact {
+                repository: repo,
+                kind: PrerequisiteKind::Issue,
+                number: 0,
+                status: DependencyStatus::Delivered,
+            }),
+        )
+        .unwrap();
+        assert!(c.drive_once().unwrap());
+        let snapshot = c.snapshot().unwrap();
+        let incident = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "incidents")
+            .unwrap();
+        assert_eq!(incident.value["signature"]["class"], "prerequisite_number");
+        assert!(
+            incident.value["summary"]
+                .as_str()
+                .unwrap()
+                .contains("missing its issue or pull request number")
         );
     }
 

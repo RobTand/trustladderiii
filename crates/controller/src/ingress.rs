@@ -569,7 +569,9 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 installation: context.installation_id,
             };
             let mut inputs = vec![Input::IssueChanged(issue_change(id, &context, &issue))];
-            inputs.extend(prerequisite_issue(&repo, &issue));
+            if bootstrap.repos.contains(&repo) {
+                inputs.extend(prerequisite_issue(&repo, &issue));
+            }
             inputs
         }
         Some(
@@ -589,7 +591,11 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 name: context.repository.name,
                 installation: context.installation_id,
             };
-            prerequisite_pr(&repo, &pull_request).into_iter().collect()
+            if bootstrap.repos.contains(&repo) {
+                prerequisite_pr(&repo, &pull_request).into_iter().collect()
+            } else {
+                vec![]
+            }
         }
         Some(Event::CommentCreated {
             context,
@@ -1109,6 +1115,41 @@ mod priority_tests {
                 if issue.labels == ["P1", "tl3"] && issue.label == "tl3")),
             "intake sees every label"
         );
+    }
+
+    #[test]
+    fn unserved_prerequisite_webhooks_are_ignored() {
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let bootstrap = Bootstrap::from_config(&config).unwrap();
+        let served = bootstrap.repos[0].clone();
+        for (name, installation) in [
+            ("operations", served.installation),
+            (served.name.as_str(), served.installation + 1),
+        ] {
+            let context = json!({"id":9,"name":name,"owner":{"id":3,"login":served.owner}});
+            for event in ["issues", "pull_request"] {
+                let mut body = json!({"action":"closed", "repository":context, "installation":{"id":installation}, "sender":{"id":7,"login":"requester"}});
+                if event == "issues" {
+                    body["issue"] = json!({"number":42,"title":"Completed","body":null,"state":"closed","state_reason":"completed","updated_at":"2026-11-03T23:00:00Z"});
+                } else {
+                    body["pull_request"] = json!({"number":42,"title":"Merged","user":{"id":7,"login":"requester"},"state":"closed","merged":true,"merged_at":"2026-11-03T23:00:00Z","updated_at":"2026-11-03T23:00:00Z","head":{"sha":"head","ref":"branch"},"base":{"sha":"base","ref":"main"}});
+                }
+                let delivery =
+                    webhook::parse("unserved", event, body.to_string().as_bytes()).unwrap();
+                assert!(
+                    inputs("unserved", delivery.event, &bootstrap)
+                        .iter()
+                        .all(|input| !matches!(
+                            input,
+                            Input::Observation {
+                                observation: Observation::Prerequisite(_),
+                                ..
+                            }
+                        )),
+                    "{event} from {name}/{installation} became a prerequisite"
+                );
+            }
+        }
     }
 
     #[test]

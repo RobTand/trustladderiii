@@ -12,3 +12,15 @@ tl3_py_test(
     srcs = ["test_queue_pr.py"],
     deps = [":queue_pr"],
 )
+
+tl3_py_test(
+    name = "test_recover_setup_incidents",
+    srcs = ["test_recover_setup_incidents.py"],
+    deps = [":recover_setup_incidents"],
+)
+
+py_binary(
+    name = "recover_setup_incidents",
+    srcs = ["recover_setup_incidents.py"],
+    visibility = ["//visibility:public"],
+)
