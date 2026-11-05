@@ -130,6 +130,8 @@ fn old_and_typed_request_corpus_is_byte_identical() {
                 "tests":[{"test":"test_a.py","base":"passed","head":"passed","pre_existing":false,"passed":true}]
             }]}) });
         let materials = json!({
+            "ingest":{"repo":{"readme":text,"file_list":["README.md"]}},
+            "audit":{"repo":{"readme":text,"file_list":["README.md"]}},
             "base_checkout":{"repository":repo.path,"commit":repo.base},
             "issue":{"number":42,"title":text,"body":text,"author":"requester","comments":[]},
             "repo":{"readme":text,"file_list":["README.md"]},

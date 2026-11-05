@@ -187,14 +187,17 @@
       "properties": {
         "allowed_scope": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
         },
         "answer": {
+          "minLength": 1,
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "type": "string"
         },
         "origin_request_version": {
@@ -207,6 +210,7 @@
         },
         "restrictions": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
@@ -232,10 +236,8 @@
           ]
         },
         "supersession_reason": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [

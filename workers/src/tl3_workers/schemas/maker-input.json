@@ -32,14 +32,17 @@
       "properties": {
         "allowed_scope": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
         },
         "answer": {
+          "minLength": 1,
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "type": "string"
         },
         "origin_request_version": {
@@ -52,6 +55,7 @@
         },
         "restrictions": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
@@ -77,10 +81,8 @@
           ]
         },
         "supersession_reason": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
@@ -151,6 +153,8 @@
         },
         "goal_ids": {
           "items": {
+            "minLength": 1,
+            "pattern": "\\S",
             "type": "string"
           },
           "type": "array",
@@ -166,6 +170,8 @@
         },
         "outside_paths": {
           "items": {
+            "minLength": 1,
+            "pattern": "\\S",
             "type": "string"
           },
           "maxItems": 100,
@@ -332,6 +338,7 @@
         "generated_files": {
           "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance.",
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
@@ -433,6 +440,9 @@
       "properties": {
         "body_lines": {
           "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "pattern": "^[^\\r\\n]+$",
             "type": "string"
           },
           "type": "array",
@@ -527,6 +537,8 @@
         },
         "files": {
           "items": {
+            "minLength": 1,
+            "pattern": "\\S",
             "type": "string"
           },
           "minItems": 1,
@@ -551,6 +563,8 @@
         },
         "goal_ids": {
           "items": {
+            "minLength": 1,
+            "pattern": "\\S",
             "type": "string"
           },
           "minItems": 1,
@@ -570,6 +584,8 @@
         },
         "tests": {
           "items": {
+            "minLength": 1,
+            "pattern": "\\S",
             "type": "string"
           },
           "minItems": 1,
@@ -733,6 +749,7 @@
     },
     "protected_paths": {
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "type": "array"

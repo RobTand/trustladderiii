@@ -255,6 +255,9 @@
       "properties": {
         "body_lines": {
           "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "pattern": "^[^\\r\\n]+$",
             "type": "string"
           },
           "type": "array",
@@ -696,6 +699,7 @@
         },
         "tests": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "minItems": 1,
@@ -1363,6 +1367,7 @@
     },
     "edited_selected_tests": {
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "minItems": 1,
@@ -1424,6 +1429,7 @@
     "unresolved_displaced_failures": {
       "description": "Historical selected failures without verified complete-unit head outcomes. These remain unresolved even when no test file was edited.",
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "minItems": 1,

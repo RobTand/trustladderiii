@@ -32,14 +32,17 @@
       "properties": {
         "allowed_scope": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
         },
         "answer": {
+          "minLength": 1,
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "type": "string"
         },
         "origin_request_version": {
@@ -52,6 +55,7 @@
         },
         "restrictions": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
@@ -77,10 +81,8 @@
           ]
         },
         "supersession_reason": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
@@ -109,6 +111,7 @@
         "generated_files": {
           "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance.",
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
@@ -277,6 +280,7 @@
         },
         "file_list": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "maxItems": 10000,
@@ -304,6 +308,7 @@
   "properties": {
     "audit_objections": {
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "type": "array"
@@ -335,6 +340,7 @@
     "protected_paths": {
       "description": "Effective defaults, global and repository protected-path patterns. These edits belong outside TL3.",
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "type": "array",

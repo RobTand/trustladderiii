@@ -32,14 +32,17 @@
       "properties": {
         "allowed_scope": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
         },
         "answer": {
+          "minLength": 1,
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "type": "string"
         },
         "origin_request_version": {
@@ -52,6 +55,7 @@
         },
         "restrictions": {
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
@@ -77,10 +81,8 @@
           ]
         },
         "supersession_reason": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
@@ -109,6 +111,7 @@
         "generated_files": {
           "description": "Repository-relative generated-output globs. ** matches zero or more path segments. Generated text costs a fixed regeneration allowance.",
           "items": {
+            "minLength": 1,
             "type": "string"
           },
           "type": "array"
@@ -223,6 +226,7 @@
     "always_tests": {
       "description": "Repo-wide rule test files or node IDs that the harness runs as regression checks in every round. Follow these rules when planning test additions.",
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "type": "array"
@@ -243,6 +247,7 @@
     "findings": {
       "description": "Everything learned before a re-plan, including failed checks and review findings. Empty for initial planning.",
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "type": "array"
@@ -279,6 +284,7 @@
     "protected_paths": {
       "description": "Controller-supplied repo-relative glob patterns. A leaf or split cannot declare matching files. ** matches zero or more path segments.",
       "items": {
+        "minLength": 1,
         "type": "string"
       },
       "type": "array"
