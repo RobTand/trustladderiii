@@ -684,6 +684,10 @@ pub(crate) mod contract_vectors {
     fn parse_vector(path: &std::path::Path, version: &str, prefix: &str) -> Parsed {
         let name = format!("{prefix}{}", path.file_stem().unwrap().to_string_lossy());
         let vector: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        parse_value(name, vector, version)
+    }
+
+    fn parse_value(name: String, vector: Value, version: &str) -> Parsed {
         let request = &vector["request"];
         let mut run =
             json!({"repository":"/served", "base_sha":request["base"], "plan":request["plan"]});
@@ -729,6 +733,60 @@ pub(crate) mod contract_vectors {
             results,
             failed_tests,
         }
+    }
+
+    fn message_case(message: Option<&str>) -> Parsed {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../harness/test-vectors/contracts/head-failure.json");
+        let mut vector: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let test = vector["results"][0]["tests"][0].as_object_mut().unwrap();
+        match message {
+            None => {
+                test.remove("message");
+            }
+            Some(message) => {
+                test.insert("message".into(), json!(message));
+            }
+        }
+        parse_value("message-presence".into(), vector, "tl3.checks.v1")
+    }
+
+    /// #819: absence and empty text keep the same failure diagnostic and judgement.
+    #[test]
+    fn absent_and_empty_messages_keep_failure_diagnostics_and_judgements() {
+        let absent = message_case(None);
+        let empty = message_case(Some(""));
+        assert!(absent.report);
+        assert!(!absent.pass);
+        assert_eq!((absent.report, absent.pass), (empty.report, empty.pass));
+        assert_eq!(
+            serde_json::to_value(&absent.failed_tests).unwrap(),
+            serde_json::to_value(&empty.failed_tests).unwrap()
+        );
+        assert_eq!(
+            absent.failed_tests[0].message,
+            "The harness rejected this named test; no failure message was supplied."
+        );
+        assert_eq!(
+            message_case(Some("failure details")).failed_tests[0].message,
+            "failure details"
+        );
+    }
+
+    /// #819: stored rows retain the empty default the previous parser materialized.
+    #[test]
+    fn absent_and_empty_messages_keep_identical_stored_result_rows() {
+        let absent = message_case(None);
+        let empty = message_case(Some(""));
+        assert_eq!(
+            serde_json::to_string(&absent.results).unwrap(),
+            serde_json::to_string(&empty.results).unwrap()
+        );
+        assert_eq!(absent.results[0]["tests"][0]["message"], "");
+        assert_eq!(
+            message_case(Some("failure details")).results[0]["tests"][0]["message"],
+            "failure details"
+        );
     }
 
     #[test]
