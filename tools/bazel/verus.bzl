@@ -377,9 +377,12 @@ def verus_proofs():
     if native.package_name() == "crates/harness-core":
         verus_test(
             name = "verus_red_match",
-            src = "verus/red_match.rs",
+            src = "//crates/harness-core/verus:red_match.rs",
             srcs = ["src/red_match.rs"],
-            specs = native.glob(["verus/red_match*.rs"]),
+            specs = [
+                "//crates/harness-core/verus:red_match.rs",
+                "//crates/harness-core/verus:red_match_spec.rs",
+            ],
             expected_obligations = 24,
             tags = ["rust", "verus"],
             size = "small",

@@ -373,7 +373,7 @@
           "FILE:@@//crates/controller/Cargo.toml 29e3c7c85d73423d039c1cc00d4e10436e8ac54d6e10525593c5394bbb67740f",
           "FILE:@@//crates/controller-core/Cargo.toml e46693ef1baf5e463f0448d904cf35063940893def24df626050dd80d73df17f",
           "FILE:@@//crates/github/Cargo.toml 57cb058f659b9a088094fabf4b1165f2649d2b2aa37e7d858e8d94c70d31dcb5",
-          "FILE:@@//crates/harness-core/Cargo.toml 52329cd443b84ff2970371437e3d222c22dc3afe88d366d315a30ff8c983d39b",
+          "FILE:@@//crates/harness-core/Cargo.toml d44a8729b4bbe494b0acee6e6f1752c1a6390bdfae433bf4b243bad3dd2c1135",
           "FILE:@@//crates/kernel/Cargo.toml 66645e760a8a02fae42c17c5e9be8d9cad35617dec9199288bef3b4b511fc981",
           "FILE:@@//crates/mergify/Cargo.toml 445220ad6d0b90e933d139a43426e0b9f12f3b7737e960944c65349538df8a6b",
           "FILE:@@//crates/prismabuild/Cargo.toml d94963a8d312dfcf7d6d89ac61b899cb9c940d162357220bb86ca9f9ca2b3207",
