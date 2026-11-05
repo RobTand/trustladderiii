@@ -44,6 +44,12 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             && final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
             && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
             && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
+        (old(w).nodes@.len() > 0 && old(w).nodes@[0].phase == Phase::Unplanned
+            && progress_unplanned::obstructed(old(w).nodes@[0])
+            && event == progress_unplanned::outside_event(old(w).nodes@[0]))
+            ==> final(w).nodes@.len() == old(w).nodes@.len()
+                && (forall|j: int| 1 <= j < old(w).nodes@.len()
+                    ==> final(w).nodes@[j] == old(w).nodes@[j]),
         match event {
             Event::Fact { node, fact } => retirement::selected(fact)
                 && node.0 < old(w).nodes@.len() ==> {

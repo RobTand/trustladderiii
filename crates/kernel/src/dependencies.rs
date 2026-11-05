@@ -23,6 +23,27 @@ pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> boo
         ==> !dependencies[i].rejected && dependencies[i].status == DependencyStatus::Delivered
 }
 
+/// #693 / #806: blocked credit is unavailable or has zero ledger balance.
+#[verifier::opaque]
+pub(super) open spec fn zero_credit(credit: Credit) -> bool {
+    credit.withheld || credit.start as int + credit.earned as int + credit.added as int == credit.spent as int
+}
+
+/// #693 / #806: expose the existing universal delivery predicate to ported proofs.
+pub(super) proof fn delivered_definition(edges: Seq<Dependency>, node: NodeId)
+    ensures delivered(edges, node) == (forall|i: int| 0 <= i < edges.len() && edges[i].node == node
+        ==> !edges[i].rejected && edges[i].status == DependencyStatus::Delivered),
+{
+    reveal(delivered);
+}
+
+/// #693 / #806: external declarations and rejected cycles have no active graph edge.
+pub closed spec fn no_active_graph_edges(w: World) -> bool {
+    forall|i: int| 0 <= i < w.dependencies@.len() ==>
+        w.dependencies@[i].rejected || w.dependencies@[i].status != DependencyStatus::Pending
+            || w.dependencies@[i].target.request.is_none()
+}
+
 /// #771: public ghost view of the private executable prerequisite table.
 pub closed spec fn prerequisites_delivered(world: World, node: NodeId) -> bool {
     delivered(world.dependencies@, node)
@@ -70,7 +91,8 @@ pub(super) open spec fn dependency_checked(world: World, dependency: Dependency)
             && !prerequisites_delivered(world, dependency.node) ==>
                 !world.nodes@[dependency.node.0 as int].holds && !world.nodes@[dependency.node.0 as int].pool
                     && world.nodes@[dependency.node.0 as int].ticket.is_none()
-                    && world.nodes@[dependency.node.0 as int].run.is_none())
+                    && world.nodes@[dependency.node.0 as int].run.is_none()
+                    && zero_credit(world.nodes@[dependency.node.0 as int].credit))
 }
 
 /// #693 / #771: executable prerequisite checks imply this progress projection.
@@ -376,7 +398,8 @@ impl World {
     #[allow(clippy::collapsible_if)]
     pub fn dependency_graph_acyclic(&self) -> (result: bool) [
         requires edges_indexable(*self),
-    ] proof [reveal(edges_indexable);] {
+        ensures no_active_graph_edges(*self) ==> result,
+    ] proof [reveal(edges_indexable); reveal(no_active_graph_edges);] {
         let mut index = 0usize;
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), edges_indexable(*self),
@@ -402,10 +425,11 @@ impl World {
     pub(super) fn check_dependencies(&self) -> (result: Result<(), Broken>) [
         requires self.nodes@.len() <= u64::MAX as int,
         ensures result.is_ok() ==> dependencies_checked(*self),
+            progress_unplanned_witness::fixture_edges(*self) ==> result.is_ok(),
             (self.dependencies@.len() == 0
                 && forall|j: int| 0 <= j < self.nodes@.len() ==> !self.nodes@[j].credit.withheld)
                 ==> result.is_ok(),
-    ] proof [reveal(dependencies_checked); reveal(edges_indexable);] {
+    ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges); reveal(zero_credit);] {
         let mut node_index = 0usize;
         kernel_while! { (node_index < self.nodes.len()) [
             invariant node_index <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
@@ -413,10 +437,26 @@ impl World {
         ] {
             let node = &self.nodes[node_index];
             if node.credit.withheld {
+                kernel_proof! {
+                    if progress_unplanned_witness::fixture_edges(*self) {
+                        assert(node_index == 0);
+                        assert(self.dependencies@.len() > 0);
+                        assert(self.dependencies@[0].node == NodeId(0));
+                    }
+                }
                 let mut found = false;
                 let mut edge = 0usize;
                 kernel_while! { (edge < self.dependencies.len()) [
                     invariant edge <= self.dependencies.len(),
+                        progress_unplanned_witness::fixture_edges(*self)
+                            ==> node_index == 0 && self.dependencies@.len() > 0,
+                        !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
+                        !found ==> forall|j: int| 0 <= j < edge
+                            ==> self.dependencies@[j].node != NodeId(node_index as u64),
+                    ensures found || edge == self.dependencies.len(),
+                        progress_unplanned_witness::fixture_edges(*self)
+                            ==> node_index == 0 && self.dependencies@.len() > 0,
+                        !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
                     decreases self.dependencies.len() - edge,
                 ] {
                     if self.dependencies[edge].node == NodeId(node_index as u64) {
@@ -425,6 +465,9 @@ impl World {
                     }
                     edge += 1;
                 } }
+                kernel_proof! {
+                    if progress_unplanned_witness::fixture_edges(*self) { assert(found); }
+                }
                 if !found { return Err(Broken::Dependencies); }
             }
             node_index += 1;
@@ -464,6 +507,12 @@ impl World {
                 decreases index - previous,
             ] {
                 let d = &self.dependencies[previous];
+                kernel_proof! {
+                    if progress_unplanned_witness::fixture_edges(*self) {
+                        assert(declarations_unique(*self));
+                        assert(!same_declaration(*d, *dependency));
+                    }
+                }
                 if d.node == dependency.node && d.target.kind == dependency.target.kind
                     && d.target.number == dependency.target.number
                 { return Err(Broken::Dependencies); }
@@ -489,6 +538,7 @@ impl World {
             {
                 return Err(Broken::Dependencies);
             }
+            kernel_proof! { reveal(zero_credit); }
             if !self.dependencies_delivered(dependency.node)
                 && matches!(
                     self.nodes[owner].phase,

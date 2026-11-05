@@ -28,6 +28,7 @@ fn progress_scope_witness() -> (world: World)
         reveal(initial_node);
         reveal(progress_scope);
         reveal(world_checked);
+        reveal(dependencies::zero_credit);
         reveal(settled_world);
         reveal(storage_ordered);
         reveal(world_headroom);

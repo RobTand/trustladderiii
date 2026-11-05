@@ -1392,31 +1392,6 @@ proof!(
 );
 
 // No dead states, one phase at a time.
-proof!(
-    progress_from_unplanned,
-    3,
-    check_unplanned_progress(any_world(Some(Phase::Unplanned)))
-);
-proof!(
-    progress_from_unplanned_delivered,
-    3,
-    check_unplanned_progress(any_unplanned_dependencies::<2>(true))
-);
-proof!(
-    progress_from_unplanned_delivered_one,
-    3,
-    check_unplanned_progress(any_unplanned_dependencies::<1>(true))
-);
-proof!(
-    progress_from_unplanned_waiting,
-    3,
-    check_unplanned_waiting::<2>()
-);
-proof!(
-    progress_from_unplanned_waiting_one,
-    3,
-    check_unplanned_waiting::<1>()
-);
 
 proof!(apply_new_adoption, {
     let repo = kani::any();

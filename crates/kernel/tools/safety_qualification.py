@@ -218,6 +218,23 @@ CASES = {
                               'if n.phase.is_closed() {\n                i += 1;\n                continue;\n            }',
                               'if n.phase.is_closed() { return None; }',
                               '//crates/kernel:verus_witness'),
+    'unplanned_selector_order': ('crates/kernel/src/witness.rs',
+                                 'if n.paused && !n.phase.is_stopping() {',
+                                 'if n.paused && !n.phase.is_stopping() && n.effect.is_none() {',
+                                 '//crates/kernel:verus_witness'),
+    'unplanned_admission': ('crates/kernel/src/ranks.rs',
+                            'set_phase(m, Phase::Planning { must_split: false });',
+                            'set_phase(m, Phase::Planning { must_split: true });',
+                            '//crates/kernel:verus_ranks'),
+    'unplanned_waiting': ('crates/kernel/src/scheduler.rs',
+                          'context.admit = w.dependencies_delivered(NodeId(i as u64)) && admits(w, n.repo);',
+                          'context.admit = admits(w, n.repo);',
+                          '//crates/kernel:verus_scheduler'),
+    'unplanned_cover_occupant': ('crates/kernel/src/scheduler.rs',
+                                 'context.slot = slot_free(w, i) && first_in_line(w, i);',
+                                 'context.slot = false;',
+                                 '//crates/kernel:verus_scheduler'),
+
 }
 
 
