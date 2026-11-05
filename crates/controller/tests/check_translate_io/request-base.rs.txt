@@ -1,0 +1,11 @@
+fn request(snapshot: &Snapshot, node: NodeId) -> Result<Request> {
+    decode_stored(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "requests" && r.id == node.0.to_string())
+            .ok_or(Error::Invalid("missing request binding"))?
+            .value
+            .clone(),
+    )
+}

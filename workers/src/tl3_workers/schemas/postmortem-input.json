@@ -7,54 +7,132 @@
     "record": {
       "type": "object",
       "properties": {
-        "id": {"type": "integer", "minimum": 1},
-        "trigger": {"type": "string", "minLength": 1},
-        "reason": {"type": "string", "minLength": 1}
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trigger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
       },
-      "required": ["id", "trigger", "reason"],
+      "required": [
+        "id",
+        "trigger",
+        "reason"
+      ],
       "additionalProperties": false
     },
     "case": {
       "type": "object",
       "properties": {
-        "request": {"type": "object"},
-        "outcome": {"type": "string", "minLength": 1},
-        "grades": {"type": "array"},
-        "phases": {"type": "array"},
-        "questions": {"type": "array"},
-        "incidents": {"type": "array"},
+        "request": {
+          "type": "object"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grades": {
+          "type": "array"
+        },
+        "phases": {
+          "type": "array"
+        },
+        "questions": {
+          "type": "array"
+        },
+        "incidents": {
+          "type": "array"
+        },
         "plan": {},
         "brief": {},
         "audit": {},
         "findings": {},
-        "release": {"type": "string"}
+        "release": {
+          "type": "string"
+        }
       },
-      "required": ["request", "outcome", "grades", "phases", "questions", "incidents", "release"],
+      "required": [
+        "request",
+        "outcome",
+        "grades",
+        "phases",
+        "questions",
+        "incidents",
+        "release"
+      ],
       "additionalProperties": false
     },
     "rubric": {
       "type": "object",
       "properties": {
-        "version": {"type": "integer", "minimum": 1},
-        "dimensions": {"type": "object"}
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dimensions": {
+          "type": "object"
+        }
       },
-      "required": ["version", "dimensions"]
+      "required": [
+        "version",
+        "dimensions"
+      ]
     },
-    "release": {"type": "string"},
-    "grade_model": {"type": "string", "minLength": 1},
-    "deadline_secs": {"type": "integer", "minimum": 1, "description": "The run's whole wall-clock allowance (#486)."},
+    "release": {
+      "type": "string"
+    },
+    "grade_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "deadline_secs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The run's whole wall-clock allowance (#486)."
+    },
     "trace_tags": {
       "type": "object",
       "properties": {
-        "node": {"type": "string", "pattern": "^[0-9]+$"},
-        "request": {"type": "string", "pattern": "^[0-9]+$"},
-        "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
-        "issue": {"type": "string", "pattern": "^[0-9]+$"}
+        "node": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "request": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "issue": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
       },
-      "required": ["node", "request", "repo", "issue"],
+      "required": [
+        "node",
+        "request",
+        "repo",
+        "issue"
+      ],
       "additionalProperties": false
     }
   },
-  "required": ["record", "case", "rubric", "release", "grade_model", "deadline_secs", "trace_tags"],
+  "required": [
+    "record",
+    "case",
+    "rubric",
+    "release",
+    "grade_model",
+    "deadline_secs",
+    "trace_tags"
+  ],
   "additionalProperties": false
 }

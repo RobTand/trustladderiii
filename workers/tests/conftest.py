@@ -32,8 +32,45 @@ def fake_model_tool_binding(monkeypatch):
     monkeypatch.setattr(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self)
 
 
+@pytest.fixture
+def checker_state_directory(tmp_path_factory):
+    import tempfile
+    from pathlib import Path
+
+    # Keep real fsync/rename for the cursor, without shared-disk durability waits
+    # for ephemeral test coordination. Executables stay in pytest scratch.
+    try:
+        state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir="/dev/shm")
+    except OSError:
+        state = tempfile.TemporaryDirectory(prefix="tl3-checker-", dir=tmp_path_factory.getbasetemp())
+    # Keep fixture cleanup independent of action tests replacing TemporaryDirectory.cleanup.
+    cleanup = state.cleanup
+    try:
+        yield Path(state.name)
+    finally:
+        cleanup()
+
+
 @pytest.fixture(autouse=True)
-def budget_binary(request, tmp_path_factory, monkeypatch):
+def stable_git_commits(monkeypatch):
+    import subprocess
+    from pathlib import Path
+
+    original = subprocess.run
+
+    def run(command, *args, **kwargs):
+        if (isinstance(command, (list, tuple)) and command
+                and Path(command[0]).name == 'git' and 'commit' in command):
+            kwargs['env'] = {**kwargs.get('env', os.environ),
+                             'GIT_AUTHOR_DATE': '2000-01-01T00:00:00+0000',
+                             'GIT_COMMITTER_DATE': '2000-01-01T00:00:00+0000'}
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+
+
+@pytest.fixture(autouse=True)
+def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
     import json
     import subprocess
     import sys
@@ -41,6 +78,10 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
 
     import checker_stub
 
+    # #823: summary facts contain base commit identities. Record and replay use
+    # the same immutable fixture dates so full-document equality is meaningful.
+    monkeypatch.setenv('GIT_AUTHOR_DATE', '2000-01-01T00:00:00+0000')
+    monkeypatch.setenv('GIT_COMMITTER_DATE', '2000-01-01T00:00:00+0000')
     tmp_path = tmp_path_factory.mktemp("checker")
     if os.environ.get("TEST_RECORD_CHECKER_DIR"):
         yield from checker_stub.record(request.node.nodeid, tmp_path, monkeypatch)
@@ -49,12 +90,18 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
         yield
         return
 
-    cursor = tmp_path / "checker-cursor"
+    # A child needs only this immutable script, not the complete parity corpus.
+    script = checker_stub.cases().get(request.node.nodeid, [])
+    state = request.getfixturevalue("checker_state_directory") if script else tmp_path
+    cursor = state / "checker-cursor"
+    script_path = tmp_path / "checker-script.json"
+    script_path.write_text(json.dumps(script))
+
     checker = tmp_path / "recorded-rust-checker"
     checker.write_text(
-        f"#!{sys.executable}\n"
+        f"#!{sys.executable} -IS\n"
         "import runpy, sys\n"
-        f"sys.argv[1:1] = ['--replay', {request.node.nodeid!r}, {str(cursor)!r}]\n"
+        f"sys.argv[1:1] = ['--replay-file', {str(script_path)!r}, {request.node.nodeid!r}, {str(cursor)!r}]\n"
         f"runpy.run_path({str(Path(checker_stub.__file__).resolve())!r}, run_name='__main__')\n")
     checker.chmod(0o755)
     monkeypatch.setenv("TL3_BINARY", str(checker))
@@ -64,9 +111,10 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
         if isinstance(command, (list, tuple)) and command and command[0] == str(checker):
             try:
                 value = checker_stub.replay(request.node.nodeid, cursor, list(command[1:]),
-                                            json.loads(kwargs["input"]))
+                                            json.loads(kwargs["input"]), script=script)
                 code, stdout, stderr = 0, json.dumps(value, ensure_ascii=False), ""
             except RuntimeError as error:
+                print(error, file=sys.stderr)
                 code, stdout, stderr = 1, "", str(error)
             if not (kwargs.get("text") or kwargs.get("encoding") or kwargs.get("universal_newlines")):
                 stdout, stderr = stdout.encode(), stderr.encode()
@@ -79,6 +127,5 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
     # stub executable is doubled; child workers inherit its actual replay script.
     monkeypatch.setattr(subprocess, "run", recorded)
     yield
-    script = checker_stub.cases().get(request.node.nodeid, [])
     consumed = int(cursor.read_text()) if cursor.exists() else 0
     assert consumed == len(script), f"unconsumed Rust checker steps in {request.node.nodeid}: {consumed}/{len(script)}"

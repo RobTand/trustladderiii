@@ -1,0 +1,25 @@
+{
+  "description": "Pre-existing Python/Rust pattern divergence (#819). Preserve these current results; changing acceptance is a separate follow-up.",
+  "schema": "request",
+  "pointer": "/properties/model/properties/base_url",
+  "cases": [
+    {
+      "name": "U+2005 FOUR-PER-EM SPACE",
+      "value": "https://example.test/\u2005",
+      "rust_valid": true,
+      "python_valid": false
+    },
+    {
+      "name": "U+1680 OGHAM SPACE MARK",
+      "value": "https://example.test/\u1680",
+      "rust_valid": true,
+      "python_valid": false
+    },
+    {
+      "name": "U+2003 EM SPACE",
+      "value": "https://example.test/\u2003",
+      "rust_valid": false,
+      "python_valid": false
+    }
+  ]
+}

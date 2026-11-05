@@ -9,6 +9,7 @@ tl3_crate(
     build_script = True,
     local_deps = [
         "//crates/config:tl3_config",
+        "//crates/contracts:tl3_contracts",
         "//crates/controller-core:tl3_controller_core",
         "//crates/github:tl3_github",
         "//crates/harness-core:tl3_harness_core",
@@ -20,7 +21,6 @@ tl3_crate(
     ],
     bins = [
         "tl3",
-        "tl3-contracts-schemas",
         "tl3-worker-supervisor",
         "tl3d",
     ],

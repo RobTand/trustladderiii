@@ -3,6 +3,17 @@
 use super::super::*;
 use super::recorded_io::File;
 
+// #819 preserves omission in the shared wire type. Keep the frozen bodies below
+// verbatim while providing their former empty-default view in this test only.
+trait LegacyMessage {
+    fn as_str(&self) -> &str;
+}
+impl<const MAX: usize> LegacyMessage for Option<crate::contracts::bounded::ClippedText<MAX>> {
+    fn as_str(&self) -> &str {
+        self.as_ref().map_or("", |message| message.as_str())
+    }
+}
+
 fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
         && ending.succeeded
