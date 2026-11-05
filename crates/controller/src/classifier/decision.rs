@@ -1,7 +1,10 @@
 //! Finite classification facts, parsed from schema-checked JSON at the boundary.
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Kind {
     ChangeRequest,
     Answer,
@@ -15,8 +18,9 @@ pub enum Kind {
     Reconcile,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Answer {
     ChangeRequest,
     AddCredit,
@@ -24,8 +28,8 @@ pub enum Answer {
     Other,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Classification {
     pub kind: Kind,
     pub answer: Answer,
@@ -43,6 +47,8 @@ pub struct Classification {
     pub text_nonblank: bool,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Violation {
     ReconcileRequired,
@@ -81,6 +87,9 @@ impl Violation {
 }
 
 /// Return the first violation, in the worker's repair-message order.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
+    result == expected(c),
+))]
 pub fn decide(c: Classification) -> Result<(), Violation> {
     use self::Violation::*;
     if c.reconcile_issue || c.kind == Kind::Reconcile {
@@ -128,4 +137,26 @@ pub fn decide(c: Classification) -> Result<(), Violation> {
         return Err(EmptyChange);
     }
     Ok(())
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Q15/Q49/#743: the Kani ordered rule table, over all finite parsed facts.
+pub open spec fn expected(c: Classification) -> Result<(), Violation> {
+    let reconcile = c.reconcile_issue || c.kind == Kind::Reconcile;
+    let change = c.kind == Kind::ChangeRequest || (c.kind == Kind::Answer && c.answer == Answer::ChangeRequest);
+    if reconcile && !(c.reconcile_issue && c.kind == Kind::Reconcile) { Err(Violation::ReconcileRequired) }
+    else if reconcile && !c.assessments_exact { Err(Violation::Assessments) }
+    else if !reconcile && !c.selected_matches { Err(Violation::SelectedAnswer) }
+    else if !reconcile && change && c.has_applicable && !c.supersedes_present { Err(Violation::MissingSupersedes) }
+    else if !reconcile && !c.supersedes_applicable { Err(Violation::InapplicableDecision) }
+    else if !reconcile && c.kind == Kind::Restart && !c.restartable { Err(Violation::RestartUnavailable) }
+    else if !reconcile && c.closed && !(c.kind == Kind::Restart || c.kind == Kind::Complaint || c.kind == Kind::Remark || c.kind == Kind::Unsure) { Err(Violation::Closed) }
+    else if !reconcile && c.kind == Kind::Answer && !c.question_current { Err(Violation::Question) }
+    else if !reconcile && c.kind == Kind::Answer && c.answer != Answer::Unclear && !c.answer_offered { Err(Violation::UnofferedAnswer) }
+    else if !reconcile && c.kind == Kind::Answer && c.answer == Answer::AddCredit && !c.credit_integer { Err(Violation::Credit) }
+    else if !reconcile && c.kind == Kind::Complaint && !c.closed { Err(Violation::Complaint) }
+    else if !reconcile && change && !c.text_nonblank { Err(Violation::EmptyChange) }
+    else { Ok(()) }
+}
 }
