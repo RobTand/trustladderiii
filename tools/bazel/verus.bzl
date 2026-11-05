@@ -161,6 +161,22 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
+        # ctrl-core A3: separate routing families over the real production module.
+        for name, count in [("queue", 9), ("webhook", 13), ("projection", 9), ("failure", 2)]:
+            verus_test(
+                name = "verus_route_" + name,
+                src = "proofs/route.rs",
+                srcs = ["src/decide/route.rs"],
+                expected_obligations = count,
+                module = "route::" + name,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
