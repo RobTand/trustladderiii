@@ -21,12 +21,8 @@ def save(repo, message):
     return git(repo, "rev-parse", "HEAD").decode().strip()
 
 
-def main():
-    require_admission()
-    container = Container(sys.argv[1])
-    source = Path(__file__).resolve().parents[1]
-    verify_orphans(container)
-    suite = ["docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
+def suite_command(source, container, tests=('tests',)):
+    return ["docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
              "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65534:65534",
              "--pids-limit=128", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
              "--mount", f"type=bind,src={source},dst=/source,readonly",
@@ -34,8 +30,15 @@ def main():
              "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", "--env", "OMP_NUM_THREADS=1",
              "--env", "MKL_NUM_THREADS=1", "--env", "OPENBLAS_NUM_THREADS=1",
              "--workdir=/source", "--entrypoint=python3", container.image,
-             "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
-    subprocess.run(suite, check=True)
+             "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests]
+
+
+def main():
+    require_admission()
+    container = Container(sys.argv[1])
+    source = Path(__file__).resolve().parents[1]
+    verify_orphans(container)
+    subprocess.run(suite_command(source, container), check=True)
     from verify_reproducing import verify
     verify(container)
     from verify_scratch import verify as verify_scratch
@@ -108,17 +111,9 @@ def main():
 
 
 def verify_orphans(container):
-    from tl3_harness.test_tool import run_current
-
-    fixture = Path(__file__).resolve().parents[1] / 'tests/fixtures/orphans/test_orphans.py'
-    with tempfile.TemporaryDirectory(prefix='tl3-orphans-') as directory:
-        tree = Path(directory)
-        tree.chmod(0o755)
-        shutil.copyfile(fixture, tree / 'test_orphans.py')
-        summary = run_current(tree, container, ('test_orphans.py::test_exited_orphans_leave_room_for_teardown',))
-        print(json.dumps({'orphan_reaping': summary}), flush=True)
-        assert summary['status'] == 'completed', summary
-        assert summary['totals'] == {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}, summary
+    require_admission()
+    source = Path(__file__).resolve().parents[1]
+    subprocess.run(suite_command(source, container, ('tests/fixtures/orphans/test_orphans.py',)), check=True)
 
 
 if __name__ == "__main__":
