@@ -2,19 +2,13 @@
 use super::progress_phase::*;
 use super::progress_phase_witness::original;
 use super::*;
-verus! {
-/// #806 A2: the remaining six phase families; outcomes stay unrestricted.
-pub(super) open spec fn phase_a2(phase: Phase) -> bool {
-    matches!(phase, Phase::Publishing | Phase::Queued | Phase::Rebasing
-        | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_))
-}
-}
 
 kernel_fn! {
 /// Q30/Q39 / #806 A2: each late phase and every terminal outcome has a
 /// consistent settled original-domain world. Closed retains an open node1.
 fn world(phase: Phase) -> (result: World) [
-    requires phase_a2(phase),
+    requires matches!(phase, Phase::Publishing | Phase::Queued | Phase::Rebasing
+        | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_)),
     ensures original(result), retirement::accepted(result), settled_world(result),
         result.nodes@[0].phase == phase,
         phase is Closed ==> !(result.nodes@[1].phase is Closed),
@@ -109,7 +103,8 @@ kernel_fn! {
 /// The input phase preserves every Stopping/Closed outcome, and Closed
 /// explicitly retains the original open-node1 requirement.
 fn cover(phase: Phase) -> (result: (Ghost<World>, World, Event, u64, u64)) [
-    requires phase_a2(phase),
+    requires matches!(phase, Phase::Publishing | Phase::Queued | Phase::Rebasing
+        | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_)),
     ensures original(result.0@), retirement::accepted(result.0@), settled_world(result.0@),
         result.0@.nodes@[0].phase == phase,
         phase is Closed ==> !(result.0@.nodes@[1].phase is Closed),
