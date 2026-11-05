@@ -215,7 +215,7 @@ def _recovery_verus_test_impl(ctx):
     ctx.actions.write(launcher, """#!/bin/bash
 set -euo pipefail
 cd "${RUNFILES_DIR:-$0.runfiles}/%s"
-exec /usr/bin/time -f 'VERUS_PEAK_RSS_KB %%M' "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
+exec python3 -c 'import resource, subprocess, sys; result = subprocess.run(sys.argv[1:]); print("VERUS_PEAK_RSS_KB", resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, flush=True); sys.exit(result.returncode)' "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
 """ % (
         ctx.workspace_name,
         ctx.executable._runner.short_path,
