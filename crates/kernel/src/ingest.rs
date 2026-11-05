@@ -49,9 +49,8 @@ pub(super) fn finish_ingest_node(m: &mut Node, size: u8, early_end: Option<Early
         m.credit.start = size as u64 + RESERVE;
     }
     m.early_end = early_end;
-    kernel_snapshot! { deposited = *m }
     set_phase(m, Phase::Auditing);
-    kernel_proof! { timing3_lemmas::ingest_frame(before@, deposited@, *m, size, early_end); }
+    kernel_proof! { timing3_lemmas::ingest_frame(before@, size, early_end); }
 }
 }
 

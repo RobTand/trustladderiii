@@ -160,8 +160,8 @@ CASES = {
                                'm.credit.start = size as u64;',
                                '//crates/kernel:verus_ingest_finish_ingest_node'),
     'timing3_pause_release': ('crates/kernel/src/lib.rs',
-                             'm.holds = false;\n                kernel_snapshot! { released = *m }',
-                             'm.holds = true;\n                kernel_snapshot! { released = *m }',
+                             'm.holds = false;\n                set_phase(m, Phase::Ready(r));',
+                             'm.holds = true;\n                set_phase(m, Phase::Ready(r));',
                              '//crates/kernel:verus_kernel_pause_node'),
 
 }

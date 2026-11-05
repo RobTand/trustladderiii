@@ -1955,9 +1955,8 @@ kernel_fn! {
         if m.phase.holding() {
             if let Some(r) = m.phase.resume() {
                 m.holds = false;
-                kernel_snapshot! { released = *m }
                 set_phase(m, Phase::Ready(r));
-                kernel_proof! { timing3_lemmas::pause_frame(before@, released@, *m, r); }
+                kernel_proof! { timing3_lemmas::pause_frame(before@, r); }
                 return true;
             }
         }
