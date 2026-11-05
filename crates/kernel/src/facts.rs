@@ -139,7 +139,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 ==> retirement::unapproved_note(*final(out), i),
             _ => true,
         },
-] proof [reveal(retry_bounds); reveal(retirement::fact_node);] {
+] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
@@ -148,10 +148,12 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
             }
+            kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
+                kernel_proof! { reveal(retirement::fact_node); }
                 return;
             }
             m.pr_open = false;
@@ -159,6 +161,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 notice(out, i, Notice::Note(NoteKind::PrClosed));
                 enter_stopping(m, Outcome::Stopped);
             }
+            kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
         Fact::PushByOther { head } => {
@@ -174,6 +177,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
+                kernel_proof! { reveal(retry_bounds); }
             }
         }
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
@@ -182,6 +186,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
                 set_phase(m, Phase::Rebasing);
             }
+            kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::UpstreamStalled => {
             let m = &mut w.nodes[i];

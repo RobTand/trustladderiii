@@ -25,6 +25,17 @@ pub(super) proof fn cancellation_input(before: Node, prepared: Node)
     ensures retirement::fact_node(prepared, Fact::CiFailed { infra: true })
         == retirement::fact_node(before, Fact::CiFailed { infra: true }),
 {
-    reveal(retirement::fact_node);
+    if before.phase == Phase::Publishing {
+        reveal(retirement::fact_node);
+        if before.run_failures == 0 {
+            assert(retirement::fact_node(prepared, Fact::CiFailed { infra: true })
+                == retirement::fact_node(before, Fact::CiFailed { infra: true }));
+        } else {
+            assert(retirement::fact_node(prepared, Fact::CiFailed { infra: true })
+                == retirement::fact_node(before, Fact::CiFailed { infra: true }));
+        }
+    } else {
+        assert(prepared == before);
+    }
 }
 }
