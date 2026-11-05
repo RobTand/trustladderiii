@@ -14,13 +14,17 @@ responses, result/error and serialized input bytes. There are no writes in
 `inputs`, so no durable state or write-crash boundaries are modeled.
 
 Unchanged criteria/goals/clipping leaves retain production bodies. Validation
-is a recorded leaf; this test measures the exact value reaching validation and
-its failure boundary. The real validator and real store/git adapters run in the
-retained controller worker targets. No claim is made that synthetic receipts
-are schema-valid. #717, #704/#706/#719/#723 motivate opaque wire preservation;
+records the value and injected read failures, then runs source-checked copies
+of the production registry, validator and diagnostic capture against the real
+packaged schemas. The diagnostic adapter only converts the copied private
+Failure into the public controller error, preserving its fields. Every run
+compares the error variant as well as its message. Synthetic malformed receipts
+stop at that real validation boundary; their exact candidate wire is still
+asserted in the recorded call. Schema-valid optional combinations also assert
+successful output bytes. Retained worker targets run real store/git adapters. #717, #704/#706/#719/#723 motivate opaque wire preservation;
 they do not define new caps or authorize summary rewrites here.
 
-Generated schedules use seed 0x1707302026 and 112 cases plus the committed
+Generated schedules use seed 0x1707302026 and 176 cases plus the committed
 minimized extraction-stub seed. Each run copies the seed file to writable test
 output before replay; failures persist there, with the full minimized schedule.
 Mandatory tests assert exact expected serialized inputs, read sequences and
@@ -32,3 +36,12 @@ of 20 must not accidentally appear here.
 
 Run `//crates/controller:test_test_review_inputs_io` alone, uncached, on
 BuildBuddy. This harness is temporary until the extraction ships.
+
+H17b keeps schema validation before parsing ReviewerInput. Serializing the type
+through to_value restores sorted Value key order. Direct struct serialization
+has a mandatory negative comparison. Mandatory and generated valid wires cover
+review fixes, test and generation evidence, custom standing rules, and omitted
+TestResult.message. Memories and memory_note are added by the caller after
+inputs returns, not by this shell. Their present and recall-unavailable wires
+have separate real-schema and typed round-trip checks. There is no field named
+memories_unavailable in the contract.
