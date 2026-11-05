@@ -160,6 +160,27 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+    if native.package_name() == "crates/controller-core":
+        # Group G2a: current-generation rebase replies, over the real core.
+        for name, module, count in [
+            ("decision", "translate_arms#rebase_reply", 1),
+            ("witnesses", "translate_arms_witnesses", 3),
+        ]:
+            verus_test(
+                name = "verus_translate_arms_" + name,
+                src = "verus/translate_arms.rs",
+                srcs = ["src/translate_arms.rs"],
+                specs = ["verus/translate_arms_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/kernel":
         # Every body called by step is checked in one of these groups. Module
         # filters bound solver context; exact counts refuse empty selections.

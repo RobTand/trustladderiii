@@ -40,6 +40,7 @@ pub(super) struct Schedule {
     pub interned: BTreeMap<(String, String), u64>,
     pub initial_rows: BTreeMap<String, Value>,
     pub failures: Vec<bool>,
+    pub select_failures: Vec<bool>,
 }
 impl Default for Schedule {
     fn default() -> Self {
@@ -48,6 +49,7 @@ impl Default for Schedule {
             interned: BTreeMap::new(),
             initial_rows: BTreeMap::from([("0".into(), json!({"head":OTHER,"files":["old.rs"]}))]),
             failures: vec![],
+            select_failures: vec![],
         }
     }
 }
@@ -72,6 +74,8 @@ struct Recording {
     run: Run,
     cut: Option<Cut>,
     failures: Vec<bool>,
+    select_failures: Vec<bool>,
+    select_reads: usize,
 }
 thread_local! { static ACTIVE: RefCell<Option<Recording>> = const { RefCell::new(None) }; }
 fn with<T>(f: impl FnOnce(&mut Recording) -> T) -> T {
@@ -102,14 +106,29 @@ pub(super) struct Controller {
     pub(super) store: Store,
 }
 pub(super) struct Store;
-pub(super) struct InternId(u64);
+pub(super) struct InternId(i64);
 impl InternId {
-    pub(super) fn get(&self) -> u64 {
+    pub(super) fn get(&self) -> i64 {
         self.0
     }
 }
 impl Store {
     pub(super) fn intern_commit(&mut self, scope: &str, sha: &str) -> Result<InternId> {
+        let failed = with(|r| {
+            let failed = r
+                .select_failures
+                .get(r.select_reads)
+                .copied()
+                .unwrap_or(false);
+            r.select_reads += 1;
+            failed
+        });
+        if failed {
+            call("intern.select.error", json!({"scope":scope,"sha":sha}));
+            return Err(Error::Store(tl3_store::Error::Invalid(
+                "injected intern select failure",
+            )));
+        }
         let key = (scope.to_owned(), sha.to_owned());
         let existing = with(|r| r.run.pending_intern.get(&key).copied());
         call(
@@ -117,7 +136,7 @@ impl Store {
             json!({"scope":scope,"sha":sha,"result":existing}),
         );
         if let Some(id) = existing {
-            return Ok(InternId(id));
+            return Ok(InternId(id as i64));
         }
         let (index, failed) = begin_write("intern.insert", json!({"scope":scope,"sha":sha}));
         let result = if failed {
@@ -132,7 +151,7 @@ impl Store {
         call("intern.result", json!(result));
         end_write(index);
         result
-            .map(InternId)
+            .map(|id| InternId(id as i64))
             .ok_or(Error::Store(tl3_store::Error::Invalid(
                 "injected intern failure",
             )))
@@ -210,6 +229,8 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
                 writes: 0,
             },
             failures: s.failures.clone(),
+            select_failures: s.select_failures.clone(),
+            select_reads: 0,
             cut,
         })
     });

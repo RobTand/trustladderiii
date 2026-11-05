@@ -300,6 +300,7 @@ fn fixed_seed_differential_schedules_and_sequences() {
         .run(&strategy, |(steps, flags, failures)| {
             let mut s = Schedule {
                 steps,
+                select_failures: failures.clone(),
                 failures,
                 ..Schedule::default()
             };
@@ -318,5 +319,72 @@ fn fixed_seed_differential_schedules_and_sequences() {
         .unwrap();
     eprintln!(
         "G2a: 512 fixed-seed schedules/sequences plus every before/after write cut; seed 0x472a2026"
+    );
+}
+
+#[test]
+fn mandatory_store_select_error_after_staged_delete() {
+    let s = Schedule {
+        steps: vec![Step {
+            conflict: false,
+            ..Step::default()
+        }],
+        select_failures: vec![true],
+        ..Schedule::default()
+    };
+    let run = compare(&s);
+    assert!(
+        run.results[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("injected intern select failure")
+    );
+    assert_eq!(run.calls[0]["op"], "row.push");
+    assert_eq!(run.calls[1]["op"], "intern.select.error");
+    assert_eq!(run.calls.len(), 2);
+    assert_eq!(run.persisted_rows, s.initial_rows);
+    assert_eq!(run.persisted_intern, s.interned);
+}
+
+#[test]
+fn fixed_seed_accepted_sequences_preserve_intern_state_across_transactions() {
+    let strategy = prop::collection::vec(
+        (
+            any::<bool>(),
+            any::<bool>(),
+            prop::collection::vec("[a-z/]{1,20}", 0..6),
+        ),
+        1..17,
+    );
+    let mut runner = TestRunner::new(Config {
+        cases: 128,
+        rng_seed: RngSeed::Fixed(0x47_2b_2026),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/rebase_translate_io/proptest-regressions.txt"
+        )))),
+        ..Config::default()
+    });
+    runner
+        .run(&strategy, |steps| {
+            let s = Schedule {
+                steps: steps
+                    .into_iter()
+                    .map(|(conflict, other, files)| Step {
+                        conflict,
+                        sha: if other { OTHER.into() } else { SHA.into() },
+                        files,
+                        ..Step::default()
+                    })
+                    .collect(),
+                ..Schedule::default()
+            };
+            let run = compare(&s);
+            prop_assert_eq!(run.results.len(), s.steps.len());
+            Ok(())
+        })
+        .unwrap();
+    eprintln!(
+        "G2a: 128 accepted sequences of up to 16 observations and every write cut; seed 0x472b2026"
     );
 }

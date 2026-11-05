@@ -29,6 +29,9 @@ pub enum RebaseDisposition {
     },
 ))]
 pub fn rebase_reply(phase: RebasePhase, current: u64, observed: u64) -> RebaseDisposition {
-    let _ = (phase, current, observed);
-    RebaseDisposition::Ignore
+    if phase == RebasePhase::Rebasing && current == observed {
+        RebaseDisposition::Accept
+    } else {
+        RebaseDisposition::Ignore
+    }
 }
