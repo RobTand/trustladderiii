@@ -140,8 +140,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         }
     }
     kernel_proof! {
-        allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
-        allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
+        allocation_stopping_lemmas::stopping_complete(before@, *m, outcome);
     }
 }
 }

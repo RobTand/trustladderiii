@@ -61,4 +61,36 @@ pub(super) proof fn stopping_frame(before: Node, after: Node, outcome: Outcome)
 {
     reveal(retirement::stopped);
 }
+/// #806 stopping rows: expose the complete original contract after verifying the exact result.
+#[verifier::spinoff_prover]
+pub(super) proof fn stopping_complete(before: Node, after: Node, outcome: Outcome)
+    requires after == retirement::stopped(before, outcome),
+        !(before.phase is Closed || before.phase is Stopping) ==> before.generation < u64::MAX,
+    ensures after == retirement::stopped(before, outcome),
+        (!before.paused && !before.waiting_incident && before.effect.is_none()
+            && !(before.phase is Closed || before.phase is Stopping)
+            ==> distance(after) < distance(before)),
+        after.repo == before.repo, after.footprint == before.footprint,
+        (settle_shape(before) ==> settle_shape(after)),
+        after.generation as int == before.generation as int
+            + if before.phase is Closed || before.phase is Stopping { 0int } else { 1int },
+        after.phase == match before.phase {
+            Phase::Closed(o) => Phase::Closed(o),
+            Phase::Stopping(o) => Phase::Stopping(if outcome == Outcome::Merged { outcome } else { o }),
+            _ => Phase::Stopping(outcome),
+        },
+        after.next_seq == before.next_seq, after.credit == before.credit,
+        after.last_cmd == before.last_cmd,
+        after.review_stop == before.review_stop,
+        (before.phase is Closed || before.phase is Stopping) ==> after == (Node {
+            phase: after.phase, ..before
+        }),
+        !(before.phase is Closed || before.phase is Stopping) ==>
+            after.pos == 0 && after.ticket.is_none() && after.question.is_none()
+                && !after.waiting_incident && !after.incident_needs_rob,
+{
+    stopping_frame(before, after, outcome);
+    stopping_progress(before, after, outcome);
+}
+
 }
