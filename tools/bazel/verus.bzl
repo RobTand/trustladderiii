@@ -171,3 +171,26 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    # CC-M1: production enqueue decisions and constructive anti-vacuity witnesses.
+    if native.package_name() == "crates/mergify":
+        native.exports_files(["src/decide/execute.rs"])
+    if native.package_name() == "crates/controller":
+        for name, module, count in [
+            ("core", "execute", 9),
+            ("witnesses", "witnesses", 5),
+        ]:
+            verus_test(
+                name = "verus_mergify_execute_" + name,
+                src = "tests/mergify_execute_schedule/verus.rs",
+                srcs = ["//crates/mergify:src/decide/execute.rs"],
+                specs = ["tests/mergify_execute_schedule/witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )

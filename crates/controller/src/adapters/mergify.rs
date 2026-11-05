@@ -873,7 +873,14 @@ impl Adapter {
                 }
                 lifecycle::Need::Person => {
                     let mut removed = false;
-                    if baseline.is_some() || self.repaired_head(delivery, snapshot)? {
+                    use tl3_mergify::decide::execute::{PersonProbe, person_probe};
+                    let probe = match person_probe(baseline.is_some(), None) {
+                        PersonProbe::RepairedHead => {
+                            person_probe(false, Some(self.repaired_head(delivery, snapshot)?))
+                        }
+                        probe => probe,
+                    };
+                    if probe == PersonProbe::Events {
                         let events = self.runtime.block_on(
                             self.clients[&delivery.repository.installation].issue_events(
                                 &full_name(&delivery.repository),
@@ -894,9 +901,10 @@ impl Adapter {
                             let fresh = if let Some(snapshot) = snapshot {
                                 fact.unresolved_hold(snapshot)?
                             } else {
-                                baseline
-                                    .as_ref()
-                                    .is_some_and(|attempt| event > attempt.last_event)
+                                tl3_mergify::decide::execute::person_fresh(
+                                    baseline.as_ref().map(|attempt| attempt.last_event),
+                                    event,
+                                )
                             };
                             if fresh {
                                 removed = true;
@@ -1110,8 +1118,7 @@ impl Executor for Adapter {
                     .block_on(github.issue_events(&repo, number))?
                     .iter()
                     .map(|event| event.id)
-                    .max()
-                    .unwrap_or(0),
+                    .fold(0, tl3_mergify::decide::execute::latest_event),
                 requeue: issue
                     .labels
                     .iter()
@@ -1136,11 +1143,16 @@ impl Executor for Adapter {
         while let Some(effect) = effects.pop_front() {
             match effect {
                 lifecycle::Effect::SaveIntent => {
-                    self.records.write(
-                        &self.records.path(&delivery.key).with_extension("intent"),
-                        &serde_json::to_vec(&attempt)?,
-                    )?;
-                    self.fence(delivery)?;
+                    use tl3_mergify::decide::execute::{IntentBoundary, intent_boundaries};
+                    for boundary in intent_boundaries() {
+                        match boundary {
+                            IntentBoundary::Save => self.records.write(
+                                &self.records.path(&delivery.key).with_extension("intent"),
+                                &serde_json::to_vec(&attempt)?,
+                            )?,
+                            IntentBoundary::Fence => self.fence(delivery)?,
+                        }
+                    }
                 }
                 lifecycle::Effect::Read(lifecycle::Need::Command) => {
                     if let Reconciliation::Found(completion) = self.queue_command(delivery, None)? {
@@ -1177,18 +1189,25 @@ impl Executor for Adapter {
             &self.records.path(&delivery.key).with_extension("applied"),
             b"true",
         )?;
-        match self.read_enqueue(delivery)? {
-            Reconciliation::Found(completion) => {
-                if completion.ack == Ack::Confirmed {
-                    self.records
-                        .deliver(delivery, Completion::confirmed(vec![]))?;
-                }
-                Ok(*completion)
+        let final_read = self.read_enqueue(delivery)?;
+        use tl3_mergify::decide::execute::{ReceiptAction, ReceiptStage, receipt};
+        match receipt(ReceiptStage::Final, receipt_read(&final_read), None) {
+            ReceiptAction::SaveRecord => {
+                self.records
+                    .deliver(delivery, Completion::confirmed(vec![]))?;
             }
-            _ => Err(Error::Invalid(
-                "enqueue request sent; Mergify acceptance is still unknown",
-            )),
+            ReceiptAction::Return => {}
+            ReceiptAction::Unknown => {
+                return Err(Error::Invalid(
+                    "enqueue request sent; Mergify acceptance is still unknown",
+                ));
+            }
+            _ => return Err(Error::Invalid("unexpected final enqueue receipt")),
         }
+        let Reconciliation::Found(completion) = final_read else {
+            return Err(Error::Invalid("unexpected final enqueue receipt"));
+        };
+        Ok(*completion)
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         match self.read_enqueue(delivery) {

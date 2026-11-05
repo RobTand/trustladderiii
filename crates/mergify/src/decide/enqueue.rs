@@ -475,15 +475,20 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             }
         }
         QueueEvent::LabelRead { head, open, merged } => {
-            out.push(if state.intent != Some(Intent { requeue: None }) {
-                Effect::Error(Failure::IntentMissing)
-            } else if head != Head::Current {
-                Effect::Complete(Complete::Retryable)
-            } else if !open || merged {
-                Effect::Error(Failure::PullClosed)
-            } else {
-                Effect::Write(Write::Label)
-            });
+            use super::execute::{LabelDecision, label};
+            out.push(
+                match label(
+                    state.intent == Some(Intent { requeue: None }),
+                    head == Head::Current,
+                    open,
+                    merged,
+                ) {
+                    LabelDecision::IntentMissing => Effect::Error(Failure::IntentMissing),
+                    LabelDecision::Retryable => Effect::Complete(Complete::Retryable),
+                    LabelDecision::Closed => Effect::Error(Failure::PullClosed),
+                    LabelDecision::Write => Effect::Write(Write::Label),
+                },
+            );
         }
         QueueEvent::RecoveryTick { eligible, now_ms } => {
             let recovery = state.recovery.get_or_insert(Recovery {
@@ -662,18 +667,20 @@ pub fn dequeue_pending(
     queued: Option<u64>,
     finished: Option<Time>,
 ) -> bool {
-    if !retry || rule_concluded {
-        return false;
-    }
-    if !dequeued_label {
-        return true;
+    use super::execute::{DequeueProbe, dequeue_probe};
+    match dequeue_probe(retry, rule_concluded, dequeued_label) {
+        DequeueProbe::Clear => return false,
+        DequeueProbe::Pending => return true,
+        DequeueProbe::Events => {}
     }
     !dequeued.is_some_and(|event| {
-        event.labeled
-            && queued.map_or_else(
-                || finished.is_some_and(|finished| event.at >= finished),
-                |queued| event.id > queued,
-            )
+        super::execute::dequeue_fresh(
+            event.labeled,
+            event.id,
+            queued,
+            (event.at.secs, event.at.nanos),
+            finished.map(|time| (time.secs, time.nanos)),
+        )
     })
 }
 

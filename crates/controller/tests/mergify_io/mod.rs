@@ -680,6 +680,13 @@ mod properties {
     }
     #[test]
     fn expanded_helpers_are_verbatim() {
+        assert_eq!(
+            free_function(
+                include_str!("../../src/adapters/mergify.rs"),
+                "receipt_read"
+            ),
+            free_function(include_str!("current.rs"), "receipt_read"),
+        );
         for (source, copy) in [
             (
                 include_str!("../../src/adapters/mergify.rs"),
