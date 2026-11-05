@@ -364,7 +364,7 @@ mod proof_grace {
     {
         let initial = Some(Recovery { command: Command::Ready, eligible_since_ms: since });
         let grant = tick(initial, true, now_ms);
-        if grant.second == Some(Effect::Read(Need::Command)) {
+        if matches!(grant.second, Some(Effect::Read(Need::Command))) {
             assert(since.is_some());
             assert((now_ms as int) >= (since.unwrap() as int) + 300_000);
             let read = CommandRead { head: Head::Current, open: true, merged: false,
@@ -440,7 +440,7 @@ mod proof_callers {
         let a = dispatch(recovery, waiting);
         let b = dispatch(recovery, legacy);
         assert(a == b);
-        if a.second == Some(Effect::Write(Write::Command)) {
+        if matches!(a.second, Some(Effect::Write(Write::Command))) {
             assert(a.first == Some(Effect::SaveRecovery));
             assert(ready(a.recovery).command == Command::Sending);
         }
