@@ -247,6 +247,11 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
                          'figures': {key: value for key, value in policy['figures'].items() if key != 'scc_max'}}
     # SCC growth is checked component-by-component against base by compare().
     moves = source_moves(base, head, head['edge_diff'])
+    # Credits follow renamed identities only within their original package.
+    credit_moves = {destination: origin for destination, origin in moves.items()
+                    if package(destination) == package(origin)}
+    crate_sources = {credit_moves.get(source, source) for source in crate_sources}
+    fanout_sources = {credit_moves.get(source, source) for source in fanout_sources}
     comparison_head = moved_head(head, moves)
     compared = graph_impact.compare({**base, 'edge_groups': base_groups}, comparison_head, comparison_policy,
                                     changed_tests=changed, allowlist=allowlist, record_gains=record_gains)

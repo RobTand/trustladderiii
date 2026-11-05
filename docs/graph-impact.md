@@ -115,8 +115,10 @@ fanout growth. Update it in every slice that changes the measured maximum.
 An exact entry excuses existing-source fanout growth only for sources in its
 own package with a validated N. Other existing sources still fail under the
 same consumer-count and added-edge rules. Source move identities retain their
-original labels for structural comparison and cannot transfer credit across
-packages. SCC, edge-group, and forbidden-edge checks use the full graph.
+original labels for structural comparison. A rename within the same package
+keeps its validated reach and fanout credits at that original identity. A move
+across packages cannot transfer those credits. SCC, edge-group, and forbidden-edge
+checks use the full graph.
 
 The TL3 adapter matches source moves using the typed edge diff and SHA-256 of
 the file bytes read at each revision. A match needs a removed rule-to-source
@@ -134,7 +136,8 @@ a move credits only that file. Unrelated additions in the destination package
 cannot inherit a fabricated base peer. Unmatched new sources still count as
 growth when other sources disappear, unless they inherit an original base
 package's fan-out or have a reach exception. Additional consumers of a moved
-file still count as fan-out growth. Comparison-only identity paths connect the
+file still count as fan-out growth unless an exact crate entry credits a rename
+within the same package. Comparison-only identity paths connect the
 original labels to actual added edges for diagnostics. The exported graphs,
 SCCs, edge diffs, and U figures remain unchanged.
 The summary lists each matched move, and `source_moves` in the result maps
