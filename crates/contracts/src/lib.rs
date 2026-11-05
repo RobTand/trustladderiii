@@ -35,6 +35,8 @@ pub fn generated() -> Vec<Generated> {
             text: render(&check_report_schema()),
         },
         decision_context::generated().unwrap_or_else(|error| panic!("{error}")),
+        request::generated().unwrap_or_else(|error| panic!("{error}")),
+        roles::postmortem_input::generated().unwrap_or_else(|error| panic!("{error}")),
     ]
 }
 
@@ -85,3 +87,6 @@ fn render(schema: &Value) -> String {
 pub mod render;
 
 pub mod decision_context;
+
+pub mod request;
+pub mod roles;
