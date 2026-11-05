@@ -35,7 +35,13 @@ use ranks::advance_node;
 use ranks::*;
 
 mod checking;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/cleanup_lemmas.rs"]
+mod cleanup_lemmas;
 mod events;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/events_lemmas.rs"]
+mod events_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;
@@ -118,6 +124,10 @@ pub use queries::Wait;
 
 #[cfg(kani)]
 mod proofs;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/timing3_lemmas.rs"]
+mod timing3_lemmas;
 
 /// Starting credit is the request's size in leaves plus this reserve.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -1411,10 +1421,33 @@ kernel_fn! {
     }
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #805 / #806: Ready continuations inherit the resumed phase rank and its bound.
+#[verifier::spinoff_prover]
+proof fn cont_rank_ready(r: Resume)
+    ensures continuation_rank(Cont::Ready(r)) == phase_rank(Phase::Ready(r)),
+        continuation_rank(Cont::Ready(r)) <= 24,
+{
+    reveal_with_fuel(phase_rank, 3);
+    match r {
+        Resume::Making => {},
+        Resume::Checking => {},
+        Resume::Reviewing => {},
+        Resume::Publishing => {},
+        Resume::Rebasing => {},
+    }
+}
+}
+
 kernel_fn! {
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn cont_rank(cont: Cont) -> (result: u64) [
         ensures result as int == continuation_rank(cont), result <= 32,
     ] {
+        kernel_proof! {
+            if let Cont::Ready(r) = cont { cont_rank_ready(r); }
+        }
         match cont {
             Cont::Ingesting => 32,
             Cont::Auditing => 30,
@@ -1923,6 +1956,7 @@ kernel_fn! {
         /// and files and waits in Ready, resuming at the step it reached. Q30 / #771.
         // The pinned Verus frontend requires nested if-let instead of let chains.
         #[allow(clippy::collapsible_if)]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn pause_node(m: &mut Node) -> (result: bool) [
     requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
     ensures final(m).generation as int <= old(m).generation as int + 1,
@@ -1949,6 +1983,7 @@ kernel_fn! {
         final(m).last_cmd == old(m).last_cmd,
         final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
     ] {
+        kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
         if m.phase.holding() {
             if let Some(r) = m.phase.resume() {
                 m.holds = false;
@@ -2026,3 +2061,17 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+mod allocation_stopping_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod allocation_incident_lemmas;
+#[cfg(verus_keep_ghost)]
+mod facts_transition_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod facts_ci_failed_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod facts_merge_lemmas;

@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::{collections::BTreeMap, io::SeekFrom, path::PathBuf};
 mod current;
 mod io;
+mod pre_fix;
 mod reference;
 
 #[derive(Debug)]
@@ -44,18 +45,52 @@ fn parity(bytes: &[u8], postmortem: bool, inputs: &Value) -> Value {
     let d = delivery(postmortem);
     let old = outcome(reference::parse_reply(bytes, &d, inputs));
     let new = outcome(current::parse_reply(bytes, &d, inputs));
-    assert_eq!(old, new, "stream={bytes:?}, postmortem={postmortem}");
-    old
+    assert_eq!(
+        old,
+        outcome(pre_fix::parse_reply(bytes, &d, inputs)),
+        "F1/F2 reference drift: stream={bytes:?}"
+    );
+    // The sole intended divergence: the old parser accepts a non-final quota
+    // because its bytes equal the final line, ignoring all intervening events.
+    let lines = bytes.split_inclusive(|b| *b == b'\n').collect::<Vec<_>>();
+    let early_quota = old["ok"].get("Quota").is_some()
+        && lines.len() > 1
+        && lines[..lines.len() - 1].contains(lines.last().unwrap());
+    if early_quota {
+        assert_eq!(
+            new,
+            outcome(Err(Error::Invalid("event after quota ending")))
+        );
+    } else {
+        assert_eq!(old, new, "stream={bytes:?}, postmortem={postmortem}");
+    }
+    new
+}
+/// Copies the committed regressions to writable test output so proptest can
+/// append new minimized failures there instead of the read-only runfiles tree.
+/// One file per test (libtest names each test thread) so parallel runners
+/// cannot clobber each other.
+fn writable_regressions() -> &'static str {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+        .or_else(|| std::env::var_os("TEST_TMPDIR"))
+        .unwrap_or_else(|| std::env::temp_dir().into_os_string());
+    let test = std::thread::current()
+        .name()
+        .unwrap_or("runner")
+        .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    let name = format!("worker_events_io-{test}-regressions.txt");
+    let path = std::path::PathBuf::from(output).join(name);
+    std::fs::write(&path, include_str!("proptest-regressions.txt")).unwrap();
+    Box::leak(path.to_str().unwrap().to_owned().into_boxed_str())
 }
 fn runner(cases: u32) -> proptest::test_runner::TestRunner {
     use proptest::test_runner::*;
     TestRunner::new(Config {
         cases,
         rng_seed: RngSeed::Fixed(0xF176_0202_6005),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/worker_events_io/proptest-regressions.txt"
-        )))),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+            writable_regressions(),
+        ))),
         ..Config::default()
     })
 }
@@ -144,10 +179,9 @@ fn mandatory_quota_compatibility_edges() {
     let mut repeated = line(3, false);
     repeated.extend(line(0, false));
     repeated.extend(line(3, false));
-    assert!(
-        parity(&repeated, false, &Value::Null)["ok"]
-            .get("Quota")
-            .is_some()
+    assert_eq!(
+        parity(&repeated, false, &Value::Null)["error"],
+        "event after quota ending"
     );
 }
 #[test]
@@ -176,6 +210,25 @@ fn pinned_reference_and_production_copies() {
         include_str!("base.sha256").trim()
     );
     let production = include_str!("../../src/adapters/workers/source.rs");
+    // Actual F2 base d8f58cc383661f06338cc4f0f0c2b4bd2ebe7e02, not a shared shim over the changed core.
+    for (name, digest) in [
+        (
+            "parse_reply",
+            "2696c4294b20061aeb3cebacfbf1d727f43db92a37553f00e82175d0128e0170",
+        ),
+        (
+            "reply_step",
+            "b2a68b003639a1e65b7fbb770763302996cb73abcf440affadef21bf69e6e253",
+        ),
+    ] {
+        assert_eq!(
+            format!(
+                "{:x}",
+                Sha256::digest(function(include_str!("pre_fix.rs"), name))
+            ),
+            digest
+        );
+    }
     for name in ["refresh", "progress", "external_wait", "parse_reply"] {
         assert_eq!(
             function(base, name),
@@ -345,4 +398,101 @@ fn mandatory_postmortem_model_and_reply() {
             unit: ProgressUnit::ExternalWait
         }
     );
+}
+
+include!("quota_position_red.rs");
+
+#[test]
+fn mandatory_quota_position_and_precedence() {
+    let inputs = json!({"grade_model":"grade"});
+    for postmortem in [false, true] {
+        for kind in if postmortem { vec![3, 4] } else { vec![3] } {
+            let quota = line(kind, postmortem);
+            assert!(
+                parity(&quota, postmortem, &inputs)["ok"]
+                    .get("Quota")
+                    .is_some()
+            );
+            for prefix in 0..3 {
+                for tail in 0..18 {
+                    let mut bytes = (0..prefix)
+                        .flat_map(|_| line(0, postmortem))
+                        .collect::<Vec<_>>();
+                    bytes.extend(&quota);
+                    bytes.extend(match tail {
+                        16 => b"\n".to_vec(),
+                        17 => b"not-json\n".to_vec(),
+                        _ => line(tail, postmortem),
+                    });
+                    // Every byte of the middle is ignored by the buggy parser.
+                    bytes.extend(&quota);
+                    let d = delivery(postmortem);
+                    assert!(reference::parse_reply(&bytes, &d, &inputs).is_ok());
+                    assert_eq!(
+                        parity(&bytes, postmortem, &inputs)["error"],
+                        "event after quota ending"
+                    );
+                }
+            }
+            let mut after = quota.clone();
+            after.extend(b"\n");
+            assert_eq!(
+                parity(&after, postmortem, &inputs)["error"],
+                "event after quota ending"
+            );
+            let mut partial = quota.clone();
+            partial.extend(b"{");
+            assert_eq!(
+                parity(&partial, postmortem, &inputs)["error"],
+                "incomplete worker output"
+            );
+        }
+        // Model/reset validation retains priority over position validation.
+        for (kind, error) in [(5, "invalid quota reset"), (6, "invalid quota model")] {
+            let mut bytes = line(kind, postmortem);
+            bytes.extend(line(0, postmortem));
+            bytes.extend(line(kind, postmortem));
+            assert_eq!(parity(&bytes, postmortem, &inputs)["error"], error);
+        }
+    }
+}
+
+#[test]
+fn generated_quota_position_divergence() {
+    use proptest::prelude::*;
+    runner(256)
+        .run(
+            &(
+                any::<bool>(),
+                any::<bool>(),
+                1u64..u64::MAX,
+                proptest::collection::vec(0u8..3, 0..20),
+                proptest::collection::vec(any::<u8>(), 0..512),
+            ),
+            |(postmortem, explicit, reset, prefix, middle)| {
+                let role = if postmortem { "postmortem" } else { "ingest" };
+                let mut value = json!({"event":"quota","role":role,"reset_ms":reset});
+                if postmortem && explicit {
+                    value["model"] = json!("grade");
+                }
+                let mut quota = serde_json::to_vec(&value).unwrap();
+                quota.push(b'\n');
+                let mut bytes = prefix
+                    .into_iter()
+                    .flat_map(|k| line(k, postmortem))
+                    .collect::<Vec<_>>();
+                bytes.extend(&quota);
+                bytes.extend(middle);
+                bytes.push(b'\n');
+                bytes.extend(&quota);
+                let inputs = json!({"grade_model":"grade"});
+                prop_assert!(
+                    reference::parse_reply(&bytes, &delivery(postmortem), &inputs).is_ok()
+                );
+                let result = parity(&bytes, postmortem, &inputs);
+                prop_assert_eq!(result["error"].as_str(), Some("event after quota ending"));
+                Ok(())
+            },
+        )
+        .unwrap();
 }

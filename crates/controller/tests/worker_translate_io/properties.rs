@@ -16,6 +16,11 @@ fn arm(source: &str) -> &str {
 }
 #[test]
 fn production_and_reference_sources_are_pinned() {
+    let resource = include_str!("resource.rs")
+        .split_once("// #833: verbatim resource persistence below.\n")
+        .unwrap()
+        .1;
+    assert!(include_str!("../../src/input_resources.rs").contains(resource.trim_end()));
     let pins: Value = serde_json::from_str(include_str!("pins.json")).unwrap();
     let base = include_str!("base-arms.rs.txt");
     assert_eq!(
@@ -49,9 +54,21 @@ fn production_and_reference_sources_are_pinned() {
             "crates/controller/tests/worker_translate_io/{name}.rs"
         )))
         .unwrap();
+        // A leaf whose production body changed after the freeze has a separate
+        // current copy: the frozen parts then pin only the reference copy, and
+        // the current copy must equal the production body before its tests.
+        let current = root.join(format!(
+            "crates/controller/tests/worker_translate_io/{name}-current.rs"
+        ));
+        let changed = current.exists();
+        if changed {
+            let copy = std::fs::read_to_string(&current).unwrap();
+            let body = production.split("#[cfg(test)]").next().unwrap();
+            assert_eq!(copy.trim_end(), body.trim_end(), "current leaf drift: {name}");
+        }
         for part in pin["parts"].as_array().unwrap() {
             let part = part.as_str().unwrap();
-            assert!(production.contains(part), "production leaf drift: {name}");
+            assert!(changed || production.contains(part), "production leaf drift: {name}");
             let normalized = compiled.replace("pub(super) fn", "fn");
             assert!(
                 compiled.contains(part) || normalized.contains(part),

@@ -377,6 +377,61 @@ def diagnostic_and_byte_cases(recorder, inputs, forecast, execution):
                     'bytes': target, 'characters': len(message), 'selectors': packed(selectors)}
 
 
+def pb2710_cases(recorder, inputs, forecast, execution):
+    """Replay the trace projection with recorded budget observations, as other extras do."""
+    from types import SimpleNamespace
+    from planner_fixtures import LEAF
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/planner-pb2710.json').read_text())
+    request = deepcopy(inputs)
+    request.pop('base_sha', None)
+    request['repair_plan_consistency'] = True
+    request['ingest']['goals'] = fixture['goals']
+    draft = {**deepcopy(LEAF), 'files': fixture['files'], 'checks': fixture['checks']}
+    check = recorder.check(planner.check_reply)
+    constrain = recorder.correction('constrain', planner.PlanConsistencyError.constrain)
+    previous = Path.cwd()
+    with tempfile.TemporaryDirectory(dir=recorder.temporary_root) as temporary:
+        os.chdir(temporary)
+        try:
+            for file in fixture['files']:
+                Path(file).parent.mkdir(parents=True, exist_ok=True)
+                Path(file).write_text('')
+            Path('tests/test_checkout_recovery_1465.py').write_text(
+                'def _git(): pass\n'
+                'def test_missing_or_conflicting_action_snapshot_and_ending_proof_keeps_original():\n'
+                '    assert True\n')
+            with patch.object(planner, 'Forecaster', lambda _: SimpleNamespace(measure=lambda *args: deepcopy(forecast), problems=[])), \
+                 patch.object(planner, 'execution_forecast', lambda *args, **kwargs: deepcopy(execution)):
+                for resolution in ('accepted', 'unrelated_change'):
+                    recorder.source, recorder.node, recorder.ordinal = 'planner_vectors_extra', 'extra/pb2710/' + resolution, 0
+                    terminal_inputs = {**deepcopy(request), 'repair_plan_consistency': False}
+                    terminal = deepcopy(draft)
+                    check(terminal_inputs, terminal)
+                    assert terminal['violations'] == [fixture['violation'], 'Planner coverage correction attempts: 0.']
+                    try:
+                        check(deepcopy(request), deepcopy(draft))
+                    except planner.PlanConsistencyError as error:
+                        mismatch = error
+                    else:
+                        raise AssertionError('PB #2710 must be eligible for coverage repair')
+                    assert mismatch.missing_goals == {3: fixture['goals'][3]['description']}
+                    assert mismatch.repair_text == fixture['violation'] + '\n' + fixture['repair_instruction']
+                    corrected = deepcopy(draft)
+                    corrected['checks'][0]['goal_ids'].append(3)
+                    if resolution == 'unrelated_change':
+                        corrected['estimated_exploration_turns'] += 1
+                    check(deepcopy(request), corrected)
+                    assert corrected['violations'] == []
+                    constrain(mismatch, corrected)
+                    if resolution == 'accepted':
+                        assert corrected['violations'] == []
+                    else:
+                        assert 'Correction changes declarations outside the test consistency error.' in corrected['violations']
+        finally:
+            os.chdir(previous)
+
+
 def extra_cases(recorder):
     """Reach every correction rejection without expanding the production rules."""
     from planner_fixtures import LEAF, SPLIT
@@ -482,6 +537,7 @@ def extra_cases(recorder):
         check(deepcopy(inputs), reply)
     observation_cases(recorder, inputs, forecast, execution)
     diagnostic_and_byte_cases(recorder, inputs, forecast, execution)
+    pb2710_cases(recorder, inputs, forecast, execution)
 
 
 def generate(selection=None):
