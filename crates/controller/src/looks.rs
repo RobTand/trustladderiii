@@ -1783,7 +1783,15 @@ impl Controller {
                         || (r.table == "github_message_reconciliations"
                             && state.delivery.key == format!("github-cleanup:{}", r.id))
                 });
-            if !pending && !watched && !incident_open && !maintenance_pending {
+            // Q53 / #817: a current quota deadline covers a lost result watch.
+            // Keep that durable retry until the existing quota path releases it.
+            let quota_held = crate::dispatch_liveness::quota_held(
+                snapshot,
+                &[],
+                state.delivery.node(),
+                &world.nodes[state.delivery.node().0 as usize],
+            )?;
+            if !pending && !watched && !incident_open && !maintenance_pending && !quota_held {
                 if state.external_wait.is_some()
                     && !self.retire_wait(snapshot, &state.delivery, &mut commit)?
                 {

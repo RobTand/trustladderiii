@@ -175,7 +175,12 @@ fn schedule(actions: &[u8], index: usize, database: &mut crate::git_tests::suppo
     let mut failures = 0;
     for (step, action) in actions.iter().enumerate() {
         let node = controller.world().unwrap().nodes[0];
-        if node.waiting_incident {
+        // The missing-dispatch incident is authoritative controller evidence;
+        // it need not set the kernel's waiting_incident flag. Incidents absorb
+        // subsequent schedule actions in the reference model.
+        if node.waiting_incident
+            || controller.dispatch_status(NodeId(0)).unwrap() == DispatchStatus::Incident
+        {
             break;
         }
         let key = format!("effect:0:{}", node.next_seq - 1);

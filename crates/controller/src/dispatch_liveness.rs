@@ -588,7 +588,12 @@ fn disjoint(world: &World, a: tl3_kernel::Footprint, b: tl3_kernel::Footprint) -
 
 /// Q53 / #828: a current quota retry is already covered by its durable reset,
 /// including when its completed worker no longer has a result watch.
-fn quota_held(snapshot: &Snapshot, changes: &[RowChange], id: NodeId, node: &Node) -> Result<bool> {
+pub(crate) fn quota_held(
+    snapshot: &Snapshot,
+    changes: &[RowChange],
+    id: NodeId,
+    node: &Node,
+) -> Result<bool> {
     let Some(key) = key(id, node) else {
         return Ok(false);
     };
