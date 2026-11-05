@@ -1,6 +1,5 @@
 """Small required Verus proofs with declared source, spec and toolchain inputs."""
 
-load("@rules_python//python:defs.bzl", "py_test")
 load("//tools/bazel:verus_toolchain.bzl", "VerusToolchainInfo")
 
 def _verus_test_impl(ctx):
@@ -405,17 +404,6 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
-
-        # One Python edge run while the action copy remains.
-        py_test(
-            name = "test_limits_boundary",
-            srcs = ["tests/fixtures/limits/test_boundary.py"],
-            main = "tests/fixtures/limits/test_boundary.py",
-            data = ["tests/fixtures/limits/delay.json"],
-            deps = ["//harness/src/tl3_harness"],
-            size = "small",
-            timeout = "short",
-        )
 
     if native.package_name() == "crates/controller-core":
         # Group G2a: current-generation rebase replies, over the real core.
