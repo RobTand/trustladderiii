@@ -135,3 +135,22 @@ fn fit_and_remaining_boundary_goldens() {
         assert_eq!(decision::remaining(used, 4), 4 - used);
     }
 }
+
+proptest! {
+    #![proptest_config(proptest::test_runner::Config {
+        rng_seed: proptest::test_runner::RngSeed::Fixed(7807),
+        .. proptest::test_runner::Config::default()
+    })]
+    /// #780: cold-price selection uses decoded integers over all finite binary64 weights.
+    #[test]
+    fn decoded_price_comparison_matches_finite_binary64(left in 0u64..=0x7fef_ffff_ffff_ffff, right in 0u64..=0x7fef_ffff_ffff_ffff) {
+        fn decoded(bits:u64) -> tl3_controller::budget::decision::Price {
+            let power=((bits>>52)&0x7ff) as i16;
+            tl3_controller::budget::decision::Price {
+                significand:(bits&((1<<52)-1)) | if power==0 {0} else {1<<52},
+                exponent:if power==0 {-1074} else {power-1023-52},
+            }
+        }
+        prop_assert_eq!(decoded(left).greater(decoded(right)), f64::from_bits(left)>f64::from_bits(right));
+    }
+}

@@ -38,6 +38,24 @@ def facts_history(messages):
 
 
 def run(mode, schedules):
+    if mode == "shrinking_probe":
+        assert all(n <= 3 for schedule in schedules for n in schedule), schedules
+        return
+    if mode == "io_checkpoint_mutants":
+        import inspect
+        import pytest
+        from schedule import compare
+        from tl3_workers import session
+        from tl3_workers.roles import maker
+        source = inspect.getsource(session.save)
+        for omitted in ["json.dump(value, handle, ensure_ascii=False, allow_nan=False)",
+                        "handle.flush()", "os.fsync(handle.fileno())", "os.replace(temporary, path)"]:
+            namespace = {}
+            exec(compile(source.replace(omitted, "pass"), "checkpoint_mutant", "exec"), session.__dict__, namespace)
+            with patch.object(maker, "save", namespace["save"]):
+                with pytest.raises(AssertionError):
+                    compare(old, [[0, 1, 2]])
+        return
     if mode == "io_schedule":
         from schedule import compare
         compare(old, schedules[:4])
@@ -63,7 +81,13 @@ def run(mode, schedules):
     for schedule in schedules:
         for number in schedule:
             n = number
-            if mode == "forecast":
+            if mode == "diagnostics":
+                from tl3_workers.forecast import execution_forecast
+                from tl3_workers.roles.planner import execution_budget_details
+                expected = old["forecast"].execution_forecast(["a", "b"], n % 10, exploration=n % 20)
+                actual = execution_forecast(["a", "b"], n % 10, exploration=n % 20)
+                assert execution_budget_details(actual).encode() == execution_budget_details(expected).encode()
+            elif mode == "forecast":
                 files = {"a": n, "b": n // 7}
                 config = {"overhead_tokens": {"making": 4000}, "fit_tokens": 10000, "context_tokens": 15000}
                 expected = old["forecast"].forecast_fit("héllo", files, config, problems=range(n % 3))
@@ -111,6 +135,26 @@ def run(mode, schedules):
                              implementation_files=False, implementation_started=False,
                              phase=None, exhaustion=None, finalizing=False, final=False) == expected
             elif mode == "compaction":
+                from tl3_workers import exploration
+                from langchain_core.messages import SystemMessage
+                transcript = [SystemMessage(content="system"), HumanMessage(content="inputs")]
+                for i in range(1 + n % 24):
+                    transcript.extend([AIMessage(content="long café\\n" * 1500,
+                        tool_calls=[{"name": "read", "id": str(i), "args": {
+                            "z": "long argument\\t" * (1500 if n % 2 else 1), "a": "é"}}]),
+                        ToolMessage(content="long tool message\\n" * 2000, tool_call_id=str(i)),
+                        HumanMessage(content="Retain this instruction.")])
+                expected = old["exploration"].retained(transcript, 1024)
+                calls = []
+                original = exploration.budget_check
+                def measured(kind, **facts):
+                    calls.append(kind)
+                    return original(kind, **facts)
+                with patch.object(exploration, "budget_check", measured):
+                    actual = exploration.retained(transcript, 1024)
+                assert json.dumps([m.model_dump() for m in actual], ensure_ascii=False).encode() == json.dumps(
+                    [m.model_dump() for m in expected], ensure_ascii=False).encode()
+                assert len(calls) <= 1, (len(transcript), calls)
                 assert check("compaction", before=n, after=n // 2) == (n // 2 < n)
     print(mode, "parity schedules", len(schedules))
 

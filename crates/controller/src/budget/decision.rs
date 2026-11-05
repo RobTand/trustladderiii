@@ -121,6 +121,10 @@ pub struct Price {
     pub exponent: i16,
 }
 impl Price {
+    pub fn greater(self, _other: Self) -> bool {
+        false
+    }
+
     pub fn integer(value: u64) -> Option<Self> {
         Self::rounded(u128::from(value), 0)
     }
