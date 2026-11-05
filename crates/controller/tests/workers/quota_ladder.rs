@@ -268,6 +268,85 @@ pub(super) fn whole_ladder_waits(settings: &tl3_config::Store) {
         f.planner_models(),
         ["default-model", "alternate-model", "alternate-model"]
     );
+
+    operator_clear_resumes();
+}
+
+/// #828 / Q53: an operator reset wakes the real worker under the same effect key.
+fn operator_clear_resumes() {
+    let mut database = Database::start();
+    let settings = database.create("operator_clear");
+    let mut f = fixture_at(
+        &settings,
+        &["default-model"],
+        json!({"planner": {"default-model": 600}}),
+        real_now(),
+        true,
+    );
+    f.quota_recorded("default-model");
+    f.controller.look_due().unwrap();
+    let wait = f.quota_waits().pop().expect("planner is quota held");
+    let key = wait["delivery"]["key"].as_str().unwrap().to_owned();
+    assert_eq!(f.planner_attempt(), 0);
+    fs::write(f.root.path().join("entered.quota-models"), "{}").unwrap();
+    f.controller
+        .observe(
+            "operator-clear",
+            Observation::GitHubComment {
+                repository: tl3_controller::Repository {
+                    owner: "RobTand".into(),
+                    name: "trustladderiii".into(),
+                    installation: 2,
+                },
+                issue: 17,
+                comment: tl3_github::Comment {
+                    id: 828,
+                    body: "clear quota default-model".into(),
+                    user: tl3_github::Actor {
+                        id: f.config.github.rob.id,
+                        login: "fixture".into(),
+                    },
+                    created_at: chrono::DateTime::UNIX_EPOCH,
+                    updated_at: chrono::DateTime::UNIX_EPOCH,
+                    issue_url: "https://api.github.com/repos/RobTand/trustladderiii/issues/17"
+                        .into(),
+                },
+            },
+        )
+        .unwrap();
+    f.step();
+    assert!(
+        f.model_quota("default-model").is_none(),
+        "clear state: {:?}; notes: {:?}",
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|row| matches!(
+                row.table.as_str(),
+                "operations_comments" | "incidents" | "inbox"
+            ))
+            .collect::<Vec<_>>(),
+        adapters::delivered_notes(&f.root.path().join("fakes")).unwrap()
+    );
+    assert_eq!(f.controller.next_look_in().unwrap(), Some(Duration::ZERO));
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.planner_attempt(),
+        1,
+        "operator evidence resumes before reset"
+    );
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "allowances" && row.id == key)
+    );
+    f.finish_planning();
+    assert_eq!(f.planner_models(), ["default-model", "default-model"]);
 }
 
 pub(super) fn removed_model_resumes_on_open(settings: &tl3_config::Store, legacy: bool) {

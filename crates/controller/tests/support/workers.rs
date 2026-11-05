@@ -71,6 +71,13 @@ impl<F: FnMut(&Delivery, &mut Completion)> Workers<F> {
 }
 
 impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
+    fn configured_model(&self, model: &str) -> bool {
+        match &self.real {
+            Some(real) => real.configured_model(model),
+            None => self.fake.configured_model(model),
+        }
+    }
+
     fn input_incident(
         &mut self,
         notice: &tl3_controller::input_errors::IncidentNotice,

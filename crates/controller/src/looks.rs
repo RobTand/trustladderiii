@@ -1562,6 +1562,71 @@ impl Controller {
         }
     }
 
+    /// #828 / Q53: operator reset evidence ends this model's hold atomically.
+    pub(crate) fn operator_clear_quota(
+        &self,
+        snapshot: &Snapshot,
+        model: &str,
+        now: u64,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        self.clear_model_quota(snapshot, Some(model), commit);
+        for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            if state.quota_ms.is_some() && state.last_quota_model.as_deref() == Some(model) {
+                // Keep the quota-resume path, but do not reconstruct the old reset
+                // from the worker's ending when quota_resume_ms next reads it.
+                state.quota_ms = Some(now);
+                state.due_ms = Some(now);
+                commit
+                    .rows
+                    .push(put("allowances", row.id.clone(), json!(state)));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn quota_clear_reply(
+        &self,
+        snapshot: &Snapshot,
+        repository: &crate::Repository,
+        issue: u64,
+        comment: u64,
+        line: String,
+        commit: &mut Commit,
+    ) {
+        let delivery = Delivery {
+            key: format!("model-quota-clear-reply:{comment}"),
+            epoch: snapshot.epoch.get(),
+            output: Out::Comment {
+                node: NodeId(0),
+                kind: crate::executor::CommentKind::OperationsNote,
+            },
+            generation: 0,
+            head_sha: None,
+            repository: repository.clone(),
+            issue,
+            pull_request: None,
+            proposed: None,
+            paths: vec![],
+            attempt: 1,
+            round: 0,
+            replanned: false,
+            checks: None,
+            job_generation: None,
+            question: None,
+            note: Some(line.clone()),
+            scope_removals: None,
+            marker_key: None,
+            question_context: None,
+            steering: Some(crate::steering::Task::ConsoleNote { text: line }),
+            request_text: None,
+            evidence: None,
+        };
+        commit.rows.push(self.allowance_row(delivery.clone()));
+        commit.effects.push(delivery.into_effect());
+    }
+
     pub(crate) fn quota_allowance(
         &self,
         snapshot: &Snapshot,

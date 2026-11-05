@@ -28,6 +28,11 @@ impl Spy {
     }
 }
 impl Executor for Spy {
+    fn configured_model(&self, model: &str) -> bool {
+        let _: Result<()> = self.hit("configured_model", model.into());
+        true
+    }
+
     fn input_incident(
         &mut self,
         notice: &tl3_controller::input_errors::IncidentNotice,
@@ -222,6 +227,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
             head: None,
         };
         assert_delivery_methods(&mut router, &stop, primary, &calls);
+        assert!(router.configured_model("configured"));
         assert_eq!(router.implementation(), primary);
         assert_eq!(router.app_login(42).as_deref(), Some(primary));
         let question = tl3_controller::adoption::Clarification {
@@ -268,6 +274,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         assert_eq!(
             *calls.lock().unwrap(),
             vec![
+                (primary, "configured_model", "configured".into()),
                 (primary, "implementation", String::new()),
                 (primary, "app_login", "42".into()),
                 (primary, "intake_question", format!("{}:3", question.key())),

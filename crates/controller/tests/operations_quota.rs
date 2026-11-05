@@ -223,6 +223,7 @@ fn clears_and_wakes_atomically() {
     );
     for id in ["waiting-1", "waiting-2"] {
         assert_eq!(f.row("allowances", id).unwrap()["due_ms"], NOW);
+        assert_eq!(f.row("allowances", id).unwrap()["quota_ms"], NOW);
     }
     for id in ["other", "running"] {
         assert_eq!(f.row("allowances", id).unwrap()["due_ms"], RESET);
@@ -339,6 +340,15 @@ fn clear_survives_replay_check() {
     f.clear(100);
     assert!(f.row("model_quotas", MODEL).is_none());
     let before = f.store.load().unwrap();
+    f.comment(
+        "replayed-clear",
+        100,
+        42,
+        17,
+        &format!("clear quota {MODEL}"),
+    );
+    assert_eq!(before.rows, f.store.load().unwrap().rows);
+    let before = f.store.load().unwrap();
     let report = replay::run(
         &mut Reader::open(&f.settings).unwrap(),
         Some("fixture:anchor"),
@@ -348,6 +358,24 @@ fn clear_survives_replay_check() {
     let after = f.store.load().unwrap();
     assert_eq!(before.rows, after.rows);
     assert_eq!(before.revision, after.revision);
+    let event = Reader::open(&f.settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 128)
+        .unwrap()
+        .into_iter()
+        .find(|event| event.key == format!("model-quota-clear:{MODEL}:100"))
+        .unwrap();
+    let mut reconstructed = Fixture::new("quota_reconstructed");
+    reconstructed
+        .c
+        .observe("clear-100", serde_json::from_value(event.payload).unwrap())
+        .unwrap();
+    assert!(reconstructed.c.drive_once().unwrap());
+    assert_eq!(
+        after.rows,
+        reconstructed.store.load().unwrap().rows,
+        "replaying the recorded operations input reconstructs every store row"
+    );
 }
 /// Q53 / #828: the existing status quota data renders the operator clear time.
 #[test]
@@ -386,12 +414,32 @@ fn incident_and_quota_share_authorization_and_parser_boundary() {
         assert_eq!(receipts, [false, false]);
         assert!(f.row("model_quotas", MODEL).is_some());
     }
-    f.comment(
-        "whitespace",
-        300,
-        42,
-        17,
-        &format!(" \nclear quota {MODEL}\n "),
-    );
-    assert!(f.row("model_quotas", MODEL).is_none());
+    for (index, template, expected) in [
+        (0, "clear {kind} {value}", true),
+        (1, " \nclear {kind} {value}\n ", true),
+        (2, "Clear {kind} {value}", false),
+        (3, "clear  {kind} {value}", false),
+        (4, "clear {kind}  {value}", false),
+    ] {
+        f.put(
+            "incidents",
+            "fixture",
+            json!({"id":"fixture", "node":0,
+            "open":true, "needs_rob":true, "blocking":false, "summary":"fixture",
+            "signature":{"upstream":"GitHub", "class":"permission"}}),
+        );
+        f.put("model_quotas", MODEL, json!({"reset_ms":RESET}));
+        let mut cleared = vec![];
+        for (offset, kind, value) in [(0, "incident", "fixture"), (1, "quota", MODEL)] {
+            let id = 400 + index * 2 + offset;
+            let body = template.replace("{kind}", kind).replace("{value}", value);
+            f.comment(&format!("grammar-{id}"), id, 42, 17, &body);
+            cleared.push(if kind == "incident" {
+                f.row("incidents", "fixture").unwrap()["open"] == false
+            } else {
+                f.row("model_quotas", MODEL).is_none()
+            });
+        }
+        assert_eq!(cleared, [expected, expected], "{template}");
+    }
 }

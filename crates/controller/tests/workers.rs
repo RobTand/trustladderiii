@@ -970,6 +970,9 @@ fn worker_simulation(
 ) -> tl3_controller::Result<(tl3_controller::executor::Registry, WorkerOutputSource)> {
     struct IngestAudit(Supervisor, adapters::workers::Fake, bool);
     impl Executor for IngestAudit {
+        fn configured_model(&self, model: &str) -> bool {
+            self.0.configured_model(model)
+        }
         fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
             self.0.retire(store)
         }
