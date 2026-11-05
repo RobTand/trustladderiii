@@ -139,7 +139,9 @@ def test_stdout_eof_still_drains_stderr(tmp_path, monkeypatch):
 def test_repeated_failures_fit_the_existing_result_log_headroom(tmp_path, monkeypatch, capsys):
     for _ in range(32):
         result, diagnostic = observe(tmp_path, monkeypatch, "import os; os.write(2, b'x' * 16384); os._exit(125)")
-        assert diagnostic['stderr_tail']
+        if diagnostic is not None:
+            assert diagnostic['stderr_tail']
+        assert 'stderr_tail' not in json.dumps(result)
     logged = capsys.readouterr().out
     assert logged.startswith('TL3_EXECUTION_FAILURE ')
     assert len(logged.encode()) <= 16_384

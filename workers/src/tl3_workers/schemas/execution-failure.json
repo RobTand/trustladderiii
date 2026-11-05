@@ -1,0 +1,53 @@
+{
+  "$defs": {
+    "Outcome": {
+      "enum": [
+        "setup_failure",
+        "unknown_incomplete"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/execution-failure.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A diagnostic read only from a verified, bounded PB action log.",
+  "properties": {
+    "outcome": {
+      "$ref": "#/$defs/Outcome"
+    },
+    "phase": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "stderr_tail": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+    },
+    "termination_reason": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "test": {
+      "maxLength": 2048,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "test_started": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "outcome",
+    "phase",
+    "termination_reason",
+    "test_started",
+    "stderr_tail"
+  ],
+  "type": "object"
+}
