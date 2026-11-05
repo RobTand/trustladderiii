@@ -199,7 +199,8 @@ fn functions(source: &str, module: &str) -> Vec<Function> {
                     module: module.into(),
                     path: format!("{owner}::{name}"),
                     verifiable: verifiable || annotated,
-                    definition_only: ts.get(i.wrapping_sub(1)).and_then(Token::name) == Some("spec")
+                    definition_only: ts.get(i.wrapping_sub(1)).and_then(Token::name)
+                        == Some("spec")
                         && !ts[i + 2..]
                             .iter()
                             .take_while(|token| **token != Token::Punct('{'))
@@ -346,7 +347,10 @@ fn check(
             .collect();
         if let Some(reason) = unverified.get(&function.path) {
             if reason.starts_with("Logical definition;") && !function.definition_only {
-                errors.push(format!("{}: definition-only reason requires a nonrecursive spec function", function.path));
+                errors.push(format!(
+                    "{}: definition-only reason requires a nonrecursive spec function",
+                    function.path
+                ));
             }
             used.insert(function.path.clone());
         } else if !function.verifiable {
