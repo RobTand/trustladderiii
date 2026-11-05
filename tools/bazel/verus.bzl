@@ -214,7 +214,7 @@ def verus_proofs():
 
 
         # ctrl-core A4: enqueue_ack_sound, independent full-domain contract and witnesses.
-        for suffix, module, count in [("", "enqueue#decide", 1), ("_issue", "enqueue#reconcile_issue", 1), ("_witness", "witness", 4)]:
+        for suffix, module, count in [("", "enqueue#decide", 1), ("_issue", "enqueue#reconcile_issue", 1), ("_completion", "enqueue#command_completion", 1), ("_witness", "witness", 4)]:
             verus_test(
                 name = "verus_enqueue_ack_sound" + suffix,
                 src = "proofs/enqueue_ack_sound.rs",
@@ -269,7 +269,7 @@ def verus_proofs():
 
 
         # ctrl-core A4: dequeue freshness over its actual body and full-domain witness.
-        for suffix, module, count in [("", "enqueue#dequeue_pending", 1), ("_label_event", "enqueue#LabelEvent", 1), ("_witness", "witness", 4)]:
+        for suffix, module, count in [("", "enqueue#dequeue_pending", 1), ("_label_event", "enqueue#LabelEvent::clone", 1), ("_witness", "witness", 4)]:
             verus_test(
                 name = "verus_enqueue_dequeue_fresh" + suffix,
                 src = "proofs/enqueue_dequeue_fresh.rs",
