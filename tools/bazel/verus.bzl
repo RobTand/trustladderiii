@@ -60,6 +60,107 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
+        # Group B1: production recovery residue and full-domain witnesses.
+        for name, count in [("budget", 10), ("eligibility", 10), ("schedule", 8), ("command", 6)]:
+            verus_test(
+                name = "verus_recovery_" + name,
+                src = "proofs/recovery.rs",
+                srcs = ["src/decide/recovery.rs"],
+                expected_obligations = count,
+                module = "recovery::" + name,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+        # ctrl-core C1: production required-check/rerun residue and witnesses.
+        verus_test(
+            name = "verus_required",
+            src = "proofs/required.rs",
+            srcs = ["src/decide/required.rs"],
+            specs = ["proofs/required_spec.rs"],
+            expected_obligations = 33,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+        # ctrl-core A1: shell residue, with no contract changes to enqueue::decide.
+        verus_test(
+            name = "verus_completion",
+            src = "proofs/completion.rs",
+            srcs = ["src/decide/completion.rs"],
+            specs = ["proofs/completion_spec.rs"],
+            expected_obligations = 44,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        # #743 M1a: real observe/check/facts decisions and original-domain witnesses.
+        for name, module, count in [
+            ("observe", "observe", 11),
+            ("check", "check", 12),
+            ("check_facts", "facts", 6),
+            ("observe_witness", "observe_witness", 8),
+            ("observe_properties", "observe_properties", 2),
+        ]:
+            verus_test(
+                name = "verus_" + name,
+                src = "proofs/observe.rs",
+                srcs = [
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                    "src/decide/facts.rs",
+                ],
+                specs = ["src/decide/observe_witness.rs", "proofs/observe_properties.rs"],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+        # ctrl-core A2: executable execute plans and body-heal decisions.
+        verus_test(
+            name = "verus_plan",
+            src = "proofs/plan.rs",
+            srcs = ["src/decide/plan.rs"],
+            specs = ["proofs/plan_spec.rs"],
+            expected_obligations = 22,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+        verus_test(
+            name = "verus_heal",
+            src = "proofs/heal.rs",
+            srcs = ["src/decide/heal.rs"],
+            specs = ["proofs/heal_spec.rs"],
+            expected_obligations = 23,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
@@ -74,6 +175,163 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+        verus_test(
+            name = "verus_budget_limits",
+            src = "proofs/budget_limits.rs",
+            srcs = ["src/budget/limits.rs"],
+            expected_obligations = 13,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
+            name = "verus_budget_cutoff_witness",
+            src = "proofs/budget_cutoff_witness.rs",
+            srcs = ["src/budget/cutoff.rs"],
+            expected_obligations = 2,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
+            name = "verus_reviewer",
+            src = "proofs/reviewer.rs",
+            srcs = ["src/reviewer/decision.rs"],
+            expected_obligations = 8,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
+            name = "verus_postmortem",
+            src = "proofs/postmortem.rs",
+            srcs = ["src/postmortem_reply/decision.rs"],
+            expected_obligations = 8,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
+            name = "verus_classifier",
+            src = "proofs/classifier.rs",
+            srcs = ["src/classifier/decision.rs"],
+            expected_obligations = 6,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+    if native.package_name() == "crates/github":
+        verus_test(
+            name = "verus_status",
+            src = "proofs/status.rs",
+            srcs = ["src/status.rs"],
+            expected_obligations = 7,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+    if native.package_name() == "crates/controller-core":
+        # Group F: H16/C4, production decisions and concrete branch witnesses.
+        worker_event_groups = {
+            "quota_model": ("worker_events#quota_model", 1),
+            "reply_step": ("worker_events#reply_step", 1),
+            "progress_due": ("worker_events#progress_due", 1),
+            "progress_signal": ("worker_events#progress_signal", 1),
+            "claim_decision": ("worker_events#claim_decision", 1),
+            "refresh_gate": ("worker_events#refresh_gate", 1),
+            "end_decision": ("worker_events#end_decision", 1),
+            "witnesses": ("worker_events_witnesses", 4),
+        }
+        for name, (module, count) in worker_event_groups.items():
+            verus_test(
+                name = "verus_worker_events_" + name,
+                src = "verus/worker_events.rs",
+                srcs = ["src/worker_events.rs"],
+                specs = ["verus/worker_events_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+    if native.package_name() == "crates/controller-core":
+        # Group G1: production Queue residue, with separate unbounded scans.
+        translate_groups = {
+            "repeated": ("translate#repeated", 2),
+            "dispatch": ("translate#dispatch", 1),
+            "clear": ("translate#clear_reported", 2),
+            "previous": ("translate#previous_commit", 2),
+            "carry": ("translate#carry_plan", 1),
+            "head_current": ("translate#head_current", 1),
+            "enqueue": ("translate#enqueue_pending", 1),
+            "witnesses": ("translate_witnesses", 6),
+        }
+        for name, (module, count) in translate_groups.items():
+            verus_test(
+                name = "verus_translate_" + name,
+                src = "verus/translate.rs",
+                srcs = ["src/translate.rs"],
+                specs = ["verus/translate_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+    if native.package_name() == "crates/controller-core":
+        # Group G2b: only WorkerReply/WorkerFailed translation decisions.
+        translate_worker_groups = {
+            "role": ("translate_worker#valid_role", 1),
+            "failed": ("translate_worker#worker_failed", 1),
+            "maker": ("translate_worker#maker_self_check", 1),
+            "budget": ("translate_worker#findings_prefix", 2),
+            "document": ("translate_worker#document", 1),
+            "review": ("translate_worker#review_route", 1),
+            "witnesses": ("translate_worker_witnesses", 6),
+        }
+        for name, (module, count) in translate_worker_groups.items():
+            verus_test(
+                name = "verus_translate_worker_" + name,
+                src = "verus/translate_worker.rs",
+                srcs = ["src/translate_worker.rs"],
+                specs = ["verus/translate_worker_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     # #836 RED matching: independent of the other wave-B proof inventories.
     if native.package_name() == "crates/harness-core":
         verus_test(
@@ -187,3 +445,62 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    if native.package_name() == "crates/controller-core":
+        # D1: contracts over production decisions and concrete Q7 reachability.
+        verus_test(
+            name = "verus_looks",
+            src = "verus/looks.rs",
+            srcs = ["src/looks.rs"],
+            expected_obligations = 22,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+        # D2: look-result, quota and declared-wait production decisions.
+        verus_test(
+            name = "verus_looks_state",
+            src = "verus/looks_state.rs",
+            srcs = ["src/looks_state.rs"],
+            expected_obligations = 22,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+    # CC-P / H19: real adapter decision functions and non-vacuous protocol witnesses.
+    if native.package_name() == "crates/controller":
+        verus_test(
+            name = "verus_prismabuild",
+            src = "src/adapters/prismabuild/decide.rs",
+            srcs = ["src/adapters/prismabuild/decide.rs"],
+            expected_obligations = 23,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+    if native.package_name() == "crates/controller-core":
+        # E1: production publication decisions and concrete branch witnesses.
+        verus_test(
+            name = "verus_publication",
+            src = "verus/publication.rs",
+            srcs = ["src/publication.rs"],
+            expected_obligations = 38,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )

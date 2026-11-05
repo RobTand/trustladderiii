@@ -25,6 +25,7 @@ _POSTGRES = ["crates/controller", "crates/store"]
 
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
+    "crates/contracts": ["//workers:schemas"],
     "crates/controller": ["//workers:schemas"],
     "crates/config": ["//deploy/dl380g10:models.toml"],
     "crates/github": ["//crates/mergify:sources"],
@@ -165,6 +166,9 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "src/lib.rs": ["tests/worker_events_io/**"],
+    # CC-P: exact source replay and persistent differential schedules.
+    "tests/prismabuild_schedule/main.rs": ["tests/prismabuild_schedule/io.rs", "tests/prismabuild_schedule/reference.rs", "tests/prismabuild_schedule/extracted.rs", "tests/prismabuild_schedule/io_schedule-regressions.txt"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
@@ -295,13 +299,18 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             allow_empty = True,
         ),
     )
-    if directory in ["crates/controller", "crates/kernel", "crates/store"]:
+    separate_library = directory in ["crates/controller", "crates/kernel", "crates/store", "crates/contracts"]
+    if separate_library:
         native.filegroup(
             name = "library_sources",
             # Proof drivers and crate tooling are not linked into a Rust library.
-            srcs = native.glob(["src/**/*", "migrations/**"], exclude = ["src/proofs.rs"], allow_empty = True),
+            srcs = native.glob(
+                ["src/**/*", "migrations/**"],
+                exclude = ["src/proofs.rs"] + (["src/bin/**"] if directory == "crates/contracts" else []),
+                allow_empty = True,
+            ),
         )
-    library_sources = [":library_sources"] if directory in ["crates/controller", "crates/kernel", "crates/store"] else [":sources"]
+    library_sources = [":library_sources"] if separate_library else [":sources"]
     compile_data = _COMPILE_DATA.get(directory, [])
     script = []
     if build_script:
@@ -327,11 +336,14 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     )
     for name in bins:
         standalone_verifier = name == "verus-runner" and directory == "crates/mergify"
+        binary_sources = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources
+        if directory == "crates/contracts":
+            binary_sources = library_sources + ["src/bin/%s.rs" % name]
         rust_binary(
             name = name,
             crate_name = name.replace("-", "_"),
             crate_root = "src/bin/%s.rs" % name,
-            srcs = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources,
+            srcs = binary_sources,
             edition = "2024",
             crate_features = features,
             aliases = aliases(),
