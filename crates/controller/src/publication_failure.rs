@@ -142,6 +142,11 @@ pub(crate) fn http_status(error: &Error) -> Option<u16> {
     source
         .downcast_ref::<HttpOperation>()
         .and_then(|op| status(&op.source))
+        .or_else(|| {
+            source
+                .downcast_ref::<crate::input_resources::LookupError>()
+                .and_then(|op| status(&op.source))
+        })
         .or_else(|| source.downcast_ref::<tl3_github::Error>().and_then(status))
 }
 
