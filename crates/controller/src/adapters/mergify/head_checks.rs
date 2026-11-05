@@ -1,5 +1,6 @@
 use super::*;
 use tl3_github::{CheckAnnotation, PullRequest, WorkflowRun};
+use tl3_mergify::decide::required;
 
 enum Failure {
     Tests {
@@ -56,10 +57,10 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
     let requirements = github
         .required_status_checks(repo, &pull.base.branch)
         .await?;
-    let checks = if requirements.checks.is_empty() {
-        vec![]
-    } else {
+    let checks = if required::needs_checks(requirements.checks.is_empty()) {
         github.check_runs(repo, &pull.head.sha).await?
+    } else {
+        vec![]
     };
     evaluate(github, repo, pull, requirements, &checks).await
 }
@@ -73,7 +74,7 @@ pub(super) async fn evaluate(
 ) -> Result<Checks> {
     let required = requirements.checks;
     let mut unavailable = requirements.unavailable;
-    if required.is_empty() {
+    if !required::needs_checks(required.is_empty()) {
         return Ok(Checks {
             ready: true,
             unavailable,
@@ -82,40 +83,51 @@ pub(super) async fn evaluate(
             failure: None,
         });
     }
-    let mut latest = BTreeMap::new();
-    for check in checks.iter().cloned() {
-        if check.head_sha == pull.head.sha {
-            let key = (check.app.as_ref().map(|app| app.id), check.name.clone());
-            let entry = latest.entry(key).or_insert_with(|| check.clone());
-            if check.id > entry.id {
-                *entry = check;
-            }
-        }
-    }
+    let latest = latest_payloads(
+        checks.iter().cloned(),
+        |check| (check.app.as_ref().map(|app| app.id), check.name.clone()),
+        |check| required::Candidate {
+            id: check.id,
+            eligible: check.head_sha == pull.head.sha,
+        },
+    );
     let mut statuses = BTreeMap::new();
     let mut statuses_available = true;
-    if required.iter().any(|rule| rule.integration_id.is_none()) {
-        let read = match github.commit_statuses(repo, &pull.head.sha).await {
-            Ok(statuses) => statuses,
-            Err(tl3_github::Error::Http {
-                status: status @ (403 | 404),
-            }) => {
-                unavailable.push(format!("Commit statuses: read unavailable (HTTP {status})"));
+    if required::needs_statuses(
+        &required
+            .iter()
+            .map(|rule| rule.integration_id)
+            .collect::<Vec<_>>(),
+    ) {
+        let result = github.commit_statuses(repo, &pull.head.sha).await;
+        let read = match required::status_read(match &result {
+            Ok(_) => required::ReadResult::Success,
+            Err(tl3_github::Error::Http { status }) => required::ReadResult::Http(*status),
+            Err(_) => required::ReadResult::Other,
+        }) {
+            required::StatusRead::Available => result?,
+            required::StatusRead::Unavailable => {
+                if let Err(tl3_github::Error::Http { status }) = result {
+                    unavailable.push(format!("Commit statuses: read unavailable (HTTP {status})"));
+                }
                 statuses_available = false;
                 vec![]
             }
-            Err(error) => return Err(error.into()),
+            required::StatusRead::Propagate => return Err(result.unwrap_err().into()),
         };
-        for status in read {
-            let entry = statuses
-                .entry(status.context.clone())
-                .or_insert_with(|| status.clone());
-            if status.id > entry.id {
-                *entry = status;
-            }
-        }
+        statuses = latest_payloads(
+            read,
+            |status| status.context.clone(),
+            |status| required::Candidate {
+                id: status.id,
+                eligible: true,
+            },
+        );
     }
-    let mut ready = true;
+    let mut summary = required::Summary {
+        ready: true,
+        failure: required::Failure::None,
+    };
     let mut missing = Vec::new();
     let mut reported = Vec::new();
     let mut tests = None;
@@ -124,10 +136,11 @@ pub(super) async fn evaluate(
         let checks: Vec<_> = latest
             .values()
             .filter(|check| {
-                rule.context == check.name
-                    && rule
-                        .integration_id
-                        .is_none_or(|id| check.app.as_ref().is_some_and(|app| app.id == id))
+                required::rule_matches(
+                    rule.context == check.name,
+                    rule.integration_id,
+                    check.app.as_ref().map(|app| app.id),
+                )
             })
             .collect();
         let status = rule
@@ -141,41 +154,47 @@ pub(super) async fn evaluate(
         };
         let reports = !checks.is_empty() || status.is_some();
         if facts::required_missing(reports, rule.integration_id.is_some(), statuses_available) {
-            ready = false;
+            summary = required::record(summary, required::Contribution::Pending);
             missing.push(expected);
         } else if reports {
             reported.push(expected);
         }
         for check in checks {
             let view = tl3_mergify::views(std::slice::from_ref(check), &pull.head.sha, |_| true)[0];
-            // Only Actions failures need annotations to distinguish runner failures.
-            let runner = view.status == tl3_mergify::decide::Status::Completed
-                && view.app == tl3_mergify::decide::App::Actions
-                && view.conclusion == Some(tl3_mergify::decide::Conclusion::Failure)
-                && runner_failure(&github.check_annotations(repo, check.id).await?);
-            match lifecycle::required_check(view, runner) {
-                lifecycle::RequiredState::Passed => {}
+            let runner = required::needs_annotations(
+                view.status == tl3_mergify::decide::Status::Completed,
+                view.app == tl3_mergify::decide::App::Actions,
+                view.conclusion == Some(tl3_mergify::decide::Conclusion::Failure),
+            ) && runner_failure(&github.check_annotations(repo, check.id).await?);
+            let item = match lifecycle::required_check(view, runner) {
+                lifecycle::RequiredState::Passed => required::Contribution::Passed,
                 lifecycle::RequiredState::Pending | lifecycle::RequiredState::Unknown => {
-                    ready = false
+                    required::Contribution::Pending
                 }
-                lifecycle::RequiredState::Infrastructure => {
-                    ready = false;
-                    infrastructure.push(check.clone());
-                }
-                lifecycle::RequiredState::Tests => {
-                    ready = false;
+                lifecycle::RequiredState::Infrastructure => required::Contribution::Infrastructure,
+                lifecycle::RequiredState::Tests => required::Contribution::Tests,
+            };
+            summary = required::record(summary, item);
+            match item {
+                required::Contribution::Infrastructure => infrastructure.push(check.clone()),
+                required::Contribution::Tests => {
                     tests = Some(Failure::Tests {
                         check: check.id,
                         completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                    });
+                    })
                 }
+                _ => {}
             }
         }
         if let Some(status) = status {
-            if status.state != "success" {
-                ready = false;
-            }
-            if matches!(status.state.as_str(), "failure" | "error") {
+            let item = required::classic_status(match status.state.as_str() {
+                "success" => required::ClassicStatus::Success,
+                "failure" => required::ClassicStatus::Failure,
+                "error" => required::ClassicStatus::Error,
+                _ => required::ClassicStatus::Other,
+            });
+            summary = required::record(summary, item);
+            if item == required::Contribution::Tests {
                 tests = Some(Failure::Tests {
                     check: status.id,
                     completed_at: status.updated_at.map(|time| time.to_rfc3339()),
@@ -184,13 +203,15 @@ pub(super) async fn evaluate(
         }
     }
     Ok(Checks {
-        ready,
+        ready: summary.ready,
         unavailable,
         missing,
         reported,
-        failure: tests.or_else(|| {
-            (!infrastructure.is_empty()).then_some(Failure::Infrastructure(infrastructure))
-        }),
+        failure: match summary.failure {
+            required::Failure::Tests => tests,
+            required::Failure::Infrastructure => Some(Failure::Infrastructure(infrastructure)),
+            required::Failure::None => None,
+        },
     })
 }
 
@@ -198,22 +219,45 @@ async fn failure(github: &GitHub, repo: &str, pull: &PullRequest) -> Result<Opti
     Ok(read(github, repo, pull).await?.failure)
 }
 
-fn runner_failure(annotations: &[CheckAnnotation]) -> bool {
-    let failures: Vec<_> = annotations
-        .iter()
-        .filter(|annotation| annotation.annotation_level == "failure")
-        .collect();
-    !failures.is_empty()
-        && failures.iter().all(|annotation| {
-            [
-                "The runner has lost communication with the server",
-                "The job was not acquired by Runner of type",
-                "The job was abandoned as the runner did not pick it up",
-                "The job was not started because recent account payments have failed",
-            ]
-            .iter()
-            .any(|prefix| annotation.message.starts_with(prefix))
+fn latest_payloads<T, K: Ord>(
+    items: impl IntoIterator<Item = T>,
+    key: impl Fn(&T) -> K,
+    candidate: impl Fn(&T) -> required::Candidate,
+) -> BTreeMap<K, T> {
+    let mut groups: BTreeMap<K, Vec<T>> = BTreeMap::new();
+    for item in items {
+        groups.entry(key(&item)).or_default().push(item);
+    }
+    groups
+        .into_iter()
+        .filter_map(|(key, mut items)| {
+            let candidates: Vec<_> = items.iter().map(&candidate).collect();
+            required::latest(&candidates, false).map(|i| (key, items.swap_remove(i)))
         })
+        .collect()
+}
+
+fn annotation_class(annotation: &CheckAnnotation) -> required::Annotation {
+    if annotation.annotation_level != "failure" {
+        return required::Annotation::Ignore;
+    }
+    if [
+        "The runner has lost communication with the server",
+        "The job was not acquired by Runner of type",
+        "The job was abandoned as the runner did not pick it up",
+        "The job was not started because recent account payments have failed",
+    ]
+    .iter()
+    .any(|prefix| annotation.message.starts_with(prefix))
+    {
+        required::Annotation::RunnerFailure
+    } else {
+        required::Annotation::OtherFailure
+    }
+}
+
+fn runner_failure(annotations: &[CheckAnnotation]) -> bool {
+    required::runner_failure(&annotations.iter().map(annotation_class).collect::<Vec<_>>())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -274,11 +318,19 @@ impl Adapter {
     ) -> Result<()> {
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
-        let Some(Failure::Infrastructure(checks)) =
-            self.runtime
-                .block_on(failure(&github, &repo, &state.pull_request))?
-        else {
+        let failure = self
+            .runtime
+            .block_on(failure(&github, &repo, &state.pull_request))?;
+        let class = match &failure {
+            Some(Failure::Infrastructure(_)) => required::Failure::Infrastructure,
+            Some(Failure::Tests { .. }) => required::Failure::Tests,
+            None => required::Failure::None,
+        };
+        if !required::rerun(class) {
             return Ok(());
+        }
+        let Some(Failure::Infrastructure(checks)) = failure else {
+            unreachable!()
         };
         let (number, head) = enqueue(delivery)?;
         let runs = self
@@ -287,19 +339,21 @@ impl Adapter {
             .map_err(Error::from)?;
         let mut selected = BTreeMap::new();
         for check in checks {
-            let run = runs
+            let candidates: Vec<_> = runs
                 .iter()
-                .filter(|run| {
-                    run.head_sha == head
-                        && check
-                            .check_suite
-                            .as_ref()
-                            .is_some_and(|suite| suite.id == run.check_suite_id)
+                .map(|run| required::Candidate {
+                    id: run.id,
+                    eligible: required::matching_suite(
+                        run.head_sha == head,
+                        check.check_suite.as_ref().map(|suite| suite.id),
+                        run.check_suite_id,
+                    ),
                 })
-                .max_by_key(|run| run.id)
-                .ok_or(Error::Invalid(
-                    "required check has no matching head workflow run",
-                ))?;
+                .collect();
+            let index = required::latest(&candidates, true).ok_or(Error::Invalid(
+                "required check has no matching head workflow run",
+            ))?;
+            let run = &runs[index];
             selected.insert(run.id, run.clone());
         }
         let mut saved = self.saved_reruns(delivery)?;
@@ -332,16 +386,16 @@ impl Adapter {
                         lifecycle::Effect::Continue => {}
                         lifecycle::Effect::Read(lifecycle::Need::RerunPull) => {
                             let pull = self.runtime.block_on(github.pull_request(&repo, number))?;
-                            writable = Some(
-                                pull.head.sha == run.head_sha
-                                    && pull.state == "open"
-                                    && pull.merged_at.is_none(),
-                            );
+                            writable = Some(required::writable(
+                                pull.head.sha == run.head_sha,
+                                pull.state == "open",
+                                pull.merged_at.is_some(),
+                            ));
                             read_pull = true;
                         }
                         lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
                         lifecycle::Effect::SaveRerun => {
-                            if core.rerun.is_some_and(|rerun| !rerun.waiting) {
+                            if required::needs_fence(core.rerun.map(|rerun| rerun.waiting)) {
                                 self.fence(delivery)?;
                             }
                             save_rerun_projection(self, &path, &mut saved, &run, core.rerun)?;
@@ -350,19 +404,29 @@ impl Adapter {
                             let result = self
                                 .runtime
                                 .block_on(github.rerun_workflow_run(&repo, run.id));
-                            let outcome = match &result {
-                                Ok(()) => lifecycle::RerunResult::Accepted,
+                            let dispatch = match &result {
+                                Ok(()) => required::DispatchResult::Accepted,
                                 Err(tl3_github::Error::ActionsForbidden(
                                     tl3_github::ActionsRefusal::RunInProgress,
-                                )) => lifecycle::RerunResult::InProgress,
-                                Err(
-                                    tl3_github::Error::ActionsForbidden(_)
-                                    | tl3_github::Error::RateLimited { .. }
-                                    | tl3_github::Error::Http {
-                                        status: 400..=407 | 409..=499,
-                                    },
-                                ) => lifecycle::RerunResult::Refused,
-                                Err(_) => lifecycle::RerunResult::Unknown,
+                                )) => required::DispatchResult::InProgress,
+                                Err(tl3_github::Error::ActionsForbidden(_)) => {
+                                    required::DispatchResult::Forbidden
+                                }
+                                Err(tl3_github::Error::RateLimited { .. }) => {
+                                    required::DispatchResult::RateLimited
+                                }
+                                Err(tl3_github::Error::Http { status }) => {
+                                    required::DispatchResult::Http(*status)
+                                }
+                                Err(_) => required::DispatchResult::Other,
+                            };
+                            let outcome = match required::rerun_result(dispatch) {
+                                required::RerunResult::Accepted => lifecycle::RerunResult::Accepted,
+                                required::RerunResult::InProgress => {
+                                    lifecycle::RerunResult::InProgress
+                                }
+                                required::RerunResult::Refused => lifecycle::RerunResult::Refused,
+                                required::RerunResult::Unknown => lifecycle::RerunResult::Unknown,
                             };
                             let (next, effects) =
                                 lifecycle::decide(core, lifecycle::QueueEvent::RerunDone(outcome));
@@ -378,7 +442,7 @@ impl Adapter {
                         _ => return Err(Error::Invalid("unexpected workflow rerun effect")),
                     }
                 }
-                if !read_pull {
+                if required::rerun_loop(read_pull) == required::Loop::Done {
                     break;
                 }
             }
