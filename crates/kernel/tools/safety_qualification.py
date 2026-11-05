@@ -173,6 +173,18 @@ CASES = {
                              'command: Command::Resume,',
                              'command: Command::Pause,',
                              '//crates/kernel:verus_witness'),
+    'phase_late_resume': ('crates/kernel/src/witness.rs',
+                           'if n.paused && !n.phase.is_stopping() {',
+                           'if n.paused && !n.phase.is_stopping() && n.phase != Phase::Publishing {',
+                           '//crates/kernel:verus_witness'),
+    'phase_stopping_ack': ('crates/kernel/src/witness.rs',
+                            'if let Some(e) = n.effect {',
+                            'if let Some(e) = if n.phase.is_stopping() { None } else { n.effect } {',
+                            '//crates/kernel:verus_witness'),
+    'phase_closed_sibling': ('crates/kernel/src/witness.rs',
+                              'if n.phase.is_closed() {\n                i += 1;\n                continue;\n            }',
+                              'if n.phase.is_closed() { return None; }',
+                              '//crates/kernel:verus_witness'),
 }
 
 
