@@ -74,6 +74,70 @@ impl Controller {
             queue_blocked_summary(conditions, failed),
         )
     }
+    pub(crate) fn resolve_stale_missing_checks(
+        &self,
+        snapshot: &Snapshot,
+        world: &tl3_kernel::World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        use crate::adapters::mergify::{Evidence, QueueFact};
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
+            let Ok(fact) = serde_json::from_value::<QueueFact>(row.value.clone()) else {
+                continue;
+            };
+            let (head, id) = match &fact.evidence {
+                Evidence::CheckMissing { head, required } => {
+                    let Some(node) = fact.node(snapshot)? else {
+                        continue;
+                    };
+                    (head, missing_check_incident_id(node, head, required))
+                }
+                // #447: a blocked-queue incident also ends with its head.
+                Evidence::QueueBlocked {
+                    head, conditions, ..
+                } => {
+                    let Some(node) = fact.node(snapshot)? else {
+                        continue;
+                    };
+                    (head, queue_blocked_incident_id(node, head, conditions))
+                }
+                _ => continue,
+            };
+            let Some(node) = fact.node(snapshot)? else {
+                continue;
+            };
+            let Some(incident) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
+            else {
+                continue;
+            };
+            let current = &world.nodes[node
+                .index()
+                .ok_or(crate::Error::Invalid("node index overflow"))?];
+            let interned = snapshot.interned.iter().find(|item| {
+                item.kind == tl3_store::InternKind::Commit
+                    && item.scope == node.0.to_string()
+                    && item.value == *head
+            });
+            let still_head = interned.is_some_and(|item| {
+                let id = Some(tl3_kernel::HeadId(item.id as u64));
+                current.head == id && current.approved == id
+            });
+            if matches!(current.phase, tl3_kernel::Phase::Closed(_)) || !still_head {
+                let mut incident: Incident = crate::decode_stored(incident.value.clone())?;
+                incident.open = false;
+                commit.rows.push(put("incidents", id, json!(incident)));
+            }
+        }
+        Ok(())
+    }
+
 }
 pub(crate) fn queue_blocked_incident_id(node: NodeId, head: &str, conditions: &[String]) -> String {
     use sha2::{Digest, Sha256};

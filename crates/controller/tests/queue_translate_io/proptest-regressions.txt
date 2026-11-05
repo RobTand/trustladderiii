@@ -1,2 +1,3 @@
 # Persisted replay seeds for Queue translation. Fixed runner seed: 0x004717602026.
 # proptest appends minimized failing seeds here; keep them through integration.
+cc 2812c0b500274973e4c7367c18d37c0d39517dfaa202c80f3b59d751b6a5601c # Additional replay seed pinned to the base Queue arm.

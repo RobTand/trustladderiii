@@ -9,6 +9,7 @@ tl3_crate(
     build_script = True,
     local_deps = [
         "//crates/config:tl3_config",
+        "//crates/controller-core:tl3_controller_core",
         "//crates/github:tl3_github",
         "//crates/kernel:tl3_kernel",
         "//crates/mergify:tl3_mergify",

@@ -14,5 +14,6 @@ these synthetic inputs; this test makes no claim about redaction or notice text.
 It checks the arm's calls into those unchanged helpers, including their arguments.
 
 Run //crates/controller:test_test_queue_translate_io alone on BuildBuddy.
-256 fixed-seed schedules use 0x004717602026 and persisted regression seeds.
+256 fixed-seed schedules use 0x004717602026; 128 event sequences use
+0x004717602027. Both replay persisted regression seeds.
 mandatory_* cases assert route reachability and concrete outcomes.
