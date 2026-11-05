@@ -88,6 +88,86 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+        # ctrl-core B2: enqueue_refused_sticky; real body and constructive/composed witnesses.
+        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 1)]:
+            verus_test(
+                name = "verus_enqueue_refused_sticky" + suffix,
+                src = "proofs/enqueue_refused_sticky.rs",
+                srcs = [
+                    "src/decide/enqueue.rs",
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                ],
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_refused_sticky_spec.rs",
+                    "proofs/enqueue_refused_sticky_witness.rs",
+                ],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+        # ctrl-core B2: write_ahead = Prepare/Label + Command ordering + Rerun ordering.
+        # The three write variants exhaust Write; every original assertion and cover remains.
+        for part, witnesses in [("label", 2), ("command", 1), ("rerun", 1)]:
+            for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", witnesses)]:
+                verus_test(
+                    name = "verus_enqueue_write_ahead_" + part + suffix,
+                    src = "proofs/enqueue_write_ahead_" + part + ".rs",
+                    srcs = [
+                        "src/decide/enqueue.rs",
+                        "src/decide/check.rs",
+                        "src/decide/observe.rs",
+                        "src/decide/verification.rs",
+                    ],
+                    specs = [
+                        "proofs/enqueue_helpers.rs",
+                        "proofs/enqueue_write_ahead_" + part + "_spec.rs",
+                        "proofs/enqueue_write_ahead_" + part + "_witness.rs",
+                    ],
+                    module = module,
+                    expected_obligations = count,
+                    tags = ["rust", "verus"],
+                    size = "small",
+                    timeout = "short",
+                    target_compatible_with = ["@platforms//cpu:x86_64"],
+                    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                    exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+                )
+
+        # ctrl-core B2: enqueue_recovery_grace; real body and constructive/composed witnesses.
+        for suffix, module, count in [("", "enqueue", 21), ("_witness", "witness", 2)]:
+            verus_test(
+                name = "verus_enqueue_recovery_grace" + suffix,
+                src = "proofs/enqueue_recovery_grace.rs",
+                srcs = [
+                    "src/decide/enqueue.rs",
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                ],
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_recovery_grace_spec.rs",
+                    "proofs/enqueue_recovery_grace_witness.rs",
+                ],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
