@@ -91,7 +91,10 @@ def vectors():
             if call["command"] == ["check-reply", "maker"] and document.get("operation", "check") == "check":
                 reply(f"recorded/{case}/{index}", document["inputs"], document["reply"])
     from message_invariants import request_123_handover, review_fix
-    fixture = {"inputs": {"plan": {"checks": [], "files": []}, "goals": []}}
+    fixture = {"inputs": {"plan": {"checks": [], "files": []}, "goals": [
+        {"id": "greeting", "description": "Return hello.", "verification": "test"},
+        {"id": "interface", "description": "Keep greet's interface.", "verification": "review"},
+    ]}}
     incident, value = request_123_handover.__wrapped__(deepcopy(fixture))
     reply("request_123/pending", incident["inputs"], value, expected=None)
     changed = deepcopy(value)
