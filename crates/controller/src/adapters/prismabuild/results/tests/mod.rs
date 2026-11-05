@@ -336,3 +336,56 @@ fn campaign_planned_proof_requires_positive_ordinary_head() {
     assert_eq!(old["class"], Value::Null);
     assert_eq!(old["pass"], false);
 }
+
+fn shell_invariant_counterexample(selected: bool, forced: bool) {
+    let (mut job, mut report) = fixture("passed", "passed", true, false);
+    let mut appended = report["results"][0].clone();
+    if selected {
+        job.selected_tests = Some(1);
+        appended["name"] = json!(SELECTED_CHECK);
+    } else {
+        job.always_tests = vec!["tests/test_x.py::test_x".into()];
+        appended["name"] = json!("Repository always tests");
+    }
+    report["results"].as_array_mut().unwrap().push(appended);
+    assert!(
+        evaluate(&job, &report).1,
+        "the unaltered shell report must pass"
+    );
+    if forced {
+        report["results"][1]["tests"][0]["head_forced"] = json!("passed");
+    } else {
+        report["results"][1]["tests"][0]["pre_existing"] = json!(true);
+    }
+    assert!(
+        parse(&raw(&report), &job).is_some(),
+        "the counterexample is shape-valid"
+    );
+    let (reported, passed, results, failed, class) = evaluate(&job, &report);
+    assert!(!reported && !passed && results.is_empty() && failed.is_empty());
+    assert_eq!(class, Some(HARNESS));
+}
+
+/// #822: stale_result leaves the judge's pre_existing flag intact.
+#[test]
+fn shell_invariants_always_pre_existing() {
+    shell_invariant_counterexample(false, false);
+}
+
+/// #822: selected_head leaves the judge's pre_existing flag intact.
+#[test]
+fn shell_invariants_selected_pre_existing() {
+    shell_invariant_counterexample(true, false);
+}
+
+/// #822/#393: an always check cannot invent a forced-head observation.
+#[test]
+fn shell_invariants_always_forced_head() {
+    shell_invariant_counterexample(false, true);
+}
+
+/// #822/#393: a selected group cannot invent a forced-head observation.
+#[test]
+fn shell_invariants_selected_forced_head() {
+    shell_invariant_counterexample(true, true);
+}
