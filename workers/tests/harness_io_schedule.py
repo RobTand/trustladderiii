@@ -391,11 +391,11 @@ def lifecycle(module, directory, schedule):
         patch.setattr(Path, 'replace', lambda path, target: change(('stage-rename', name(path), name(target)), lambda: original_replace(path, target)))
         original_directory, original_walk, original_file = tree._directory, tree._walk, tree._file
         @contextmanager
-        def source_directory(parts):
-            trace.append(('source-directory', parts))
-            with original_directory(parts) as descriptor: yield descriptor
-        def source_walk(descriptor):
-            values = list(original_walk(descriptor))
+        def source_directory(parts, **kwargs):
+            trace.append(('source-directory', parts, kwargs))
+            with original_directory(parts, **kwargs) as descriptor: yield descriptor
+        def source_walk(descriptor, prefix=""):
+            values = list(original_walk(descriptor, prefix))
             trace.append(('source-walk', values))
             return iter(values)
         @contextmanager
@@ -488,7 +488,10 @@ def decide(schedule):
     boundaries = 0
     coverage = set()
     for mode in ('run_current', 'run', 'main'):
-        observed = compare_crashes(action, legacy_action, test_tool, {**schedule, 'mode':mode})
+        selected_schedule = {**schedule, 'mode':mode}
+        if mode == 'main':
+            selected_schedule.update(selector_reads=[True, True], reads=schedule['reads'] or [0])
+        observed = compare_crashes(action, legacy_action, test_tool, selected_schedule)
         boundaries += observed[3]
         coverage.update(call[0] for call in observed[0])
     for base in (False, True):

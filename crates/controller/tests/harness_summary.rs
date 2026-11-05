@@ -139,6 +139,8 @@ fn extraction_preserves_recorded_io_schedules_and_crash_state() {
     result.unwrap();
     for required in [
         "selector-exists",
+        "fsync",
+        "rename",
         "proof-is-file",
         "proof-read",
         "stdout-write",
