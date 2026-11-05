@@ -276,6 +276,8 @@ Keep every run's report and receipt bound to the exact base, head, selectors, de
 - A leaf whose operation waits on an incident gives back its slot and files. It waits in Ready, and resumes at the same step.
 - When a model reports quota, the step moves at once to the next model in its role's ladder that hasn't reported quota since its announced reset. This spends no credit and counts no failure. Each model's quota-limited state is recorded with its reset time. The step waits only when every model in its ladder is out, and then for the earliest announced reset. A wait for a model no longer configured for that step ends when tl3d opens with the new config (Q53, approved by Rob, 2026-11-01).
 
+- On the configured operations issue, only Rob can issue `clear quota <model>` after the provider resets that model. The command deletes its recorded quota hold and immediately schedules every quota-held allowance whose eligible ladder in the current worker configuration contains that model, even if another rung reported quota last. Allowances whose eligible ladders exclude the model stay asleep. Unknown or unconfigured models and models without a recorded hold receive a plain reply without changing quota waits. This is operator evidence under [Rob's #828 approval](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499), and adds no timer or polling.
+
 Code computes a signature for each failure from the upstream's error class, and uses it only to group incidents.
 
 **Environment blockers,** as Rob approved on 2026-11-01 (Q50):
