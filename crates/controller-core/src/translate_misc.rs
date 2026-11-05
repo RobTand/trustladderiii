@@ -14,7 +14,7 @@ pub fn admit_comment(author_matches: bool, repository_configured: bool) -> bool 
 }
 
 /// Escape: preserved existing behaviour (no rule), controller/src/lib.rs:3052-3056
-/// at 9a658a8e; ab534876a2 introduced retirement/snapshot deduplication.
+/// at 9a658a8e; ab534876a2 introduced the retirement guard before snapshot deduplication.
 /// The shell reads comment_retired before sampling the snapshot. This decision
 /// cannot move or repeat the read. No loop, recursion or sequence bound is used.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures

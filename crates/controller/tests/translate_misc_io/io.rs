@@ -221,11 +221,10 @@ pub(super) fn compare(s: &Schedule) -> (Run, usize) {
     for write in 0..old.writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
-            assert_eq!(
-                run(s, false, cut),
-                run(s, true, cut),
-                "cut {cut:?}, schedule {s:?}"
-            );
+            let reference = run(s, false, cut);
+            let current = run(s, true, cut);
+            assert_eq!(reference, current, "cut {cut:?}, schedule {s:?}");
+            assert_eq!(reference.results.last(), Some(&json!({"crash":true})));
         }
     }
     let count = 1 + 2 * old.writes;

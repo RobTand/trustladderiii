@@ -9,8 +9,8 @@ base fixtures. No changed production body uses a shared shim.
 
 The real unchanged Store::comment_retired body is compiled in store.rs against a
 recorded SQL client. Its exact source, SQL and parameters are pinned and checked
-against production. Every SELECT consumes a fresh tape response, including query
-and connection failures. Tests compare calls, results, buffered RowChange values,
+against production. Every SELECT consumes a fresh tape response, including database timeouts. The SQL leaf returns the real DatabaseError,
+so the method and arm exercise both real error conversions. Tests compare calls, results, buffered RowChange values,
 read/write counts and persisted bytes. Each attempted row push and explicit
 harness commit is replayed with a crash before and after it.
 

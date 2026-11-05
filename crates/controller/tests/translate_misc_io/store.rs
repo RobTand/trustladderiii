@@ -25,7 +25,11 @@ impl QueryRow {
     }
 }
 impl Client {
-    fn query_one(&mut self, sql: &str, parameters: &[&String]) -> Result<QueryRow> {
+    fn query_one(
+        &mut self,
+        sql: &str,
+        parameters: &[&String],
+    ) -> std::result::Result<QueryRow, tl3_store::DatabaseError> {
         let reply = with(|r| {
             let v = r.tape.get(r.run.reads).copied().unwrap_or(0) % 4;
             r.run.reads += 1;
@@ -38,8 +42,7 @@ impl Client {
         match reply {
             0 => Ok(QueryRow(false)),
             1 => Ok(QueryRow(true)),
-            2 => Err(tl3_store::Error::Invalid("query failed")),
-            _ => Err(tl3_store::Error::Invalid("connection lost")),
+            _ => Err(tl3_store::DatabaseError::__private_api_timeout()),
         }
     }
 }
