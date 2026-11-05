@@ -655,6 +655,14 @@ mod tests {
     use tl3_kernel::{Ack, Command, EarlyEnd};
 
     fn fixture(db: &mut Database, name: &str) -> (Repo, Controller, Repository) {
+        let (repo, controller, repository, _) = fixture_with_settings(db, name);
+        (repo, controller, repository)
+    }
+
+    fn fixture_with_settings(
+        db: &mut Database,
+        name: &str,
+    ) -> (Repo, Controller, Repository, tl3_config::Store) {
         let repo = Repo::new();
         let mut config =
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -672,7 +680,7 @@ mod tests {
             bootstrap,
         )
         .unwrap();
-        (repo, controller, repository)
+        (repo, controller, repository, config.store)
     }
 
     fn intake(c: &mut Controller, repo: &Repository, number: u64) -> NodeId {
@@ -1354,4 +1362,5 @@ mod tests {
             assert_eq!(issue_status(&issue), expected);
         }
     }
+    mod refusal_properties;
 }
