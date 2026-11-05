@@ -17,6 +17,15 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 use tl3_controller::contracts::{self, Check, CheckReport, CheckResult};
 
+/// #826 review: the operator log contract is generated from Rust, not mirrored by hand.
+#[test]
+fn execution_diagnostic_contract_is_generated() {
+    assert!(
+        contracts::generated()
+            .iter()
+            .any(|file| file.path.ends_with("/execution-failure.json"))
+    );
+}
 fn check_report_validator(definition: Option<&str>) -> jsonschema::Validator {
     let mut schema = contracts::check_report_schema();
     if let Some(definition) = definition {

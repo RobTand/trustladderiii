@@ -576,3 +576,73 @@ def test_request199_complete_summary_envelope_keeps_exact_retained_evidence(subm
     assert 'Truncated' in result['note']
     from tl3_workers.forcing_rehearsal import unusable
     assert unusable(result, [NODE], 'failed') == 'incomplete node results'
+
+
+# #826 review: redaction must see the label before any capture/display boundary.
+@pytest.mark.parametrize('boundary', ['line', 'total', 'raw'])
+def test_stderr_capture_redacts_before_clipping_and_trace(boundary, tmp_path, monkeypatch, capsys):
+    from tl3_harness import supervision, test_tool
+    from tl3_workers.tracing import Redactor
+    secret = 'zE9!pR4#cV7$' if boundary != 'raw' else 'v' * 128
+    payloads = {
+        'line': 'password: ' + secret + ' ' + '.' * 499,
+        'total': 'password:\n' + secret + ' ' + '.' * 490 + '\n' + '.' * 512,
+        'raw': 'password: ' + 'v' * 20000 + '\ncontainer shim refused\n',
+    }
+    path = tmp_path / 'stderr.bin'
+    path.write_text(payloads[boundary])
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
+    monkeypatch.setattr(test_tool, 'container_command', lambda *args: [sys.executable, '-I', '-B', '-c',
+        f'import os; os.write(2, open({str(path)!r}, "rb").read()); os._exit(125)'])
+    result = test_tool.run_current(tmp_path, execution_container(), ())
+    records = [json.loads(line.removeprefix(supervision.FAILURE_PREFIX))
+               for line in capsys.readouterr().out.splitlines() if line.startswith(supervision.FAILURE_PREFIX)]
+    assert records, 'operator diagnostic was lost'
+    assert secret not in json.dumps(records), 'capture clipping erased the credential label'
+    assert secret not in Redactor(None).text(json.dumps(records)), 'trace sees an unlabeled secret'
+    assert 'stderr_tail' not in json.dumps(result), 'operator stderr reached a model-facing summary'
+
+
+def execution_container():
+    from tl3_harness.execution import Container
+    return Container(IMAGE)
+
+
+# #826 review: both action-log serializations must exclude unredacted stderr.
+def test_both_stderr_log_prefixes_are_redacted(tmp_path, monkeypatch, capsys):
+    from tl3_harness import supervision, test_tool
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    failure = supervision.ExecutionFailure(supervision.ExecutionOutcome.SETUP_FAILURE,
+        'container_start', 'incomplete_report', stderr_tail='password: zE9!pR4#cV7$')
+    failure.log()
+    result = infrastructure(failure.message())
+    result['execution'] = failure.as_json()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['test_tool', IMAGE, '[]'])
+    monkeypatch.setattr(test_tool, 'run', lambda *args, **kwargs: result)
+    test_tool.main()
+    output = capsys.readouterr().out
+    assert 'TL3_EXECUTION_FAILURE ' in output and 'TL3_TEST_SUMMARY ' in output
+    assert 'zE9!pR4#cV7$' not in output
+
+
+# #826 review: the real StructuredTool boundary excludes diagnostics in every shape.
+@pytest.mark.parametrize('mode', ['plain', 'base', 'repeat', 'nested'])
+def test_run_tests_tool_never_returns_operator_stderr(submission, mode):
+    result = infrastructure('Container failed.')
+    result['execution'] = {'outcome': 'setup_failure', 'phase': 'container_start',
+        'termination_reason': 'incomplete_report', 'test_started': False,
+        'stderr_tail': 'operator-only instruction from stderr'}
+    if mode == 'nested':
+        nested = deepcopy(result)
+        result.update(groups=[nested], runs=[nested], base=nested)
+    args = {'tests': ['test_code.py::test_value']}
+    if mode == 'base':
+        prepare_base_submission(submission)
+        args['base'] = True
+    if mode == 'repeat':
+        args['repeat'] = 2
+    observed, _ = invoke(submission, result, args)
+    assert 'stderr_tail' not in json.dumps(observed)
+    assert 'operator-only instruction' not in json.dumps(observed)

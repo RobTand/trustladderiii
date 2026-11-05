@@ -98,6 +98,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// #826 review: a malformed producer record is visible operator evidence.
+    #[test]
+    fn malformed_diagnostic_is_visible() {
+        let diagnostic = Diagnostic::from_log(b"TL3_EXECUTION_FAILURE {}\n");
+        assert!(
+            diagnostic.is_some(),
+            "malformed diagnostic disappeared silently"
+        );
+    }
+
     /// #826: malformed or oversized log text cannot become operator evidence.
     #[test]
     fn only_bounded_execution_diagnostics_are_decoded() {
