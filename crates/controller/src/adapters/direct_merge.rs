@@ -21,8 +21,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tl3_github::{CheckRun, GitHub, MergeMethod, PullRequest};
+use tl3_github::{GitHub, MergeMethod, PullRequest};
 use tl3_kernel::{EffectKind, Phase};
+use tl3_mergify::decide::{required, enqueue as lifecycle};
 use tl3_store::{Snapshot, Store};
 
 pub const VISIBILITY: &str = "delivered directly (CI bypassed by repo config)";
@@ -49,16 +50,31 @@ struct Read {
 /// Sleeping effects are invalidated only by relevant webhook/catch-up events.
 /// A new adapter after restart starts awake and reconciles from GitHub.
 #[derive(Clone, Default)]
-pub struct Wakes(Arc<Mutex<BTreeSet<String>>>);
+pub struct Wakes(Arc<Mutex<WakeState>>);
+#[derive(Default)]
+struct WakeState {
+    sleeping: BTreeSet<String>,
+    events: BTreeSet<String>,
+}
 impl Wakes {
     fn sleeping(&self, key: &str) -> bool {
-        self.0.lock().unwrap().contains(key)
+        self.0.lock().unwrap().sleeping.contains(key)
     }
     fn sleep(&self, key: &str) {
-        self.0.lock().unwrap().insert(key.to_owned());
+        self.0.lock().unwrap().sleeping.insert(key.to_owned());
     }
     fn wake(&self, key: &str) {
-        self.0.lock().unwrap().remove(key);
+        let mut state = self.0.lock().unwrap();
+        state.sleeping.remove(key);
+        state.events.insert(key.to_owned());
+    }
+    fn take_event(&self, key: &str) -> bool {
+        self.0.lock().unwrap().events.remove(key)
+    }
+    fn forget(&self, key: &str) {
+        let mut state = self.0.lock().unwrap();
+        state.sleeping.remove(key);
+        state.events.remove(key);
     }
 }
 
@@ -70,6 +86,8 @@ pub enum Write {
     Annotation,
     Merge,
     Receipt,
+    History,
+    Reclaim,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WriteBoundary {
@@ -182,7 +200,7 @@ impl Adapter {
         self.epoch = d.epoch;
         Ok(())
     }
-    fn read(&self, d: &Delivery) -> Result<Read> {
+    fn read(&self, d: &Delivery, write_authorized: bool) -> Result<Read> {
         let approved = head(
             d.head_sha
                 .as_deref()
@@ -266,73 +284,65 @@ impl Adapter {
             } else {
                 vec![]
             };
-            checks = Checks::Passed;
+            let mut summary = required::Summary { ready: true, failure: required::Failure::None };
             for rule in required.checks {
-                let matching: Vec<_> = latest
-                    .values()
-                    .filter(|check| {
-                        check.name == rule.context
-                            && rule
-                                .integration_id
-                                .is_none_or(|id| check.app.as_ref().is_some_and(|app| app.id == id))
-                    })
-                    .collect();
-                let status = rule
-                    .integration_id
-                    .is_none()
-                    .then(|| {
-                        statuses
-                            .iter()
-                            .filter(|status| status.context == rule.context)
-                            .max_by_key(|status| status.id)
-                    })
-                    .flatten();
-                let all_passed = if !matching.is_empty() {
-                    matching.iter().all(|check| passed(check))
-                } else {
-                    status.is_some_and(|status| status.state == "success")
-                };
-                if !all_passed && checks != Checks::Failed {
-                    checks = Checks::Pending;
+                let matching: Vec<_> = latest.values().filter(|check| {
+                    required::rule_matches(check.name == rule.context, rule.integration_id,
+                        check.app.as_ref().map(|app| app.id))
+                }).collect();
+                let status = rule.integration_id.is_none().then(|| {
+                    statuses.iter().filter(|status| status.context == rule.context).max_by_key(|status| status.id)
+                }).flatten();
+                if matching.is_empty() && status.is_none() {
+                    summary = required::record(summary, required::Contribution::Pending);
                 }
-                let bad = matching.iter().find(|check| {
-                    check.status == "completed"
-                        && matches!(
-                            check.conclusion.as_deref(),
-                            Some(
-                                "failure"
-                                    | "timed_out"
-                                    | "cancelled"
-                                    | "action_required"
-                                    | "startup_failure"
-                                    | "stale"
-                            )
-                        )
-                });
-                if let Some(check) = bad {
-                    checks = Checks::Failed;
-                    failure = Some(Evidence::CiFailed {
-                        check: check.id,
-                        completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                        head: pull.head.sha.clone(),
-                        infra: false,
-                        head_check: true,
-                        details: Default::default(),
+                // Q47, docs/state-machine.md:681-689 on b8ed2968; #830 preserves required protection.
+                // C1's record folds EVERY report conjunctively, including a same-name legacy status.
+                for check in matching {
+                    let view = tl3_mergify::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)[0];
+                    let runner = if required::needs_annotations(
+                        view.status == tl3_mergify::decide::Status::Completed,
+                        view.app == tl3_mergify::decide::App::Actions,
+                        view.conclusion == Some(tl3_mergify::decide::Conclusion::Failure),
+                    ) {
+                        let annotations = self.runtime.block_on(github.check_annotations(&repo, check.id))?;
+                        required::runner_failure(&annotations.iter().map(annotation_class).collect::<Vec<_>>())
+                    } else { false };
+                    let item = match lifecycle::required_check(view, runner) {
+                        lifecycle::RequiredState::Passed => required::Contribution::Passed,
+                        lifecycle::RequiredState::Infrastructure => required::Contribution::Infrastructure,
+                        lifecycle::RequiredState::Tests => required::Contribution::Tests,
+                        lifecycle::RequiredState::Pending | lifecycle::RequiredState::Unknown => required::Contribution::Pending,
+                    };
+                    summary = required::record(summary, item);
+                    if matches!(item, required::Contribution::Tests | required::Contribution::Infrastructure)
+                        && (failure.is_none() || item == required::Contribution::Tests) {
+                        failure = Some(Evidence::CiFailed {
+                            check: check.id,
+                            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+                            head: pull.head.sha.clone(),
+                            infra: item == required::Contribution::Infrastructure,
+                            head_check: true, details: Default::default(),
+                        });
+                    }
+                }
+                if let Some(status) = status {
+                    let item = required::classic_status(match status.state.as_str() {
+                        "success" => required::ClassicStatus::Success,
+                        "failure" => required::ClassicStatus::Failure,
+                        "error" => required::ClassicStatus::Error,
+                        _ => required::ClassicStatus::Other,
                     });
-                } else if let Some(status) =
-                    status.filter(|status| matches!(status.state.as_str(), "error" | "failure"))
-                {
-                    checks = Checks::Failed;
-                    failure = Some(Evidence::CiFailed {
-                        check: status.id,
-                        completed_at: status.updated_at.map(|time| time.to_rfc3339()),
-                        head: pull.head.sha.clone(),
-                        infra: false,
-                        head_check: true,
-                        details: Default::default(),
-                    });
+                    summary = required::record(summary, item);
+                    if item == required::Contribution::Tests {
+                        failure = Some(Evidence::CiFailed { check: status.id,
+                            completed_at: status.updated_at.map(|time|time.to_rfc3339()),
+                            head: pull.head.sha.clone(), infra: false, head_check: true, details:Default::default() });
+                    }
                 }
             }
+            checks = if summary.failure != required::Failure::None { Checks::Failed }
+                else if summary.ready { Checks::Passed } else { Checks::Pending };
             let checked_base = pull.base.branch.clone();
             // A later read can differ. Never cache the first PR read across check/settings I/O.
             pull = self
@@ -366,6 +376,7 @@ impl Adapter {
         Ok(Read {
             facts: Facts {
                 approved,
+                write_authorized,
                 observed: head(&pull.head.sha)?,
                 checked,
                 checking: n.checked.is_some(),
@@ -401,7 +412,36 @@ impl Adapter {
         };
         Ok(Completion::confirmed(observations))
     }
+    fn remember_delivery(&self, d: &Delivery, merged: &Merged) -> Result<()> {
+        let intent: Option<Intent> = read_file(&self.records.path(&d.key).with_extension("intent"))?;
+        if !intent.is_some_and(|intent| intent.action == "Merge" && intent.head == merged.head) {
+            return Ok(());
+        }
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        let id = d.node().0.to_string();
+        let value = serde_json::json!({"delivery":d.key,"head":merged.head,"mode":"direct","number":number(d)?});
+        if snapshot.rows.iter().any(|r|r.table == "delivery_history" && r.id == id && r.value == value) {
+            return Ok(());
+        }
+        if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
+            return Err(Error::Invalid("direct history epoch is fenced"));
+        }
+        self.records.fence(self.epoch)?;
+        let mut commit = tl3_store::Commit::new(
+            format!("direct-history:{}:{}", d.key, snapshot.revision.get()),
+            serde_json::json!({"direct_delivery":d.key}), &snapshot);
+        commit.rows.push(tl3_store::RowChange::Put { table:"delivery_history".into(), id, value });
+        self.boundary(Write::History, false);
+        store.commit(&commit)?;
+        self.boundary(Write::History, true);
+        Ok(())
+    }
     fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
+        self.remember_delivery(d, &merged)?;
+        let fact = QueueFact { repository:d.repository.clone(), number:number(d)?,
+            evidence:Evidence::Merged {head:merged.head.clone(),checks_passed:merged.checks_passed} };
+        if fact.recorded(&self.snapshot()?)? { return self.fact(d, fact.evidence); }
         self.write(
             Write::Receipt,
             &self.receipt_path(d)?,
@@ -415,19 +455,17 @@ impl Adapter {
             },
         )
     }
-    fn result(&self, d: &Delivery, read: &Read, plan: &Plan) -> Result<Option<Completion>> {
+    fn result(&self, d: &Delivery, read: &Read, plan: &Plan, remember: bool) -> Result<Option<Completion>> {
         Ok(Some(match plan.outcome {
             Outcome::Merged => {
                 let matched = read.facts.observed == read.facts.approved
                     && read.facts.checking
                     && read.facts.checked == read.facts.approved;
-                self.merged(
-                    d,
-                    Merged {
-                        head: read.pull.head.sha.clone(),
-                        checks_passed: matched,
-                    },
-                )?
+                if remember {
+                    self.merged(d, Merged { head: read.pull.head.sha.clone(), checks_passed: matched })?
+                } else {
+                    self.fact(d, Evidence::Merged { head: read.pull.head.sha.clone(), checks_passed: matched })?
+                }
             }
             Outcome::Moved => self.fact(
                 d,
@@ -453,12 +491,13 @@ impl Adapter {
                 return Err(Error::ChecksPending);
             }
             Outcome::Held => return Err(Error::ChecksPending),
-            Outcome::Ready => return Ok(None),
+            Outcome::Ready | Outcome::Observe => return Ok(None),
         }))
     }
     fn attempt(&mut self, d: &Delivery) -> Result<Completion> {
         number(d)?;
         if let Some(merged) = self.recorded(d)? {
+            self.remember_delivery(d, &merged)?;
             return self.fact(
                 d,
                 Evidence::Merged {
@@ -472,9 +511,9 @@ impl Adapter {
         }
         // At most one annotation and one merge per call. A pending check never loops.
         for _ in 0..2 {
-            let read = self.read(d)?;
+            let read = self.read(d, true)?;
             let plan = decide::decide(read.facts);
-            if let Some(completion) = self.result(d, &read, &plan)? {
+            if let Some(completion) = self.result(d, &read, &plan, true)? {
                 return Ok(completion);
             }
             let github = self.client(d)?.clone();
@@ -522,6 +561,9 @@ impl Adapter {
                     }
                     Step::Merge => {
                         self.fence(d)?;
+                        // No timer/repeated controller drive may authorize the next PUT.
+                        // An upstream event clears this wait; restart constructs fresh state.
+                        self.wakes.sleep(&d.key);
                         self.boundary(Write::Merge, false);
                         let result = self.runtime.block_on(github.merge_pull_request(
                             &repo,
@@ -542,9 +584,9 @@ impl Adapter {
                             }
                             Ok(_) | Err(tl3_github::Error::Http { status: 405 }) => {
                                 // Already-merged refusals converge; classify a genuine refusal from fresh evidence.
-                                let current = self.read(d)?;
+                                let current = self.read(d, true)?;
                                 if let Some(completion) =
-                                    self.result(d, &current, &decide::decide(current.facts))?
+                                    self.result(d, &current, &decide::decide(current.facts), true)?
                                 {
                                     return Ok(completion);
                                 }
@@ -621,20 +663,27 @@ impl Executor for Adapter {
         if self.wakes.sleeping(&d.key) {
             return Ok(vec![]);
         }
-        let read = self.read(d)?;
+        let read = self.read(d, false)?;
         let plan = decide::decide(read.facts);
-        match self.result(d, &read, &plan) {
+        match self.result(d, &read, &plan, false) {
             Ok(Some(completion)) => Ok(completion.observations),
             Ok(None) | Err(Error::ChecksPending) => Ok(vec![]),
             Err(error) => Err(error),
         }
     }
     fn look(&mut self, d: &Delivery) -> Result<Look> {
-        Ok(match self.reconcile(d)? {
-            Reconciliation::Found(completion) => Look::Found(completion),
-            Reconciliation::Absent => Look::Absent,
-            Reconciliation::Pending => Look::Pending,
-        })
+        // Only the authenticated upstream translator grants this capability.
+        // Silence/allowance looks without that capability are observation-only.
+        if self.wakes.take_event(&d.key) {
+            return Ok(match self.reconcile(d)? {
+                Reconciliation::Found(c) => Look::Found(c),
+                Reconciliation::Absent => Look::Absent,
+                Reconciliation::Pending => Look::Pending,
+            });
+        }
+        let observations = self.observations(d)?;
+        Ok(if observations.is_empty() { Look::Pending }
+            else { Look::Found(Box::new(Completion::confirmed(observations))) })
     }
     fn reconcile_cancellation(&mut self, d: &Delivery) -> Result<Reconciliation> {
         let github = self.client(d)?;
@@ -655,7 +704,33 @@ impl Executor for Adapter {
         Ok(Reconciliation::Found(Box::new(completion)))
     }
     fn retire_delivery(&mut self, d: &Delivery) -> Result<()> {
-        self.wakes.wake(&d.key);
+        let snapshot = self.snapshot()?;
+        let world = crate::snapshot::decode(&snapshot)?;
+        let n = world.nodes.get(d.node().0 as usize).ok_or(Error::Invalid("missing retired direct node"))?;
+        // The controller invokes this hook after the terminal effect's dispatch/watch
+        // retirement is durable. The consumed merged fact protects against late retries.
+        let retiring = snapshot.rows.iter().any(|r| r.table == "retiring_effects" && r.id == d.key);
+        let unsettled = snapshot.pending_effects.iter().any(|effect| effect.key == d.key)
+            || snapshot.rows.iter().any(|r| matches!(r.table.as_str(), "watches" | "dispatches") && r.id == d.key);
+        if retiring && !unsettled && matches!(n.phase,
+            Phase::Stopping(tl3_kernel::Outcome::Merged) | Phase::Closed(tl3_kernel::Outcome::Merged)) {
+            if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
+                return Err(Error::Invalid("direct retirement epoch is fenced"));
+            }
+            let head = crate::commit_sha(&snapshot, n.merged).ok_or(Error::Invalid("missing consumed merged head"))?;
+            self.remember_delivery(d, &Merged {head:head.into(), checks_passed:n.checked == n.merged})?;
+            self.records.fence(self.epoch)?;
+            for path in [self.records.path(&d.key).with_extension("intent"), self.receipt_path(d)?] {
+                self.boundary(Write::Reclaim, false);
+                match fs::remove_file(&path) {
+                    Ok(()) => std::fs::File::open(path.parent().unwrap())?.sync_all()?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(error) => return Err(error.into()),
+                }
+                self.boundary(Write::Reclaim, true);
+            }
+        }
+        self.wakes.forget(&d.key);
         Ok(())
     }
     fn probe(&mut self, d: &Delivery) -> Result<bool> {
@@ -684,12 +759,16 @@ fn number(d: &Delivery) -> Result<u64> {
     d.pull_request
         .ok_or(Error::Invalid("direct delivery needs a PR number"))
 }
-fn passed(check: &CheckRun) -> bool {
-    check.status == "completed"
-        && matches!(
-            check.conclusion.as_deref(),
-            Some("success" | "neutral" | "skipped")
-        )
+// Parse the upstream annotation wording at this boundary; C1 owns aggregation/classification.
+fn annotation_class(annotation: &tl3_github::CheckAnnotation) -> required::Annotation {
+    if annotation.annotation_level != "failure" { return required::Annotation::Ignore; }
+    if ["The runner has lost communication with the server",
+        "The job was not acquired by Runner of type",
+        "The job was abandoned as the runner did not pick it up",
+        "The job was not started because recent account payments have failed"]
+        .iter().any(|prefix| annotation.message.starts_with(prefix)) {
+        required::Annotation::RunnerFailure
+    } else { required::Annotation::OtherFailure }
 }
 fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)

@@ -13,12 +13,14 @@ verus! {
 /// No loop bound: the production decision is straight-line over arbitrary full SHA values.
 fn witnesses() {
     let h = decide::Head { upper: 1, lower: 2 };
-    let visible = decide::Facts { approved: h, observed: h, checked: h, checking: true, approval: true,
+    let visible = decide::Facts { approved: h, write_authorized: true, observed: h, checked: h, checking: true, approval: true,
         open: true, merged: false, recorded_merge: false, held: false, conflict: false,
         checks: decide::Checks::Passed, visible: true };
     let merge = decide::decide(visible);
     assert(merge.third == decide::Step::Merge);
     assert(merge.first == decide::Step::Fence && merge.second == decide::Step::Intent);
+    let timer = decide::decide(decide::Facts { write_authorized: false, ..visible });
+    assert(timer.third == decide::Step::None);
     let unapproved = decide::decide(decide::Facts { approval: false, ..visible });
     assert(unapproved.third == decide::Step::None);
     let unchecked = decide::decide(decide::Facts { checking: false, ..visible });

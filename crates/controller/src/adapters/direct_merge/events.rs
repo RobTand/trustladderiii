@@ -189,7 +189,8 @@ impl GitHubTranslator for Translator {
                 ) => self.wakes(snapshot, &repo, Some(pull_request.number), None),
                 _ => Ok(vec![]), // No Mergify dequeue, missing-check or merge-group rules in direct mode.
             },
-            GitHubDelivery::CatchUp { .. } => {
+            GitHubDelivery::CatchUp { changes, .. } => {
+                let world = crate::snapshot::decode(snapshot)?;
                 let mut inputs = self.wakes(snapshot, &repo, None, None)?;
                 let client = self
                     .clients
@@ -211,6 +212,16 @@ impl GitHubTranslator for Translator {
                     let number = row.value["number"]
                         .as_u64()
                         .ok_or(Error::Invalid("invalid direct PR number"))?;
+                    let n = world.nodes.get(node.0 as usize).ok_or(Error::Invalid("missing direct catch-up node"))?;
+                    let changed = changes.pull_requests.iter().any(|pull| pull.number == number)
+                        || changes.closed.iter().any(|(closed, _)| *closed == number)
+                        || changes.check_runs.iter().any(|check| {
+                            Some(check.head_sha.as_str()) == crate::commit_sha(snapshot, n.head)
+                        })
+                        || changes.check_suites.iter().any(|check| {
+                            Some(check.head_sha.as_str()) == crate::commit_sha(snapshot, n.head)
+                        });
+                    if matches!(n.phase, Phase::Closed(_)) && !changed { continue; }
                     let pull = crate::executor::runtime()?
                         .block_on(client.pull_request(&full_name(&repo), number))?;
                     inputs.extend(self.input(snapshot, &repo, &pull, true)?);

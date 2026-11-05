@@ -1991,46 +1991,32 @@ mod router_queue {
             count.get()
         );
     }
-    fn block<'a>(source: &'a str, marker: &str) -> &'a str {
-        let start = source.find(marker).unwrap();
-        let brace = start + source[start..].find('{').unwrap();
-        let mut depth = 1;
-        let mut cursor = brace + 1;
-        while depth != 0 {
-            match source.as_bytes()[cursor] {
-                b'{' => depth += 1,
-                b'}' => depth -= 1,
-                _ => {}
-            }
-            cursor += 1;
-        }
-        &source[start..cursor]
+    // These fragments are compiled as the current adapter and complete trait above.
+    // Compare their exact bytes with production; do not tokenize or scan Rust braces.
+    fn pinned(source: &str, fragment: &str) -> bool {
+        source.contains(fragment)
     }
     #[test]
     fn router_source_pins_preserve_literal_whitespace() {
-        assert_ne!(tokens(r#"fn example() { "x y" }"#), tokens(r#"fn example() { "xy" }"#));
-    }
-    fn tokens(s: &str) -> String {
-        s.split_whitespace().collect()
+        assert!(!pinned(r#"fn example() { "xy" }"#, r#"fn example() { "x y" }"#));
+        let raw = "fn example() { r#\"} {\"# }";
+        assert!(pinned(raw, raw));
     }
     #[test]
     fn router_queue_copies_are_complete_production_bodies() {
         let actual = include_str!("../../src/executor.rs");
-        let copy = include_str!("router_executor.rs");
-        for marker in [
-            "pub enum Look {",
-            "pub enum WaitRecord {",
-            "pub trait Executor {",
-        ] {
-            assert_eq!(tokens(block(actual, marker)), tokens(block(copy, marker)));
-        }
-        let actual = block(
-            include_str!("../../src/adapters/mergify.rs"),
-            "impl Executor for Adapter {",
-        );
-        let copy = include_str!("router_current_executor.rs");
-        for marker in ["    fn execute(", "    fn reconcile("] {
-            assert_eq!(tokens(block(actual, marker)), tokens(block(copy, marker)));
-        }
+        let copy = include_str!("router_executor.rs").split_once('\n').unwrap().1;
+        let (look, rest) = copy.split_once("\n\npub enum WaitRecord {").unwrap();
+        let (wait, executor) = rest.split_once("\n\npub trait Executor {").unwrap();
+        assert!(pinned(actual, look));
+        assert!(pinned(actual, &format!("pub enum WaitRecord {{{wait}")));
+        assert!(pinned(actual, &format!("pub trait Executor {{{executor}")));
+        let actual = include_str!("../../src/adapters/mergify.rs");
+        let copy = include_str!("router_current_executor.rs").split_once('\n').unwrap().1
+            .strip_prefix("impl executor::Executor for Adapter {\n").unwrap()
+            .strip_suffix("\n}\n").unwrap();
+        let (execute, reconcile) = copy.split_once("\n\n    fn reconcile(").unwrap();
+        assert!(pinned(actual, execute), "complete execute body drifted");
+        assert!(pinned(actual, &format!("    fn reconcile({reconcile}")), "complete reconcile body drifted");
     }
 }
