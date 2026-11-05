@@ -214,11 +214,28 @@ fn mandatory_a1_check_comparison() {
     assert!(!c::check_changed(c::CheckComparison::BothMissing));
     assert!(c::check_changed(c::CheckComparison::OneMissing));
     assert!(!c::check_changed(c::CheckComparison::BothPresent {
-        fields: [true; 10]
+        fields: check_fields([true; 10])
     }));
     for changed in 0..10 {
         let mut fields = [true; 10];
         fields[changed] = false;
-        assert!(c::check_changed(c::CheckComparison::BothPresent { fields }));
+        assert!(c::check_changed(c::CheckComparison::BothPresent {
+            fields: check_fields(fields)
+        }));
+    }
+}
+
+fn check_fields(fields: [bool; 10]) -> c::CheckFields {
+    c::CheckFields {
+        id: fields[0],
+        pull_requests: fields[1],
+        name: fields[2],
+        head_sha: fields[3],
+        external_id: fields[4],
+        details_url: fields[5],
+        status: fields[6],
+        conclusion: fields[7],
+        app: fields[8],
+        output: fields[9],
     }
 }

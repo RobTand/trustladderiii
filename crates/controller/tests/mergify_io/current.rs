@@ -1034,18 +1034,18 @@ fn completion_check(
     match (before, current) {
         (None, None) => completion_core::CheckComparison::BothMissing,
         (Some(before), Some(current)) => completion_core::CheckComparison::BothPresent {
-            fields: [
-                before.id == current.id,
-                before.pull_requests == current.pull_requests,
-                before.name == current.name,
-                before.head_sha == current.head_sha,
-                before.external_id == current.external_id,
-                before.details_url == current.details_url,
-                before.status == current.status,
-                before.conclusion == current.conclusion,
-                before.app == current.app,
-                before.output == current.output,
-            ],
+            fields: completion_core::CheckFields {
+                id: before.id == current.id,
+                pull_requests: before.pull_requests == current.pull_requests,
+                name: before.name == current.name,
+                head_sha: before.head_sha == current.head_sha,
+                external_id: before.external_id == current.external_id,
+                details_url: before.details_url == current.details_url,
+                status: before.status == current.status,
+                conclusion: before.conclusion == current.conclusion,
+                app: before.app == current.app,
+                output: before.output == current.output,
+            },
         },
         _ => completion_core::CheckComparison::OneMissing,
     }

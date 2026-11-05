@@ -14,15 +14,6 @@ macro_rules! completion_while {
     };
 }
 
-#[cfg(not(verus_keep_ghost))]
-macro_rules! completion_proof {
-    ($($body:tt)*) => {};
-}
-#[cfg(verus_keep_ghost)]
-macro_rules! completion_proof {
-    ($($body:tt)*) => { vstd::prelude::verus_exec_expr! { proof { $($body)* } } };
-}
-
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,39 +320,50 @@ pub fn read_facts(healed: bool) -> bool {
 pub enum CheckComparison {
     BothMissing,
     OneMissing,
-    BothPresent { fields: [bool; 10] },
+    BothPresent { fields: CheckFields },
 }
 
-/// #608/#760: late completed_at/check_suite metadata does not acknowledge acceptance. The ten remaining upstream field equalities decide.
+/// #608/#760: completed_at/check_suite alone never acknowledge acceptance.
+/// Every other CheckRun field participates in the comparison.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match comparison {
-            CheckComparison::BothMissing => false,
-            CheckComparison::OneMissing => true,
-            CheckComparison::BothPresent { fields } => exists|j: int| 0 <= j < 10 && !fields@[j],
-        },))]
+    CheckComparison::BothMissing => false,
+    CheckComparison::OneMissing => true,
+    CheckComparison::BothPresent { fields } => !(fields.id && fields.pull_requests && fields.name && fields.head_sha && fields.external_id && fields.details_url && fields.status && fields.conclusion && fields.app && fields.output),
+},))]
 pub fn check_changed(comparison: CheckComparison) -> bool {
     match comparison {
         CheckComparison::BothMissing => false,
         CheckComparison::OneMissing => true,
         CheckComparison::BothPresent { fields } => {
-            let mut i = 0;
-            completion_while! { (i < fields.len()) [
-                invariant i <= 10,
-                    forall|j: int| 0 <= j < i ==> fields@[j],
-                decreases 10 - i,
-            ] {
-                if !fields[i] {
-                    completion_proof! {
-                        assert(exists|j: int| 0 <= j < 10 && !fields@[j]) by {
-                            assert(!fields@[i as int]);
-                        }
-                    }
-                    return true;
-                }
-                i += 1;
-            } }
-            false
+            !(fields.id
+                && fields.pull_requests
+                && fields.name
+                && fields.head_sha
+                && fields.external_id
+                && fields.details_url
+                && fields.status
+                && fields.conclusion
+                && fields.app
+                && fields.output)
         }
     }
+}
+
+/// Equality of the nonmetadata CheckRun fields, parsed at the upstream boundary.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckFields {
+    pub id: bool,
+    pub pull_requests: bool,
+    pub name: bool,
+    pub head_sha: bool,
+    pub external_id: bool,
+    pub details_url: bool,
+    pub status: bool,
+    pub conclusion: bool,
+    pub app: bool,
+    pub output: bool,
 }
 
 // The lifecycle result has a failure payload opaque to completion decisions.

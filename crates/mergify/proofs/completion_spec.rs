@@ -83,11 +83,10 @@ fn check_witness() {
     assert(!actual_23);
     let actual_24 = check_changed(CheckComparison::OneMissing);
     assert(actual_24);
-    let actual_25 = check_changed(CheckComparison::BothPresent { fields: [true, true, true, true, true, true, true, true, true, true] });
+    let actual_25 = check_changed(CheckComparison::BothPresent { fields: CheckFields { id: true, pull_requests: true, name: true, head_sha: true, external_id: true, details_url: true, status: true, conclusion: true, app: true, output: true } });
     assert(!actual_25);
-    let bad = [false, false, false, false, false, false, false, false, false, false];
+    let bad = CheckFields { id: false, pull_requests: false, name: false, head_sha: false, external_id: false, details_url: false, status: false, conclusion: false, app: false, output: false };
     let actual_26 = check_changed(CheckComparison::BothPresent { fields: bad });
-    assert(!bad@[0]);
     assert(actual_26);
 }
 }
