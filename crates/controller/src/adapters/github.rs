@@ -566,6 +566,7 @@ impl Executor for Adapter {
     }
 
     fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
+        self.records.fence(self.epoch)?;
         let Some(scan) = &mut self.legacy_approval_scan else {
             return Ok(());
         };

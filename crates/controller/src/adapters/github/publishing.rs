@@ -436,6 +436,7 @@ impl Adapter {
     }
 
     pub(super) fn retire_approval(&self, delivery: &Delivery) -> Result<()> {
+        self.records.fence(self.epoch)?;
         let path = self.approval_path(delivery)?;
         match std::fs::remove_file(&path) {
             Ok(()) => std::fs::File::open(
