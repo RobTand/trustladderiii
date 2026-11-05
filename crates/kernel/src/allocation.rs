@@ -291,8 +291,30 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    kernel_proof! { reveal(retirement::incident); }
-    let m = &mut w.nodes[i];
+    raise_incident_node(&mut w.nodes[i], needs_rob);
+    notice(out, i, Notice::Incident { needs_rob });
+}
+}
+
+kernel_fn! {
+/// Incident rows / #771/#806: unchanged node writes, separated from the world frame.
+fn raise_incident_node(m: &mut Node, needs_rob: bool) -> (result: ()) [
+    requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
+    ensures *final(m) == retirement::incident(*old(m), needs_rob),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation as int == old(m).generation as int
+            + if holding(old(m).phase) { 1int } else { 0int },
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).question == old(m).question,
+        final(m).waiting_incident, final(m).incident_needs_rob == needs_rob,
+        final(m).ticket.is_none(),
+        final(m).run_failures == old(m).run_failures,
+        final(m).run_incidents == old(m).run_incidents,
+        final(m).fx_failures == old(m).fx_failures,
+        final(m).fx_incidents == old(m).fx_incidents,
+        final(m).last_cmd == old(m).last_cmd,
+] proof [reveal(retirement::incident);] {
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;
     m.ticket = None;
@@ -301,7 +323,6 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         m.holds = false;
         set_phase(m, Phase::Ready(r));
     }
-    notice(out, i, Notice::Incident { needs_rob });
 }
 }
 

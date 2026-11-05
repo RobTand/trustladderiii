@@ -16,6 +16,19 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'split_incident_node': ('crates/kernel/src/allocation.rs',
+        '        set_phase(m, Phase::Ready(r));', '        let _ = r;',
+        '//crates/kernel:verus_allocation_incident_node'),
+    'split_skip_teardown': ('crates/kernel/src/ranks/cleanup.rs',
+        '            m.pool = false;\n        }\n        m.pos += 1;',
+        '            m.pool = false;\n        }\n        m.pos += 0;',
+        '//crates/kernel:verus_rank_skip_teardown'),
+    'split_emit_teardown': ('crates/kernel/src/ranks/cleanup.rs',
+        '        emit_node(node, context.node, kind, out);', '        let _ = kind;',
+        '//crates/kernel:verus_rank_emit_teardown'),
+    'split_finish_recheck': ('crates/kernel/src/retries.rs',
+        '    m.holds = false;\n    set_phase(m, target);', '    m.holds = true;\n    set_phase(m, target);',
+        '//crates/kernel:verus_retry_finish_released'),
     'split_confirmed_cleanup': ('crates/kernel/src/acknowledgements.rs',
         '    m.fx_incidents = 0;', '    m.fx_incidents = 1;',
         '//crates/kernel:verus_ack_confirmed_cleanup'),

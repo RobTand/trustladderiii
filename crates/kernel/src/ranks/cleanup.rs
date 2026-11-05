@@ -67,7 +67,6 @@ kernel_fn! {
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
     pub(super) fn advance_teardown(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
@@ -76,12 +75,11 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_post);] {
         let n = *node;
         if n.question.is_some() {
             return false; // waiting for Rob
         }
-        kernel_proof! { assert(n.phase is Stopping); }
         let gone = match kind {
             EffectKind::StopRun => n.run.is_none(),
             EffectKind::WithdrawJob => n.job.is_none(),
@@ -90,13 +88,44 @@ kernel_fn! {
             _ => false,
         };
         if gone {
-            let m = &mut *node;
-            if kind == EffectKind::StopRun {
-                m.pool = false;
-            }
-            m.pos += 1;
-            return true;
+            return skip_teardown(node, _next_ticket, context, out, kind);
         }
+        emit_teardown(node, _next_ticket, context, out, kind)
+    }
+}
+kernel_fn! {
+    /// #771: same executable transition, partitioned for bounded solver queries.
+    fn skip_teardown(node: &mut Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
+            !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Teardown(kind)),
+            old(node).question.is_none(),
+        ensures result, (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), _context),
+    ] proof [reveal(advance_post); reveal(distance);] {
+        let m = &mut *node;
+        if kind == EffectKind::StopRun {
+            m.pool = false;
+        }
+        m.pos += 1;
+        true
+    }
+}
+
+kernel_fn! {
+    /// #771: same executable transition, partitioned for bounded solver queries.
+    fn emit_teardown(node: &mut Node, _next_ticket: &mut u64,
+        context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
+            !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Teardown(kind)),
+            old(node).question.is_none(),
+        ensures result, (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
+    ] proof [reveal(advance_post); reveal(distance);] {
         emit_node(node, context.node, kind, out);
         true
     }

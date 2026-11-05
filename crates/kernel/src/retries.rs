@@ -451,7 +451,42 @@ pub(super) fn finish_recheck(m: &mut Node, target: Phase) -> (result: ()) [
         ..*old(m)
     }),
 ] {
-    if !target.holding() { m.holds = false; }
+    if !target.holding() {
+        return finish_recheck_released(m, target);
+    }
+    finish_recheck_held(m, target)
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: the existing hold release immediately followed by phase change.
+/// Separate from the optional debit to keep independent branch queries small.
+fn finish_recheck_released(m: &mut Node, target: Phase) -> (result: ()) [
+    requires old(m).generation < u64::MAX, !holding(target),
+    ensures *final(m) == (Node {
+        holds: false,
+        generation: (old(m).generation + 1) as u64, phase: target, pos: 0, ticket: None,
+        effect: match old(m).effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None },
+        ..*old(m)
+    }),
+] {
+    m.holds = false;
+    set_phase(m, target);
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: the existing hold release immediately followed by phase change.
+/// Separate from the optional debit to keep independent branch queries small.
+fn finish_recheck_held(m: &mut Node, target: Phase) -> (result: ()) [
+    requires old(m).generation < u64::MAX, holding(target),
+    ensures *final(m) == (Node {
+        holds: old(m).holds,
+        generation: (old(m).generation + 1) as u64, phase: target, pos: 0, ticket: None,
+        effect: match old(m).effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None },
+        ..*old(m)
+    }),
+] {
     set_phase(m, target);
 }
 }
