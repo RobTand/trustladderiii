@@ -379,6 +379,8 @@ def verus_proofs():
             "kernel::footprint::World::files": "Read-only iterator API outside the scoped Verus core.",
             "kernel::footprint::World::file_sets": "Read-only storage inspection outside the scoped Verus core.",
             "kernel::dependencies::World::dependencies": "Read-only storage inspection outside the scoped Verus core.",
+            "kernel::dependencies::zero_credit": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependencies::no_active_graph_edges": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::delivered": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::prerequisites_delivered": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::edges_indexable": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
