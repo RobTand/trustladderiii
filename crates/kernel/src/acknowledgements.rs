@@ -131,11 +131,31 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    let m = &mut w.nodes[i];
+    match failed_delivery_node(&mut w.nodes[i], kind) {
+        None => emit(w, i, kind, out),
+        Some(needs_rob) => raise_incident(w, i, needs_rob, out),
+    }
+}
+}
+
+
+kernel_fn! {
+/// Failed-delivery rows / #771: reset the retry ladder before emitting or
+/// raising its incident. This node-local part allocates at most one generation.
+fn failed_delivery_node(m: &mut Node, kind: EffectKind) -> (result: Option<bool>) [
+    requires old(m).generation < u64::MAX,
+        old(m).fx_failures <= 1, old(m).fx_incidents <= 2,
+    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation as int <= old(m).generation as int + 1,
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).question == old(m).question, final(m).last_cmd == old(m).last_cmd,
+        final(m).fx_failures <= 1, final(m).fx_incidents <= 2,
+        result.is_none() == (old(m).fx_failures == 0),
+] {
     m.fx_failures += 1;
     if m.fx_failures < 2 {
-        emit(w, i, kind, out);
-        return;
+        return None;
     }
     m.fx_failures = 0;
     m.fx_incidents = (m.fx_incidents + 1).min(2);
@@ -145,7 +165,7 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         m.pos = operation_start(m.phase);
         m.generation += 1;
     }
-    raise_incident(w, i, needs_rob, out);
+    Some(needs_rob)
 }
 }
 
