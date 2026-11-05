@@ -64,7 +64,13 @@ _WAVE_B_ENTRIES = {
     # node-id (#824)
     "node-id": _WAVE_B_STUB,
     # limits (S4)
-    "limits": _WAVE_B_STUB,
+    "limits": {
+        "srcs": ["tests/limits.rs"],
+        "crate_root": "tests/limits.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde_json"],
+        "data": ["//harness:core_vectors"],
+        "tags": ["wave-b-plan-only", "rust"],
+    },
     # red-match (S4)
     "red-match": _WAVE_B_STUB,
 }
