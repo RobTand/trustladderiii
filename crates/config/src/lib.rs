@@ -375,6 +375,9 @@ fn generator_timeout_setting<'de, D: serde::Deserializer<'de>>(
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
+    /// #830: delivery follows TL3's own checks and approval in either mode.
+    #[serde(default)]
+    pub delivery: Delivery,
     #[serde(default)]
     pub protected_paths: Vec<String>,
     /// Generated outputs cost a regeneration allowance rather than a source edit.
@@ -413,6 +416,14 @@ pub struct Repository {
     /// means the heal reruns nothing.
     #[serde(default)]
     pub heal_rerun_workflows: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Delivery {
+    #[default]
+    Queue,
+    Direct,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
