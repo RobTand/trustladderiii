@@ -702,3 +702,15 @@ def test_pb2710_second_substantive_refusal_records_one_attempt(planner_request, 
     assert fixture['violation'] in violations
     assert [v for v in violations if v.startswith('Planner coverage correction attempts:')] == [
         'Planner coverage correction attempts: 1.']
+
+
+def test_pb2710_ids_fit_even_when_clipping_markers_do_not():
+    from tl3_workers.roles.planner import PlanConsistencyError
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
+
+    goals = dict.fromkeys(range(140), 'A required review goal. ' * 100)
+    error = PlanConsistencyError((), missing_goals=goals)
+    message = repair_message(error)
+    assert isinstance(message, str), 'descriptions must be omitted when the ids and instructions still fit'
+    assert len(message.encode()) <= REPAIR_MESSAGE_BYTES
+    assert all(f'goal {index}:' in message for index in goals)

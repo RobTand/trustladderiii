@@ -133,13 +133,14 @@ class PlanConsistencyError(ValueError):
         if len(full.encode()) <= REPAIR_MESSAGE_BYTES:
             return full
         marker = ' [...]'
-        fixed = message(dict.fromkeys(self.missing_goals, marker))
+        fixed = message(dict.fromkeys(self.missing_goals, ''))
         available = REPAIR_MESSAGE_BYTES - len(fixed.encode())
         if available < 0:
             return None
         cap = available // len(self.missing_goals)
         return message({index: (description if len(description.encode()) <= cap else
-                                description.encode()[:cap].decode(errors='ignore') + marker)
+                                description.encode()[:cap - len(marker)].decode(errors='ignore') + marker
+                                if cap >= len(marker) else '')
                         for index, description in self.missing_goals.items()})
 
     def constrain(self, reply):
