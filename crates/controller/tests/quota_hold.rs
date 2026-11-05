@@ -975,6 +975,9 @@ fn classifier_uses_the_earliest_ladder_retry_before_the_last_hint() {
     use tl3_kernel::NodeId;
     const EARLIER: u64 = RESET - 86_400_000;
     let mut f = Fixture::with_earlier_rung(true);
+    // #828 B also permits an hourly probe. Put T1 before that deadline so
+    // this fixture continues to isolate the two ladder reset deadlines.
+    f.clock.0.set(EARLIER - 30 * 60 * 1000);
     f.intake(2662);
     f.until(|f| f.hold().is_some());
     let key = f.hold().unwrap().0;
