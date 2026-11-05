@@ -591,7 +591,7 @@ def verus_proofs():
             "dependencies_unseen_prefix": ("kernel::dependencies#unseen_prefix", 1),
             "dependencies_unseen_prefix_equal": ("kernel::dependencies#unseen_prefix_equal", 1),
             "dependencies_visit_reduces_unseen": ("kernel::dependencies#visit_reduces_unseen", 1),
-            "progress": ("kernel::progress", 10),
+            "progress": ("kernel::progress", 12),
             "dependencies_empty_delivered": ("kernel::dependencies#empty_delivered", 1),
             "dependencies_delivered_definition": ("kernel::dependencies#delivered_definition", 1),
             "scheduler": ("kernel::scheduler", 13),
