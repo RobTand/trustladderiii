@@ -516,7 +516,7 @@ fn generated_http_outcome_matrix() {
         ::std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
             .unwrap_or_else(|| ::std::env::var_os("TMPDIR").unwrap_or_else(|| ".".into())),
     );
-    let mut comparisons = 0;
+    let comparisons = ::std::cell::Cell::new(0);
     for mode in 0..23u8 {
         let regression = output.join(format!("memory-http-{mode}-regressions.txt"));
         ::std::fs::write(&regression, include_str!("proptest-regressions.txt")).unwrap();
@@ -542,7 +542,7 @@ fn generated_http_outcome_matrix() {
                 };
                 match io::compare(&schedule, Entry::Flush) {
                     Ok(n) => {
-                        comparisons += n;
+                        comparisons.set(comparisons.get() + n);
                         Ok(())
                     }
                     Err(error) => {
@@ -557,5 +557,8 @@ fn generated_http_outcome_matrix() {
             })
             .unwrap();
     }
-    eprintln!("HTTP matrix: 92 fixed-seed schedules, {comparisons} complete/crash comparisons");
+    eprintln!(
+        "HTTP matrix: 92 fixed-seed schedules, {} complete/crash comparisons",
+        comparisons.get()
+    );
 }

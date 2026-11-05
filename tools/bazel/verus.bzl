@@ -497,7 +497,7 @@ def verus_proofs():
             "bounds": ("memory_retain::bounds", 2),
             "classification": ("memory_retain::classification", 1),
             "completion": ("memory_retain::completion", 3),
-            "witnesses": ("memory_retain_witnesses", 5),
+            "witnesses": ("memory_retain_witnesses", 7),
         }
         for name, (module, count) in memory_retain_groups.items():
             verus_test(
