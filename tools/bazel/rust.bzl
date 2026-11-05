@@ -149,6 +149,7 @@ _CONTROLLER_RUNTIME = {
         "//workers/tools:scripts",
         "//workers/src:prompts",
         "//workers/tests:fixtures",
+        "//workers/tests:prompt_render_recordings",
     ],
     # The shared harness check-report vectors (#734) the typed contracts parse (#741).
     "test_test_contracts": ["//harness:project_files"],
