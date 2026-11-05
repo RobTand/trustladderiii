@@ -1137,3 +1137,15 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+py_library(
+    name = "planner_vectors",
+    srcs = ["planner_vectors.py"],
+    deps = ["//workers/src", "@tl3_pip//jsonschema"],
+)
+
+tl3_py_test(
+    name = "test_planner_vectors",
+    srcs = ["test_planner_vectors.py"],
+    deps = [":conftest", ":planner_vectors", "@tl3_pip//pytest"],
+)
