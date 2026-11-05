@@ -134,13 +134,13 @@ fn restart_reads_already_closed_prerequisite_and_retains_it() {
     let waiter = intake(&mut c, &repository, 42);
     ingest(&mut c, waiter, &[2761]);
     set_issue(&repo, 2761, "closed", Some("not_planned"));
-    let c = reopen(&repo, c, &settings);
+    let mut c = reopen(&repo, c, &settings);
     assert_eq!(
         c.world().unwrap().dependencies()[0].status,
         DependencyStatus::Abandoned
     );
     set_issue(&repo, 2761, "open", None);
-    let c = reopen(&repo, c, &settings);
+    let mut c = reopen(&repo, c, &settings);
     assert_eq!(
         c.world().unwrap().dependencies()[0].status,
         DependencyStatus::Abandoned
