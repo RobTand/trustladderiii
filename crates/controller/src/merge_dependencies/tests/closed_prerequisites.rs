@@ -622,6 +622,7 @@ fn startup_revokes_closed_delivery_before_resume() {
     let mut db = Database::start();
     let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_resume_current");
     let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761]);
     event(
         &mut c,
         Event::Command {
@@ -630,7 +631,6 @@ fn startup_revokes_closed_delivery_before_resume() {
             command: Command::Pause,
         },
     );
-    ingest(&mut c, waiter, &[2761]);
     external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
     assert_eq!(
         c.world().unwrap().dependencies()[0].status,
@@ -639,11 +639,10 @@ fn startup_revokes_closed_delivery_before_resume() {
     assert!(!c.world().unwrap().nodes[waiter.0 as usize].planning_started);
     c.observe(
         "resume-before-open",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node: waiter,
-            id: 2,
             command: Command::Resume,
-        }),
+        },
     )
     .unwrap();
     set_issue(&repo, 2761, "open", None);
