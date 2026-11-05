@@ -380,6 +380,8 @@ def _crate_test(kind, package, name, source, harness, options):
         sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
         if source == "tests/proof_map.rs":
             sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
+        if native.package_name() == "crates/kernel" and source == "tests/random_walks.rs":
+            sources = sources + ["tests/measure_equivalence/reference.rs"]
         if native.package_name() == "crates/store":
             sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
