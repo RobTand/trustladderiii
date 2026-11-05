@@ -73,6 +73,8 @@ worker_groups! {
     QuotaReplays: 2,
     QuotaFallback: 1,
     QuotaFallbacks: 1,
+    QuotaOperatorClear: 1,
+    QuotaOperatorNonLast: 1,
     QuotaRemoved: 1,
     Planning: 2,
     UnavailableModelNotFound: 1,
