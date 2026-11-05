@@ -16,6 +16,8 @@ All production crates share the root workspace and Cargo.lock. The optional `ser
 - `Node::waiting_on()` returns a `Wait` for status readers.
 - `Node::operation_pending(kind, generation)` tells the controller whether an acknowledged operation still needs a result.
 - `Node::effect_cancelling(seq)` identifies a delivery whose node has moved on.
+- `Node::next_command_id()` returns the next checked command ID, or `None` at exhaustion.
+- `World::headroom_ok()` checks the counter reserves required before a controller step.
 
 These queries live in `src/queries.rs`. They read the world without changing
 `step`, `settle`, or any transition. Enqueue watches name the generation before
@@ -73,6 +75,12 @@ The message adapter supplies the plain-language text.
   - `witness`, the progress event;
   - `proof_of_event` and `proofs_of_phase`, the proof map.
 - `src/proofs.rs` holds the Kani proofs.
+- `src/headroom.rs` defines the counter reserves. The executable handlers live
+  in the event modules, and `src/ranks.rs` holds the local settle transitions.
+- `verus/progress.rs` imports those same executable bodies. Its safety contracts
+  cover counter budgets and command order; global progress remains unfinished.
+  [Progress scope and counter exhaustion](progress-counterexample.md) records
+  the enforced scope, counter audit and Kani-to-Verus mapping.
 - `tests/` holds scripted scenarios, seeded random walks, the footprint set checks and the proof-map check.
 - `run.py` runs a build and tests, runs named Kani proofs, or prints a PrismaBuild campaign manifest.
 

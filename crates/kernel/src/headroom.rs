@@ -227,7 +227,7 @@ impl World {
     }
 
     kernel_fn! {
-        /// #771: the executable progress theorem is scoped to counter headroom.
+        /// #771: the executable step-safety theorem is scoped to counter headroom.
         /// The u32 scratch counters reserve one new open root and six local
         /// settle moves per open node. Closed nodes do not contribute to these
         /// scans in a consistent world. This admits at most 715,827,881 open nodes;
