@@ -76,6 +76,7 @@ enum Observation {
         role: String,
         reply: Value,
         model: Option<String>,
+        plan_check: Option<contracts::plan_check::PlanCheckProvenance>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

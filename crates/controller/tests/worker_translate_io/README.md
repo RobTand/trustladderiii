@@ -46,3 +46,12 @@ material/document tapes, and asserts a committed populated maker_findings row.
 It feeds those exact rows into a maker reply and replays both sides of its intern
 write. Mandatory shell witnesses assert RunFailed and the expected call/row
 trace for invalid maker paths and known request-scope citations without a quote.
+
+#832 adds the optional plan-check provenance field to the test observation. The
+reference arm ignores exactly that field; its original arm bytes and all frozen
+leaf hashes remain pinned. The current arm and its protocol mapping are copied
+from production by `sync.py`, which runs on BuildBuddy. Only the current arm uses
+`protocol-current.rs`; the reference keeps the original protocol implementation.
+The differential schedules supply no provenance, so they check the dormant
+fallback and preserve the existing I/O and failure order. Semantic-provenance
+cases run through the real controller acceptance tests.

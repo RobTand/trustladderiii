@@ -404,6 +404,7 @@ pub(super) fn schedule(role: &str, reply: Value) -> Schedule {
             role: role.into(),
             reply,
             model: Some("model".into()),
+            plan_check: None,
         },
         phase,
         run: Some(7),
