@@ -312,9 +312,9 @@ fn generated_tails_and_crash_cuts() {
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(path))),
         ..Config::default()
     });
-    let mut seen = [0usize; 5];
-    let mut successful_populated = 0usize;
-    let mut errors = 0usize;
+    let seen = std::cell::Cell::new([0usize; 5]);
+    let successful_populated = std::cell::Cell::new(0usize);
+    let errors = std::cell::Cell::new(0usize);
     runner
         .run(&generated(), |s| {
             let r = compare(&s);
@@ -331,19 +331,26 @@ fn generated_tails_and_crash_cuts() {
                     } => 1,
                     _ => 2,
                 };
-                seen[k] += 1;
+                let mut counts = seen.get();
+                counts[k] += 1;
+                seen.set(counts);
                 if !s.failed.is_empty() {
-                    successful_populated += 1;
+                    successful_populated.set(successful_populated.get() + 1);
                 }
             } else {
-                seen[4] += 1;
+                let mut counts = seen.get();
+                counts[4] += 1;
+                seen.set(counts);
             }
             if r.result.starts_with("error:") {
-                errors += 1;
+                errors.set(errors.get() + 1);
             }
             Ok(())
         })
         .unwrap();
+    let seen = seen.get();
+    let successful_populated = successful_populated.get();
+    let errors = errors.get();
     assert!(
         seen.iter().all(|n| *n > 0),
         "generated branch counts {seen:?}"
