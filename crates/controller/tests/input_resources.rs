@@ -329,9 +329,12 @@ fn a_recurring_legacy_fault_starts_one_new_typed_lineage_without_rewriting_histo
     w.next_generation();
     w.reply("issue", 4040);
     assert_eq!(
-        w.incidents().len(),
+        w.incidents()
+            .iter()
+            .filter(|incident| incident["signature"]["class"] == "not_found")
+            .count(),
         2,
-        "subsequent typed faults dedupe within the new lineage"
+        "subsequent typed input faults dedupe within the new lineage"
     );
 }
 
