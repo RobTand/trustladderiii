@@ -1,6 +1,5 @@
 use vstd::prelude::*;
 use crate::completion::*;
-use crate::{QueueState, Time};
 
 verus! {
 /// #608: the previous cycle is stale at the equality boundary and throughout u64.
@@ -23,8 +22,8 @@ fn completion_witness() {
 
 /// #608: a merged queue skips the missing hold read; a saved baseline skips repaired_head.
 fn hold_witness() {
-    assert(held(QueueState::Merged, None) == Some(false));
-    assert(held(QueueState::Waiting, None) == None);
+    assert(held(Queue::Merged, None) == Some(false));
+    assert(held(Queue::Other, None) == None);
     assert(person_events(true, None) == Some(true));
     assert(person_events(false, None) == None);
     assert(fresh(0, Freshness::Snapshot { unresolved: true }));

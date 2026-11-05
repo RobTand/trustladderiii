@@ -1,5 +1,6 @@
 use super::*;
-use tl3_mergify::decide::{Head, Time, completion as c};
+use c::{Head, Time};
+use tl3_mergify::decide::completion as c;
 
 /// #608/#373: witnesses for each completion mapping, receipt and conflict branch.
 #[test]
@@ -58,7 +59,7 @@ fn mandatory_a1_person_hold_and_freshness() {
     for queue in [QueueState::Merged, QueueState::Waiting] {
         for unresolved in [None, Some(false), Some(true)] {
             assert_eq!(
-                c::held(queue, unresolved),
+                c::held(queue.into(), unresolved),
                 if queue == QueueState::Merged {
                     Some(false)
                 } else {
@@ -118,9 +119,9 @@ fn mandatory_a1_labels_dequeue_and_time() {
         QueueState::DequeuedByPerson,
         QueueState::Unknown,
     ] {
-        assert!(c::retry(true, queue));
+        assert!(c::retry(true, queue.into()));
         assert_eq!(
-            c::retry(false, queue),
+            c::retry(false, queue.into()),
             matches!(
                 queue,
                 QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict

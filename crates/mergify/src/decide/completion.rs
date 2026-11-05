@@ -1,6 +1,5 @@
 //! Completion-shell predicates. Upstream parsing and all sampling stay in the adapter.
 
-use super::{Head, QueueState, Time};
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
@@ -15,6 +14,8 @@ macro_rules! completion_while {
     };
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Complete<F> {
     Confirmed { progress: bool, conflict: bool },
@@ -24,6 +25,8 @@ pub enum Complete<F> {
     Absent,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ack<F> {
     Confirmed,
@@ -31,6 +34,8 @@ pub enum Ack<F> {
     Permanent(F),
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Resolution<F> {
     Found {
@@ -73,6 +78,8 @@ pub fn resolve<F: PartialEq>(result: Complete<F>, observed: bool) -> Resolution<
 }
 
 /// A receipt is Found regardless of the acknowledgement stored in it (#760).
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Receipt {
     Found,
@@ -100,9 +107,9 @@ pub fn conflicts(mergeable: Option<bool>) -> bool {
 
 /// None requests the hold projection; a merge must skip that projection entirely.
 /// #608, docs/state-table.md:674 on cdacce8f: a merge wins over a human hold and skips its read.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == if matches!(queue, QueueState::Merged) { Some(false) } else { unresolved },))]
-pub fn held(queue: QueueState, unresolved: Option<bool>) -> Option<bool> {
-    if matches!(queue, QueueState::Merged) {
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == if matches!(queue, Queue::Merged) { Some(false) } else { unresolved },))]
+pub fn held(queue: Queue, unresolved: Option<bool>) -> Option<bool> {
+    if matches!(queue, Queue::Merged) {
         Some(false)
     } else {
         unresolved
@@ -116,6 +123,8 @@ pub fn person_events(baseline: bool, repaired: Option<bool>) -> Option<bool> {
     if baseline { Some(true) } else { repaired }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PersonEvidence {
     Dequeued(u64),
@@ -132,6 +141,8 @@ pub fn person_event(evidence: PersonEvidence) -> Option<u64> {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Freshness {
     Snapshot { unresolved: bool },
@@ -153,6 +164,8 @@ pub fn fresh(event: u64, source: Freshness) -> bool {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Label {
     Queue,
@@ -179,15 +192,13 @@ pub fn has_label(labels: &[Label], wanted: Label) -> bool {
 }
 
 /// #608: retry applies to the queue label or Dequeued/FailedCi/Conflict, not a person dequeue alone.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (queue_label || matches!(queue, QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict)),))]
-pub fn retry(queue_label: bool, queue: QueueState) -> bool {
-    queue_label
-        || matches!(
-            queue,
-            QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
-        )
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (queue_label || matches!(queue, Queue::Retryable)),))]
+pub fn retry(queue_label: bool, queue: Queue) -> bool {
+    queue_label || matches!(queue, Queue::Retryable)
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DequeueGate {
     Done,
@@ -207,12 +218,16 @@ pub fn dequeue_gate(retry: bool, concluded: bool, dequeued_label: bool) -> Deque
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LabelAction {
     Labeled,
     Other,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LabelEvent {
     pub id: u64,
@@ -270,6 +285,8 @@ pub fn time(secs: i64, nanos: u32) -> Time {
     Time { secs, nanos }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Proof {
     Empty,
@@ -297,6 +314,8 @@ pub fn read_facts(healed: bool) -> bool {
 
 /// Equality of every CheckRun field except completed_at and check_suite.
 /// The shell compares opaque upstream payloads without parsing away unknown fields.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckComparison {
     BothMissing,
@@ -348,6 +367,8 @@ impl From<super::enqueue::Complete> for Complete<super::enqueue::Failure> {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HoldEvidence {
     Person,
@@ -371,5 +392,64 @@ pub fn unresolved_hold(versions: Option<(i64, i64)>) -> bool {
     match versions {
         Some((observed, resumed)) => resumed <= observed,
         None => true,
+    }
+}
+
+/// The queue distinctions used by these shell gates. Every other state shares
+/// the same behavior; conversion from the lifecycle enum is exhaustive.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Queue {
+    Merged,
+    Retryable,
+    Other,
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Head {
+    Current,
+    Other,
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Time {
+    pub secs: i64,
+    pub nanos: u32,
+}
+
+#[cfg(not(verus_keep_ghost))]
+impl From<super::QueueState> for Queue {
+    fn from(queue: super::QueueState) -> Self {
+        use super::QueueState as Q;
+        match queue {
+            Q::Merged => Self::Merged,
+            Q::Dequeued | Q::FailedCi | Q::Conflict => Self::Retryable,
+            Q::Waiting | Q::Queued | Q::ChecksRunning | Q::DequeuedByPerson | Q::Unknown => {
+                Self::Other
+            }
+        }
+    }
+}
+#[cfg(not(verus_keep_ghost))]
+impl From<Head> for super::Head {
+    fn from(head: Head) -> Self {
+        match head {
+            Head::Current => Self::Current,
+            Head::Other => Self::Other,
+        }
+    }
+}
+#[cfg(not(verus_keep_ghost))]
+impl From<Time> for super::Time {
+    fn from(time: Time) -> Self {
+        Self {
+            secs: time.secs,
+            nanos: time.nanos,
+        }
     }
 }

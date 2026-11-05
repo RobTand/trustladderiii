@@ -26,7 +26,7 @@ fn lifecycle_error(failure: lifecycle::Failure) -> Error {
 }
 
 fn lifecycle_head(current: bool) -> tl3_mergify::decide::Head {
-    completion_core::head(current)
+    completion_core::head(current).into()
 }
 
 
@@ -312,7 +312,7 @@ impl Adapter {
                         queue: state.state,
                         merged: state.pull_request.merged_at.is_some(),
                         conflicts: completion_core::conflicts(state.pull_request.mergeable),
-                        held: completion_core::held(state.state, None)
+                        held: completion_core::held(state.state.into(), None)
                             .map_or_else(|| self.unresolved_human_hold(delivery, snapshot), Ok)?,
                         check_changed: baseline
                             .as_ref()
@@ -632,7 +632,7 @@ impl Adapter {
             .collect();
         let retry = completion_core::retry(
             completion_core::has_label(&labels, completion_core::Label::Queue),
-            state.state,
+            state.state.into(),
         );
         match completion_core::dequeue_gate(
             retry,
@@ -677,14 +677,16 @@ impl Adapter {
             label_event(completion_core::Label::Dequeued).map(|event| lifecycle::LabelEvent {
                 id: event.id,
                 labeled: completion_core::labeled(event.action),
-                at: event.at,
+                at: event.at.into(),
             }),
             label_event(completion_core::Label::Queued).map(|event| event.id),
             state
                 .check
                 .as_ref()
                 .and_then(|check| check.completed_at)
-                .map(|time| completion_core::time(time.timestamp(), time.timestamp_subsec_nanos())),
+                .map(|time| {
+                    completion_core::time(time.timestamp(), time.timestamp_subsec_nanos()).into()
+                }),
         ))
     }
     fn snapshot(&self) -> Result<Option<Snapshot>> {
