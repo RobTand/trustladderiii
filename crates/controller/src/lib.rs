@@ -21,6 +21,7 @@ pub mod clock;
 pub mod console;
 pub mod contracts;
 mod decisions;
+mod dispatch_liveness;
 pub mod evidence;
 pub mod executor;
 mod github_messages;
@@ -95,6 +96,8 @@ pub enum Error {
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     WorkerInputs(#[from] worker_inputs::Failure),
+    #[error("worker reply has no matching durable dispatch")]
+    WorkerDispatchMissing,
     #[error("{0}")]
     Invalid(&'static str),
     #[error("merge prerequisite update is missing its issue or pull request number")]
@@ -314,6 +317,7 @@ struct Request {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
+    WorkerWait,
     BeforeDispatch,
     AfterDispatch,
     BeforeReconcile,
@@ -443,6 +447,7 @@ impl Controller {
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
+        controller.reconcile_worker_waits()?;
         Ok(controller)
     }
 
@@ -1203,6 +1208,14 @@ impl Controller {
         }
         let mut progressed = false;
         let world = snapshot::decode(&snapshot)?;
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == dispatch_liveness::QUEUED)
+            && self.reconcile_queued_worker_waits(&snapshot, &world, &mut hook)?
+        {
+            return Ok(true);
+        }
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
             // ClosePr removes the queue label without waiting for Mergify admission reads.
@@ -2520,6 +2533,7 @@ impl Controller {
             commit.rows.push(self.allowance_row(delivery.clone()));
             commit.effects.push(delivery.into_effect());
         }
+        dispatch_liveness::queue_pool_changes(snapshot, &previous, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             let old = previous
                 .nodes
