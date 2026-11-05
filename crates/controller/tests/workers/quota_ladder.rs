@@ -494,7 +494,8 @@ fn pending_success(settings: &tl3_config::Store) -> (Fixture, Observation) {
     // Q53 / #828: these success-clear scenarios require a known older quota,
     // not the unknown legacy rows that must now wait for reset/operator clear.
     // Stage the pre-ingress world, then redeliver the real immutable ending.
-    // The adapter already queued its reply and availability watermark above.
+    // Replace the adapter's queued reply and availability watermark above,
+    // rather than leaving a duplicate inbox entry ahead of the next scenario input.
     let success = f
         .store
         .latest_worker_success("0", "default-model")
@@ -506,11 +507,9 @@ fn pending_success(settings: &tl3_config::Store) -> (Fixture, Observation) {
         .expect("real dispatch family is retained");
     let snapshot = f.controller.snapshot().unwrap();
     let mut commit = Commit::new("fixture:before-success-evidence", json!({}), &snapshot);
-    for row in snapshot
-        .rows
-        .iter()
-        .filter(|row| row.table == "model_successes")
-    {
+    for row in snapshot.rows.iter().filter(|row| {
+        row.table == "model_successes" || row.table == "inbox" && row.value == json!(&ending)
+    }) {
         commit.rows.push(RowChange::Delete {
             table: row.table.clone(),
             id: row.id.clone(),
