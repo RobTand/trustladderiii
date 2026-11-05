@@ -76,6 +76,29 @@ CONSTRAINTS = {
     'FORCED_SELECT': 'Replace only named absent forced selectors; preserve forcing, symptom and receipt identity.',
     'EDIT_COVER': 'Named edits have no demonstrating check. Cover only those edits, retaining kinds, goals and forcing.',
     'SPLIT': 'Preserve every original obligation and estimate; report cant_meet if no lossless bounded split is supported.',
+    'FILES_FILL': 'Fill empty files only with named source-required subject paths.',
+    'GOAL_ADD': 'Fill empty citations only from an unchanged source-supported proof.',
+    'GOAL_DROP': 'Remove only named unknown goal ids; retain valid citations in order.',
+    'GOAL_SANITIZE': 'Remove only invalid or duplicate citations, retaining each valid first occurrence.',
+    'PIECE_GOALS': 'Fill only empty citations supported by this unchanged piece brief and files.',
+    'PIECE_DROP': 'Remove only unknown piece goal ids; retain valid citations in order.',
+    'PIECE_COVER': 'Add only missing goal ids supported by each unchanged piece brief and files.',
+    'PROOF_FILE': 'Add only the named source-required path of an existing proof unit; freeze proof values.',
+    'EDIT_FILE': 'Add only the named file of an already-observed necessary base-test edit.',
+    'EDIT_DROP': 'Drop only the named absent-base edit already covered by an unchanged demonstrating check.',
+    'FROZEN': 'Remove only named edited nodes from frozen checks; retain kind and independent controls.',
+    'EVIDENCE_EMPTY': 'Add only missing evidence_contract as []; inherited requirements remain code-owned.',
+    'METHOD_REPLACE': 'Replace only named method choices with supplied capabilities; freeze source requirements.',
+    'MEMORY_DROP': 'Remove only named unsupplied memory ids; retain all other citations.',
+    'FLAG_DROP': 'Remove only named uncited flags.',
+    'FLAG_CLAIM': 'Drop the named flag or replace only its claim with an exact supplied passage for the same memory.',
+    'SYMPTOM_FIELDS': 'Remove extra symptom keys or fill node from the sole original selector; freeze execution identity.',
+    'PATCH_MODE': 'Remove extra patch keys only when one original mode exists; freeze that mode and argument.',
+    'FORCING_KEYS': 'Remove only extra top-level forcing keys; freeze all mutations and symptom.',
+    'PROOF_DEDUP': 'Remove only identical repeated proof units; retain each first occurrence.',
+    'NODE_DEDUP': 'Remove only duplicate selectors; retain each first occurrence.',
+    'FILE_PATH': 'Replace only a named spelling with its unique confined relative path.',
+    'SPLIT_REASON': 'Replace only the invalid split reason with an already-true permitted reason.',
 }
 
 
@@ -96,7 +119,7 @@ def message(objections):
                 descriptions.append(item.items['descriptions'][goal])
             continue
         fixed.append(item.rule + ' ' + '; '.join(identities(item.items)) + ': '
-                     + CONSTRAINTS.get(operation, 'Only the named, source-supported correction is permitted; otherwise cant_meet.'))
+                     + CONSTRAINTS.get(operation, CONSTRAINTS['NONE']))
         descriptions.append(item.items.get('description', str(item)))
     def render(texts):
         return prefix + '\n'.join(line + (' ' + text if text else '') for line, text in zip(fixed, texts))
