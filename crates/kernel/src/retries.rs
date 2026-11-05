@@ -223,6 +223,7 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before_recheck = *w }
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
@@ -248,5 +249,16 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
             out,
         );
     }
+    kernel_proof! {
+        assert(w.nodes@.len() == before_recheck@.nodes@.len());
+        assert forall|j: int| 0 <= j < before_recheck@.nodes@.len() && j != i implies
+            w.nodes@[j] == before_recheck@.nodes@[j] by {}
+        assert(w.nodes@[i as int].generation as int
+            <= before_recheck@.nodes@[i as int].generation as int + 1);
+        assert(w.nodes@[i as int].credit.spent as int
+            <= before_recheck@.nodes@[i as int].credit.spent as int + 1);
+        assert(w.next_question as int <= before_recheck@.next_question as int + 1);
+    }
+
 }
 }
