@@ -66,15 +66,31 @@ fn parity(bytes: &[u8], postmortem: bool, inputs: &Value) -> Value {
     }
     new
 }
+/// Copies the committed regressions to writable test output so proptest can
+/// append new minimized failures there instead of the read-only runfiles tree.
+/// One file per test (libtest names each test thread) so parallel runners
+/// cannot clobber each other.
+fn writable_regressions() -> &'static str {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+        .or_else(|| std::env::var_os("TEST_TMPDIR"))
+        .unwrap_or_else(|| std::env::temp_dir().into_os_string());
+    let test = std::thread::current()
+        .name()
+        .unwrap_or("runner")
+        .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    let name = format!("worker_events_io-{test}-regressions.txt");
+    let path = std::path::PathBuf::from(output).join(name);
+    std::fs::write(&path, include_str!("proptest-regressions.txt")).unwrap();
+    Box::leak(path.to_str().unwrap().to_owned().into_boxed_str())
+}
 fn runner(cases: u32) -> proptest::test_runner::TestRunner {
     use proptest::test_runner::*;
     TestRunner::new(Config {
         cases,
         rng_seed: RngSeed::Fixed(0xF176_0202_6005),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/worker_events_io/proptest-regressions.txt"
-        )))),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+            writable_regressions(),
+        ))),
         ..Config::default()
     })
 }
