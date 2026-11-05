@@ -132,6 +132,35 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+        # ctrl-core A2: executable execute plans and body-heal decisions.
+        verus_test(
+            name = "verus_plan",
+            src = "proofs/plan.rs",
+            srcs = ["src/decide/plan.rs"],
+            specs = ["proofs/plan_spec.rs"],
+            expected_obligations = 22,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+        verus_test(
+            name = "verus_heal",
+            src = "proofs/heal.rs",
+            srcs = ["src/decide/heal.rs"],
+            specs = ["proofs/heal_spec.rs"],
+            expected_obligations = 23,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
@@ -248,6 +277,34 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+    if native.package_name() == "crates/controller-core":
+        # Group G1: production Queue residue, with separate unbounded scans.
+        translate_groups = {
+            "repeated": ("translate#repeated", 2),
+            "dispatch": ("translate#dispatch", 1),
+            "clear": ("translate#clear_reported", 2),
+            "previous": ("translate#previous_commit", 2),
+            "carry": ("translate#carry_plan", 1),
+            "head_current": ("translate#head_current", 1),
+            "enqueue": ("translate#enqueue_pending", 1),
+            "witnesses": ("translate_witnesses", 6),
+        }
+        for name, (module, count) in translate_groups.items():
+            verus_test(
+                name = "verus_translate_" + name,
+                src = "verus/translate.rs",
+                srcs = ["src/translate.rs"],
+                specs = ["verus/translate_witnesses.rs"],
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/kernel":
         # Every body called by step is checked in one of these groups. Module
         # filters bound solver context; exact counts refuse empty selections.
@@ -346,6 +403,35 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+    if native.package_name() == "crates/controller-core":
+        # D1: contracts over production decisions and concrete Q7 reachability.
+        verus_test(
+            name = "verus_looks",
+            src = "verus/looks.rs",
+            srcs = ["src/looks.rs"],
+            expected_obligations = 22,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+        # D2: look-result, quota and declared-wait production decisions.
+        verus_test(
+            name = "verus_looks_state",
+            src = "verus/looks_state.rs",
+            srcs = ["src/looks_state.rs"],
+            expected_obligations = 22,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
     # CC-P / H19: real adapter decision functions and non-vacuous protocol witnesses.
     if native.package_name() == "crates/controller":
         verus_test(
@@ -368,6 +454,21 @@ def verus_proofs():
             src = "verus/publication.rs",
             srcs = ["src/publication.rs"],
             expected_obligations = 38,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+    # #819: selected-release prompt identity and cache-control policy.
+    if native.package_name() == "crates/controller":
+        verus_test(
+            name = "verus_prompt_render",
+            src = "proofs/prompt_render.rs",
+            srcs = ["src/prompt_render/decision.rs"],
+            expected_obligations = 4,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
