@@ -39,6 +39,16 @@ impl Records {
             Err(e) => Err(e.into()),
         }
     }
+    pub fn contract_evidence(
+        &self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        use crate::dispatch_liveness::decision::ContractEvidence;
+        Ok(match self.reconcile(delivery)? {
+            Reconciliation::Found(_) => ContractEvidence::Ending,
+            Reconciliation::Absent | Reconciliation::Pending => ContractEvidence::Absent,
+        })
+    }
     pub fn fence(&self, incoming: i64) -> Result<()> {
         let fence = self.0.join("epoch.fence");
         let epoch = match fs::read(&fence) {

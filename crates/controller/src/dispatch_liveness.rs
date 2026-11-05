@@ -431,6 +431,7 @@ impl Controller {
         let mut e = Evidence {
             class: DeliveryClass::Worker,
             intent: false,
+            contract: crate::dispatch_liveness::decision::ContractEvidence::Absent,
             watch: false,
             process: ProcessEvidence::Unknown,
             ending: false,
@@ -476,6 +477,9 @@ impl Controller {
                         .adapters
                         .get(crate::executor::upstream(d.output))?
                         .dispatch_evidence(&d)?;
+                } else if e.intent {
+                    e.contract = self.adapters.adapter(&d)?.contract_evidence(&d)?;
+                    e.ending = e.contract == decision::ContractEvidence::Ending;
                 }
             }
             for row in &snapshot.rows {

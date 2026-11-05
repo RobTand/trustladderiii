@@ -31,6 +31,13 @@ pub fn set_fake_issue(root: &Path, issue: &tl3_github::Issue) {
 }
 
 impl Executor for Fake {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        self.0.contract_evidence(delivery)
+    }
+
     fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
         // Simulation has local completion records, not visible upstream copy counts.
         Ok((self.reconcile(delivery)?, None))
@@ -365,6 +372,19 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        if crate::approval_delivery::is_approval(delivery) {
+            return self.approval_evidence(delivery);
+        }
+        // Open/ClosePr reconcile from upstream. They have no local dispatch
+        // receipt, so status retains their durable retry instead of claiming a
+        // request is in flight on the strength of its outbox row.
+        self.records.contract_evidence(delivery)
+    }
+
     fn app_login(&self, installation: u64) -> Option<String> {
         self.clients
             .get(&installation)

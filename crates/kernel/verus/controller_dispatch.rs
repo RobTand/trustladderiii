@@ -60,6 +60,38 @@ mod dispatch_theorems {
         classify(Wait::Resume, e)
     }
 
+    /// State-table delivery classes / #817 review: an immutable intent alone
+    /// cannot certify any non-worker operation. Once needs the bound action.
+    fn non_worker_needs_contract(e: Evidence) -> (result: DispatchStatus)
+        requires !e.incident, !e.ending, e.quota_reset.is_none(),
+            e.class != DeliveryClass::Worker, e.contract == ContractEvidence::Absent,
+        ensures result != DispatchStatus::Dispatched(e.class),
+            result == if e.deadline { DispatchStatus::Retry(RetryPending::Allowance) }
+                else { DispatchStatus::Silent },
+    {
+        operation_status(e)
+    }
+
+    /// Once: another delivery class's intent cannot stand in for a PB binding.
+    fn once_requires_action_binding(e: Evidence) -> (result: DispatchStatus)
+        requires e.class == DeliveryClass::Once,
+        ensures result == DispatchStatus::Dispatched(DeliveryClass::Once)
+            ==> e.contract == ContractEvidence::ActionBound,
+    {
+        operation_status(e)
+    }
+
+    /// State-table effect delivery / #817: witnesses require actual adapter
+    /// evidence; neither a worker process nor another class's receipt suffices.
+    fn non_worker_contract_witnesses(e: Evidence) {
+        let once = Evidence { class: DeliveryClass::Once, intent: true, contract: ContractEvidence::ActionBound, ..e };
+        assert(operation_classification(once) == DispatchStatus::Dispatched(DeliveryClass::Once));
+        let converges = Evidence { class: DeliveryClass::Converges, intent: true, contract: ContractEvidence::RecordedIntent, ..e };
+        assert(operation_classification(converges) == DispatchStatus::Dispatched(DeliveryClass::Converges));
+        let dedup = Evidence { class: DeliveryClass::AtLeastOnce, intent: true, contract: ContractEvidence::RecordedIntent, ..e };
+        assert(operation_classification(dedup) == DispatchStatus::Dispatched(DeliveryClass::AtLeastOnce));
+    }
+
     /// #816: all decisions preserve the original operation. No action in the
     /// executable repair language can launch or manufacture a successful reply.
     fn repair_is_total(awaited: bool, covered: bool, matching: bool, watch: bool,
@@ -98,7 +130,7 @@ mod dispatch_theorems {
     /// #817 nonvacuity: all six primary outcomes have concrete witnesses.
     fn outcome_witnesses() {
         let mut e = Evidence {
-            class: DeliveryClass::Worker, intent: true, watch: true,
+            class: DeliveryClass::Worker, intent: true, contract: ContractEvidence::Absent, watch: true,
             process: ProcessEvidence::Live, ending: false, deadline: false, quota_reset: None,
             incident: false, paused: false, ticket: false, obstruction: false,
             question: false, external: false, closed: false, admission: false,

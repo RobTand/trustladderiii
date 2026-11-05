@@ -419,6 +419,14 @@ pub trait Executor {
     ) -> Result<(crate::dispatch_liveness::ProcessEvidence, bool)> {
         Ok((crate::dispatch_liveness::ProcessEvidence::Unknown, false))
     }
+    /// #817: read adapter-owned delivery evidence without I/O mutations or a
+    /// new upstream request. Missing evidence leaves the durable retry in charge.
+    fn contract_evidence(
+        &mut self,
+        _delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        Ok(crate::dispatch_liveness::decision::ContractEvidence::Absent)
+    }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()
     }

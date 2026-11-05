@@ -803,7 +803,42 @@ fn intended_checks_without_an_action_binding_are_a_retry() {
     let mut db = support::Database::start();
     let settings = db.create("checks_no_binding");
     let root = tempfile::tempdir().unwrap();
-    let registry = adapters::simulation(root.path()).unwrap();
+    // This fixture never submits an action. The real adapter has an empty
+    // binding directory and an inert tool, so unintended execution fails.
+    let tool = tl3_prismabuild::Tool {
+        program: "/bin/false".into(),
+        args: vec![],
+    };
+    let client = tl3_prismabuild::PrismaBuild::new(tl3_prismabuild::Options {
+        queue_root: root.path().join("queue"),
+        tool: tool.clone(),
+        bell_url: "http://127.0.0.1:9/".into(),
+    })
+    .unwrap();
+    let mut owner =
+        tl3_controller::Ownership::claim(Store::open(&db.create("checks_adapter_owner")).unwrap())
+            .unwrap();
+    let adapter = adapters::prismabuild::Adapter::new(
+        client,
+        adapters::prismabuild::Settings {
+            records: root.path().join("bindings"),
+            harness: root.path().join("unused-harness"),
+            python: vec!["/bin/false".into()],
+            image: format!("sha256:{}", "a".repeat(64)),
+            demand: tl3_prismabuild::Demand {
+                cpus: 1.try_into().unwrap(),
+                mem_gb: 1,
+                gpu: false,
+            },
+            quiet: std::time::Duration::from_secs(120),
+            priority: -10,
+            result_tool: tool,
+        },
+        &mut owner,
+    )
+    .unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::PrismaBuild, adapter);
     let mut controller = Controller::open(
         Store::open(&settings).unwrap(),
         registry,

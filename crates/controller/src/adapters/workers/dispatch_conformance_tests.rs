@@ -72,7 +72,9 @@ impl Executor for PendingRecords {
     fn dispatch_evidence(&mut self, delivery: &Delivery) -> Result<(ProcessEvidence, bool)> {
         let attempt = run_root(&self.root, &delivery.key).join("attempt-00000000");
         Ok((
-            if alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))? {
+            if !attempt.join("claim.json").exists() && !attempt.join("process.json").exists() {
+                ProcessEvidence::Unknown
+            } else if alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))? {
                 ProcessEvidence::Live
             } else {
                 ProcessEvidence::Ended
@@ -146,6 +148,7 @@ fn evidence() -> Evidence {
     Evidence {
         class: DeliveryClass::Worker,
         intent: true,
+        contract: crate::dispatch_liveness::decision::ContractEvidence::Absent,
         watch: true,
         process: ProcessEvidence::Live,
         ending: false,
@@ -162,7 +165,164 @@ fn evidence() -> Evidence {
     }
 }
 
-fn schedule(actions: &[u8], index: usize, database: &mut crate::git_tests::support::Database) {
+// The reference state is a projection of raw durable facts, not the public
+// classifier. The same proved recovery model predicts the post-restart state;
+// ingress and each drive are checked separately, before another step can hide it.
+fn sampled(controller: &mut Controller, root: &Path) -> Evidence {
+    let node = controller.world().unwrap().nodes[0];
+    let snapshot = controller.snapshot().unwrap();
+    let mut e = evidence();
+    e.watch = false;
+    e.deadline = false;
+    e.process = ProcessEvidence::Unknown;
+    e.intent = false;
+    e.incident = snapshot
+        .rows
+        .iter()
+        .any(|r| r.table == "incidents" && r.value["open"] == true && r.value["node"] == 0);
+    e.paused = node.paused;
+    e.ticket = node.ticket.is_some();
+    let Some(seq) = node
+        .effect
+        .map(|e| e.seq)
+        .or_else(|| node.next_seq.checked_sub(1))
+    else {
+        return e;
+    };
+    let key = format!("effect:0:{seq}");
+    e.intent = controller
+        .store
+        .effect(&key)
+        .unwrap()
+        .is_some_and(|effect| effect.payload["generation"] == json!(node.generation));
+    for row in &snapshot.rows {
+        if row.id == key {
+            if row.table == "watches" {
+                e.watch = row.value["generation"] == json!(node.generation);
+            }
+            if row.table == "allowances"
+                && row.value["delivery"]["generation"] == json!(node.generation)
+            {
+                e.deadline = row.value["due_ms"].as_u64().is_some();
+                e.quota_reset = row.value["quota_ms"].as_u64();
+            }
+        }
+        if row.table == "inbox" {
+            let failure = &row.value["WorkerFailed"];
+            e.ending |= failure["node"] == 0 && failure["generation"] == json!(node.generation);
+        }
+    }
+    let attempt = run_root(&root.join("runs"), &key).join("attempt-00000000");
+    if attempt.join("claim.json").exists() || attempt.join("process.json").exists() {
+        e.process = if alive(&attempt.join("claim.json")).unwrap()
+            || alive(&attempt.join("process.json")).unwrap()
+        {
+            ProcessEvidence::Live
+        } else {
+            ProcessEvidence::Ended
+        };
+    }
+    e
+}
+
+fn assert_step(
+    controller: &mut Controller,
+    root: &Path,
+    starts: &Rc<RefCell<BTreeMap<String, usize>>>,
+) {
+    let e = sampled(controller, root);
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(
+        controller.dispatch_status(NodeId(0)).unwrap(),
+        classify(node.waiting_on(), e),
+        "per-step reference state: {e:?}"
+    );
+    assert!(starts.borrow().values().all(|n| *n == 1), "second start");
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|r| r.table != "briefs"),
+        "invented reply"
+    );
+}
+
+fn restart_boundary(
+    mut controller: Controller,
+    settings: &tl3_config::Store,
+    root: &Path,
+    starts: &Rc<RefCell<BTreeMap<String, usize>>>,
+    restart: bool,
+) -> Controller {
+    assert_step(&mut controller, root, starts);
+    if !restart {
+        return controller;
+    }
+    let before = controller.world().unwrap();
+    let snapshot = controller.snapshot().unwrap();
+    let original = sampled(&mut controller, root);
+    let node = before.nodes[0];
+    let acknowledged = node.effect.is_none() && node.run.is_some() && !node.waiting_incident;
+    let repairable = acknowledged
+        && !crate::input_errors::kernel_backlog(&snapshot)
+        && !original.incident
+        && !original.ending
+        && original.quota_reset.is_none();
+    // A startup repair does not import an ending. That requires the separate
+    // source/ingress boundary. Model its transaction with unknown liveness.
+    let mut expected = original;
+    if repairable {
+        let mut recovery = original;
+        recovery.process = ProcessEvidence::Unknown;
+        expected = model::step(recovery, original.intent);
+        expected.process = original.process;
+    }
+    let effects = Reader::open(settings).unwrap().effects().unwrap();
+    close(controller, settings);
+    let mut controller = open(settings, root, starts);
+    assert_eq!(
+        controller.world().unwrap(),
+        before,
+        "restart changed kernel state"
+    );
+    assert_eq!(
+        sampled(&mut controller, root),
+        expected,
+        "restart recovery differs from reference transaction"
+    );
+    let effect_facts = |effects: Vec<tl3_store::Effect>| {
+        effects
+            .into_iter()
+            .map(|e| {
+                (
+                    e.key,
+                    e.epoch.get(),
+                    e.kind,
+                    e.payload,
+                    e.state,
+                    e.created_revision.get(),
+                    e.updated_revision.get(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        effect_facts(Reader::open(settings).unwrap().effects().unwrap()),
+        effect_facts(effects),
+        "restart changed immutable dispatches"
+    );
+    assert_step(&mut controller, root, starts);
+    controller
+}
+
+fn schedule(
+    actions: &[u8],
+    restarts: &[bool],
+    index: usize,
+    database: &mut crate::git_tests::support::Database,
+) {
     let settings = database.create(&format!("dispatch_model_{index}"));
     let root = tempfile::tempdir().unwrap();
     fs::create_dir_all(root.path().join("runs/.ready")).unwrap();
@@ -183,6 +343,15 @@ fn schedule(actions: &[u8], index: usize, database: &mut crate::git_tests::suppo
         .unwrap();
     settle(&mut controller);
     let mut failures = 0;
+    let mut boundary = 0;
+    macro_rules! checkpoint {
+        () => {{
+            let restart = restarts[boundary % restarts.len()];
+            boundary += 1;
+            controller = restart_boundary(controller, &settings, root.path(), &starts, restart);
+            restart
+        }};
+    }
     for (step, action) in actions.iter().enumerate() {
         let node = controller.world().unwrap().nodes[0];
         // The missing-dispatch incident is authoritative controller evidence;
@@ -245,24 +414,64 @@ fn schedule(actions: &[u8], index: usize, database: &mut crate::git_tests::suppo
         }
         expected = model::step(expected, *action != 3);
         let wanted = classify(Wait::WorkerReply, expected);
-        // Every schedule boundary restarts both controller and event source.
-        close(controller, &settings);
-        controller = open(&settings, root.path(), &starts);
+        // Faults are recovered once, then arbitrary additional process restarts
+        // interrupt every source/ingress/drive boundary in the schedule.
+        controller = restart_boundary(controller, &settings, root.path(), &starts, true);
+        checkpoint!();
         let mut source = source::WorkerOutputSource::new(
             root.path().join("runs"),
             settings.clone(),
             ActiveRuns::default(),
         );
-        let (sender, receiver) = crate::sync::mpsc::channel();
+        let (sender, mut receiver) = crate::sync::mpsc::channel();
         source.poll_once(&mut store, &sender).unwrap();
+        if checkpoint!() {
+            // A process restart loses its channel. Recreate both source and
+            // channel, then replay solely from the worker's durable evidence.
+            source = source::WorkerOutputSource::new(
+                root.path().join("runs"),
+                settings.clone(),
+                ActiveRuns::default(),
+            );
+            let (replay_sender, replay_receiver) = crate::sync::mpsc::channel();
+            source.poll_once(&mut store, &replay_sender).unwrap();
+            receiver = replay_receiver;
+            assert_step(&mut controller, root.path(), &starts);
+        }
         while let Ok(input) = receiver.try_recv() {
             if let crate::cli::Input::Observation { key, observation } = input {
+                if checkpoint!() {
+                    // The ingress payload must be recoverable after losing the
+                    // old channel, including at the pre-observe crash point.
+                    let mut replay = source::WorkerOutputSource::new(
+                        root.path().join("runs"),
+                        settings.clone(),
+                        ActiveRuns::default(),
+                    );
+                    let (tx, rx) = crate::sync::mpsc::channel();
+                    replay.poll_once(&mut store, &tx).unwrap();
+                    assert!(rx.try_iter().any(|input| matches!(input,
+                        crate::cli::Input::Observation { key: recovered, observation: value }
+                        if recovered == key && serde_json::to_value(&value).unwrap() == serde_json::to_value(&observation).unwrap())),
+                        "ingress was not replayable from durable evidence");
+                }
                 controller.observe(&key, observation).unwrap();
+                checkpoint!();
             }
         }
-        // K=32 controller drives covers the fixed one-node transaction backlog
-        // of this fixture. No iteration advances time or probes the worker.
-        settle(&mut controller);
+        // K=32 individual drives, with a generated crash choice before and
+        // after EACH drive. Never hide the drain behind a single restart.
+        let mut settled = false;
+        for _ in 0..32 {
+            checkpoint!();
+            let progressed = controller.drive_once().unwrap();
+            checkpoint!();
+            if !progressed {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "exceeded K=32 drives: {actions:?}, {restarts:?}");
         let actual = controller.dispatch_status(NodeId(0)).unwrap();
         let after = controller.world().unwrap().nodes[0];
         match wanted {
@@ -323,6 +532,7 @@ fn schedule(actions: &[u8], index: usize, database: &mut crate::git_tests::suppo
         }
         drop(source);
     }
+    assert!(boundary > 0);
     close(controller, &settings);
 }
 
@@ -335,7 +545,24 @@ fn reference_model_regressions_conform_to_store_faults_and_restarts() {
     ))
     .unwrap();
     for (i, actions) in regressions.iter().enumerate() {
-        schedule(actions, i, &mut database);
+        schedule(actions, &[true], i, &mut database);
+    }
+    #[derive(Deserialize)]
+    struct RestartRegression {
+        actions: Vec<u8>,
+        restarts: Vec<bool>,
+    }
+    let interrupted: Vec<RestartRegression> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/dispatch-restart-regressions.json"
+    ))
+    .unwrap();
+    for (i, case) in interrupted.iter().enumerate() {
+        schedule(
+            &case.actions,
+            &case.restarts,
+            regressions.len() + i,
+            &mut database,
+        );
     }
 }
 
@@ -343,22 +570,44 @@ fn generated_schedules(seed: u64) {
     use proptest::test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner};
     let index = std::cell::Cell::new(0);
     let database = RefCell::new(crate::git_tests::support::Database::start());
+    // Bazel's source tree is read-only. Persist into its published artifact
+    // directory, seeding it with the committed regressions on every run.
+    let fallback = tempfile::tempdir().unwrap();
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| fallback.path().to_owned());
+    fs::create_dir_all(&output).unwrap();
+    let persistence = output.join(format!("dispatch-conformance-{seed}.proptest-regressions"));
+    fs::write(
+        &persistence,
+        include_str!("../../../tests/fixtures/dispatch-conformance.proptest-regressions"),
+    )
+    .unwrap();
+    let persistence = Box::leak(persistence.to_string_lossy().into_owned().into_boxed_str());
     let mut runner = TestRunner::new(Config {
-        cases: 2,
+        cases: 16,
+        max_shrink_iters: 128,
         rng_seed: RngSeed::Fixed(seed),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/dispatch-conformance.proptest-regressions"
-        )))),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(persistence))),
         ..Config::default()
     });
     runner
-        .run(&prop::collection::vec(0u8..6, 1..9), |actions| {
-            schedule(&actions, index.get(), &mut database.borrow_mut());
-            index.set(index.get() + 1);
-            Ok(())
-        })
+        .run(
+            &(
+                prop::collection::vec(0u8..6, 1..5),
+                prop::collection::vec(any::<bool>(), 128),
+            ),
+            |(actions, restarts)| {
+                schedule(&actions, &restarts, index.get(), &mut database.borrow_mut());
+                index.set(index.get() + 1);
+                Ok(())
+            },
+        )
         .unwrap();
+    eprintln!(
+        "T817_CONFORMANCE seed={seed} cases={} choices=128 drives=32",
+        index.get()
+    );
 }
 
 /// #817 / Q7: independent generated schedules keep each conformance unit bounded.

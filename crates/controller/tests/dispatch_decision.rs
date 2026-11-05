@@ -7,6 +7,7 @@ fn evidence() -> Evidence {
     Evidence {
         class: DeliveryClass::Worker,
         intent: false,
+        contract: tl3_controller::dispatch_liveness::decision::ContractEvidence::Absent,
         watch: false,
         process: ProcessEvidence::Unknown,
         ending: false,
@@ -45,6 +46,11 @@ fn delivery_contracts_and_current_endings_are_distinct() {
         DeliveryClass::AtLeastOnce,
     ] {
         e.class = class;
+        e.contract = if class == DeliveryClass::Once {
+            tl3_controller::dispatch_liveness::decision::ContractEvidence::ActionBound
+        } else {
+            tl3_controller::dispatch_liveness::decision::ContractEvidence::RecordedIntent
+        };
         assert_eq!(
             classify(
                 Wait::Effect(match class {

@@ -12,6 +12,7 @@ use vstd::prelude::*;
     result.quota_reset == e.quota_reset,
     e.quota_reset.is_some() ==> result == e,
     result.class == e.class, result.process == e.process,
+    result.contract == e.contract, result.intent == e.intent,
     result.process == ProcessEvidence::Ended && e.quota_reset.is_none() ==> result.ending || result.incident,
     result.paused == e.paused, result.ticket == e.ticket,
     result.obstruction == e.obstruction,

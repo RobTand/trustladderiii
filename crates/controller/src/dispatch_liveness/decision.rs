@@ -21,6 +21,17 @@ pub enum DeliveryClass {
     AtLeastOnce,
 }
 
+/// State-table delivery evidence belongs to the adapter, not the outbox.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContractEvidence {
+    Absent,
+    ActionBound,
+    RecordedIntent,
+    Ending,
+}
+
 /// Q53: the classifier retains the durable retry deadline. Role, model, family
 /// and the original operation key remain in the quota facts/status view (#828).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -64,6 +75,7 @@ pub enum DispatchStatus {
 pub struct Evidence {
     pub class: DeliveryClass,
     pub intent: bool,
+    pub contract: ContractEvidence,
     pub watch: bool,
     pub process: ProcessEvidence,
     pub ending: bool,
@@ -185,6 +197,21 @@ pub fn classify(wait: Wait, e: Evidence) -> DispatchStatus {
     }
 }
 
+/// Once requires the PB action binding. Converging and deduplicated effects
+/// require their adapter's own durable intent. An outbox row proves neither.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
+    result == contract_covers_spec(class, evidence),
+))]
+pub fn contract_covers(class: DeliveryClass, evidence: ContractEvidence) -> bool {
+    match class {
+        DeliveryClass::Worker => false,
+        DeliveryClass::Once => evidence == ContractEvidence::ActionBound,
+        DeliveryClass::Converges | DeliveryClass::AtLeastOnce => {
+            evidence == ContractEvidence::RecordedIntent
+        }
+    }
+}
+
 /// Q7: a proven dead process cannot hide behind its old allowance.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
     result == operation_classification(e),
@@ -197,7 +224,7 @@ pub fn operation_status(e: Evidence) -> DispatchStatus {
         if e.process == ProcessEvidence::Ended {
             return DispatchStatus::Silent;
         }
-    } else if e.intent {
+    } else if e.intent && contract_covers(e.class, e.contract) {
         return DispatchStatus::Dispatched(e.class);
     }
     if e.deadline {
@@ -269,6 +296,13 @@ pub fn supervisor_ending(acknowledged: bool, absent: bool) -> Repair {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+pub open spec fn contract_covers_spec(class: DeliveryClass, evidence: ContractEvidence) -> bool {
+    match class {
+        DeliveryClass::Worker => false,
+        DeliveryClass::Once => evidence == ContractEvidence::ActionBound,
+        DeliveryClass::Converges | DeliveryClass::AtLeastOnce => evidence == ContractEvidence::RecordedIntent,
+    }
+}
 pub open spec fn delivery_contract(kind: EffectKind) -> DeliveryClass {
     match kind {
         EffectKind::StartRun(_) | EffectKind::StopRun => DeliveryClass::Worker,
@@ -284,7 +318,7 @@ pub open spec fn operation_classification(e: Evidence) -> DispatchStatus {
         DispatchStatus::Dispatched(DeliveryClass::Worker)
     } else if e.class == DeliveryClass::Worker && e.process == ProcessEvidence::Ended {
         DispatchStatus::Silent
-    } else if e.class != DeliveryClass::Worker && e.intent {
+    } else if e.class != DeliveryClass::Worker && e.intent && contract_covers_spec(e.class, e.contract) {
         DispatchStatus::Dispatched(e.class)
     } else if e.deadline { DispatchStatus::Retry(RetryPending::Allowance) } else { DispatchStatus::Silent }
 }

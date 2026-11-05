@@ -24,6 +24,13 @@ impl Fake {
     }
 }
 impl Executor for Fake {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        self.0.contract_evidence(delivery)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         let node = delivery.node();
         let observations = match delivery.output {
@@ -792,6 +799,23 @@ impl Real {
 }
 
 impl Executor for Real {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        use crate::dispatch_liveness::decision::ContractEvidence;
+        let repo = self.repository(delivery)?;
+        let _guard = repo
+            .mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        Ok(match repo.load(delivery)? {
+            Some(record) if record.completion.is_some() => ContractEvidence::Ending,
+            Some(_) => ContractEvidence::RecordedIntent,
+            None => ContractEvidence::Absent,
+        })
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.execute_with(delivery, |_| {})
     }

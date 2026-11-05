@@ -470,9 +470,9 @@ def verus_proofs():
             "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
-            "dispatch_classifier": ("decision", 14),
+            "dispatch_classifier": ("decision", 16),
             "dispatch_model": ("model", 1),
-            "dispatch_liveness": ("kernel::controller_dispatch::dispatch_theorems", 9),
+            "dispatch_liveness": ("kernel::controller_dispatch::dispatch_theorems", 12),
         }
         for name, (module, count) in groups.items():
             verus_test(
