@@ -17,7 +17,7 @@ from tl3_harness.trees import git, test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
-from tl3_workers.turns import REPAIR_MESSAGE_BYTES
+from tl3_workers.turns import InvalidReply, REPAIR_MESSAGE_BYTES, Unrepairable
 
 
 # Fresh proposals require estimates; the transport still accepts workers that
@@ -36,11 +36,17 @@ def execution_budget_details(execution):
             f"Components: {components}.")
 
 
+COVERAGE_REPAIR = (
+    'Only add the named uncovered goal ids to goal_ids of existing checks. '
+    'Preserve every existing citation and every other declaration. '
+    'Use already-read facts; return cant_meet if no existing check honestly supports the goals.')
+
+
 class PlanConsistencyError(ValueError):
     """A draft's checks disagree with its declarations or exact base selections."""
 
     def __init__(self, uncovered, missing_forced=(), *, draft=None, selectors=None, missing_proof=None,
-                 missing_subjects=None, base_sha=None):
+                 missing_subjects=None, missing_goals=None, base_sha=None):
         self.draft = deepcopy(draft)
         self.base_sha = base_sha
         self.uncovered = set(uncovered)
@@ -48,7 +54,9 @@ class PlanConsistencyError(ValueError):
         self.selectors = selectors or {}
         self.missing_proof = missing_proof or {}
         self.missing_subjects = missing_subjects or {}
-        self.local = bool(self.selectors or self.missing_proof or self.missing_subjects)
+        self.missing_goals = dict(sorted((missing_goals or {}).items()))
+        self.local = bool(self.selectors or self.missing_proof or self.missing_subjects
+                          or self.missing_goals and not (self.uncovered or self.missing_forced))
         self.node_ids = (*uncovered, *missing_forced,
                          *(subject for subjects in self.missing_subjects.values() for subject in sorted(subjects)),
                          *(node for nodes in self.selectors.values() for node in nodes),
@@ -73,12 +81,22 @@ class PlanConsistencyError(ValueError):
             + ', '.join(sorted(subjects))
             + '. Only add the named subjects or their covering enclosing modules or definitions.'
             for index, subjects in self.missing_subjects.items())
+        if self.missing_goals:
+            self.violations.append(self.coverage_violation(self.missing_goals))
+        coverage_only = self.missing_goals and not any((self.uncovered, self.missing_forced,
+            self.selectors, self.missing_proof, self.missing_subjects))
+        if coverage_only:
+            super().__init__('\n'.join(self.violations) + '\n' + COVERAGE_REPAIR)
+            self.repair_text = self.bounded_coverage_message(COVERAGE_REPAIR)
+            return
         if self.local:
             super().__init__("\n".join(self.violations) +
                              "\nUse already-read facts. Only replace the named check's selectors or fill its "
                              "missing proof fields or named subjects. Preserve every other declaration, existing proof value, "
                              "check, goal, forcing, evidence obligation, file and estimate. "
                              "Do not invent base failures; return cant_meet if needed.")
+            if self.missing_goals:
+                self.add_coverage_instruction()
             return
         super().__init__("\n".join(self.violations) +
                          "\nReconcile the declaration and checks using already-read facts. "
@@ -90,8 +108,49 @@ class PlanConsistencyError(ValueError):
                          "A forced check must name existing base tests and preserve every required goal, "
                          "including deterministic and mutant proof; do not treat a passing smoke as red. "
                          "Do not weaken goals or invent base failures; return cant_meet if needed.")
+        if self.missing_goals:
+            self.add_coverage_instruction()
+
+    @staticmethod
+    def coverage_violation(goals):
+        return 'Required goals have no check coverage: ' + '; '.join(
+            f'goal {index}: {description}' for index, description in goals.items())
+
+    def add_coverage_instruction(self):
+        instructions = str(self).split('\n')[-1] + ' ' + COVERAGE_REPAIR
+        self.args = ('\n'.join(self.violations) + '\n' + instructions,)
+        self.repair_text = self.bounded_coverage_message(instructions)
+
+    def bounded_coverage_message(self, instructions):
+        """Keep ids/instructions; share the remaining UTF-8 bytes equally among descriptions."""
+        prefix = '\n'.join(self.violations[:-1])
+        if prefix:
+            prefix += '\n'
+
+        def message(goals):
+            return prefix + self.coverage_violation(goals) + '\n' + instructions
+
+        full = message(self.missing_goals)
+        if len(full.encode()) <= REPAIR_MESSAGE_BYTES:
+            return full
+        marker = ' [...]'
+        fixed = message(dict.fromkeys(self.missing_goals, ''))
+        available = REPAIR_MESSAGE_BYTES - len(fixed.encode())
+        if available < 0:
+            return None
+        cap = available // len(self.missing_goals)
+        return message({index: (description if len(description.encode()) <= cap else
+                                description.encode()[:cap - len(marker)].decode(errors='ignore') + marker
+                                if cap >= len(marker) else '')
+                        for index, description in self.missing_goals.items()})
 
     def constrain(self, reply):
+        self.constrain_draft(reply)
+        if self.missing_goals and reply['violations']:
+            reply['violations'] = list(dict.fromkeys([
+                *self.violations, *reply['violations'], 'Planner coverage correction attempts: 1.']))
+
+    def constrain_draft(self, reply):
         """Keep the correction within the declarations of the rejected draft."""
         draft = self.draft
         errors = []
@@ -110,6 +169,10 @@ class PlanConsistencyError(ValueError):
         if ({key: value for key, value in reply.items() if key not in mutable}
                 != {key: value for key, value in draft.items() if key not in mutable}):
             errors.append('Correction changes declarations outside the test consistency error.')
+        if self.missing_goals:
+            for before, after in zip(draft['checks'], reply['checks']):
+                if [goal for goal in after['goal_ids'] if goal not in self.missing_goals] != before['goal_ids']:
+                    errors.append('Correction may only add the named uncovered goal ids and must preserve every existing citation.')
         if self.local:
             errors.extend(self.constrain_local(reply))
             reply['violations'].extend(dict.fromkeys(errors))
@@ -123,7 +186,8 @@ class PlanConsistencyError(ValueError):
         uncovered = {function(node) for node in self.uncovered}
         goals = {goal for check in checks for goal in check['goal_ids']}
         for index, check in enumerate(reply['checks']):
-            if not set(check['goal_ids']) <= goals:
+            allowed_goals = goals | self.missing_goals.keys() if index < len(checks) else goals
+            if not set(check['goal_ids']) <= allowed_goals:
                 errors.append('Correction introduces a goal outside the draft checks.')
             if index >= len(checks):
                 if (check['kind'] != 'demonstrating'
@@ -137,8 +201,9 @@ class PlanConsistencyError(ValueError):
                     errors.append('Correction adds a declared symptom absent from the draft.')
                 continue
             original = checks[index]
-            if ({key: value for key, value in check.items() if key != 'node_ids'}
-                    != {key: value for key, value in original.items() if key != 'node_ids'}):
+            mutable_check = {'node_ids', 'goal_ids'} if self.missing_goals else {'node_ids'}
+            if ({key: value for key, value in check.items() if key not in mutable_check}
+                    != {key: value for key, value in original.items() if key not in mutable_check}):
                 errors.append('Correction changes a draft check kind, goals or forcing.')
             old_nodes, new_nodes = set(original['node_ids']), set(check['node_ids'])
             replacing = original['kind'] == 'demonstrating' and 'forcing' in original
@@ -152,7 +217,7 @@ class PlanConsistencyError(ValueError):
         reply['violations'].extend(dict.fromkeys(errors))
 
     def constrain_local(self, reply):
-        """Only rejected selectors, absent proof fields and named subject omissions can change."""
+        """Only named selectors, proof omissions and uncovered goal citations can change."""
         errors = []
         draft = self.draft
         if reply.get('edits_tests') != draft.get('edits_tests'):
@@ -161,6 +226,8 @@ class PlanConsistencyError(ValueError):
             errors.append('Correction changes the number of draft checks.')
         for index, (before, after) in enumerate(zip(draft['checks'], reply['checks'])):
             mutable = ({'node_ids'} if index in self.selectors else set())
+            if self.missing_goals:
+                mutable.add('goal_ids')
             if index in self.missing_proof or index in self.missing_subjects:
                 mutable.add('proof')
                 old, new = before.get('proof', {}), after.get('proof', {})
@@ -192,6 +259,26 @@ class PlanConsistencyError(ValueError):
                     if oversized or not exists:
                         errors.append(f'Corrected check must name a test defined at the base: {node}')
         return errors
+
+
+def coverage_stop(error):
+    """Retain complete coverage evidence when the existing single correction ends."""
+    errors = error.errors if isinstance(error, InvalidReply) else (error,)
+    if any(isinstance(item, Unrepairable) for item in errors):
+        return None
+    coverage = [item for item in errors if isinstance(item, PlanConsistencyError) and item.missing_goals]
+    if not coverage:
+        return None
+    reply = deepcopy(coverage[-1].completed_reply)
+    diagnostics = [violation for item in errors if isinstance(item, PlanConsistencyError)
+                   for violation in item.violations]
+    if not isinstance(error, InvalidReply):
+        diagnostics.append('Planner coverage correction unavailable: the existing input allowance has no room for a correction turn.')
+    if isinstance(error, InvalidReply) and not isinstance(errors[-1], PlanConsistencyError):
+        diagnostics.append('Planner coverage correction failed reply validation.')
+    reply['violations'] = list(dict.fromkeys([
+        *diagnostics, *reply['violations'], f'Planner coverage correction attempts: {len(errors) - 1}.']))
+    return reply
 
 
 def proof_omissions(reply):
@@ -246,6 +333,8 @@ def check_reply(inputs, reply, *, rehearsals=None):
     selector_errors = set()
     missing_proof = proof_omissions(reply)
     missing_subjects = {}
+    missing_goals = {}
+    repair_error = None
     paths = set()
     if reply["kind"] == "leaf":
         if inputs["must_split"]:
@@ -334,8 +423,8 @@ def check_reply(inputs, reply, *, rehearsals=None):
             violations.append(str(error))
         required = {i for i, goal in enumerate(inputs["ingest"]["goals"])
                     if goal.get("stage", "maker") != "publishing"}
-        if not required <= covered:
-            violations.append("Every maker and checking goal must have a check.")
+        missing_goals = {index: inputs['ingest']['goals'][index]['description']
+                         for index in sorted(required - covered)}
         paths.update(reply["files"])
     elif reply["kind"] == "split":
         covered = set()
@@ -423,21 +512,29 @@ def check_reply(inputs, reply, *, rehearsals=None):
         rejected = next((item for item in reversed(rehearsals.candidates) if item['status'] == 'refused'), None)
         if rejected is not None:
             violations.append(rejected['message'])
-    if uncovered or missing_forced or selectors or missing_proof or missing_subjects:
+    if uncovered or missing_forced or selectors or missing_proof or missing_subjects or missing_goals:
         mismatch = PlanConsistencyError(uncovered, missing_forced, draft=reply,
                                         selectors=selectors, missing_proof=missing_proof,
-                                        missing_subjects=missing_subjects, base_sha=inputs.get('base_sha'))
+                                        missing_subjects=missing_subjects, missing_goals=missing_goals,
+                                        base_sha=inputs.get('base_sha'))
         # Only these intrinsic inconsistencies enter the existing tool-free repair.
         # Substantive plan failures still reach the controller under Q54.
         proof_errors = (rehearsals.violations(inputs.get('base_sha'),
                         [check for check in reply['checks'] if valid_forcing(check)])
-                        if mismatch.local and rehearsals is not None else [])
-        message_fits = not mismatch.local or len(str(mismatch).encode()) <= REPAIR_MESSAGE_BYTES
+                        if (mismatch.local or missing_goals) and rehearsals is not None else [])
+        proof_unavailable = missing_goals and rehearsals is None and any(
+            valid_forcing(check) for check in reply['checks'])
+        message_fits = (mismatch.repair_text is not None if missing_goals else
+                        not mismatch.local or len(str(mismatch).encode()) <= REPAIR_MESSAGE_BYTES)
         if not message_fits:
             violations.append('Planner declarations exceed the existing correction message limit.')
-        if not violations and not proof_errors and inputs.get('repair_plan_consistency', False):
-            raise mismatch
+        if not violations and not proof_errors and not proof_unavailable and inputs.get('repair_plan_consistency', False):
+            if not missing_goals:
+                raise mismatch
+            repair_error = mismatch
         violations.extend(mismatch.violations)
+        if missing_goals and repair_error is None:
+            violations.append('Planner coverage correction attempts: 0.')
     if reply['kind'] == 'leaf':
         valid = [check for check in reply['checks'] if valid_forcing(check)]
         if rehearsals is not None:
@@ -451,6 +548,9 @@ def check_reply(inputs, reply, *, rehearsals=None):
     reply["forecast"] = forecast
     reply["execution"] = execution
     reply["violations"] = list(dict.fromkeys(violations))
+    if repair_error is not None:
+        repair_error.completed_reply = deepcopy(reply)
+        raise repair_error
 
 
 def base_definition(node_id, base_sha=None):

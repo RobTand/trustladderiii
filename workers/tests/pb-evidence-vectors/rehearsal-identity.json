@@ -1,0 +1,872 @@
+{
+  "version": 1,
+  "kind": "rehearsal-identity",
+  "cases": [
+    {
+      "case": "unicode-int-float",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "café 雪 😀",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.one",
+                "returns": 1
+              },
+              {
+                "target": "subject.two",
+                "returns": 1.0
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.one",
+                  "returns": 1
+                },
+                {
+                  "target": "subject.two",
+                  "returns": 1.0
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": 1, \"target\": \"subject.one\"}, {\"returns\": 1.0, \"target\": \"subject.two\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "key-order",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "patches": [
+              {
+                "target": "subject.one",
+                "returns": 1
+              },
+              {
+                "target": "subject.two",
+                "returns": 1.0
+              }
+            ],
+            "environment": {},
+            "symptom": "café 雪 😀"
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.one",
+                  "returns": 1
+                },
+                {
+                  "target": "subject.two",
+                  "returns": 1.0
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": 1, \"target\": \"subject.one\"}, {\"returns\": 1.0, \"target\": \"subject.two\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "selector-and-independent-patch-order",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "café 雪 😀",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.two",
+                "returns": 1.0
+              },
+              {
+                "target": "subject.one",
+                "returns": 1
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.two",
+                  "returns": 1.0
+                },
+                {
+                  "target": "subject.one",
+                  "returns": 1
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1.0,\"target\":\"subject.two\"},{\"returns\":1,\"target\":\"subject.one\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1.0,\"target\":\"subject.two\"},{\"returns\":1,\"target\":\"subject.one\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": 1.0, \"target\": \"subject.two\"}, {\"returns\": 1, \"target\": \"subject.one\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "alias-attributes",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "café 雪 😀",
+            "environment": {},
+            "patches": [
+              {
+                "target": "a.same",
+                "returns": 0
+              },
+              {
+                "target": "b.same",
+                "returns": 1
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "a.same",
+                  "returns": 0
+                },
+                {
+                  "target": "b.same",
+                  "returns": 1
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":0,\"target\":\"a.same\"},{\"returns\":1,\"target\":\"b.same\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":0,\"target\":\"a.same\"},{\"returns\":1,\"target\":\"b.same\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":0,\"target\":\"a.same\"},{\"returns\":1,\"target\":\"b.same\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": 0, \"target\": \"a.same\"}, {\"returns\": 1, \"target\": \"b.same\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "parent-child",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "café 雪 😀",
+            "environment": {},
+            "patches": [
+              {
+                "target": "a.parent",
+                "returns": null
+              },
+              {
+                "target": "a.parent.child",
+                "returns": 1
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "a.parent",
+                  "returns": null
+                },
+                {
+                  "target": "a.parent.child",
+                  "returns": 1
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":null,\"target\":\"a.parent\"},{\"returns\":1,\"target\":\"a.parent.child\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":null,\"target\":\"a.parent\"},{\"returns\":1,\"target\":\"a.parent.child\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":null,\"target\":\"a.parent\"},{\"returns\":1,\"target\":\"a.parent.child\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": null, \"target\": \"a.parent\"}, {\"returns\": 1, \"target\": \"a.parent.child\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "negative-zero",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "café 雪 😀",
+            "environment": {},
+            "patches": [
+              {
+                "target": "a.value",
+                "returns": -0.0
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "a.value",
+                  "returns": -0.0
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":-0.0,\"target\":\"a.value\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":-0.0,\"target\":\"a.value\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":-0.0,\"target\":\"a.value\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": -0.0, \"target\": \"a.value\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "exponent",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "café 雪 😀",
+            "environment": {},
+            "patches": [
+              {
+                "target": "a.value",
+                "returns": 1e-07
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "a.value",
+                  "returns": 1e-07
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1e-07,\"target\":\"a.value\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1e-07,\"target\":\"a.value\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1e-07,\"target\":\"a.value\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": 1e-07, \"target\": \"a.value\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "declared-symptom",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old",
+            "tests/test_é.py::test_雪",
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "café 雪 😀",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.one",
+                "returns": 1
+              },
+              {
+                "target": "subject.two",
+                "returns": 1.0
+              }
+            ]
+          },
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old",
+              "tests/test_é.py::test_雪",
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "café 雪 😀",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.one",
+                  "returns": 1
+                },
+                {
+                  "target": "subject.two",
+                  "returns": 1.0
+                }
+              ]
+            },
+            "declared_symptom": {
+              "node": "tests/test_old.py::test_old",
+              "exception": "ValueError",
+              "message": "broken",
+              "phase": "call",
+              "repeat": 2,
+              "parallel": 0
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":{\"exception\":\"ValueError\",\"message\":\"broken\",\"node\":\"tests/test_old.py::test_old\",\"parallel\":0,\"phase\":\"call\",\"repeat\":2},\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":{\"exception\":\"ValueError\",\"message\":\"broken\",\"node\":\"tests/test_old.py::test_old\",\"parallel\":0,\"phase\":\"call\",\"repeat\":2},\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}],\"symptom\":\"caf\\u00e9 \\u96ea \\ud83d\\ude00\"},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\",\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":{\"exception\":\"ValueError\",\"message\":\"broken\",\"node\":\"tests/test_old.py::test_old\",\"parallel\":0,\"phase\":\"call\",\"repeat\":2},\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":1,\"target\":\"subject.one\"},{\"returns\":1.0,\"target\":\"subject.two\"}]},\"selectors\":[\"tests/test_old.py::test_old\",\"tests/test_\\u00e9.py::test_\\u96ea\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"declared_symptom\": {\"exception\": \"ValueError\", \"message\": \"broken\", \"node\": \"tests/test_old.py::test_old\", \"parallel\": 0, \"phase\": \"call\", \"repeat\": 2}, \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": 1, \"target\": \"subject.one\"}, {\"returns\": 1.0, \"target\": \"subject.two\"}], \"symptom\": \"café 雪 😀\"}, \"selectors\": [\"tests/test_old.py::test_old\", \"tests/test_é.py::test_雪\", \"tests/test_old.py::test_old\"]}"
+        }
+      }
+    },
+    {
+      "case": "unusable-valid",
+      "input": {
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ]
+        },
+        "selectors": [
+          "tests/test_old.py::test_old"
+        ],
+        "outcome": "passed"
+      },
+      "output": {
+        "return": null
+      }
+    },
+    {
+      "case": "unusable-missing-receipts",
+      "input": {
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": ""
+        },
+        "selectors": [
+          "tests/test_old.py::test_old"
+        ],
+        "outcome": "passed"
+      },
+      "output": {
+        "return": "missing completed, verified receipt: status=completed; no diagnostic"
+      }
+    },
+    {
+      "case": "unusable-incomplete",
+      "input": {
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 0,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ]
+        },
+        "selectors": [
+          "tests/test_old.py::test_old"
+        ],
+        "outcome": "passed"
+      },
+      "output": {
+        "return": "incomplete node results"
+      }
+    },
+    {
+      "case": "unusable-missing-node",
+      "input": {
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "other.py",
+              "outcome": "passed"
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ]
+        },
+        "selectors": [
+          "tests/test_old.py::test_old"
+        ],
+        "outcome": "passed"
+      },
+      "output": {
+        "return": "missing node result for tests/test_old.py::test_old"
+      }
+    },
+    {
+      "case": "unusable-wrong-outcome",
+      "input": {
+        "result": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "failed"
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ]
+        },
+        "selectors": [
+          "tests/test_old.py::test_old"
+        ],
+        "outcome": "passed"
+      },
+      "output": {
+        "return": "tests/test_old.py::test_old ended failed; expected passed"
+      }
+    },
+    {
+      "case": "violations-matched",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          }
+        },
+        "receipts": [
+          {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "Old node fails",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.adopt",
+                  "returns": false
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "Old node fails",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.adopt",
+                  "returns": false
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}]},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": false, \"target\": \"subject.adopt\"}], \"symptom\": \"Old node fails\"}, \"selectors\": [\"tests/test_old.py::test_old\"]}",
+          "violations": []
+        }
+      }
+    },
+    {
+      "case": "violations-absent",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          }
+        },
+        "receipts": []
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "Old node fails",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.adopt",
+                  "returns": false
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}]},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": false, \"target\": \"subject.adopt\"}], \"symptom\": \"Old node fails\"}, \"selectors\": [\"tests/test_old.py::test_old\"]}",
+          "violations": [
+            "Q55 check lacks a matching forcing rehearsal receipt for the exact base, selectors and forcing: tests/test_old.py::test_old"
+          ]
+        }
+      }
+    },
+    {
+      "case": "violations-wrong-base",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          }
+        },
+        "receipts": [
+          {
+            "base_sha": "0000000000000000000000000000000000000000",
+            "selectors": [
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "Old node fails",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.adopt",
+                  "returns": false
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "Old node fails",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.adopt",
+                  "returns": false
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}]},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": false, \"target\": \"subject.adopt\"}], \"symptom\": \"Old node fails\"}, \"selectors\": [\"tests/test_old.py::test_old\"]}",
+          "violations": [
+            "Q55 check lacks a matching forcing rehearsal receipt for the exact base, selectors and forcing: tests/test_old.py::test_old"
+          ]
+        }
+      }
+    },
+    {
+      "case": "violations-terminal-failure",
+      "input": {
+        "candidate": {
+          "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "selectors": [
+            "tests/test_old.py::test_old"
+          ],
+          "forcing": {
+            "symptom": "Old node fails",
+            "environment": {},
+            "patches": [
+              {
+                "target": "subject.adopt",
+                "returns": false
+              }
+            ]
+          }
+        },
+        "receipts": [],
+        "failure": {
+          "message": "candidate budget exhausted"
+        }
+      },
+      "output": {
+        "return": {
+          "identity": {
+            "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+            "selectors": [
+              "tests/test_old.py::test_old"
+            ],
+            "forcing": {
+              "symptom": "Old node fails",
+              "environment": {},
+              "patches": [
+                {
+                  "target": "subject.adopt",
+                  "returns": false
+                }
+              ]
+            }
+          },
+          "canonical": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "bound_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}],\"symptom\":\"Old node fails\"},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "execution_identity": "{\"base_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"declared_symptom\":null,\"forcing\":{\"environment\":{},\"patches\":[{\"returns\":false,\"target\":\"subject.adopt\"}]},\"selectors\":[\"tests/test_old.py::test_old\"]}",
+          "python_sorted_default": "{\"base_sha\": \"cccccccccccccccccccccccccccccccccccccccc\", \"forcing\": {\"environment\": {}, \"patches\": [{\"returns\": false, \"target\": \"subject.adopt\"}], \"symptom\": \"Old node fails\"}, \"selectors\": [\"tests/test_old.py::test_old\"]}",
+          "violations": [
+            "candidate budget exhausted"
+          ]
+        }
+      }
+    }
+  ]
+}

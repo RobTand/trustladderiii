@@ -248,7 +248,9 @@ fn init(schedule: Schedule, cut: Option<Cut>) {
     }
 }
 fn delivery_value(key: &str) -> Value {
-    json!({"key":key,"epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0})
+    configured_delivery(
+        json!({"key":key,"epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0}),
+    )
 }
 fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
     static HOOK: ::std::sync::Once = ::std::sync::Once::new();
@@ -514,6 +516,7 @@ pub(crate) struct Row {
     pub table: &'static str,
     pub id: String,
     pub value: Value,
+    pub version: Version,
 }
 #[derive(Clone)]
 pub(crate) struct Snapshot {
@@ -542,14 +545,15 @@ impl Store {
         let f = read("store.snapshot", "");
         let repaired = (profile() == Profile::Waiting) ^ (f.word & 4 != 0);
         returned(&(repaired, f.word & 8 != 0, f.word & 16 != 0));
-        Ok(Snapshot {
+        Ok(configured_snapshot(Snapshot {
             rows: vec![Row {
                 table: "nodes",
                 id: "0".into(),
                 value: json!({"held":f.word&8!=0,"paused":f.word&16!=0}),
+                version: Version(0),
             }],
             repaired,
-        })
+        }))
     }
     pub fn effects(&self) -> Result<Vec<Archive>> {
         let f = read("store.effects", "");
@@ -628,7 +632,7 @@ fn github_frame(op: &str, args: &str) -> ::std::result::Result<Frame, ::tl3_gith
     Ok(f)
 }
 fn pull(f: &Frame) -> PullRequest {
-    serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0 || profile() == Profile::Draft,"merged_at":if f.word&4!=0 || profile() == Profile::Merged {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":!(f.word&512!=0 || profile()==Profile::MergeFalse),"mergeable_state":if f.word&512!=0 || profile()==Profile::MergeFalse {"dirty"}else{"clean"},"body":if profile()==Profile::Body {""} else {"Change type: fix"},"merge_commit_sha":if profile()==Profile::Merged {Some("merge")}else{None},"head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
+    configured_pull(serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0 || profile() == Profile::Draft,"merged_at":if f.word&4!=0 || profile() == Profile::Merged {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":!(f.word&512!=0 || profile()==Profile::MergeFalse),"mergeable_state":if f.word&512!=0 || profile()==Profile::MergeFalse {"dirty"}else{"clean"},"body":if profile()==Profile::Body {""} else {"Change type: fix"},"merge_commit_sha":if profile()==Profile::Merged {Some("merge")}else{None},"head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap())
 }
 fn check(f: &Frame, queue: bool) -> CheckRun {
     let summary = include_str!("../../../mergify/tests/fixtures/waiting/checks.json");
@@ -1067,6 +1071,102 @@ fn base64(s: &str) -> String {
     out
 }
 
+// A1 r1 fixtures extend returned facts; the I/O recorder and crash machinery
+// remain shared and unchanged. Thread-local fixtures reset even on a panic.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Version(pub i64);
+impl Version {
+    pub fn get(self) -> i64 {
+        self.0
+    }
+}
+#[derive(Clone, Default)]
+pub(super) struct A1Inputs {
+    pub rows: Vec<Row>,
+    pub delivery: Option<Delivery>,
+    pub body: Option<String>,
+}
+thread_local! { static A1_INPUTS: RefCell<A1Inputs> = RefCell::new(A1Inputs::default()); }
+pub(super) fn with_inputs<T>(inputs: A1Inputs, f: impl FnOnce() -> T) -> T {
+    struct Restore(A1Inputs);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            A1_INPUTS.with(|v| *v.borrow_mut() = self.0.clone());
+        }
+    }
+    let _restore = Restore(A1_INPUTS.with(|v| v.replace(inputs)));
+    f()
+}
+fn configured_snapshot(mut snapshot: Snapshot) -> Snapshot {
+    A1_INPUTS.with(|v| snapshot.rows.extend(v.borrow().rows.clone()));
+    snapshot
+}
+fn configured_delivery(default: Value) -> Value {
+    A1_INPUTS.with(|v| {
+        v.borrow()
+            .delivery
+            .as_ref()
+            .map_or(default, |d| serde_json::to_value(d).unwrap())
+    })
+}
+fn configured_pull(mut pull: PullRequest) -> PullRequest {
+    A1_INPUTS.with(|v| {
+        if let Some(body) = &v.borrow().body {
+            pull.body = Some(body.clone());
+        }
+    });
+    pull
+}
+pub(super) fn fixture_delivery() -> Delivery {
+    serde_json::from_value(delivery_value("enqueue-1")).unwrap()
+}
+pub(super) fn projection(name: &str) {
+    with(|r| {
+        r.calls.push(Call {
+            op: format!("projection.{name}"),
+            args: String::new(),
+            result: vec![],
+        })
+    });
+}
+pub(super) fn require_no_writes(s: &Schedule, e: Entry) {
+    assert_eq!(run(s, e, false, None).writes, 0);
+}
+
+// B1 reachability checks inspect the reference trace as well as comparing both shells.
+pub(super) fn require_recovery(s: &Schedule, entry: Entry, command: &str, timer: Option<u64>) {
+    let trace = run(s, entry, false, None);
+    let bytes = trace.files.get(&recovery_path()).expect("recovery receipt");
+    let saved: Value = serde_json::from_slice(bytes).unwrap();
+    assert_eq!(saved["command"], json!(command), "{trace:#?}");
+    assert_eq!(saved["eligible_since_ms"], json!(timer), "{trace:#?}");
+}
+pub(super) fn require_no_op(s: &Schedule, entry: Entry, op: &str) {
+    let trace = run(s, entry, false, None);
+    assert!(!trace.calls.iter().any(|c| c.op == op), "{trace:#?}");
+}
+pub(super) fn require_command_fence(s: &Schedule) {
+    let trace = run(s, Entry::Command, false, None);
+    let fence = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "file.read" && c.args.ends_with("epoch.fence"))
+        .unwrap();
+    let intent = trace
+        .calls
+        .iter()
+        .position(|c| {
+            c.op == "file.write" && String::from_utf8_lossy(&c.result).contains("Sending")
+        })
+        .unwrap();
+    let post = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "github.command")
+        .unwrap();
+    assert!(fence < intent && intent < post, "{trace:#?}");
+}
+
 // ctrl-core C1: direct evaluate inputs share the existing recorded leaf boundary.
 pub(super) fn c1_pull() -> PullRequest {
     pull(&Frame {
@@ -1373,4 +1473,64 @@ pub(super) mod c1_payloads {
         run.run_attempt = attempt;
         run
     }
+}
+
+// ctrl-core A2: configurable entry runner; the real old/current shells remain separate.
+pub(super) fn a2_compare(s: &Schedule, execute: impl Fn(bool, &Delivery) -> Value) -> Value {
+    // Install the existing crash-only panic hook before exercising custom entries.
+    let _ = run(s, Entry::Read, false, None);
+    let record = |new, cut| {
+        init(s.clone(), cut);
+        let d = serde_json::from_value(delivery_value("enqueue-1")).unwrap();
+        let result = match catch_unwind(AssertUnwindSafe(|| execute(new, &d))) {
+            Ok(value) => value,
+            Err(error) if error.is::<Crash>() => json!("crash"),
+            Err(error) => ::std::panic::resume_unwind(error),
+        };
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    };
+    let old = record(false, None);
+    let new = record(true, None);
+    assert_eq!(old, new, "A2 differential divergence: {s:?}");
+    for write in 0..old.writes {
+        for after in [false, true] {
+            let cut = Some(Cut { write, after });
+            assert_eq!(
+                record(false, cut),
+                record(true, cut),
+                "A2 crash divergence: {s:?}, {cut:?}"
+            );
+        }
+    }
+    json!({
+        "result":new.result,
+        "calls":new.calls.iter().map(|c|json!({"op":c.op,"args":c.args})).collect::<Vec<_>>(),
+        "files":new.files.iter().map(|(p,b)|(p.clone(),String::from_utf8_lossy(b).into_owned())).collect::<BTreeMap<_,_>>(),
+        "comparisons":1+2*new.writes,
+    })
+}
+
+// A2 initial durable state is installed before any shell operation, on both sides.
+pub(super) fn a2_seed_heal(same_head: bool, reran: bool) {
+    let key = "body-heal:owner/sandbox#100";
+    let path = format!(
+        "root/{}.body-heal",
+        key.bytes().map(|b| format!("{b:02x}")).collect::<String>()
+    );
+    with(|r| {
+        r.files.insert(
+            path,
+            serde_json::to_vec(&json!({"head":if same_head {"head"} else {"old"},"reran":reran}))
+                .unwrap(),
+        );
+    });
 }

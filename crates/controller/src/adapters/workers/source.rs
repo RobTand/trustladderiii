@@ -22,6 +22,7 @@ use std::{
     os::fd::OwnedFd,
     path::PathBuf,
 };
+use tl3_controller_core::worker_events::*;
 use tl3_store::Store;
 
 struct Run {
@@ -427,7 +428,9 @@ impl WorkerOutputSource {
         store: &mut Store,
         sender: &Sender<Input>,
     ) -> Result<bool> {
-        if !at("store", store.worker_reconcilable(&run.delivery.key))? {
+        if refresh_gate(at("store", store.worker_reconcilable(&run.delivery.key))?)
+            == RefreshGate::Retire
+        {
             return Ok(false);
         }
         if run.attempt.is_none() {
@@ -439,7 +442,13 @@ impl WorkerOutputSource {
             }
         }
         if let Some((_, attempt)) = &run.attempt
-            && read(&attempt.join("claim.json"))?.is_some_and(|c| c["cancelled"] == true)
+            && read(&attempt.join("claim.json"))?.is_some_and(|c| {
+                claim_decision(if c["cancelled"] == true {
+                    Claim::Cancelled
+                } else {
+                    Claim::Live
+                }) == ClaimDecision::Retire
+            })
         {
             return Ok(false);
         }
@@ -448,7 +457,12 @@ impl WorkerOutputSource {
         };
         let delivery = &run.delivery;
         // A directory or cancelled claim is not evidence of a run that started.
-        if read(&attempt.join("claim.json"))?.is_none() {
+        if claim_decision(if read(&attempt.join("claim.json"))?.is_none() {
+            Claim::Missing
+        } else {
+            Claim::Live
+        }) == ClaimDecision::AwaitClaim
+        {
             return Ok(true);
         }
         for name in ["claim.json", "process.json"] {
@@ -483,12 +497,12 @@ impl WorkerOutputSource {
                     break;
                 }
                 run.offset += n as u64;
-                if let Ok(value) = super::json::parse(&line)
-                    && progress(&value)
-                    && run.offset > recorded
+                if let Ok(parsed) = parse_event(&line, None, false, &Value::Null)
+                    && progress_due(parsed.event, run.offset, recorded)
                 {
-                    let wait = external_wait(&value);
+                    let wait = parsed.wait;
                     let changed = previous_wait != wait;
+                    let signal = progress_signal(wait.is_some(), changed);
                     at(
                         "store",
                         store.record_worker_progress(
@@ -497,14 +511,25 @@ impl WorkerOutputSource {
                             run.offset
                                 .try_into()
                                 .map_err(|_| Error::Invalid("worker output offset overflow"))?,
-                            value["unit"].as_str().unwrap(),
+                            match parsed.event {
+                                WorkerEvent::Progress {
+                                    unit: ProgressUnit::ModelTurn,
+                                } => "model_turn",
+                                WorkerEvent::Progress {
+                                    unit: ProgressUnit::ToolResult,
+                                } => "tool_result",
+                                WorkerEvent::Progress {
+                                    unit: ProgressUnit::ExternalWait,
+                                } => "external_wait",
+                                _ => unreachable!("progress_due only admits progress"),
+                            },
                             wait.as_ref(),
                         ),
                     )?;
                     previous_wait = wait.clone();
                     // Reattachments declare liveness, not new agent work.
-                    if wait.is_some() {
-                        if changed {
+                    if signal != ProgressSignal::Progress {
+                        if signal == ProgressSignal::Look {
                             send(
                                 sender,
                                 Input::Look {
@@ -531,11 +556,19 @@ impl WorkerOutputSource {
             "inspect_recorded",
             inspect_recorded(attempt, delivery, store),
         )?;
-        if !matches!(ended, Reconciliation::Pending) {
+        let decision = end_decision(match &ended {
+            Reconciliation::Found(_) => Ending::Found,
+            Reconciliation::Absent => Ending::Absent,
+            Reconciliation::Pending => Ending::Pending,
+        });
+        if decision != EndDecision::KeepActive {
             self.ended.push(attempt.clone());
         }
-        match ended {
-            Reconciliation::Found(completion) => {
+        match decision {
+            EndDecision::Complete => {
+                let Reconciliation::Found(completion) = ended else {
+                    unreachable!("completion decision")
+                };
                 for (index, observation) in completion.observations.into_iter().enumerate() {
                     send(
                         sender,
@@ -547,8 +580,8 @@ impl WorkerOutputSource {
                 }
                 Ok(false)
             }
-            Reconciliation::Absent => Ok(false),
-            Reconciliation::Pending => {
+            EndDecision::Retire => Ok(false),
+            EndDecision::KeepActive => {
                 self.active.add(delivery, *number);
                 Ok(true)
             }
@@ -556,13 +589,77 @@ impl WorkerOutputSource {
     }
 }
 
-fn progress(value: &Value) -> bool {
-    value["event"] == "progress"
-        && ((value.as_object().is_some_and(|o| o.len() == 2)
-            && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result")))
-            || (value.as_object().is_some_and(|o| o.len() == 3)
-                && value["unit"] == "external_wait"
-                && external_wait(value).is_some()))
+#[derive(Debug)]
+struct ParsedEvent {
+    event: WorkerEvent,
+    value: Value,
+    wait: Option<tl3_store::ExternalWait>,
+    model: Option<String>,
+}
+
+fn parse_event(
+    line: &[u8],
+    role: Option<&str>,
+    postmortem: bool,
+    inputs: &Value,
+) -> std::result::Result<ParsedEvent, serde_json::Error> {
+    let value = super::json::parse(line)?;
+    Ok(decode_event(value, role, postmortem, inputs))
+}
+
+fn decode_event(value: Value, role: Option<&str>, postmortem: bool, inputs: &Value) -> ParsedEvent {
+    let mut wait = None;
+    let mut model = None;
+    let size = value.as_object().map_or(0, |o| o.len());
+    let event = if value["event"] == "progress" && size == 2 && value["unit"] == "model_turn" {
+        WorkerEvent::Progress {
+            unit: ProgressUnit::ModelTurn,
+        }
+    } else if value["event"] == "progress" && size == 2 && value["unit"] == "tool_result" {
+        WorkerEvent::Progress {
+            unit: ProgressUnit::ToolResult,
+        }
+    } else if value["event"] == "progress"
+        && size == 3
+        && value["unit"] == "external_wait"
+        && external_wait(&value).is_some()
+    {
+        wait = external_wait(&value);
+        WorkerEvent::Progress {
+            unit: ProgressUnit::ExternalWait,
+        }
+    } else if size == 3 + usize::from(value.get("model").is_some())
+        && value["event"] == "quota"
+        && value["role"].as_str() == role
+        && role.is_some()
+    {
+        let field = match value.get("model") {
+            None => ModelField::Missing,
+            Some(name) if *name == inputs["grade_model"] && name.is_string() => {
+                model = name.as_str().map(str::to_owned);
+                ModelField::GradeModel
+            }
+            Some(_) => ModelField::Other,
+        };
+        WorkerEvent::Quota {
+            model: quota_model(postmortem, field),
+            reset_ms: value["reset_ms"].as_u64(),
+        }
+    } else if size == 3
+        && value["event"] == "reply"
+        && value["role"].as_str() == role
+        && role.is_some()
+    {
+        WorkerEvent::Reply
+    } else {
+        WorkerEvent::Invalid
+    };
+    ParsedEvent {
+        event,
+        value,
+        wait,
+        model,
+    }
 }
 
 fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
@@ -588,50 +685,34 @@ pub(super) fn parse_reply(
     let role = protocol::delivery_role(delivery)
         .ok_or(Error::Invalid("worker output without supported start"))?;
     let mut reply = None;
+    let mut line_end = 0;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
-        let value: Value = super::json::parse(line)?;
-        if reply.is_some() {
-            return Err(Error::Invalid("event after worker reply"));
-        }
-        if progress(&value) {
-            continue;
-        }
-        // #759: a postmortem's grade judges run on the case file's grade
-        // model, and only that model may be named as the one to charge.
-        let charged = match value.get("model") {
-            None => Some(None),
-            Some(model) if delivery.is_postmortem() && *model == inputs["grade_model"] => {
-                model.as_str().map(|model| Some(model.to_owned()))
+        line_end += line.len();
+        let parsed = parse_event(line, Some(role), delivery.is_postmortem(), inputs)?;
+        match reply_step(parsed.event, reply.is_some(), line_end, bytes.len()) {
+            ReplyDecision::Progress => continue,
+            ReplyDecision::AfterReply => return Err(Error::Invalid("event after worker reply")),
+            ReplyDecision::InvalidEvent => return Err(Error::Invalid("invalid worker event")),
+            ReplyDecision::InvalidQuotaModel => return Err(Error::Invalid("invalid quota model")),
+            ReplyDecision::InvalidQuotaReset => return Err(Error::Invalid("invalid quota reset")),
+            ReplyDecision::AfterQuota => return Err(Error::Invalid("event after quota ending")),
+            ReplyDecision::Quota => {
+                let WorkerEvent::Quota {
+                    reset_ms: Some(reset_ms),
+                    ..
+                } = parsed.event
+                else {
+                    unreachable!("quota decision")
+                };
+                return Ok(Observation::Quota {
+                    key: delivery.key.clone(),
+                    reset_ms,
+                    model: parsed.model,
+                });
             }
-            Some(_) => None,
-        };
-        if value
-            .as_object()
-            .is_some_and(|o| o.len() == 3 + usize::from(value.get("model").is_some()))
-            && value["event"] == "quota"
-            && value["role"] == role
-        {
-            let model = charged.ok_or(Error::Invalid("invalid quota model"))?;
-            let reset_ms = value["reset_ms"]
-                .as_u64()
-                .filter(|v| *v > 0)
-                .ok_or(Error::Invalid("invalid quota reset"))?;
-            // A quota ending is terminal and must be the final protocol event.
-            if bytes.split_inclusive(|b| *b == b'\n').next_back() != Some(line) {
-                return Err(Error::Invalid("event after quota ending"));
-            }
-            return Ok(Observation::Quota {
-                key: delivery.key.clone(),
-                reset_ms,
-                model,
-            });
+            ReplyDecision::Reply => (),
         }
-        if !value.as_object().is_some_and(|o| o.len() == 3)
-            || value["event"] != "reply"
-            || value["role"] != role
-        {
-            return Err(Error::Invalid("invalid worker event"));
-        }
+        let value = parsed.value;
         if delivery.is_classifier() {
             protocol::validate_classification(inputs, &value["reply"])?;
         } else if delivery.is_postmortem() {
@@ -811,6 +892,12 @@ mod tests {
 
     #[test]
     fn declared_wait_protocol_accepts_only_readable_owners() {
+        fn progress(value: &Value) -> bool {
+            matches!(
+                decode_event(value.clone(), None, false, &Value::Null).event,
+                WorkerEvent::Progress { .. }
+            )
+        }
         let event = serde_json::json!({"event":"progress", "unit":"external_wait",
             "wait":{"upstream":"prismabuild", "key":"a".repeat(64)}});
         assert!(progress(&event));
@@ -942,3 +1029,7 @@ mod tests {
 #[cfg(all(test, loom))]
 #[path = "../../../tests/loom/workers.rs"]
 mod loom_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/worker_events_io/mod.rs"]
+mod worker_events_io;
