@@ -222,13 +222,18 @@ fn delay_receipt_boundary_fixtures() {
         .unwrap(),
     )
     .unwrap();
+    let mut mismatches = Vec::new();
     for row in fixture.as_array().unwrap() {
         let accepted = serde_json::from_str::<Value>(row["json"].as_str().unwrap())
             .ok()
             .and_then(|value| decode_delay_budget(&value))
             .is_some_and(|(bits, exhausted)| delay_budget_consistent(bits, exhausted));
-        assert_eq!(accepted, row["valid"].as_bool().unwrap(), "{}", row["id"]);
+        let expected = row["valid"].as_bool().unwrap();
+        if accepted != expected {
+            mismatches.push((row["id"].as_str().unwrap(), accepted, expected));
+        }
     }
+    assert!(mismatches.is_empty(), "delay parity: {mismatches:?}");
     for bits in [
         0,
         1,

@@ -2,6 +2,8 @@
  {"id":"zero-int","json":"{\"applied_seconds\":0,\"exhausted\":false}","valid":true},
  {"id":"negative-zero","json":"{\"applied_seconds\":-0.0,\"exhausted\":false}","valid":true},
  {"id":"fraction","json":"{\"applied_seconds\":9.5,\"exhausted\":false}","valid":true},
+ {"id":"decimal-below-ten","json":"{\"applied_seconds\":9.999999999999999,\"exhausted\":false}","valid":true},
+ {"id":"decimal-below-ten-exhausted","json":"{\"applied_seconds\":9.999999999999999,\"exhausted\":true}","valid":false},
  {"id":"tiny-fraction","json":"{\"applied_seconds\":5e-324,\"exhausted\":false}","valid":true},
  {"id":"ten-int","json":"{\"applied_seconds\":10,\"exhausted\":true}","valid":true},
  {"id":"ten-float","json":"{\"applied_seconds\":10.0,\"exhausted\":true}","valid":true},
