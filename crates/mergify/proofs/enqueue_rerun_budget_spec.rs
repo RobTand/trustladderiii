@@ -21,14 +21,14 @@ pub open spec fn read_outcome(old: Option<Rerun>, head: Head, attempt: u64,
         (old, seq![Effect::Error(Failure::RerunUnknown)])
     } else if status != Status::Completed {
         (Some(Rerun { attempt, accepted: false, waiting: true }),
-            seq![Effect::SaveRerun, Effect::Error(Failure::RerunFinishing)])
+            Seq::empty().push(Effect::SaveRerun).push(Effect::Error(Failure::RerunFinishing)))
     } else if writable == None {
         (old, seq![Effect::Read(Need::RerunPull)])
     } else if writable == Some(false) {
         (old, seq![Effect::Error(Failure::PullChanged)])
     } else {
         (Some(Rerun { attempt, accepted: false, waiting: false }),
-            seq![Effect::SaveRerun, Effect::Write(Write::Rerun)])
+            Seq::empty().push(Effect::SaveRerun).push(Effect::Write(Write::Rerun)))
     }
 }
 
@@ -55,7 +55,7 @@ pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueSta
             if refused(old) {
                 next.rerun == old.rerun &&
                 next.recovery == Some(Recovery { eligible_since_ms: None, command: Command::Refused }) &&
-                effects@ == seq![Effect::SaveRecovery, Effect::Complete(Complete::Permanent(Failure::Refused))]
+                effects@ == Seq::empty().push(Effect::SaveRecovery).push(Effect::Complete(Complete::Permanent(Failure::Refused)))
             } else {
                 next.recovery == old.recovery && match event {
                     QueueEvent::RerunRead { head, attempt, status, writable } => {
