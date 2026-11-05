@@ -45,6 +45,7 @@ pub const QUEUE_LABEL: &str = "tl3-queue";
 
 pub mod completion;
 
+pub mod recovery;
 pub mod required;
 
 #[cfg(test)]
