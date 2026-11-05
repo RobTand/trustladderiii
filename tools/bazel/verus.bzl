@@ -127,7 +127,7 @@ def verus_proofs():
             "carry": ("translate#carry_plan", 1),
             "head_current": ("translate#head_current", 1),
             "enqueue": ("translate#enqueue_pending", 1),
-            "witnesses": ("translate_witnesses", 5),
+            "witnesses": ("translate_witnesses", 6),
         }
         for name, (module, count) in translate_groups.items():
             verus_test(

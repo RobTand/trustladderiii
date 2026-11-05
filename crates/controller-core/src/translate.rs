@@ -27,7 +27,7 @@ pub struct PriorFailure {
     pub overlapping_test: bool,
 }
 
-/// #373, Q52 / #447 boundary; docs/state-table.md:574-575 on cdacce8f.
+/// Q58; docs/state-machine.md:789-807 and docs/state-table.md:574-575 on cdacce8f.
 /// A prior infrastructure failure repeats exactly on this repo, PR and head
 /// with an overlapping failed test. The scan is unbounded; the invariant is
 /// the small reference model, and the I/O differential checks its JSON parse.
@@ -106,9 +106,9 @@ pub enum Decision {
     InvalidKernel,
 }
 
-/// Q52, #447, #373; docs/state-table.md:542-545,556-557,574-578 on cdacce8f.
-/// Setup routes return incidents or a translation error, never a kernel fact.
-/// Keep Mergify's route authoritative, including its wildcard kernel mappings.
+/// Q52 / #447; docs/state-table.md:542-545,555-557,578 on cdacce8f.
+/// Setup evidence never returns a kernel fact, even with an invalid route pairing.
+/// Frozen Mergify routing never constructs those pairings; valid mappings stay intact.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
     result == match route {
         Route::Record => Decision::Record,
@@ -120,13 +120,16 @@ pub enum Decision {
             EvidenceKind::Reported => Decision::Incident(IncidentAction::Clear),
             _ => Decision::InvalidIncident,
         },
-        Route::Kernel(kernel) => match kernel {
+        Route::Kernel(kernel) => if matches!(evidence, EvidenceKind::Setup | EvidenceKind::Missing | EvidenceKind::Blocked | EvidenceKind::Reported) {
+            Decision::InvalidKernel
+        } else { match kernel {
             KernelKind::PrMerged { .. } => if evidence == EvidenceKind::Merged { Decision::Kernel(kernel) } else { Decision::InvalidKernel },
             KernelKind::PushByOther => if evidence == EvidenceKind::PushByOther { Decision::Kernel(kernel) } else { Decision::InvalidKernel },
             _ => Decision::Kernel(kernel),
-        },
+        } },
     },
     route == Route::Incident ==> !(result is Kernel),
+    matches!(evidence, EvidenceKind::Setup | EvidenceKind::Missing | EvidenceKind::Blocked | EvidenceKind::Reported) ==> !(result is Kernel),
 ))]
 pub fn dispatch(route: Route, evidence: EvidenceKind) -> Decision {
     match route {
@@ -140,6 +143,16 @@ pub fn dispatch(route: Route, evidence: EvidenceKind) -> Decision {
             _ => Decision::InvalidIncident,
         },
         Route::Kernel(kernel) => match kernel {
+            _ if matches!(
+                evidence,
+                EvidenceKind::Setup
+                    | EvidenceKind::Missing
+                    | EvidenceKind::Blocked
+                    | EvidenceKind::Reported
+            ) =>
+            {
+                Decision::InvalidKernel
+            }
             KernelKind::PrMerged { .. } if evidence != EvidenceKind::Merged => {
                 Decision::InvalidKernel
             }
@@ -159,7 +172,7 @@ pub struct IncidentRow {
     pub open: bool,
 }
 
-/// Q52, #447, #373; docs/state-table.md:543,556 on cdacce8f.
+/// Q52; docs/state-table.md:543,556 on cdacce8f.
 /// CheckReported clears the first open row with its own incident ID only.
 /// The shell computes the ID from node, head, required context and app.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
@@ -190,7 +203,7 @@ pub struct CommitRow {
     pub id: i64,
 }
 
-/// Q52 / #447 heads, #373; docs/state-table.md:557,667 on cdacce8f.
+/// Push by someone other than TL3; docs/state-table.md:667 on cdacce8f.
 /// PushByOther reads the previous SHA from the first matching Commit entry.
 /// Preserve the old cast and absence of a scope filter, even for malformed rows.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
@@ -230,7 +243,7 @@ pub struct CarriedPlan<H, P> {
     pub plan: P,
 }
 
-/// Q52, #447, #373; docs/state-table.md:667 on cdacce8f.
+/// Push by someone other than TL3; docs/state-table.md:667 on cdacce8f.
 /// Carry an available check plan to the pushed head, preserving every field.
 /// An absent previous plan produces no check_plans row.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
@@ -247,7 +260,7 @@ pub fn carry_plan<H, P>(node: u64, head: H, plan: Option<P>) -> Option<CarriedPl
     }
 }
 
-/// Q52, #447, #373; docs/state-table.md:542,557,667 on cdacce8f.
+/// Queue attempt head; docs/state-table.md:540,574-576 on cdacce8f.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
     result == (current == Some(interned)),
 ))]
@@ -255,7 +268,7 @@ pub fn head_current(interned: u64, current: Option<u64>) -> bool {
     Some(interned) == current
 }
 
-/// Q52, #447, #373; docs/state-table.md:542,549 on cdacce8f.
+/// Q52 / #447; docs/state-table.md:542,545,557 on cdacce8f.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
     result == (enqueue && !cancelling),
 ))]

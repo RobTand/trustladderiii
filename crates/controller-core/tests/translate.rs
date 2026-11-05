@@ -1,6 +1,7 @@
 use tl3_controller_core::translate::*;
 
-/// Q52/#447/#373; docs/state-table.md:542-545,574-575,667 on cdacce8f.
+/// Q52/#447, Q58; docs/state-table.md:542-545,574-575,667 and
+/// docs/state-machine.md:789-807 on cdacce8f.
 #[test]
 fn production_decision_witnesses() {
     let matching = PriorFailure {
