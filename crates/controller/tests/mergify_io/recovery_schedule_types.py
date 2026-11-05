@@ -29,7 +29,8 @@ def main():
         raise RuntimeError('missing production grace constant')
     types = ['Command', 'Recovery', 'CommandRead', 'CommandResult', 'Complete',
              'Failure', 'Effect', 'Need', 'Write']
-    root = (declaration(check.read_text(), 'Head') + '\npub mod enqueue {\n'
+    root = ('use vstd::prelude::*;\n' + declaration(check.read_text(), 'Head')
+            + '\npub mod enqueue {\nuse vstd::prelude::*;\n'
             'use super::Head;\n#[vstd::prelude::verus_verify]\n' + constants[0] + '\n'
             + '\n'.join(declaration(source, name) for name in types) + '\n}\n'
             '#[path = "../mergify/src/decide/recovery.rs"]\nmod recovery;\nfn main() {}\n')
