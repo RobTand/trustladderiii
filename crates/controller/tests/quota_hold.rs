@@ -42,6 +42,12 @@ struct Audit(
     Rc<RefCell<Option<Observation>>>,
 );
 impl Executor for Audit {
+    fn configured_model(&self, model: &str) -> bool {
+        self.0.configured_model(model)
+    }
+    fn quota_model_eligible(&mut self, d: &Delivery, model: &str) -> tl3_controller::Result<bool> {
+        self.0.quota_model_eligible(d, model)
+    }
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         match d.output {
             Output::Effect {
@@ -521,6 +527,70 @@ fn duplicate_success_and_reset_do_not_dispatch_twice() {
         1,
         "success duplicates and the reset share one attempt"
     );
+}
+
+/// Q53 / #828 B+C: operator reset and later success share the held delivery's key.
+#[test]
+fn operator_clear_and_success_converge_on_one_dispatch() {
+    for success_first in [false, true] {
+        let mut f = Fixture::new();
+        f.config.github.operations = Some(tl3_config::OperationsIssue {
+            owner: "RobTand".into(),
+            name: "ops".into(),
+            installation_id: 1,
+            number: 17,
+        });
+        let mut f = f.restart();
+        let key = f.held(true);
+        if success_first {
+            f.success();
+        }
+        f.controller
+            .observe(
+                "operator-reset",
+                Observation::GitHubComment {
+                    repository: tl3_controller::Repository {
+                        owner: "RobTand".into(),
+                        name: "ops".into(),
+                        installation: 1,
+                    },
+                    issue: 17,
+                    comment: tl3_github::Comment {
+                        id: 828,
+                        body: "clear quota alternate-model".into(),
+                        user: tl3_github::Actor {
+                            id: f.config.github.rob.id,
+                            login: "fixture".into(),
+                        },
+                        created_at: chrono::DateTime::UNIX_EPOCH,
+                        updated_at: chrono::DateTime::UNIX_EPOCH,
+                        issue_url: "https://api.github.com/repos/RobTand/ops/issues/17".into(),
+                    },
+                },
+            )
+            .unwrap();
+        f.drain();
+        if !success_first {
+            // The operator reset must dispatch through an existing probe regime
+            // before any success can accidentally rescue its wake.
+            fs::write(f.root.path().join("restored"), "yes").unwrap();
+            f.controller.look_due().unwrap();
+            assert_eq!(
+                f.attempt(&key),
+                1,
+                "operator reset must release the bounded quota wait immediately"
+            );
+            f.success();
+        }
+        f.controller.look_due().unwrap();
+        f.clock.0.set(RESET);
+        f.controller.look_due().unwrap();
+        assert_eq!(
+            f.attempt(&key),
+            1,
+            "operator clear, success and reset converge on one replacement"
+        );
+    }
 }
 
 #[test]
