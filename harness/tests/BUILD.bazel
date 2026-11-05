@@ -321,10 +321,10 @@ tl3_py_test(
 # #835: keep the native unittest entry point outside Gazelle's py_test mapping.
 native_py_test(
     name = "test_limits_boundary",
-    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
-    main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
-    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
-    deps = ["//harness/src/tl3_harness"],
     size = "small",
     timeout = "short",
+    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
+    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
+    main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
+    deps = ["//harness/src/tl3_harness"],
 )
