@@ -1,4 +1,4 @@
-            Observation::CiFailed { checks, .. } => findings::QueueCiEvidence {
-                checks: checks.clone(),
-                ..Default::default()
+            Observation::CiFailed { node, infra, .. } => Event::Fact {
+                node,
+                fact: Fact::CiFailed { infra },
             },

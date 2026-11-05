@@ -14,6 +14,7 @@ fn schedule(kind: u8) -> Schedule {
     }
 }
 fn arm<'a>(s: &'a str, name: &str) -> &'a str {
+    let s = s.find("        let event = match observation {").map(|i| &s[i..]).unwrap_or(s);
     let a = s
         .find(&format!(
             "            Observation::{name}{}",
@@ -27,6 +28,7 @@ fn arm<'a>(s: &'a str, name: &str) -> &'a str {
     &s[a..end]
 }
 fn scratch(s: &str) -> &str {
+    let s = s.find("        let event = match observation {").map(|i| &s[i..]).unwrap_or(s);
     let a = s.find("            Observation::ScratchSaved {").unwrap();
     let end = s[a..]
         .find("            Observation::Progress {")
