@@ -102,3 +102,29 @@ def _run(request, emit):
                 _checked(role, request["inputs"], reply)
     emit({"event": "reply", "role": role.name, "reply": reply})
     return reply
+
+
+def create_model(request) -> BaseChatModel:
+    key = Path(request["key_file"]).read_text().strip()
+    if not key:
+        raise ValueError("empty model key")
+    from tl3_workers.tracing import record_model_key
+    record_model_key(key)
+    spec = request["model"]
+    identity = session_identity(request)
+    from tl3_workers.facts import current as current_facts
+    if facts := current_facts.get():
+        facts.session_id = identity
+    return ProxyChatOpenAI(
+        base_url=spec["base_url"],
+        model=spec["name"],
+        reasoning_effort=spec["effort"],
+        max_completion_tokens=spec["budget_tokens"],
+        api_key=key,
+        use_responses_api=False,
+        streaming=True,
+        stream_usage=True,
+        default_headers={"X-Session-ID": identity},
+        model_kwargs={"prompt_cache_key": prompt_cache_identity(request)},
+        max_retries=0,
+    )

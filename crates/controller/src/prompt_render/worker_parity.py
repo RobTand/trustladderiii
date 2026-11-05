@@ -1,6 +1,7 @@
 """Controller-only real-binary regression. Worker unit targets never import it."""
 from contextlib import nullcontext
 from copy import deepcopy
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -146,21 +147,30 @@ class Worktree:
     generation_instruction = runtime.Worktree.generation_instruction
 
 
-def scheduled(namespace, state, crash_at):
+def scheduled(namespace, state, crash_at, role_name='planner', samples=(3, 4), key_sample='fixture-key'):
     events, messages, persisted = [], [], {}
     writes = 0
 
     class SampledWorktree(Worktree):
         generation_instruction = namespace.get('generation_instruction', Worktree.generation_instruction)
 
-    def model(request):
-        events.append(('session', namespace['session_identity'](request)))
-        events.append(('cache', namespace['prompt_cache_identity'](request)))
+    def client(**kwargs):
+        events.append(('model-client', kwargs['default_headers']['X-Session-ID'],
+                       kwargs['model_kwargs']['prompt_cache_key']))
         return SimpleNamespace()
+
+    def role_run(model, request, worktree, emit):
+        # Session-role orchestration starts after create_model. Keep the real
+        # startup dispatch, then stop at the same inert agent boundary as planner.
+        events.append(('role-run', role_name))
+        agent(model, namespace['ROLES'][role_name], worktree)
+        messages.append(namespace['initial_message'](request, request['inputs']).content)
+        return {'kind': 'cant_meet', 'files': [], 'report': 'fixture'}
 
     def agent(model, role, worktree, **kwargs):
         events.append(('prompt', namespace['role_prompt'](role)))
-        events.append(('generation', worktree.generation_instruction()))
+        if role.name in {'ingest', 'planner', 'maker'}:
+            events.append(('generation', worktree.generation_instruction()))
         return SimpleNamespace()
 
     def repaired(control, history, invoke, checked):
@@ -171,6 +181,14 @@ def scheduled(namespace, state, crash_at):
         checkpoint = Path(temporary) / 'rehearsal.json'
         checkpoint.write_text('{}')
         original_read = Path.read_text
+        session = Path(temporary) / 'session.json'
+        session.write_text('{}')
+        session_head = session.with_suffix('.head')
+        session_head.write_text('{}')
+        key = Path(temporary) / 'model-key'
+        key.write_text('fixture-key')
+        session_reads = 0
+        original_exists = Path.exists
         original_open = Path.open
         original_replace = os.replace
         crashed = False
@@ -222,20 +240,45 @@ def scheduled(namespace, state, crash_at):
             original_replace(source, target)
             effect('rename')
 
+        def exists(path):
+            if path in (session, session_head):
+                events.append(('exists', path.name))
+            return original_exists(path)
+
         def read(path, *args, **kwargs):
+            nonlocal session_reads
+            if path == key:
+                events.append(('read', 'model-key', key_sample))
+                if key_sample == 'read-error':
+                    raise PermissionError('scheduled key read')
+                return key_sample
+            if path in (session, session_head):
+                sample = samples[min(session_reads, len(samples) - 1)]
+                session_reads += 1
+                events.append(('read', path.name, sample))
+                if sample == 'read-error':
+                    raise PermissionError(f'scheduled session read {session_reads}')
+                return json.dumps({'generation': sample})
             if path == checkpoint:
                 events.append(('read', 'rehearsal', deepcopy(state)))
                 return json.dumps(state)
             return original_read(path, *args, **kwargs)
 
-        request = {'role': 'planner', 'worktree': temporary, 'session_file': str(checkpoint),
-                   'operation': {'node': 1, 'generation': 0}, 'model': {'name': 'claude-fixture'},
+        request = {'role': role_name, 'worktree': temporary,
+                   'session_file': str(checkpoint if role_name == 'planner' else session),
+                   'key_file': str(key), 'operation': {'node': 1, 'generation': 0},
+                   'model': {'name': 'claude-fixture', 'base_url': 'http://unused.invalid',
+                             'effort': 'low', 'budget_tokens': 100},
                    'memory': {'summary_file': str(Path(temporary) / 'memory.json')},
                    'inputs': {'base_sha': 'a' * 40, 'ingest': {'goals': []}}}
-        changes = {'create_model': model, 'Worktree': SampledWorktree,
+        roles = dict(namespace['ROLES'])
+        if role_name != 'planner':
+            roles[role_name] = replace(roles[role_name], run=role_run, validates_reply=True)
+        changes = {'ProxyChatOpenAI': client, 'ROLES': roles, 'Worktree': SampledWorktree,
                    'build_agent': agent, 'repaired': repaired}
         with patch.dict(namespace, changes), patch.object(Path, 'read_text', read), \
-             patch.object(Path, 'open', opened), patch.object(os, 'fsync', synced), \
+             patch.object(Path, 'open', opened), patch.object(Path, 'exists', exists), \
+             patch.object(os, 'fsync', synced), \
              patch.object(os, 'replace', replaced), \
              patch.object(tracing, 'observe', lambda _: nullcontext()), \
              patch.object(facts, 'observe', lambda _: nullcontext()), \
@@ -253,18 +296,50 @@ base = {'version': 1, 'contract': {'base_sha': 'a' * 40, 'tests': None},
 scenarios = [base, {**base, 'candidates': [{'status': 'refused', 'message': 'changed after request'}], 'attempts': 1},
              {**base, 'version': 2}]
 count = 0
-schedules = [(state, crash) for state in scenarios for crash in range(10)]
-schedules.extend((scenarios[index], crash) for index, crash in json.loads(sys.argv[1]))
-for state, crash in schedules:
-        with patch.dict(os.environ, {'TL3_RELEASE_BINARY': ''}):
-            before = scheduled(old, state, crash)
-        with patch.dict(os.environ, {'TL3_RELEASE_BINARY': binary}):
-            after = scheduled(runtime.__dict__, state, crash)
-        assert before == after, (state, crash, before, after)
-        count += 1
+schedules = [(state, crash, 'planner', (3, 4), 'fixture-key')
+             for state in scenarios for crash in range(10)]
+schedules.extend((scenarios[index], crash, 'planner', (3, 4), 'fixture-key')
+                 for index, crash in json.loads(sys.argv[1]))
+for role_name in ('maker', 'reviewer'):
+    for samples, key_sample in (((3, 4), 'fixture-key'), ((7, 2), 'fixture-key'),
+                                (('read-error', 4), 'fixture-key'),
+                                ((3, 'read-error'), 'fixture-key'),
+                                (('read-error', 4), ''),
+                                (('read-error', 4), 'read-error')):
+        schedules.extend((base, crash, role_name, samples, key_sample) for crash in range(10))
+    schedules.extend((scenarios[index], crash, role_name, (index + 1, crash + 11), 'fixture-key')
+                     for index, crash in json.loads(sys.argv[1]))
+for state, crash, role_name, samples, key_sample in schedules:
+    with patch.dict(os.environ, {'TL3_RELEASE_BINARY': ''}):
+        before = scheduled(old, state, crash, role_name, samples, key_sample)
+    with patch.dict(os.environ, {'TL3_RELEASE_BINARY': binary}):
+        after = scheduled(runtime.__dict__, state, crash, role_name, samples, key_sample)
+    assert before == after, (role_name, state, crash, samples, key_sample, before, after)
+    if crash == 0 and role_name != 'planner':
+        events, _, _, outcome = after
+        reads = [event for event in events if event[0] == 'read']
+        assert reads[0] == ('read', 'model-key', key_sample), reads
+        if key_sample in ('', 'read-error'):
+            assert len(reads) == 1 and outcome[0] in {'ValueError', 'PermissionError'}, after
+        else:
+            name = 'session.head' if role_name == 'maker' else 'session.json'
+            expected_reads = [('read', name, sample) for sample in samples]
+            if samples[0] == 'read-error':
+                expected_reads = expected_reads[:1]
+            assert reads[1:] == expected_reads, after
+            clients = [event for event in events if event[0] == 'model-client']
+            if 'read-error' in samples:
+                failed_at = samples.index('read-error') + 1
+                assert not clients and outcome == ('PermissionError', f'scheduled session read {failed_at}'), after
+            else:
+                assert clients == [('model-client', f'tl3-1-{samples[0]}-0', f'tl3-1-{samples[1]}-0')], after
+                assert outcome == 'ok', after
+    count += 1
 assert any('forcing_rehearsal_state' in json.loads(''.join(block['text'] for block in content))
            for content in scheduled(runtime.__dict__, scenarios[1], 0)[1])
-print(f'PASS {count} differential worker-start schedules; identical I/O, messages, persisted bytes and failure order')
+print(f'PASS {count} differential worker-start schedules for planner, maker and reviewer; '
+      'original create_model, changing session reads, key/session failures, identical I/O, '
+      'client identities, messages, persisted bytes and failure order')
 
 oracle = runpy.run_path(str(directory / 'oracle.py'))
 with patch('sys.argv', ['oracle.py', '--check']):
