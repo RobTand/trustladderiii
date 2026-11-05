@@ -520,6 +520,16 @@ def extra_cases(recorder):
         change(reply)
         constrain(mismatch, reply)
         local(mismatch, deepcopy(reply))
+    coverage = planner.PlanConsistencyError([], draft=deepcopy(LEAF), missing_goals={7: 'source goal'})
+    invalid_coverage = deepcopy(LEAF)
+    invalid_coverage['violations'] = []
+    invalid_coverage['checks'][0]['goal_ids'] = [7]
+    constrain(coverage, invalid_coverage)
+    invariant = recorder.pure('planner.wire', planner.wire)
+    try:
+        invariant('unnamed input')
+    except TypeError:
+        pass
     # Boundary-only shape cases cannot be obtained through model schemas.
     from types import SimpleNamespace
     import checker_stub

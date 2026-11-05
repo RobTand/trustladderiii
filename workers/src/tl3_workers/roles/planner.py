@@ -301,12 +301,12 @@ class Correction:
         before, after = self.draft['pieces'], candidate['pieces']
         if len(before) != len(after):
             return ['/pieces']
-        errors = []
+        bad_paths = []
         source_goals = set(range(len(self.inputs['ingest']['goals'])))
         missing = source_goals - {g for piece in before for g in piece['goal_ids']}
         for i, (old, new) in enumerate(zip(before, after)):
             if not same({k: v for k, v in old.items() if k != 'goal_ids'}, {k: v for k, v in new.items() if k != 'goal_ids'}):
-                errors.append(f'/pieces/{i}')
+                bad_paths.append(f'/pieces/{i}')
             a, b = old['goal_ids'], new['goal_ids']
             dropping = [g for g in a if g not in source_goals] if any(item.get('piece') == i for item in self.permissions.get('PIECE_DROP', [])) else []
             retained = [g for g in a if g not in dropping]
@@ -316,8 +316,8 @@ class Correction:
             if not a and any(item.get('piece') == i for item in self.permissions.get('PIECE_GOALS', [])):
                 additions.update(g for g in source_goals if self.supports(g, old))
             if not insertion(retained, b, additions):
-                errors.append(f'/pieces/{i}/goal_ids')
-        return errors
+                bad_paths.append(f'/pieces/{i}/goal_ids')
+        return bad_paths
 
     def checks(self, candidate):
         before, after = self.draft['checks'], candidate['checks']

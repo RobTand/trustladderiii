@@ -333,7 +333,7 @@ def correction_case(case, mismatch=None, function=None):
 
 
 PURE = {
-    'planner': ('message', 'base_definition', 'proof_omissions', 'planner_schema_reply', 'proof_for_validation', 'execution_budget_details', 'edit_violations',
+    'planner': ('message', 'wire', 'base_definition', 'proof_omissions', 'planner_schema_reply', 'proof_for_validation', 'execution_budget_details', 'edit_violations',
                 'mentions', 'asks_to_edit', 'valid_forcing', 'function'),
     'evidence': ('preflight', 'proof_applicability', 'subject_covers', 'branch_satisfies',
                  'branch_objections', 'forcing_capabilities', 'forcing_guidance'),
@@ -417,6 +417,8 @@ def strings(document):
         diagnostics(unpacked(result.get('return')))
         diagnostics(unpacked(result.get('args')))
         diagnostics(unpacked(result.get('kwargs')))
+        if case.get('mismatch'):
+            values.append(case['mismatch']['message'])
         error = result.get('error', {})
         values.extend(error.get('violations', []))
         if error:
