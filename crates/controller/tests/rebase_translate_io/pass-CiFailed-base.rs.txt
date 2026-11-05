@@ -1,0 +1,4 @@
+            Observation::CiFailed { checks, .. } => findings::QueueCiEvidence {
+                checks: checks.clone(),
+                ..Default::default()
+            },

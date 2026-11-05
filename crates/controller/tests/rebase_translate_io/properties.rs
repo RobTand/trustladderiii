@@ -281,6 +281,7 @@ fn step_strategy() -> impl Strategy<Value = Step> {
                     _ => SHA.into(),
                 },
                 files,
+                ..Step::default()
             },
         )
 }

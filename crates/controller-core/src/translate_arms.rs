@@ -18,8 +18,9 @@ pub enum RebaseDisposition {
     Ignore,
 }
 
-/// Q41; docs/state-table.md:584-586 on c3e6fbbb. Only a reply for the
-/// current rebase generation may clear or record conflicts and change heads.
+/// Reply rule, docs/state-table.md:139 on c3e6fbbb: a reply must match the
+/// current operation. Rebase outcomes at :584-586 are context, not the
+/// generation-freshness rule. Only a current rebase reply changes rows/heads.
 /// This is an unbounded equality decision over the complete u64 generation.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
     result == if phase == RebasePhase::Rebasing && current == observed {
