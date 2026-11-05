@@ -844,7 +844,10 @@ PROOF_DECLARATION = Proof((), (), 'undeclared assertion message').as_json()
 
 
 def proof_for_validation(check):
-    return {**PROOF_DECLARATION, **check.get('proof', {}), **({'red_message': PROOF_DECLARATION['red_message']} if not check.get('proof', {}).get('red_message', '').strip() else {})}
+    proof = check.get('proof', {})
+    red = proof.get('red_message', '')
+    return {**PROOF_DECLARATION, **proof, **({'red_message': PROOF_DECLARATION['red_message']}
+        if isinstance(red, str) and not red.strip() else {})}
 
 
 def planner_schema_reply(reply):

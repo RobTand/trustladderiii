@@ -432,3 +432,14 @@ def test_843_live_golden_gets_one_repair_then_typed_stop(planner_request, monkey
     assert event['plan_check']['repair'] == {'status': 'attempted'}
     assert any(item['rule'] == 'check.base_missing' for item in event['plan_check']['objections'])
     assert fixture['objections'][0] in event['reply']['violations']
+
+
+@pytest.mark.parametrize('red', [1, None, [], {}])
+def test_malformed_proof_omission_keeps_the_single_format_repair(planner_request, monkeypatch, red):
+    draft = copy.deepcopy(LEAF)
+    draft['checks'][0]['proof'] = {'red_message': red}
+    model, event = _named_run(planner_request, monkeypatch, draft, LEAF)
+    assert len(model.calls) == 2
+    assert not model.calls[-1][1]
+    assert event['reply']['violations'] == []
+    assert 'plan_check' not in event
