@@ -42,9 +42,11 @@ mod events;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/events_lemmas.rs"]
 mod events_lemmas;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/plan_check.rs"]
 mod plan_check;
+use plan_check::reply_plan_check;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/plan_check_witness.rs"]
+mod plan_check_witness;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;

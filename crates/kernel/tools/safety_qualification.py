@@ -17,15 +17,15 @@ import remote_gate  # noqa: E402
 
 CASES = {
     'plan_check_rejected_asks': (
-        'crates/kernel/src/work_replies.rs',
+        'crates/kernel/src/plan_check.rs',
         'Reply::PlanCheckRejected => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
         'Reply::PlanCheckRejected => {\n            ask_rob(w, i, QKind::CantMeet, Cont::Nowhere, 0, out);',
-        '//crates/kernel:verus_work_replies'),
+        '//crates/kernel:verus_plan_check'),
     'plan_check_needs_split_asks': (
-        'crates/kernel/src/work_replies.rs',
+        'crates/kernel/src/plan_check.rs',
         'Reply::PlanCheckNeedsSplit => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
         'Reply::PlanCheckNeedsSplit => {\n            ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out);',
-        '//crates/kernel:verus_work_replies'),
+        '//crates/kernel:verus_plan_check'),
     'selector_inventory': ('crates/kernel/src/allocation.rs',
                            'use super::*;',
                            'use super::*;\nkernel_fn! { fn selector_inventory_unlisted() '

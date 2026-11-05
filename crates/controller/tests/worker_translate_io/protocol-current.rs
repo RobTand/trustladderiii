@@ -107,24 +107,27 @@ pub(crate) fn map_reply_with_plan_check(
         },
         "reviewer" if reply["verdict"] == "out_of_room" => Reply::ReviewerOutOfRoom,
         "reviewer" => Reply::ChangesRequested,
-        "planner" => {
-            forecast(reply)?;
-            let violations = reply["violations"]
-                .as_array()
-                .ok_or(Error::Invalid("planner violations missing"))?;
-            if !violations.is_empty() || reply["kind"] == "cant_meet" {
-                Reply::PlanCantMeet
-            } else if reply["kind"] == "split" {
-                Reply::PlanSplit
-            } else {
-                Reply::PlanLeaf {
-                    footprint: tl3_kernel::Footprint::default(),
-                    fits: reply["forecast"]["fits"] == true,
-                }
-            }
-        }
+        "planner" => ordinary_planner_reply(reply)?,
         _ => return Err(Error::Invalid("unsupported worker role")),
     }))
+}
+
+/// Ordinary planner mapping; #820 can replace this boundary with its typed mapper.
+fn ordinary_planner_reply(reply: &Value) -> Result<Reply> {
+    forecast(reply)?;
+    let violations = reply["violations"]
+        .as_array()
+        .ok_or(Error::Invalid("planner violations missing"))?;
+    Ok(if !violations.is_empty() || reply["kind"] == "cant_meet" {
+        Reply::PlanCantMeet
+    } else if reply["kind"] == "split" {
+        Reply::PlanSplit
+    } else {
+        Reply::PlanLeaf {
+            footprint: tl3_kernel::Footprint::default(),
+            fits: reply["forecast"]["fits"] == true,
+        }
+    })
 }
 
 pub(crate) fn relative_file(path: &str) -> bool {
