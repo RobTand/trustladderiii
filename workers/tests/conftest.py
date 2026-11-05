@@ -86,9 +86,10 @@ def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
         yield
         return
 
-    cursor = request.getfixturevalue("checker_state_directory") / "checker-cursor"
     # A child needs only this immutable script, not the complete parity corpus.
     script = checker_stub.cases().get(request.node.nodeid, [])
+    state = request.getfixturevalue("checker_state_directory") if script else tmp_path
+    cursor = state / "checker-cursor"
     script_path = tmp_path / "checker-script.json"
     script_path.write_text(json.dumps(script))
 
