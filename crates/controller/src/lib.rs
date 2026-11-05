@@ -378,6 +378,7 @@ impl Controller {
         clock: impl clock::Clock + 'static,
     ) -> Result<Self> {
         let mut store = ownership.into_store();
+        while store.migrate_dispatch_evidence()? {}
         let snapshot = store.load()?;
         if snapshot.rows.is_empty() {
             let world = World::new(
@@ -1063,13 +1064,7 @@ impl Controller {
 
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
-        if self.store.migrate_dispatch_evidence()? {
-            return Ok(true);
-        }
         let snapshot = self.store.load()?;
-        if self.reconcile_worker_waits_in(&snapshot, &mut hook)? {
-            return Ok(true);
-        }
         if self.retire_committed_waits(&snapshot)? {
             return Ok(true);
         }
@@ -1211,6 +1206,14 @@ impl Controller {
         }
         let mut progressed = false;
         let world = snapshot::decode(&snapshot)?;
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == dispatch_liveness::QUEUED)
+            && self.reconcile_queued_worker_waits(&snapshot, &world, &mut hook)?
+        {
+            return Ok(true);
+        }
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
             // ClosePr removes the queue label without waiting for Mergify admission reads.
@@ -2528,6 +2531,7 @@ impl Controller {
             commit.rows.push(self.allowance_row(delivery.clone()));
             commit.effects.push(delivery.into_effect());
         }
+        dispatch_liveness::queue_pool_changes(snapshot, &previous, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             let old = previous
                 .nodes

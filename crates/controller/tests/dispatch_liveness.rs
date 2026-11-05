@@ -493,7 +493,7 @@ fn pending_start_stays_on_its_original_dispatch_path() {
     );
     assert_eq!(missing_incidents(&mut controller), 0);
     drain(&mut controller);
-    assert_eq!(runs.borrow().starts, [key.clone()]);
+    assert_eq!(runs.borrow().starts.as_slice(), std::slice::from_ref(&key));
     assert!(
         controller
             .snapshot()
@@ -512,6 +512,8 @@ fn unrelated_observations_and_idle_drives_visit_no_worker_waits() {
     let runs = Rc::new(RefCell::new(Runs::default()));
     let mut controller = open(&settings, root.path(), Role::Audit, &runs);
     intake(&mut controller, 1);
+    let key = runs.borrow().starts[0].clone();
+    lose_watch(&settings, &key);
     controller
         .observe(
             "priority-only",
@@ -541,5 +543,13 @@ fn unrelated_observations_and_idle_drives_visit_no_worker_waits() {
     assert_eq!(
         visited, 0,
         "unrelated input and idle drives must do no worker-wait reconciliation"
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "watches" && r.id == key)
     );
 }
