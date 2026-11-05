@@ -569,7 +569,9 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 installation: context.installation_id,
             };
             let mut inputs = vec![Input::IssueChanged(issue_change(id, &context, &issue))];
-            inputs.extend(prerequisite_issue(&repo, &issue));
+            if bootstrap.repos.contains(&repo) {
+                inputs.extend(prerequisite_issue(&repo, &issue));
+            }
             inputs
         }
         Some(
@@ -589,7 +591,11 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 name: context.repository.name,
                 installation: context.installation_id,
             };
-            prerequisite_pr(&repo, &pull_request).into_iter().collect()
+            if bootstrap.repos.contains(&repo) {
+                prerequisite_pr(&repo, &pull_request).into_iter().collect()
+            } else {
+                vec![]
+            }
         }
         Some(Event::CommentCreated {
             context,

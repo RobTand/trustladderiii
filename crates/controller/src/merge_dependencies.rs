@@ -582,16 +582,13 @@ impl Controller {
         fact: ExternalFact,
         commit: &mut Commit,
     ) -> Result<()> {
-        if fact.number == 0
-            || !self
-                .bootstrap
-                .repos
-                .iter()
-                .any(|repo| same_repository(repo, &fact.repository))
-        {
-            return Err(Error::Invalid(
-                "merge prerequisite fact is outside served repositories",
-            ));
+        // App installations also deliver updates for operations-only repositories.
+        // Ignore queued updates from those repositories, including older inbox rows.
+        if !self.bootstrap.repos.contains(&fact.repository) {
+            return Ok(());
+        }
+        if fact.number == 0 {
+            return Err(Error::PrerequisiteNumber);
         }
         let fact = retain_fact(snapshot, commit, fact)?;
         let mut outputs = Vec::new();
