@@ -229,7 +229,13 @@ fn production_projection_functions_are_source_pinned() {
     }
     let frozen_adapter = include_str!("base-adapter.rs.txt");
     let reference_support = include_str!("reference-projection-support.rs");
-    for name in ["node", "identity", "unresolved_hold", "person_facts"] {
+    for name in [
+        "node",
+        "identity",
+        "unresolved_hold",
+        "person_facts",
+        "heal_phase",
+    ] {
         let needle = format!("fn {name}(");
         assert_eq!(
             item(frozen_adapter, &needle).replace("crate::", "super::"),
