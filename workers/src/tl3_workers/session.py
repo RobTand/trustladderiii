@@ -6,6 +6,8 @@ import os
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 
+from tl3_workers.budget_check import check as budget_check
+
 
 def save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,24 +50,14 @@ class ContextCharacters(BaseCallbackHandler):
 
 def out_of_room(message, context_size, prompt_characters):
     usage = message.usage_metadata
-    tokens = 0
-    if usage is not None:
-        counts = [usage.get("input_tokens"), usage.get("output_tokens")]
-        reasoning = (usage.get("output_token_details") or {}).get("reasoning")
-        if any(type(count) is not int or count < 0 for count in counts) or (
-                reasoning is not None and (type(reasoning) is not int or reasoning < 0)):
-            raise ValueError("invalid model usage metadata")
-        input_tokens, output_tokens = counts
-        if input_tokens + output_tokens:
-            # The next prompt resends this turn's input and visible output (text and
-            # tool-call arguments). Reasoning is not resent, so it takes no room.
-            # CLIProxyAPI reports it as output_token_details.reasoning. Without that,
-            # the characters bound the visible part, never the raw output count.
-            if reasoning is None:
-                visible = min(output_tokens, (_message_characters(message) + 2) // 3)
-            else:
-                visible = max(output_tokens - reasoning, 0)
-            tokens = input_tokens + visible
-    if tokens == 0:
-        tokens = (prompt_characters + _message_characters(message) + 2) // 3
-    return tokens * 100 >= context_size * 85
+    facts = dict(input=usage.get("input_tokens") if usage is not None else None,
+                 output=usage.get("output_tokens") if usage is not None else None,
+                 reasoning=(usage.get("output_token_details") or {}).get("reasoning") if usage else None,
+                 visible_characters=None, fallback_characters=None,
+                 prompt_characters=prompt_characters, context=context_size)
+    while True:
+        action = budget_check("cutoff_sample", **facts)
+        if action["kind"] == "done":
+            return action["out_of_room"]
+        field = "visible_characters" if action["kind"] == "need_visible" else "fallback_characters"
+        facts[field] = _message_characters(message)

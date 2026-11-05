@@ -94,4 +94,4 @@ path = "tests/publishing.rs"
 harness = false
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)", "cfg(verus_keep_ghost)"] }

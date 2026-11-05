@@ -1,0 +1,1 @@
+# Seeds for #780 differential regressions. New failures are retained in Bazel test outputs.
