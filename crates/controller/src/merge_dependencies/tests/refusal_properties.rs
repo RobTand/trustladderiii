@@ -873,6 +873,28 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
         baseline.consume_kernel_input(&original, &row).unwrap(),
         "case {case} must have a successful baseline"
     );
+    let reached = baseline.snapshot().unwrap();
+    let witness_table = match case {
+        7 => Some("postmortem_jobs"),
+        16 => Some("check_plans"),
+        22 => Some("rebase_conflicts"),
+        _ => None,
+    };
+    if let Some(table) = witness_table {
+        let projection = |snapshot: &Snapshot| {
+            snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == table)
+                .map(|r| (r.id.clone(), r.value.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(
+            projection(&original),
+            projection(&reached),
+            "case {case}: active handler must write {table} before refusal can qualify"
+        );
+    }
     let checkpoints = baseline.refusal_injection.borrow().visited;
     assert!(checkpoints > 0);
     if case == 0 || case == 9 {
@@ -1103,4 +1125,192 @@ fn wait_subscription_is_removed_only_after_input_commit() {
             .iter()
             .any(|r| r.table == "retiring_waits")
     );
+}
+
+/// State-table "Counter headroom": postmortem refusal must reach its active job.
+#[test]
+fn handler_reachability_postmortem() {
+    check_input_case(&mut Database::start(), 7, 771, 1);
+}
+
+/// State-table "Counter headroom": adoption worktree evidence must write its plan.
+#[test]
+fn handler_reachability_worktree() {
+    check_input_case(&mut Database::start(), 16, 771, 1);
+}
+
+/// State-table "Counter headroom": conflict refusal must reach Rebasing writes.
+#[test]
+fn handler_reachability_rebase_conflict() {
+    check_input_case(&mut Database::start(), 22, 771, 1);
+}
+
+/// State-table "Counter headroom": a slow upstream read must not stop ingress,
+/// memory-feed publication or supervisor progress on their independent sessions.
+#[test]
+fn slow_input_http_does_not_block_other_writers() {
+    use crate::executor::{Completion, Delivery, Executor, Reconciliation, Upstream};
+    use std::{
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    struct HttpPrerequisite(std::net::SocketAddr);
+    impl Executor for HttpPrerequisite {
+        fn prerequisite(
+            &mut self,
+            _: &Repository,
+            _: PrerequisiteKind,
+            _: u64,
+        ) -> crate::Result<DependencyStatus> {
+            let mut socket = TcpStream::connect(self.0).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            socket
+                .write_all(
+                    b"GET /prerequisite HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            let mut response = String::new();
+            socket.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"));
+            Ok(DependencyStatus::Pending)
+        }
+        fn execute(&mut self, _: &Delivery) -> crate::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> crate::Result<Reconciliation> {
+            unreachable!()
+        }
+    }
+    let mut db = Database::start();
+    let (repo, mut c, _, settings) = fixture_with_settings(&mut db, "http_transaction_writers");
+    let repository = c.bootstrap.repos[0].clone();
+    let node = intake(&mut c, &repository, 42);
+    c.store
+        .put_worker_materials(
+            "0",
+            &json!({"issue":{"title":"Implement","body":"Wait for #9999"}}),
+        )
+        .unwrap();
+    let generation = c.world().unwrap().nodes[0].generation;
+    c.observe("http-input", Observation::WorkerReply {
+        node, generation, role: "ingest".into(), model: None,
+        reply: json!({"kind":"brief","brief":"Implement","goals":[{"description":"Implement","verification":"test"}],"memory_ids":[],"files":["src/blocked.rs"],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true},"merge_prerequisites":[{"kind":"issue","number":9999,"source_quote":"Wait for #9999"}]}),
+    }).unwrap();
+    let bootstrap = c.bootstrap.clone();
+    let epoch = c.snapshot().unwrap().epoch.get();
+    let fake_root = repo.root.path().join("fakes");
+    let mut memory = tl3_store::Store::open(&settings).unwrap();
+    let mut worker = tl3_store::Store::open(&settings).unwrap();
+    let mut ingress = tl3_store::Store::open(&settings).unwrap();
+    let mut sql = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .dbname(&settings.database)
+        .connect(postgres::NoTls)
+        .unwrap();
+    drop(c);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0u8; 1024];
+        assert!(socket.read(&mut request).unwrap() > 0);
+        entered_tx.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .unwrap();
+    });
+    let input_settings = settings.clone();
+    let input = std::thread::spawn(move || {
+        let mut adapters = crate::adapters::simulation(&fake_root).unwrap();
+        adapters.register(Upstream::GitHub, HttpPrerequisite(address));
+        let mut c = Controller::open_with_clock(
+            tl3_store::Store::open(&input_settings).unwrap(),
+            adapters,
+            bootstrap,
+            FixedClock,
+        )
+        .unwrap();
+        let original = c.snapshot().unwrap();
+        let row = original
+            .rows
+            .iter()
+            .find(|r| r.table == "inbox" && r.id == "external:http-input")
+            .unwrap()
+            .clone();
+        assert!(c.consume_kernel_input(&original, &row).unwrap());
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let locks: Vec<Value> = sql.query("SELECT jsonb_build_object('type', l.locktype, 'table', c.relname, 'mode', l.mode, 'granted', l.granted) FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid LEFT JOIN pg_class c ON c.oid=l.relation WHERE a.datname=current_database() AND a.state='idle in transaction' ORDER BY l.locktype,c.relname,l.mode", &[]).unwrap().into_iter().map(|r| r.get(0)).collect();
+    println!("INPUT_HTTP_LOCKS {}", json!(locks));
+    let (done_tx, done_rx) = mpsc::channel();
+    let tx = done_tx.clone();
+    let memory_thread = std::thread::spawn(move || {
+        let start = Instant::now();
+        memory
+            .queue_memory("http-independent-memory", &json!({"summary":"independent"}))
+            .unwrap();
+        tx.send(("memory_feed", start.elapsed().as_millis()))
+            .unwrap();
+    });
+    let tx = done_tx.clone();
+    let worker_thread = std::thread::spawn(move || {
+        let start = Instant::now();
+        worker.claim_worker("http-worker", "0", epoch, 1).unwrap();
+        worker
+            .record_worker_progress("http-worker", 1, 1, "tool_result", None)
+            .unwrap();
+        tx.send(("worker_supervisor", start.elapsed().as_millis()))
+            .unwrap();
+    });
+    let ingress_thread = std::thread::spawn(move || {
+        let start = Instant::now();
+        assert!(
+            ingress
+                .receive_ingress(
+                    "github-webhook",
+                    "http-independent-ingress",
+                    "issues",
+                    b"{}"
+                )
+                .unwrap()
+        );
+        sql.execute("INSERT INTO tl3_world (table_name,row_id,value,version) SELECT 'inbox','http-independent-inbox','{}'::jsonb,revision FROM tl3_meta", &[]).unwrap();
+        done_tx
+            .send(("ingress_and_inbox", start.elapsed().as_millis()))
+            .unwrap();
+    });
+    let deadline = Instant::now() + Duration::from_millis(750);
+    let mut results = Vec::new();
+    while results.len() < 3 {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        let Ok(result) = done_rx.recv_timeout(remaining) else {
+            break;
+        };
+        results.push(result);
+    }
+    release_tx.send(()).unwrap();
+    server.join().unwrap();
+    input.join().unwrap();
+    memory_thread.join().unwrap();
+    worker_thread.join().unwrap();
+    ingress_thread.join().unwrap();
+    println!("INPUT_HTTP_WRITERS {}", json!(results));
+    assert_eq!(
+        results.len(),
+        3,
+        "all independent writers must commit while HTTP is still blocked"
+    );
+    assert!(results.iter().all(|(_, millis)| *millis < 750));
 }
