@@ -71,7 +71,7 @@ pub(super) open spec fn dependencies_checked(world: World) -> bool {
 /// by declaration composition and its table update. Opacity keeps unrelated
 /// dependency quantifiers out of the wrapper's verification context.
 #[verifier::opaque]
-pub(super) closed spec fn dependency_frame(before: World, after: World, i: int) -> bool {
+pub(super) open spec fn dependency_frame(before: World, after: World, i: int) -> bool {
     after.nodes@[i] == (Node {
             waiting_prerequisite: after.nodes@[i].waiting_prerequisite,
             credit: Credit { withheld: after.nodes@[i].credit.withheld,
