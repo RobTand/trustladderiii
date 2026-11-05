@@ -110,23 +110,40 @@ def sole_import(tree, name, source):
 
 def validate_partial_literal(source, module_source, module, symbol):
     """Only immutable, singly bound data can be copied without its context."""
-    for statement in ast.parse(textwrap.dedent(source)).body:
+    statements = ast.parse(textwrap.dedent(source)).body
+    for statement in statements:
         if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
             continue
         try:
             value = ast.literal_eval(statement.value)
         except (ValueError, TypeError, SyntaxError):
             continue
+        if not (len(statements) == 1 and isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name)):
+            raise ProofRefusal('partial literal support must bind one plain name in a single assignment; '
+                               'put test data inside the observer or a new support factory', module, symbol)
+        binding = statement.targets[0].id
+        class RemoveLiteral(ast.NodeTransformer):
+            removed = False
+            def visit_Assign(self, node):
+                if not self.removed and ast.dump(node) == ast.dump(statement):
+                    self.removed = True
+                    return ast.copy_location(ast.Pass(), node)
+                return self.generic_visit(node)
+        remover = RemoveLiteral()
+        stripped = remover.visit(ast.parse(module_source))
         try:
             # literal_eval yields only builtin values: hashability excludes every
             # mutable container, including one nested in an immutable tuple.
             hash(value)
-            immutable = True
-        except TypeError:
-            immutable = False
-        if not immutable or len(binding_statements(ast.parse(module_source), symbol)) != 1:
+            # Erasing only the initializer lets the compiler find every other
+            # binding, even inside the same class or compound statement.
+            safe = remover.removed and binding not in binding_names(ast.unparse(stripped))
+        except (TypeError, SyntaxError):
+            safe = False
+        if not safe:
             raise ProofRefusal('partial literal support must be immutable and bound exactly once; '
-                               'put test data inside the observer or a new support factory', module, symbol)
+                               'put test data inside the observer or a new support factory', module, binding)
         # A dynamic namespace write elsewhere could change even an immutable
         # binding, without appearing as a second write in the symbol table.
         validate_namespace_apis(ast.parse(module_source), module)

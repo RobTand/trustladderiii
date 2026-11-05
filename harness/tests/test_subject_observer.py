@@ -968,6 +968,7 @@ def test_t842_loader_trust_rejects_repository_stdlib_shadows(tmp_path, t842_case
     'TOKEN = _DATA = 0\n_DATA = 1',
     'TOKEN, _DATA = (0, 0)\n_DATA = 1',
     'TOKEN = 0; _DATA = 0\n_DATA = 1',
+    'TOKEN = 0; _DATA = TOKEN\n_DATA = 1',
 ])
 def test_t842_declared_literal_cannot_hide_a_second_binding_in_its_source_line(repository, binding):
     # #842/#645 sibling: another declared name must not smuggle omitted data.
@@ -983,3 +984,19 @@ def test_t842_declared_literal_cannot_hide_a_second_binding_in_its_source_line(r
     assert results[0].verdict == Verdict.FAIL, results
     assert 'Proof assembly refused' in results[0].tests[0].message, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
+
+
+@pytest.mark.parametrize('write', ['match 1:\n    case TOKEN: pass', 'TOKEN += 1', '(TOKEN := 1)'])
+def test_t842_class_literal_support_cannot_hide_writes_in_one_compound_statement(tmp_path, write):
+    from textwrap import indent
+
+    path = 'tests/test_subject.py'
+    before = 'class Context: pass\ndef helper(): return 0\n'
+    after = ('class Context:\n    TOKEN = 0\n' + indent(write, '    ') +
+             '\ndef helper(): return 1\ndef test_observer():\n    assert helper() == Context.TOKEN, "bug"\n')
+    case = {'case': 'class literal writes', 'before': {path: before}, 'after': {path: after},
+            'tests': [path + '::test_observer'],
+            'proof': {'subjects': [path + '::helper'], 'observer_support': [path + '::Context::TOKEN'],
+                      'red_message': 'bug'}}
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
