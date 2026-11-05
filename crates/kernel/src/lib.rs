@@ -1160,10 +1160,14 @@ impl Outbox {
         ensures empty_outbox(result),
     ] {
         kernel_proof! { reveal(empty_outbox); }
-        Outbox {
+        let result = Outbox {
             items: [None; OUTBOX],
             len: 0,
+        };
+        kernel_proof! {
+            assert(result.items@ =~= Seq::new(OUTBOX as nat, |i: int| None));
         }
+        result
     }
 }
 }
@@ -1211,7 +1215,7 @@ impl Outbox {
     ] {
         let mut index = 0usize;
         kernel_while! { (index < OUTBOX) [
-            invariant index <= OUTBOX,
+            invariant index <= OUTBOX, self.items@.len() == OUTBOX,
             decreases OUTBOX - index,
         ] {
             if let Some(item) = self.items[index] { out.push(item); }
@@ -1419,6 +1423,9 @@ impl World {
                 forall|j: int| 0 <= j < i ==> !movable(*self, j),
             decreases w.nodes.len() - i,
         ] {
+            kernel_proof! {
+                potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
+            }
             if advance(&mut w, i, &mut out) { return false; }
             i += 1;
         } }
@@ -2935,6 +2942,7 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
         reply_bounds(*old(w), *final(w), i as int, 0, 0),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(reply_bounds);] {
+    kernel_snapshot! { before_ingest = *w }
     let m = &mut w.nodes[i];
     if !m.credit.ready {
         m.credit.ready = true;
@@ -2943,6 +2951,10 @@ fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option<EarlyEnd>)
     m.early_end = early_end;
     set_phase(m, Phase::Auditing);
     w.withhold_dependency_credit(i);
+    kernel_proof! {
+        assert forall|j: int| 0 <= j < before_ingest@.nodes@.len() && j != i implies
+            w.nodes@[j] == before_ingest@.nodes@[j] by {}
+    }
 }
 }
 

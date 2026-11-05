@@ -408,6 +408,18 @@ impl World {
             final(self).fail_fast == old(self).fail_fast,
             final(self).file_sets@ == old(self).file_sets@,
             final(self).dependencies@ == old(self).dependencies@,
+            final(self).nodes@.len() == old(self).nodes@.len(),
+            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
     ] {
         if !self.dependencies_delivered(NodeId(i as u64))
             && !self.nodes[i].planning_started

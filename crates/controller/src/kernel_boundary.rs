@@ -41,6 +41,7 @@ pub(crate) fn validate_raw_event(event: Event) -> Result<Event, &'static str> {
         },
     )
 )]
+#[allow(clippy::manual_map)] // The pinned Verus frontend verifies the explicit match.
 pub(crate) fn steering_command(node: NodeId, request: &Node, command: Command) -> Option<Event> {
     match request.next_command_id() {
         Some(id) => Some(Event::Command { node, id, command }),
