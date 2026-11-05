@@ -656,6 +656,8 @@ mod properties {
                     "queue_command",
                     "recovery_decide",
                     "recovery_now_ms",
+                    "command_stage",
+                    "legacy_command",
                 ],
             ),
         ] {
@@ -915,6 +917,7 @@ mod a1_schedules {
     }
 }
 
+mod a2;
 // A1 r1: the changed hold decision is implemented separately in each shell.
 // Node resolution is an unchanged recorded boundary; identity uses real source.
 impl QueueFact {
@@ -1000,6 +1003,116 @@ impl QueueFact {
 }
 
 mod a1_r1;
+
+// Group B1: append-only recovery-protocol reachability.
+mod recovery_reachability {
+    use super::*;
+    use io::{Entry, Frame, Profile, ReadOverride, Schedule};
+    fn stable(profile: Profile) -> Schedule {
+        Schedule {
+            profile,
+            initial: 0,
+            frames: vec![],
+            appears_at: usize::MAX,
+            write_results: vec![],
+            overrides: vec![],
+            file_results: vec![],
+        }
+    }
+    fn over(s: &mut Schedule, op: &str, suffix: &str, nth: usize, word: u16) {
+        s.overrides.push(ReadOverride {
+            op: op.into(),
+            suffix: suffix.into(),
+            nth,
+            frame: Frame {
+                word,
+                elapsed_ms: 0,
+            },
+        });
+    }
+    /// #608: every spent head budget prevents another command or archive read.
+    #[test]
+    fn mandatory_budget_exhausted() {
+        for initial in [128, 136, 152, 160, 168] {
+            let mut s = stable(Profile::Command);
+            s.initial = initial;
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_no_op(&s, Entry::Command, "github.command");
+            io::require_no_op(&s, Entry::Command, "store.effects");
+        }
+    }
+    /// #608: effect-keyed Sending and Refused receipts are adopted, never resent.
+    #[test]
+    fn mandatory_legacy_adoption() {
+        for (initial, command) in [(66, "Sending"), (68, "Refused")] {
+            let mut s = stable(Profile::Command);
+            s.initial = initial;
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_recovery(&s, Entry::Command, command, None);
+            io::require_no_op(&s, Entry::Command, "github.command");
+        }
+    }
+    /// #608: both the per-head and legacy effect marker establish Sent.
+    #[test]
+    fn mandatory_sent_detection() {
+        for word in [1, 9] {
+            let mut s = stable(Profile::Command);
+            over(&mut s, "github.comments", "#100", 0, word);
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_recovery(&s, Entry::Command, "Sent", None);
+            io::require_no_op(&s, Entry::Command, "github.command");
+        }
+    }
+    /// #608/#2705: success, 403, other 4xx, rate limit, and unknown outcomes.
+    #[test]
+    fn mandatory_command_results() {
+        for (mode, command) in [
+            (0, "Sent"),
+            (1, "PermissionDenied"),
+            (2, "Rejected"),
+            (3, "Sending"),
+            (4, "Sending"),
+            (6, "Rejected"),
+        ] {
+            let mut s = stable(Profile::Command);
+            s.write_results = vec![mode];
+            io::compare(&s, Entry::Command).unwrap();
+            io::require_ops(&s, Entry::Command, &["github.command"]);
+            io::require_recovery(&s, Entry::Command, command, None);
+            if mode == 1 {
+                io::require_ack(&s, Entry::Command, "Permanent");
+            }
+            if mode > 1 {
+                io::require_error(&s, Entry::Command);
+            }
+        }
+    }
+    /// #447/#608: an ineligible tick resets the existing timer before returning.
+    #[test]
+    fn mandatory_ineligible_tick() {
+        let mut s = stable(Profile::Waiting);
+        over(&mut s, "github.issue", "#100", 0, 1);
+        io::compare(&s, Entry::Waiting).unwrap();
+        io::require_recovery(&s, Entry::Waiting, "Ready", None);
+        io::require_no_op(&s, Entry::Waiting, "clock.now");
+        io::require_no_op(&s, Entry::Waiting, "github.command");
+    }
+    /// #608/#751: the Sending save is fenced before POST; held commands never fence.
+    #[test]
+    fn mandatory_fence_on_sending() {
+        let s = stable(Profile::Command);
+        io::compare(&s, Entry::Command).unwrap();
+        io::require_command_fence(&s);
+        let mut s = stable(Profile::Command);
+        over(&mut s, "github.events", "#100", 0, 1);
+        io::compare(&s, Entry::Command).unwrap();
+        io::require_no_op(&s, Entry::Command, "github.command");
+        io::require_no_op(&s, Entry::Command, "file.exists");
+    }
+}
+
+// Group B1 r1: real snapshot projection bodies, independently source-pinned.
+mod recovery_projections;
 
 // ctrl-core C1: isolated direct evaluators reuse the entire pinned head-check shell.
 mod required_c1 {
@@ -1736,6 +1849,107 @@ mod required_payload_c1 {
         eprintln!(
             "C1 r1 workflow payloads: 128 schedules; {} complete/crash comparisons",
             comparisons.get()
+        );
+    }
+}
+
+// ctrl-core A2: independent source inclusions for configurable shell witnesses.
+#[derive(Clone, Copy, Default)]
+struct A2Config {
+    epoch: i64,
+    no_policy: bool,
+    no_branches: bool,
+    foreign: bool,
+    empty_reruns: bool,
+    inactive: bool,
+    saved_heal: Option<(bool, bool)>,
+}
+macro_rules! a2_entry {
+    ($waiting:expr) => {
+        pub(super) fn a2_run(entry: io::Entry, d: &Delivery, config: A2Config, heal: bool) -> Value {
+            if let Some((same_head, reran)) = config.saved_heal { io::a2_seed_heal(same_head, reran); }
+            let mut a = Adapter::new();
+            a.epoch = config.epoch;
+            if config.no_policy { a.policies.clear(); }
+            if config.no_branches { a.branches = None; }
+            if config.empty_reruns { a.policies[0].1.reruns.clear(); }
+            if heal {
+                let mut pull = io::c1_pull();
+                if config.foreign { pull.head.branch = "foreign".into(); }
+                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false };
+                match a.heal_body(d, &pull, Some(&snapshot)) {
+                    Ok(edited) => json!({"edited":edited}),
+                    Err(error) => json!({"error":error.to_string()}),
+                }
+            } else {
+                run_entry!(a, entry, d, $waiting)
+            }
+        }
+    }
+}
+#[allow(clippy::needless_question_mark)]
+mod a2_reference {
+    adapter!();
+    include!("reference.rs");
+    mod ci_evidence {
+        use crate::mergify_io::io::mock_std as std;
+        include!("reference-ci.rs");
+    }
+    mod waiting {
+        include!("reference-waiting.rs");
+    }
+    mod head_checks {
+        include!("reference-head.rs");
+    }
+    a2_entry!(false);
+    pub(super) fn a2_reruns(
+        runs: &[tl3_github::WorkflowRun],
+        head: &str,
+        workflows: &[String],
+    ) -> Vec<u64> {
+        body_edit_reruns(runs, head, workflows)
+    }
+    pub(super) fn a2_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+        heal_phase(phase)
+    }
+}
+#[allow(clippy::needless_question_mark)]
+mod a2_current {
+    adapter!();
+    include!("current.rs");
+    mod ci_evidence {
+        use crate::mergify_io::io::mock_std as std;
+        include!("current-ci.rs");
+    }
+    mod waiting {
+        include!("current-waiting.rs");
+    }
+    mod head_checks {
+        include!("current-head.rs");
+    }
+    a2_entry!(None);
+    pub(super) fn a2_reruns(
+        runs: &[tl3_github::WorkflowRun],
+        head: &str,
+        workflows: &[String],
+    ) -> Vec<u64> {
+        body_edit_reruns(runs, head, workflows)
+    }
+    pub(super) fn a2_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+        heal_phase(phase)
+    }
+}
+#[test]
+fn a2_boundary_helpers_are_production_source() {
+    fn free<'a>(source: &'a str, name: &str) -> &'a str {
+        let a = source.find(&format!("fn {name}(")).unwrap();
+        let b = a + source[a..].find("\n}\n").unwrap() + 3;
+        &source[a..b]
+    }
+    for name in ["execution_receipt", "heal_record"] {
+        assert_eq!(
+            free(include_str!("../../src/adapters/mergify.rs"), name),
+            free(include_str!("current.rs"), name)
         );
     }
 }
