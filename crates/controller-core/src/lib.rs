@@ -11,3 +11,6 @@ pub mod publication;
 pub mod translate;
 pub mod translate_misc;
 pub mod worker_events;
+
+pub mod translate_tail;
+pub mod translate_worker;

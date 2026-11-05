@@ -1,0 +1,1392 @@
+{
+  "format": "tl3.prompt-identity.v1",
+  "roles": {
+    "audit": {
+      "model_facing_schema": {
+        "sha256": "26061399e5f6bedc4329a788ae3d9d027b4ed8bb102537f7fff55e20b7e4ab15",
+        "utf8_bytes": 3183
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "audit",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "audit"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-0480fc409e498656080412f252725e4b1e3c96d7a52fb411",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "58b38fe49f4fc8ccc3e03b9e78968cd803eabffbf8a76a02f4012a3b494be003",
+            "utf8_bytes": 8841
+          }
+        },
+        {
+          "request": {
+            "role": "audit",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "audit"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-c2c6a7ceb944890a8cfbd0fe96a185d0aee9685adf9581cb",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "1bdb17d15c01d00d65d9aa1fc735bc028d80e14d2ddf2dfdb8351a5d8de3360d",
+            "utf8_bytes": 1372
+          }
+        },
+        {
+          "request": {
+            "role": "audit",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "audit"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 4,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-fc2c866f9c0e85e4821c5e07659b72516d552cb94f5214f7",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "9808cabd1bc7fd2ef2e66af7fd4856ee8121e84a357567f8d494e2bbc912a9e0",
+            "utf8_bytes": 8841
+          }
+        },
+        {
+          "request": {
+            "role": "audit",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "audit"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 4,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-bbc89178ddc2df6f6e3539058946e79c15f8cd023a7e37be",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "9e19bbe391178146517c162d9dca3a4013fc7f837b596b5924a4d84c211389a8",
+            "utf8_bytes": 1372
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "audit",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "audit",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "audit",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"repo\": {\"file_list\": [\"greeting.py\"], \"readme\": \"A greeting library.\"}, ",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            },
+            {
+              "type": "text",
+              "text": "\"task\": \"Preserve café and greeting.\"}"
+            }
+          ]
+        },
+        {
+          "request": {
+            "role": "audit",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"repo\": {\"file_list\": [\"greeting.py\"], \"readme\": \"A greeting library.\"}, "
+            },
+            {
+              "type": "text",
+              "text": "\"task\": \"Preserve café and greeting.\"}"
+            }
+          ]
+        }
+      ]
+    },
+    "classifier": {
+      "model_facing_schema": {
+        "sha256": "15d21d4b2e6f141a7ddbcc8649a9f07db979e01ddad5a9abe85411181e30291f",
+        "utf8_bytes": 3392
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "classifier",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "classifier"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "c820d4d1e86223068329ba8fa3562cbf1c30a24b1a9ed633d45d7abde5bc968c",
+            "utf8_bytes": 4448
+          }
+        },
+        {
+          "request": {
+            "role": "classifier",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "classifier"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "317eb7284a280b61b74c8538a01e2985584061416d22760a27500c8cef5106c4",
+            "utf8_bytes": 31
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "classifier",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "classifier",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "classifier",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "classifier",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        }
+      ]
+    },
+    "ingest": {
+      "model_facing_schema": {
+        "sha256": "62fc62c398628369dcd8fd188122c73912fb9b5875af7835ac4c3fd3b5560747",
+        "utf8_bytes": 6877
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "ingest",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "ingest"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-75301be05f5abe9242ec678b063886eeb589cd8500e56845",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "980c07405680dda25d9518e6d7a360ca2bbce78ae02537431ab7089f8b69ccae",
+            "utf8_bytes": 11917
+          }
+        },
+        {
+          "request": {
+            "role": "ingest",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "ingest"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-480a749288533e94b642f22bdc3b5805993ca8207043684d",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "1bdb17d15c01d00d65d9aa1fc735bc028d80e14d2ddf2dfdb8351a5d8de3360d",
+            "utf8_bytes": 1372
+          }
+        },
+        {
+          "request": {
+            "role": "ingest",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "ingest"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 4,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-b0eba51ecd5fa1997aab168e7f2e288d2304125781550221",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "db35ea075bc5df81067c709d67ffaa2464f251aba27dedc3e62d68f2be4debe9",
+            "utf8_bytes": 11917
+          }
+        },
+        {
+          "request": {
+            "role": "ingest",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "ingest"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 4,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-3b80feca5b8dc2f806f1e7e289e17ce5aca1525de21ca9e6",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "9e19bbe391178146517c162d9dca3a4013fc7f837b596b5924a4d84c211389a8",
+            "utf8_bytes": 1372
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "ingest",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "ingest",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "ingest",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"repo\": {\"file_list\": [\"greeting.py\"], \"readme\": \"A greeting library.\"}, ",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            },
+            {
+              "type": "text",
+              "text": "\"task\": \"Preserve café and greeting.\"}"
+            }
+          ]
+        },
+        {
+          "request": {
+            "role": "ingest",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"repo\": {\"file_list\": [\"greeting.py\"], \"readme\": \"A greeting library.\"}, "
+            },
+            {
+              "type": "text",
+              "text": "\"task\": \"Preserve café and greeting.\"}"
+            }
+          ]
+        }
+      ]
+    },
+    "maker": {
+      "model_facing_schema": {
+        "sha256": "2aefdd5ae04f286544215ab2a4ba7e348e7a99ee484bae020c6206a7f79dbb68",
+        "utf8_bytes": 4059
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "maker",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "maker"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "fd81cbcdddcc572805d745277ab91c403e740467cc6f1c8bc107215378cbc665",
+            "utf8_bytes": 9415
+          }
+        },
+        {
+          "request": {
+            "role": "maker",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "maker"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "317eb7284a280b61b74c8538a01e2985584061416d22760a27500c8cef5106c4",
+            "utf8_bytes": 31
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "maker",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "maker",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "maker",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "maker",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        }
+      ]
+    },
+    "planner": {
+      "model_facing_schema": {
+        "sha256": "5827967525b359d10e5813c7f5da44756067c7ab17eb3993ca9e071174db1a7b",
+        "utf8_bytes": 15162
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "planner",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "planner"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-88335044f8085f9df909b97df9999c0d04f1e51841818888",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "a1d5ab398ad515a3d8c4a1e2733349a32255f964411af863e64c5b65ce92af87",
+            "utf8_bytes": 21030
+          }
+        },
+        {
+          "request": {
+            "role": "planner",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "planner"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-66c22dda9371435829b9e5df5960e6ba717e0c9807e24bfc",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "a660c0495fb290e63f723c239c77c778f2ec4505bc56cf79e6ad854d32bbc65d",
+            "utf8_bytes": 2848
+          }
+        },
+        {
+          "request": {
+            "role": "planner",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "planner"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 4,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-0ecf891cb66b1d801113c129f93370723489826dbc999b31",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "8a04aa95842f57c864b4562e32c382bb8d95ff29b5b73605cadb6a3413fc03b4",
+            "utf8_bytes": 21030
+          }
+        },
+        {
+          "request": {
+            "role": "planner",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "planner"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 4,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-cache-9519843ce022f6777c36b4eaf4e5e9f6c6e74ed35041c8af",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "a9f7dc58cf09c289614b43148d778423a05a2519191a836b5c44488ecd06eaba",
+            "utf8_bytes": 2848
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "planner",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "planner",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "planner",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"repo\": {\"file_list\": [\"greeting.py\"], \"readme\": \"A greeting library.\"}, ",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            },
+            {
+              "type": "text",
+              "text": "\"task\": \"Preserve café and greeting.\"}"
+            }
+          ]
+        },
+        {
+          "request": {
+            "role": "planner",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"repo\": {\"file_list\": [\"greeting.py\"], \"readme\": \"A greeting library.\"}, "
+            },
+            {
+              "type": "text",
+              "text": "\"task\": \"Preserve café and greeting.\"}"
+            }
+          ]
+        }
+      ]
+    },
+    "postmortem": {
+      "model_facing_schema": {
+        "sha256": "0da838fbc6baba6c025f5280056e3fc5bad2af2f66b422b41fdc7d940e9dfbb6",
+        "utf8_bytes": 2422
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "postmortem",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "postmortem"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "6f64ca71889a854278112c620801db081542b09ec8e2ba00f5b2e87d908c2653",
+            "utf8_bytes": 3293
+          }
+        },
+        {
+          "request": {
+            "role": "postmortem",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "postmortem"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "317eb7284a280b61b74c8538a01e2985584061416d22760a27500c8cef5106c4",
+            "utf8_bytes": 31
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "postmortem",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "postmortem",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "postmortem",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "postmortem",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        }
+      ]
+    },
+    "reviewer": {
+      "model_facing_schema": {
+        "sha256": "0395325281fbda3583d64f44e8cc84788dc1cec80f24896fbc3b8b0130c08b92",
+        "utf8_bytes": 1689
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "reviewer",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "reviewer"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "5f51313433da9f788c6e8bc6240753b6c769c5201abaea1cca8d9e4cfd38c6c1",
+            "utf8_bytes": 7561
+          }
+        },
+        {
+          "request": {
+            "role": "reviewer",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "reviewer"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "317eb7284a280b61b74c8538a01e2985584061416d22760a27500c8cef5106c4",
+            "utf8_bytes": 31
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "reviewer",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "reviewer",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "reviewer",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "reviewer",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        }
+      ]
+    },
+    "writer": {
+      "model_facing_schema": {
+        "sha256": "77c1c66adb2c4d2f01e1359fd6a71e484dca15006e55b6d1bb09884a427d0add",
+        "utf8_bytes": 1199
+      },
+      "identities": [
+        {
+          "request": {
+            "role": "writer",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "writer"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "22153ff634b5a03315e6c8d065a2b143299bbd86ef2532c0cf036354396078ef",
+            "utf8_bytes": 5688
+          }
+        },
+        {
+          "request": {
+            "role": "writer",
+            "operation": {
+              "node": 17,
+              "generation": 3,
+              "kind": "writer"
+            },
+            "trace": {
+              "repo": "owner/served",
+              "attempt": 2
+            },
+            "test_cpus": 1,
+            "inputs": {
+              "repo": {
+                "readme": "A greeting library.",
+                "file_list": [
+                  "greeting.py"
+                ]
+              },
+              "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "task": "Preserve café and greeting.",
+              "attempt": 2
+            },
+            "prompt": {
+              "version": 7,
+              "text": "Fixture prompt: preserve café."
+            }
+          },
+          "prompt_cache_identity": "tl3-17-3-2",
+          "session_identity": "tl3-17-3-2",
+          "role_prompt": {
+            "sha256": "317eb7284a280b61b74c8538a01e2985584061416d22760a27500c8cef5106c4",
+            "utf8_bytes": 31
+          }
+        }
+      ],
+      "initial_messages": [
+        {
+          "request": {
+            "role": "writer",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "writer",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "writer",
+            "model": {
+              "name": "claude-sonnet-5-5"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        },
+        {
+          "request": {
+            "role": "writer",
+            "model": {
+              "name": "gpt-6.1-sol"
+            }
+          },
+          "inputs": {
+            "repo": {
+              "readme": "A greeting library.",
+              "file_list": [
+                "greeting.py"
+              ]
+            },
+            "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "task": "Preserve café and greeting."
+          },
+          "content": "{\"repo\": {\"readme\": \"A greeting library.\", \"file_list\": [\"greeting.py\"]}, \"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"task\": \"Preserve café and greeting.\"}"
+        }
+      ]
+    }
+  }
+}
