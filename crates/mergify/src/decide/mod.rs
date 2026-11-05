@@ -43,5 +43,7 @@ pub const MERGIFY_APP_ID: u64 = 10562;
 pub const MERGIFY_APP_SLUG: &str = "mergify";
 pub const QUEUE_LABEL: &str = "tl3-queue";
 
+pub mod required;
+
 #[cfg(test)]
 mod observe_witness;
