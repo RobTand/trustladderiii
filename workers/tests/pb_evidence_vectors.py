@@ -7,7 +7,7 @@ import argparse
 import ast
 import base64
 from copy import deepcopy
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import hashlib
 import inspect
 import json
@@ -969,7 +969,26 @@ def read_vectors(directory=DIRECTORY):
     return result
 
 
+@contextmanager
+def original_decisions():
+    """Keep corpus generation independent of the Rust being checked against it."""
+    global pb_tests, pb_generators, rehearsal
+    current = pb_tests, pb_generators, rehearsal
+    pb_tests, pb_generators, rehearsal = reference.pb_tests, reference.pb_generators, reference.forcing_rehearsal
+    try:
+        yield
+    finally:
+        pb_tests, pb_generators, rehearsal = current
+
+
 def check_vectors(directory=DIRECTORY):
+    # Rust/current-worker parity is sharded in controller::pb_evidence. Keep the
+    # frozen Python oracle here, without duplicating 48 MiB facts in unit replays.
+    with original_decisions():
+        return _check_vectors(directory)
+
+
+def _check_vectors(directory):
     vectors = read_vectors(directory)
     for kind in KINDS:
         wanted = list(cases(kind))

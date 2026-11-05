@@ -86,7 +86,7 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
-    "tl3-controller/pb_evidence": 13,
+    "tl3-controller/pb_evidence": 14,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/worker_budget_orchestration": 21,
@@ -325,6 +325,8 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     rust_library(
         name = crate,
         crate_name = crate,
+        # The PB wire consumes up to 48 MiB within the shared five-second transport.
+        rustc_flags = ["-Copt-level=2"] if directory == "crates/pb-evidence" else [],
         crate_root = "src/lib.rs",
         srcs = library_sources,
         compile_data = compile_data,

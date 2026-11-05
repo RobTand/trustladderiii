@@ -206,3 +206,22 @@ fn pb_evidence_wire_schema_matches_rust_types() {
         include_str!("../../pb-evidence/tests/request-schema.json")
     );
 }
+
+/// #821: maximum-size logs finish within the unchanged strict subprocess transport.
+#[test]
+fn artifact_limit_uses_the_strict_real_binary_transport() {
+    let script = r#"
+import json,sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'workers/tests'))
+import pb_evidence_vectors as oracle
+cases = oracle.read_vectors()['generator-artifact']
+for case in cases:
+    if case['case'] in ('artifact-bytes-below', 'artifact-bytes-at'):
+        actual = oracle.observe('generator-artifact', case['input'])
+        assert oracle.encoded(actual) == oracle.encoded(case['output']), (case['case'], str(actual)[:500])
+print(json.dumps({'done': 2}))
+"#;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert_eq!(drive(script, &[root.display().to_string()]), 2);
+}

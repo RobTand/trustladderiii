@@ -125,12 +125,9 @@ impl Serialize for Ordered<'_> {
         }
     }
 }
-fn summary_order(document: &Value, prefix: &str) -> Order {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(document["raw"].as_str().unwrap_or(""))
+fn summary_order(raw: &[u8], prefix: &str) -> Order {
+    std::str::from_utf8(raw)
         .ok()
-        .and_then(|raw| String::from_utf8(raw).ok())
         .and_then(|text| {
             text.split([
                 '\n', '\r', '\u{b}', '\u{c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}',
@@ -141,10 +138,10 @@ fn summary_order(document: &Value, prefix: &str) -> Order {
         })
         .unwrap_or_default()
 }
-fn layout(operation: &str, document: &Value, input: &Order) -> Order {
+fn layout(operation: &str, document: &Value, input: &Order, summary: Order) -> Order {
     match operation {
         "summary-finish" => {
-            let mut order = summary_order(document, crate::ending::PREFIX);
+            let mut order = summary;
             order.put("action_key", Order::Leaf);
             order.put(
                 "receipts",
@@ -161,7 +158,7 @@ fn layout(operation: &str, document: &Value, input: &Order) -> Order {
             order
         }
         "generator-finish" => {
-            let artifact = summary_order(document, "TL3_GENERATOR_ARTIFACT ");
+            let artifact = summary;
             let mut receipt = Order::object(&[
                 "action_key",
                 "artifact_sha256",
@@ -237,11 +234,40 @@ fn layout(operation: &str, document: &Value, input: &Order) -> Order {
 
 pub fn respond(operation: &str, raw: &str) -> Result<Box<RawValue>, serde_json::Error> {
     let mut document: Value = serde_json::from_str(raw)?;
-    let input: Order = serde_json::from_str(raw)?;
+    let input = if matches!(operation, "identity" | "consistency" | "generator-validate") {
+        serde_json::from_str(raw)?
+    } else {
+        Order::Leaf
+    };
+    let log = if matches!(operation, "summary-finish" | "generator-finish") {
+        Some(crate::bytes(document["raw"].as_str().unwrap_or("")))
+    } else {
+        None
+    };
+    let summary = match &log {
+        Some(Ok(bytes)) => summary_order(
+            bytes,
+            if operation == "summary-finish" {
+                crate::ending::PREFIX
+            } else {
+                "TL3_GENERATOR_ARTIFACT "
+            },
+        ),
+        _ => Order::Leaf,
+    };
     document["operation"] = Value::String(operation.into());
-    let output_order = layout(operation, &document, &input);
+    let output_order = layout(operation, &document, &input, summary);
     let request: crate::Request = serde_json::from_value(document)?;
-    let response = match crate::evaluate(request) {
+    let decision = match (request, log) {
+        (crate::Request::SummaryFinish { ending, key, .. }, Some(Ok(raw))) => {
+            crate::ending::finish(&ending, &key, &raw, false)
+        }
+        (crate::Request::GeneratorFinish { ending, key, .. }, Some(Ok(raw))) => {
+            crate::ending::finish(&ending, &key, &raw, true)
+        }
+        (request, _) => crate::evaluate(request),
+    };
+    let response = match decision {
         Ok(value) => crate::Response::Return(value),
         Err(error) => crate::Response::Raise(error),
     };
