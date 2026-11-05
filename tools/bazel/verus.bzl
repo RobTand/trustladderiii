@@ -564,3 +564,19 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    # G2c: miscellaneous translate residue, over the real production predicates.
+    if native.package_name() == "crates/controller-core":
+        verus_test(
+            name = "verus_translate_misc",
+            src = "verus/translate_misc.rs",
+            srcs = ["src/translate_misc.rs"],
+            expected_obligations = 4,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
