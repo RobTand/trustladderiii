@@ -126,11 +126,13 @@ fn read(op: &str, node: &str, table: Option<&str>) -> Result<Option<Value>> {
     });
     match value {
         Read::Value(v) => Ok(v),
-        Read::Error => Err(Error::Invalid(if table.is_some() {
-            "document read error"
-        } else {
-            "material read error"
-        })),
+        Read::Error => {
+            // Construct the same public store/database error class without a socket.
+            let error = "not-a-postgres-config"
+                .parse::<postgres::Config>()
+                .unwrap_err();
+            Err(Error::Store(tl3_store::Error::Database(error)))
+        }
     }
 }
 #[derive(Debug, PartialEq, Eq)]

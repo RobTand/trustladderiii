@@ -21,6 +21,6 @@ material/document errors, nested/flat goal precedence, duplicate and untrimmed
 goal IDs, preexisting findings, first maker reply selection and Unicode clipping.
 Generated inputs independently vary event kind, admission, wire shape and read
 tapes. Runtime counters require every source plus absence and successful populated
-findings. The fixed seed is 0x004732652026, 512 schedules. Proptest replay seeds
+findings. The fixed seed is 0x004732652026, 4096 schedules. Proptest replay seeds
 are copied to a writable test-output directory before running and failures persist
 there. The minimized red seed is committed in proptest-regressions.txt.

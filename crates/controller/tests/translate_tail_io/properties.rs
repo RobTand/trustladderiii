@@ -15,7 +15,12 @@ fn schedule(kind: u8) -> Schedule {
     };
     n.generation = 9;
     n.run = Some(9);
-    let event = if kind == 3 {
+    let event = if kind == 5 {
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::PrDequeuedByPerson,
+        }
+    } else if kind == 3 {
         Event::Fact {
             node: NodeId(0),
             fact: Fact::CiFailed { infra: false },
@@ -150,6 +155,11 @@ fn mandatory_reply_guards_and_checks_flags() {
     assert_eq!(compare(&s).writes, 0);
     let s = schedule(4);
     assert_eq!(compare(&s).writes, 0);
+    let s = schedule(5);
+    assert_eq!(operations(&compare(&s)), ["priority_reserve"]);
+    let mut s = schedule(2);
+    s.nodes[0].phase = Phase::Ingesting;
+    assert_eq!(operations(&compare(&s)), ["priority_reserve"]);
 }
 #[test]
 fn mandatory_material_and_document_errors() {
@@ -274,12 +284,15 @@ fn pinned_real_old_and_current_tail_and_helpers() {
     );
 }
 fn generated() -> impl Strategy<Value = Schedule> {
-    (0u8..5,any::<u8>(),0u8..12,0u8..6,prop::collection::vec("[^\\p{C}]{0,12}",0..4),any::<bool>()).prop_map(|(kind,flags,material,document,text,nested)| {
+    (0u8..6,any::<u8>(),0u8..12,0u8..6,prop::collection::vec("[^\\p{C}]{0,12}",0..4),any::<bool>(),any::<u8>()).prop_map(|(kind,flags,material,document,text,nested,check)| {
         let mut s=schedule(kind);
         if flags&1!=0 {s.nodes[0].run=None;s.nodes[0].job=Some(9);}
         if flags&2!=0 {s.nodes[0].generation=10;}
         if flags&4!=0 {s.detailed=true;}
-        if flags&8!=0 {s.nodes[0].phase=Phase::Queued;}
+        if flags&8!=0 {s.nodes[0].phase=Phase::Ingesting;}
+        if kind == 0 {s.event=Event::Reply {node:NodeId(0),generation:9,reply:Reply::ChecksDone {report:check&1!=0,pass:check&2!=0,in_footprint:check&4!=0}};}
+        if kind == 3 && check&1!=0 {s.event=Event::Fact {node:NodeId(0),fact:Fact::CiFailed {infra:true}};}
+        if check&8!=0 {s.nodes.clear();}
         let mat=match material {
             0=>Read::Error,1=>Read::Value(None),2=>Read::Value(Some(json!({}))),3=>Read::Value(Some(json!({"goals":null}))),
             4=>Read::Value(Some(json!({"goals":[{}]}))),5=>Read::Value(Some(json!({"goals":[{"id":" "}]}))),
@@ -307,7 +320,7 @@ fn generated_tails_and_crash_cuts() {
     std::fs::write(&path, include_str!("proptest-regressions.txt")).unwrap();
     let path: &'static str = Box::leak(path.to_string_lossy().into_owned().into_boxed_str());
     let mut runner = TestRunner::new(Config {
-        cases: 512,
+        cases: 4096,
         rng_seed: RngSeed::Fixed(0x004732652026),
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(path))),
         ..Config::default()
@@ -315,9 +328,22 @@ fn generated_tails_and_crash_cuts() {
     let seen = std::cell::Cell::new([0usize; 5]);
     let successful_populated = std::cell::Cell::new(0usize);
     let errors = std::cell::Cell::new(0usize);
+    let read_errors = std::cell::Cell::new([0usize; 2]);
+    let comparisons = std::cell::Cell::new(0usize);
     runner
         .run(&generated(), |s| {
             let r = compare(&s);
+            comparisons.set(comparisons.get() + 1 + 2 * r.writes);
+            for (i, op) in ["worker_materials", "worker_document"].iter().enumerate() {
+                if r.trace
+                    .iter()
+                    .any(|v| v[0] == *op && v[3] == json!(["error"]))
+                {
+                    let mut counts = read_errors.get();
+                    counts[i] += 1;
+                    read_errors.set(counts);
+                }
+            }
             if r.writes > 0 {
                 let k = match s.event {
                     Event::Fact { .. } => 3,
@@ -356,7 +382,13 @@ fn generated_tails_and_crash_cuts() {
         "generated branch counts {seen:?}"
     );
     assert!(successful_populated > 0 && errors > 0);
+    let read_errors = read_errors.get();
+    let comparisons = comparisons.get();
+    assert!(
+        read_errors.iter().all(|n| *n > 0),
+        "read errors {read_errors:?}"
+    );
     std::eprintln!(
-        "G2e: 512 schedules, branches {seen:?}, populated successes {successful_populated}, errors {errors}, seed 0x004732652026"
+        "G2e: 4096 schedules, branches {seen:?}, populated successes {successful_populated}, errors {errors}, read errors {read_errors:?}, comparisons {comparisons}, seed 0x004732652026"
     );
 }
