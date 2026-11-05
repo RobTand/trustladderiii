@@ -118,7 +118,7 @@ fn input_validator(role: &str) -> &'static jsonschema::Validator {
         let registry = registry.prepare().unwrap();
         documents
             .into_iter()
-            .filter(|(name, _)| name.ends_with("-input.json"))
+            .filter(|(name, _)| name.ends_with("-input.json") || name == "request.json")
             .map(|(name, document)| {
                 (
                     name,
@@ -129,7 +129,11 @@ fn input_validator(role: &str) -> &'static jsonschema::Validator {
                 )
             })
             .collect()
-    })[&format!("{role}-input.json")]
+    })[&if role == "request" {
+        "request.json".to_owned()
+    } else {
+        format!("{role}-input.json")
+    }]
 }
 
 fn request_input_corpus(text: &str, count: u64) -> Vec<(&'static str, Value)> {
@@ -151,6 +155,7 @@ fn request_input_corpus(text: &str, count: u64) -> Vec<(&'static str, Value)> {
             "maker",
             json!({"brief":text,"goals":goals,"plan":{"files":["README.md"],"checks":[{
             "name":text,"kind":"regression","tests":["test_a.py"],"goal_ids":["g1"]}]},
+            "feedback":[{"kind":"failed_check","report":text,"goal_ids":["g1"],"ci_checks":[{"name":text,"summary":text,"url":null}]}],
             "attempt":1,"round":0,"tests":{"image":format!("sha256:{}","a".repeat(64)),"tools_path":"/fixture"},"context_size":count}),
         ),
         (
@@ -192,8 +197,41 @@ proptest::proptest! {
             let old_request = json!({"protocol":1,"operation":{"node":0,"generation":count,"kind":role},
                 "role":role,"model":{"base_url":"https://model.invalid/v1","name":"fixture","effort":null,"budget_tokens":count},
                 "key_file":"/fixture/key","inputs":old_input,"worktree":"/fixture/worktree"});
+            let errors = input_validator("request").iter_errors(&old_request).map(|e| e.to_string()).collect::<Vec<_>>();
+            proptest::prop_assert!(errors.is_empty(), "request: {:?}", errors);
             let request: WorkerRequest = serde_json::from_value(old_request.clone()).unwrap();
             proptest::prop_assert_eq!(serde_json::to_vec(&value(request).unwrap()).unwrap(), serde_json::to_vec(&old_request).unwrap());
         }
     }
+}
+
+/// #730 C1/C2: a required nullable field is present even when it has no value.
+#[test]
+fn required_nullable_fields_accept_null_and_remain_required() {
+    let context = Context {
+        schema_version: 1,
+        request_version: 0,
+        decisions: vec![Decision {
+            id: "d1".into(),
+            source_comment: None,
+            question: json!({}),
+            answer: "yes".into(),
+            allowed_scope: vec![],
+            restrictions: vec![],
+            origin_request_version: 0,
+            superseded_by: None,
+            supersession_reason: None,
+        }],
+    };
+    let mut document = json!({"comment":{"author":"requester","body":"restart"},
+        "state":{"phase":"Planning","closed":false},
+        "reconcile_issue":{"number":1,"title":"title","body":null,"updated_at":"now"},
+        "decision_context":context});
+    assert!(input_validator("classifier").is_valid(&document));
+    assert_eq!(role_wire("classifier", document.clone()).unwrap(), document);
+    document["reconcile_issue"]
+        .as_object_mut()
+        .unwrap()
+        .remove("body");
+    assert!(!input_validator("classifier").is_valid(&document));
 }

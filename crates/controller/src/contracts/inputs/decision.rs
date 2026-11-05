@@ -1,3 +1,4 @@
+use crate::contracts::bounded::Nullable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,7 +16,7 @@ pub struct Context {
 #[serde(deny_unknown_fields)]
 pub struct Decision {
     pub id: String,
-    #[schemars(required)]
+    #[schemars(with = "Nullable<String>")]
     pub source_comment: Option<String>,
     #[schemars(with = "std::collections::BTreeMap<String, Value>")]
     pub question: Value,
@@ -23,7 +24,7 @@ pub struct Decision {
     pub allowed_scope: Vec<String>,
     pub restrictions: Vec<String>,
     pub origin_request_version: u64,
-    #[schemars(required)]
+    #[schemars(with = "Nullable<String>")]
     pub superseded_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersession_reason: Option<String>,

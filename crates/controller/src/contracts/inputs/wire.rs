@@ -1,7 +1,7 @@
 // The role-input shapes are owned here. Reply documents remain references to the
 // reply contracts owned by WR1/WR2, rather than a second Rust definition.
 use super::{Context, Lossless, RoleInput};
-use crate::contracts::bounded::{present, required_nullable};
+use crate::contracts::bounded::{Nullable, present, required_nullable};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,7 +25,7 @@ pub struct WorkerRequestModel {
     #[schemars(extend("minLength" = 1))]
     pub name: String,
     #[serde(deserialize_with = "required_nullable")]
-    #[schemars(required)]
+    #[schemars(with = "Nullable<String>")]
     #[schemars(extend("minLength" = 1))]
     pub effort: Option<String>,
     #[schemars(extend("minimum" = 1))]
@@ -722,7 +722,7 @@ pub struct FeedbackCiChecksItem {
     #[schemars(extend("minLength" = 1, "pattern" = "\\S", "maxLength" = 1000))]
     pub summary: String,
     #[serde(deserialize_with = "required_nullable")]
-    #[schemars(required)]
+    #[schemars(with = "Nullable<String>")]
     #[schemars(extend("maxLength" = 4096))]
     pub url: Option<String>,
 }
@@ -1150,7 +1150,7 @@ pub struct ClassifierInputReconcileIssue {
     pub number: u64,
     pub title: String,
     #[serde(deserialize_with = "required_nullable")]
-    #[schemars(required)]
+    #[schemars(with = "Nullable<String>")]
     pub body: Option<String>,
     pub updated_at: String,
     #[serde(flatten)]
