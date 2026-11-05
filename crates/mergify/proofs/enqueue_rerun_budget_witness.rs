@@ -1,5 +1,6 @@
 use crate::enqueue::*;
 use crate::enqueue_helpers::*;
+use crate::enqueue_contract::no_rerun;
 use crate::{Head, Status};
 use vstd::prelude::*;
 
@@ -13,13 +14,13 @@ verus! {
 fn consumed_receipt(state: EnqueueState, saved: Rerun, head: Head, attempt: u64,
     status: Status, writable: Option<bool>) -> (result: (EnqueueState, Effects))
     requires !refused(state), state.rerun == Some(saved), !saved.waiting,
-    ensures result.0 == state, no_write(result.1@),
+    ensures result.0 == state, no_rerun(result.1@),
 {
     let (pending_state, pending_effects) = decide(state, QueueEvent::RerunPending { head, attempt, status });
     assert(pending_state == state);
     let (next, effects) = decide(pending_state, QueueEvent::RerunRead { head, attempt, status, writable });
     assert(next == state);
-    assert(no_write(effects@));
+    assert(no_rerun(effects@));
     (next, effects)
 }
 
@@ -32,7 +33,7 @@ fn retained_budget(state: EnqueueState, receipt: Rerun, event: QueueEvent)
 {
     let (next, effects) = decide(state, event);
     assert(next.rerun == state.rerun);
-    assert(forall|i: int| 0 <= i < effects@.len() ==> #[trigger] effects@[i] != Effect::Write(Write::Rerun));
+    assert(no_rerun(effects@));
 }
 
 /// Compose actual dispatch, pending query and arbitrary repeated read. No result
@@ -49,7 +50,7 @@ fn dispatch_once(state: EnqueueState, attempt: u64, later: u64, head: Head,
     let (replayed, replay_effects) = consumed_receipt(sent,
         Rerun { attempt, accepted: false, waiting: false }, head, later, status, writable);
     assert(replayed == sent);
-    assert(no_write(replay_effects@));
+    assert(no_rerun(replay_effects@));
 }
 
 /// InProgress enables waiting, but an incomplete run must never be re-POSTed.
@@ -64,7 +65,7 @@ fn result_budget(state: EnqueueState, receipt: Rerun, result: RerunResult,
     let (_, replay) = decide(done, QueueEvent::RerunRead { head, attempt, status, writable });
     if result == RerunResult::Accepted || result == RerunResult::Unknown ||
         result == RerunResult::InProgress && status != Status::Completed {
-        assert(no_write(replay@));
+        assert(no_rerun(replay@));
     }
 }
 

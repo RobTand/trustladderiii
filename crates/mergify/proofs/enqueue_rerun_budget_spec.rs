@@ -48,6 +48,10 @@ pub open spec fn pending(old: Option<Rerun>, head: Head, attempt: u64, status: S
         (head != Head::Current || attempt <= r.attempt && (!r.waiting || status != Status::Completed)) }
 }
 
+pub open spec fn no_rerun(effects: Seq<Effect>) -> bool {
+    forall|i: int| 0 <= i < effects.len() ==> #[trigger] effects[i] != Effect::Write(Write::Rerun)
+}
+
 pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueState, effects: Effects) -> bool {
     (match event {
         QueueEvent::RerunRead { .. } | QueueEvent::RerunDone(_) | QueueEvent::RerunPending { .. } => {
@@ -78,7 +82,6 @@ pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueSta
     // Thus unrelated reconciliation/command events cannot reset the fence.
     ((!matches!(event, QueueEvent::RerunDone(_)) && match old.rerun {
         Some(r) => r.accepted || !r.waiting, None => false,
-    }) ==> next.rerun == old.rerun &&
-        forall|i: int| 0 <= i < effects@.len() ==> #[trigger] effects@[i] != Effect::Write(Write::Rerun))
+    }) ==> next.rerun == old.rerun && no_rerun(effects@))
 }
 }
