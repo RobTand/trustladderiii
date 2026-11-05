@@ -20,10 +20,16 @@ use tl3_controller::contracts::{self, Check, CheckReport, CheckResult};
 const FIX: &str = "bazel run --config=remote //crates/controller:tl3-contracts-schemas";
 
 // The committed generated files, compiled in so the check stays hermetic.
-const COMMITTED: &[(&str, &str)] = &[(
-    "workers/src/tl3_workers/schemas/check-report.json",
-    include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
-)];
+const COMMITTED: &[(&str, &str)] = &[
+    (
+        "workers/src/tl3_workers/schemas/check-report.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/planner-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/planner-reply.json"),
+    ),
+];
 
 #[test]
 fn generated_schemas_match_committed() {

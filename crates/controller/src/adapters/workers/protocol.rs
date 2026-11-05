@@ -108,22 +108,7 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
         },
         "reviewer" if reply["verdict"] == "out_of_room" => Reply::ReviewerOutOfRoom,
         "reviewer" => Reply::ChangesRequested,
-        "planner" => {
-            forecast(reply)?;
-            let violations = reply["violations"]
-                .as_array()
-                .ok_or(Error::Invalid("planner violations missing"))?;
-            if !violations.is_empty() || reply["kind"] == "cant_meet" {
-                Reply::PlanCantMeet
-            } else if reply["kind"] == "split" {
-                Reply::PlanSplit
-            } else {
-                Reply::PlanLeaf {
-                    footprint: tl3_kernel::Footprint::default(),
-                    fits: reply["forecast"]["fits"] == true,
-                }
-            }
-        }
+        "planner" => planner_reply::map(reply)?,
         _ => return Err(Error::Invalid("unsupported worker role")),
     }))
 }

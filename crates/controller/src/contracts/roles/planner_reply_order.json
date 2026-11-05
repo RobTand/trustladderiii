@@ -1,0 +1,1053 @@
+{
+  "": [
+    "$schema",
+    "$id",
+    "$defs",
+    "oneOf"
+  ],
+  "/$defs": [
+    "execution",
+    "forecast",
+    "forcing",
+    "proof",
+    "declared_symptom"
+  ],
+  "/$defs/execution": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/$defs/execution/properties": [
+    "allowed_tool_turns",
+    "finalization_turns",
+    "usable_tool_turns",
+    "estimated_tool_turns",
+    "components",
+    "exploration_declared",
+    "fits",
+    "pieces",
+    "aggregate_tool_turns",
+    "aggregate_allowed_tool_turns"
+  ],
+  "/$defs/execution/properties/allowed_tool_turns": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/execution/properties/finalization_turns": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/execution/properties/usable_tool_turns": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/execution/properties/estimated_tool_turns": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/execution/properties/components": [
+    "type",
+    "additionalProperties"
+  ],
+  "/$defs/execution/properties/components/additionalProperties": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/execution/properties/exploration_declared": [
+    "type"
+  ],
+  "/$defs/execution/properties/fits": [
+    "type"
+  ],
+  "/$defs/execution/properties/pieces": [
+    "type",
+    "items"
+  ],
+  "/$defs/execution/properties/pieces/items": [
+    "$ref"
+  ],
+  "/$defs/execution/properties/aggregate_tool_turns": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/execution/properties/aggregate_allowed_tool_turns": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/forecast": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/$defs/forecast/properties": [
+    "tokenizer",
+    "brief_tokens",
+    "file_tokens",
+    "overhead_tokens",
+    "tokens",
+    "fit_tokens",
+    "context_tokens",
+    "fits"
+  ],
+  "/$defs/forecast/properties/tokenizer": [
+    "const"
+  ],
+  "/$defs/forecast/properties/brief_tokens": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/forecast/properties/file_tokens": [
+    "type",
+    "additionalProperties"
+  ],
+  "/$defs/forecast/properties/file_tokens/additionalProperties": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/forecast/properties/overhead_tokens": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/forecast/properties/tokens": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/forecast/properties/fit_tokens": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/forecast/properties/context_tokens": [
+    "type",
+    "minimum"
+  ],
+  "/$defs/forecast/properties/fits": [
+    "type"
+  ],
+  "/$defs/forcing": [
+    "type",
+    "description",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/$defs/forcing/properties": [
+    "symptom",
+    "environment",
+    "patches"
+  ],
+  "/$defs/forcing/properties/symptom": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/$defs/forcing/properties/environment": [
+    "type",
+    "maxProperties",
+    "propertyNames",
+    "additionalProperties"
+  ],
+  "/$defs/forcing/properties/environment/propertyNames": [
+    "pattern"
+  ],
+  "/$defs/forcing/properties/environment/additionalProperties": [
+    "type",
+    "maxLength"
+  ],
+  "/$defs/forcing/properties/patches": [
+    "type",
+    "maxItems",
+    "items"
+  ],
+  "/$defs/forcing/properties/patches/items": [
+    "type",
+    "properties",
+    "required",
+    "minProperties",
+    "maxProperties",
+    "additionalProperties"
+  ],
+  "/$defs/forcing/properties/patches/items/properties": [
+    "target",
+    "value",
+    "returns",
+    "raises",
+    "delay_seconds"
+  ],
+  "/$defs/forcing/properties/patches/items/properties/target": [
+    "type",
+    "maxLength",
+    "pattern"
+  ],
+  "/$defs/forcing/properties/patches/items/properties/value": [],
+  "/$defs/forcing/properties/patches/items/properties/returns": [],
+  "/$defs/forcing/properties/patches/items/properties/raises": [
+    "type",
+    "minLength"
+  ],
+  "/$defs/forcing/properties/patches/items/properties/delay_seconds": [
+    "type",
+    "exclusiveMinimum",
+    "maximum"
+  ],
+  "/$defs/proof": [
+    "type",
+    "additionalProperties",
+    "properties",
+    "required"
+  ],
+  "/$defs/proof/properties": [
+    "subjects",
+    "observer_support",
+    "red_message"
+  ],
+  "/$defs/proof/properties/subjects": [
+    "type",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "items"
+  ],
+  "/$defs/proof/properties/subjects/items": [
+    "type",
+    "minLength",
+    "maxLength",
+    "pattern"
+  ],
+  "/$defs/proof/properties/observer_support": [
+    "type",
+    "maxItems",
+    "uniqueItems",
+    "items"
+  ],
+  "/$defs/proof/properties/observer_support/items": [
+    "type",
+    "minLength",
+    "maxLength",
+    "pattern"
+  ],
+  "/$defs/proof/properties/red_message": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/$defs/declared_symptom": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/$defs/declared_symptom/properties": [
+    "node",
+    "exception",
+    "phase",
+    "repeat",
+    "parallel"
+  ],
+  "/$defs/declared_symptom/properties/node": [
+    "type",
+    "minLength"
+  ],
+  "/$defs/declared_symptom/properties/exception": [
+    "type",
+    "pattern"
+  ],
+  "/$defs/declared_symptom/properties/phase": [
+    "enum"
+  ],
+  "/$defs/declared_symptom/properties/repeat": [
+    "type",
+    "minimum",
+    "maximum"
+  ],
+  "/$defs/declared_symptom/properties/parallel": [
+    "enum"
+  ],
+  "/oneOf/0": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/0/properties": [
+    "estimated_exploration_turns",
+    "estimated_tool_turns",
+    "execution",
+    "kind",
+    "files",
+    "checks",
+    "edits_tests",
+    "no_design_questions",
+    "lands_on_its_own",
+    "forecast",
+    "violations",
+    "memory_ids",
+    "memory_flags",
+    "conventions",
+    "decision_context",
+    "evidence_contract",
+    "evidence_errors",
+    "forcing_rehearsals"
+  ],
+  "/oneOf/0/properties/estimated_exploration_turns": [
+    "type",
+    "minimum",
+    "description"
+  ],
+  "/oneOf/0/properties/estimated_tool_turns": [
+    "type",
+    "minimum",
+    "description"
+  ],
+  "/oneOf/0/properties/execution": [
+    "$ref",
+    "description"
+  ],
+  "/oneOf/0/properties/kind": [
+    "const"
+  ],
+  "/oneOf/0/properties/files": [
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems"
+  ],
+  "/oneOf/0/properties/files/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/0/properties/checks": [
+    "type",
+    "items",
+    "minItems"
+  ],
+  "/oneOf/0/properties/checks/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/0/properties/checks/items/properties": [
+    "kind",
+    "node_ids",
+    "goal_ids",
+    "forcing",
+    "proof",
+    "declared_symptom"
+  ],
+  "/oneOf/0/properties/checks/items/properties/kind": [
+    "enum"
+  ],
+  "/oneOf/0/properties/checks/items/properties/node_ids": [
+    "description",
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems"
+  ],
+  "/oneOf/0/properties/checks/items/properties/node_ids/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/0/properties/checks/items/properties/goal_ids": [
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems",
+    "description"
+  ],
+  "/oneOf/0/properties/checks/items/properties/goal_ids/items": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/0/properties/checks/items/properties/forcing": [
+    "$ref"
+  ],
+  "/oneOf/0/properties/checks/items/properties/proof": [
+    "$ref"
+  ],
+  "/oneOf/0/properties/checks/items/properties/declared_symptom": [
+    "$ref"
+  ],
+  "/oneOf/0/properties/edits_tests": [
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems",
+    "description"
+  ],
+  "/oneOf/0/properties/edits_tests/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/0/properties/no_design_questions": [
+    "type"
+  ],
+  "/oneOf/0/properties/lands_on_its_own": [
+    "type"
+  ],
+  "/oneOf/0/properties/forecast": [
+    "$ref"
+  ],
+  "/oneOf/0/properties/violations": [
+    "type",
+    "items",
+    "description"
+  ],
+  "/oneOf/0/properties/violations/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/0/properties/memory_ids": [
+    "type",
+    "items",
+    "uniqueItems",
+    "description"
+  ],
+  "/oneOf/0/properties/memory_ids/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/0/properties/memory_flags": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/0/properties/memory_flags/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties": [
+    "id",
+    "claim",
+    "reason",
+    "evidence"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/id": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/claim": [
+    "type",
+    "minLength",
+    "maxLength",
+    "description"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/reason": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/evidence": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/evidence/properties": [
+    "path",
+    "start_line",
+    "end_line",
+    "quote"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/evidence/properties/path": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/evidence/properties/start_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/evidence/properties/end_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/0/properties/memory_flags/items/properties/evidence/properties/quote": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/conventions": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/0/properties/conventions/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/0/properties/conventions/items/properties": [
+    "text",
+    "evidence"
+  ],
+  "/oneOf/0/properties/conventions/items/properties/text": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/conventions/items/properties/evidence": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/oneOf/0/properties/conventions/items/properties/evidence/properties": [
+    "path",
+    "start_line",
+    "end_line",
+    "quote"
+  ],
+  "/oneOf/0/properties/conventions/items/properties/evidence/properties/path": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/conventions/items/properties/evidence/properties/start_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/0/properties/conventions/items/properties/evidence/properties/end_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/0/properties/conventions/items/properties/evidence/properties/quote": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/decision_context": [
+    "$ref",
+    "description"
+  ],
+  "/oneOf/0/properties/evidence_contract": [
+    "$ref"
+  ],
+  "/oneOf/0/properties/evidence_errors": [
+    "type",
+    "items",
+    "uniqueItems",
+    "maxItems",
+    "description"
+  ],
+  "/oneOf/0/properties/evidence_errors/items": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/0/properties/forcing_rehearsals": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/0/properties/forcing_rehearsals/items": [
+    "type"
+  ],
+  "/oneOf/1": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/1/properties": [
+    "estimated_exploration_turns",
+    "estimated_tool_turns",
+    "execution",
+    "kind",
+    "reason",
+    "pieces",
+    "forecast",
+    "violations",
+    "memory_ids",
+    "memory_flags",
+    "conventions",
+    "decision_context",
+    "evidence_contract",
+    "evidence_errors",
+    "forcing_rehearsals"
+  ],
+  "/oneOf/1/properties/estimated_exploration_turns": [
+    "type",
+    "minimum",
+    "description"
+  ],
+  "/oneOf/1/properties/estimated_tool_turns": [
+    "type",
+    "minimum",
+    "description"
+  ],
+  "/oneOf/1/properties/execution": [
+    "$ref",
+    "description"
+  ],
+  "/oneOf/1/properties/kind": [
+    "const"
+  ],
+  "/oneOf/1/properties/reason": [
+    "enum"
+  ],
+  "/oneOf/1/properties/pieces": [
+    "type",
+    "items",
+    "minItems"
+  ],
+  "/oneOf/1/properties/pieces/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/1/properties/pieces/items/properties": [
+    "estimated_exploration_turns",
+    "estimated_tool_turns",
+    "brief",
+    "goal_ids",
+    "files"
+  ],
+  "/oneOf/1/properties/pieces/items/properties/estimated_exploration_turns": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/1/properties/pieces/items/properties/estimated_tool_turns": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/1/properties/pieces/items/properties/brief": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/1/properties/pieces/items/properties/goal_ids": [
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems",
+    "description"
+  ],
+  "/oneOf/1/properties/pieces/items/properties/goal_ids/items": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/1/properties/pieces/items/properties/files": [
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems"
+  ],
+  "/oneOf/1/properties/pieces/items/properties/files/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/1/properties/forecast": [
+    "$ref"
+  ],
+  "/oneOf/1/properties/violations": [
+    "type",
+    "items",
+    "description"
+  ],
+  "/oneOf/1/properties/violations/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/1/properties/memory_ids": [
+    "type",
+    "items",
+    "uniqueItems",
+    "description"
+  ],
+  "/oneOf/1/properties/memory_ids/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/1/properties/memory_flags": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/1/properties/memory_flags/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties": [
+    "id",
+    "claim",
+    "reason",
+    "evidence"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/id": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/claim": [
+    "type",
+    "minLength",
+    "maxLength",
+    "description"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/reason": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/evidence": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/evidence/properties": [
+    "path",
+    "start_line",
+    "end_line",
+    "quote"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/evidence/properties/path": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/evidence/properties/start_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/evidence/properties/end_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/1/properties/memory_flags/items/properties/evidence/properties/quote": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/conventions": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/1/properties/conventions/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/1/properties/conventions/items/properties": [
+    "text",
+    "evidence"
+  ],
+  "/oneOf/1/properties/conventions/items/properties/text": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/conventions/items/properties/evidence": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/oneOf/1/properties/conventions/items/properties/evidence/properties": [
+    "path",
+    "start_line",
+    "end_line",
+    "quote"
+  ],
+  "/oneOf/1/properties/conventions/items/properties/evidence/properties/path": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/conventions/items/properties/evidence/properties/start_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/1/properties/conventions/items/properties/evidence/properties/end_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/1/properties/conventions/items/properties/evidence/properties/quote": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/decision_context": [
+    "$ref",
+    "description"
+  ],
+  "/oneOf/1/properties/evidence_contract": [
+    "$ref"
+  ],
+  "/oneOf/1/properties/evidence_errors": [
+    "type",
+    "items",
+    "uniqueItems",
+    "maxItems",
+    "description"
+  ],
+  "/oneOf/1/properties/evidence_errors/items": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/1/properties/forcing_rehearsals": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/1/properties/forcing_rehearsals/items": [
+    "type"
+  ],
+  "/oneOf/2": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/2/properties": [
+    "estimated_exploration_turns",
+    "estimated_tool_turns",
+    "execution",
+    "kind",
+    "report",
+    "files",
+    "forecast",
+    "violations",
+    "protected_paths",
+    "memory_ids",
+    "memory_flags",
+    "conventions",
+    "decision_context",
+    "evidence_contract",
+    "evidence_errors",
+    "forcing_rehearsals"
+  ],
+  "/oneOf/2/properties/estimated_exploration_turns": [
+    "type",
+    "minimum",
+    "description"
+  ],
+  "/oneOf/2/properties/estimated_tool_turns": [
+    "type",
+    "minimum",
+    "description"
+  ],
+  "/oneOf/2/properties/execution": [
+    "$ref",
+    "description"
+  ],
+  "/oneOf/2/properties/kind": [
+    "const"
+  ],
+  "/oneOf/2/properties/report": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/2/properties/files": [
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems"
+  ],
+  "/oneOf/2/properties/files/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/2/properties/forecast": [
+    "$ref"
+  ],
+  "/oneOf/2/properties/violations": [
+    "type",
+    "items",
+    "description"
+  ],
+  "/oneOf/2/properties/violations/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/2/properties/protected_paths": [
+    "type",
+    "items",
+    "minItems",
+    "uniqueItems",
+    "description"
+  ],
+  "/oneOf/2/properties/protected_paths/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/2/properties/memory_ids": [
+    "type",
+    "items",
+    "uniqueItems",
+    "description"
+  ],
+  "/oneOf/2/properties/memory_ids/items": [
+    "type",
+    "minLength"
+  ],
+  "/oneOf/2/properties/memory_flags": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/2/properties/memory_flags/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties": [
+    "id",
+    "claim",
+    "reason",
+    "evidence"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/id": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/claim": [
+    "type",
+    "minLength",
+    "maxLength",
+    "description"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/reason": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/evidence": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/evidence/properties": [
+    "path",
+    "start_line",
+    "end_line",
+    "quote"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/evidence/properties/path": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/evidence/properties/start_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/evidence/properties/end_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/2/properties/memory_flags/items/properties/evidence/properties/quote": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/conventions": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/2/properties/conventions/items": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties"
+  ],
+  "/oneOf/2/properties/conventions/items/properties": [
+    "text",
+    "evidence"
+  ],
+  "/oneOf/2/properties/conventions/items/properties/text": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/conventions/items/properties/evidence": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description"
+  ],
+  "/oneOf/2/properties/conventions/items/properties/evidence/properties": [
+    "path",
+    "start_line",
+    "end_line",
+    "quote"
+  ],
+  "/oneOf/2/properties/conventions/items/properties/evidence/properties/path": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/conventions/items/properties/evidence/properties/start_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/2/properties/conventions/items/properties/evidence/properties/end_line": [
+    "type",
+    "minimum"
+  ],
+  "/oneOf/2/properties/conventions/items/properties/evidence/properties/quote": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/decision_context": [
+    "$ref",
+    "description"
+  ],
+  "/oneOf/2/properties/evidence_contract": [
+    "$ref"
+  ],
+  "/oneOf/2/properties/evidence_errors": [
+    "type",
+    "items",
+    "uniqueItems",
+    "maxItems",
+    "description"
+  ],
+  "/oneOf/2/properties/evidence_errors/items": [
+    "type",
+    "minLength",
+    "maxLength"
+  ],
+  "/oneOf/2/properties/forcing_rehearsals": [
+    "type",
+    "maxItems",
+    "items",
+    "description"
+  ],
+  "/oneOf/2/properties/forcing_rehearsals/items": [
+    "type"
+  ]
+}

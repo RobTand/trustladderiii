@@ -29,10 +29,16 @@ pub struct Generated {
 
 /// Every file this module generates.
 pub fn generated() -> Vec<Generated> {
-    vec![Generated {
-        path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
-        text: render(&check_report_schema()),
-    }]
+    vec![
+        Generated {
+            path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
+            text: render(&check_report_schema()),
+        },
+        Generated {
+            path: format!("{SCHEMA_DIRECTORY}/planner-reply.json"),
+            text: roles::planner_reply::schema_text(),
+        },
+    ]
 }
 
 /// The harness check report's schema: self-contained, with every definition in `$defs`.
