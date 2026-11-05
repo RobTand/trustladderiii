@@ -480,6 +480,101 @@ fn replay_bytes(c: &mut Controller, initial_revision: i64) -> Vec<u8> {
     serde_json::to_vec(&dump).unwrap()
 }
 
+// Both production enums are matched without a wildcard below. Adding a variant
+// requires a fixture and a handler witness here before the library can compile.
+macro_rules! input_inventory {
+    ($($case:ident => $test:ident),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        enum InputCase { $($case),+ }
+        impl InputCase { const ALL: &'static [Self] = &[$(Self::$case),+]; }
+        $(
+            /// State-table "Counter headroom": activate this handler before
+            /// injecting refusal at every step and at final SQL publication.
+            #[test]
+            fn $test() { run_input_case(InputCase::$case); }
+        )+
+    };
+}
+input_inventory! {
+    Prerequisite => refusal_case_prerequisite,
+    ScratchSaved => refusal_case_scratch_saved,
+    ScratchPruned => refusal_case_scratch_pruned,
+    TraceLogsCapped => refusal_case_trace_logs_capped,
+    Progress => refusal_case_progress,
+    Quota => refusal_case_quota,
+    Classified => refusal_case_classified,
+    Postmortem => refusal_case_postmortem,
+    LinkedRequest => refusal_case_linked_request,
+    Queue => refusal_case_queue,
+    GitHubComment => refusal_case_git_hub_comment,
+    WorkerFailed => refusal_case_worker_failed,
+    WorkerReply => refusal_case_worker_reply,
+    Kernel => refusal_case_kernel,
+    Steering => refusal_case_steering,
+    CiFailed => refusal_case_ci_failed,
+    WorktreePrepared => refusal_case_worktree_prepared,
+    CheckPlan => refusal_case_check_plan,
+    Checks => refusal_case_checks,
+    Plan => refusal_case_plan,
+    Made => refusal_case_made,
+    Reviewed => refusal_case_reviewed,
+    RebaseConflict => refusal_case_rebase_conflict,
+    Rebased => refusal_case_rebased,
+    Merged => refusal_case_merged,
+    PullRequest => refusal_case_pull_request,
+    PrivateIntake => refusal_case_private_intake,
+    PrivateIssueChange => refusal_case_private_issue_change,
+    PrivateEvent => refusal_case_private_event,
+    PrivateCompletion => refusal_case_private_completion,
+    PrivateCancelAbsent => refusal_case_private_cancel_absent,
+    PrivateReplacement => refusal_case_private_replacement,
+    PrivatePriorityReread => refusal_case_private_priority_reread,
+}
+impl InputCase {
+    fn observation(value: &Observation) -> Self {
+        match value {
+            Observation::Prerequisite(..) => Self::Prerequisite,
+            Observation::ScratchSaved { .. } => Self::ScratchSaved,
+            Observation::ScratchPruned { .. } => Self::ScratchPruned,
+            Observation::TraceLogsCapped { .. } => Self::TraceLogsCapped,
+            Observation::Progress { .. } => Self::Progress,
+            Observation::Quota { .. } => Self::Quota,
+            Observation::Classified { .. } => Self::Classified,
+            Observation::Postmortem { .. } => Self::Postmortem,
+            Observation::LinkedRequest { .. } => Self::LinkedRequest,
+            Observation::Queue(..) => Self::Queue,
+            Observation::GitHubComment { .. } => Self::GitHubComment,
+            Observation::WorkerFailed { .. } => Self::WorkerFailed,
+            Observation::WorkerReply { .. } => Self::WorkerReply,
+            Observation::Kernel(..) => Self::Kernel,
+            Observation::Steering { .. } => Self::Steering,
+            Observation::CiFailed { .. } => Self::CiFailed,
+            Observation::WorktreePrepared { .. } => Self::WorktreePrepared,
+            Observation::CheckPlan { .. } => Self::CheckPlan,
+            Observation::Checks { .. } => Self::Checks,
+            Observation::Plan { .. } => Self::Plan,
+            Observation::Made { .. } => Self::Made,
+            Observation::Reviewed { .. } => Self::Reviewed,
+            Observation::RebaseConflict { .. } => Self::RebaseConflict,
+            Observation::Rebased { .. } => Self::Rebased,
+            Observation::Merged { .. } => Self::Merged,
+            Observation::PullRequest { .. } => Self::PullRequest,
+        }
+    }
+    fn private(value: &crate::input_errors::PendingKernelInput) -> Self {
+        use crate::input_errors::PendingKernelInput as Input;
+        match value {
+            Input::Intake { .. } => Self::PrivateIntake,
+            Input::IssueChange(..) => Self::PrivateIssueChange,
+            Input::Event(..) => Self::PrivateEvent,
+            Input::Completion { .. } => Self::PrivateCompletion,
+            Input::CancelAbsent { .. } => Self::PrivateCancelAbsent,
+            Input::Replacement { .. } => Self::PrivateReplacement,
+            Input::PriorityReread { .. } => Self::PrivatePriorityReread,
+        }
+    }
+}
+
 fn observation_inventory(
     c: &mut Controller,
     repo: &Repo,
@@ -599,7 +694,7 @@ fn observation_inventory(
             sha: sha.clone(),
             changed_paths: vec![format!("src/file_{payload}.rs")],
             failed_tests: vec![],
-            report: false,
+            report: true,
             pass: false,
             results: vec![],
         },
@@ -640,6 +735,170 @@ fn observation_inventory(
     ]
 }
 
+// Active phase fixtures retain the executable agenda's Await position and live
+// operation. The baseline below must demonstrate each handler's intended write.
+fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
+    let planning = matches!(
+        case,
+        InputCase::Plan
+            | InputCase::Made
+            | InputCase::Checks
+            | InputCase::Reviewed
+            | InputCase::CiFailed
+            | InputCase::Merged
+            | InputCase::RebaseConflict
+            | InputCase::Rebased
+    );
+    let head = c.head(NodeId(0), &repo.head).unwrap();
+    if planning {
+        ingest(c, NodeId(0), &[]);
+        if case != InputCase::Plan {
+            let snapshot = c.snapshot().unwrap();
+            let mut world = c.world().unwrap();
+            let footprint = c
+                .footprint(&snapshot, &mut world, NodeId(0), &["src/active.rs".into()])
+                .unwrap();
+            persist_world(c, &world, "active-footprint");
+            reply(
+                c,
+                NodeId(0),
+                Reply::PlanLeaf {
+                    footprint,
+                    fits: true,
+                },
+            );
+            if case != InputCase::Made {
+                reply(c, NodeId(0), Reply::MakerDone { head });
+                if case != InputCase::Checks {
+                    reply(
+                        c,
+                        NodeId(0),
+                        Reply::ChecksDone {
+                            report: true,
+                            pass: true,
+                            in_footprint: true,
+                        },
+                    );
+                    if case != InputCase::Reviewed {
+                        reply(c, NodeId(0), Reply::Approved { head });
+                        assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::Queued);
+                        if !matches!(case, InputCase::CiFailed | InputCase::Merged) {
+                            event(
+                                c,
+                                Event::Fact {
+                                    node: NodeId(0),
+                                    fact: Fact::Conflict,
+                                },
+                            );
+                            confirm(c, NodeId(0));
+                            assert_eq!(
+                                c.world().unwrap().nodes[0].phase,
+                                tl3_kernel::Phase::Rebasing
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut world = c.world().unwrap();
+    if case == InputCase::WorktreePrepared {
+        world.nodes[0].adopted = true;
+        world.nodes[0].head = Some(head);
+        let check_run = crate::adapters::prismabuild::CheckRun {
+            repository: repo.root.path().into(),
+            base_sha: tl3_worktrees::CommitId::new(&repo.head).unwrap(),
+            reviewed_sha: None,
+            reproducing_unavailable: None,
+            plan: vec![],
+            selected_failures: vec![],
+        };
+        c.store
+            .put_worker_materials("0", &json!({"check_run":check_run}))
+            .unwrap();
+    }
+    persist_world(c, &world, "active-handler");
+    if case == InputCase::Rebased {
+        let snapshot = c.snapshot().unwrap();
+        let mut commit = Commit::new("prior-conflict", json!(null), &snapshot);
+        commit.rows.push(put(
+            "rebase_conflicts",
+            "0".into(),
+            json!({"head":repo.head}),
+        ));
+        c.store.commit(&commit).unwrap();
+    }
+}
+
+/// State-table "Counter headroom": a baseline must make the handler's intended
+/// business change, not merely consume the inbox or hit the final checkpoint.
+fn assert_handler_reached(case: InputCase, before: &Snapshot, after: &Snapshot) {
+    let table = match case {
+        InputCase::Prerequisite => "kernel",
+        InputCase::Progress | InputCase::Quota => "allowances",
+        InputCase::Classified => "comment_jobs",
+        InputCase::Postmortem => "postmortem_jobs",
+        InputCase::LinkedRequest => "request_links",
+        InputCase::Queue => "queue_facts",
+        InputCase::GitHubComment => "unclassified_comments",
+        InputCase::WorkerFailed => "worker_failures",
+        InputCase::WorktreePrepared | InputCase::CheckPlan => "check_plans",
+        InputCase::Checks => "check_evidence",
+        InputCase::RebaseConflict | InputCase::Rebased => "rebase_conflicts",
+        InputCase::PullRequest => "pull_requests",
+        InputCase::PrivateIntake | InputCase::PrivateReplacement => "requests",
+        InputCase::PrivateIssueChange => crate::ISSUE_EDITS,
+        InputCase::WorkerReply
+        | InputCase::Kernel
+        | InputCase::Steering
+        | InputCase::CiFailed
+        | InputCase::Plan
+        | InputCase::Made
+        | InputCase::Reviewed
+        | InputCase::Merged
+        | InputCase::PrivateEvent
+        | InputCase::PrivatePriorityReread => "nodes",
+        InputCase::PrivateCompletion | InputCase::PrivateCancelAbsent => {
+            assert_ne!(
+                before
+                    .pending_effects
+                    .iter()
+                    .map(|e| (&e.key, e.state))
+                    .collect::<Vec<_>>(),
+                after
+                    .pending_effects
+                    .iter()
+                    .map(|e| (&e.key, e.state))
+                    .collect::<Vec<_>>(),
+                "case {case:?}: active completion must change its outbox record"
+            );
+            return;
+        }
+        InputCase::ScratchSaved | InputCase::ScratchPruned => {
+            // Compatibility receipts deliberately have no handler writes. Their
+            // specified effect is consuming the legacy inbox observation once.
+            let old = before.rows.iter().filter(|r| r.table == "inbox").count();
+            let new = after.rows.iter().filter(|r| r.table == "inbox").count();
+            assert_eq!(old, new + 1);
+            return;
+        }
+        InputCase::TraceLogsCapped => unreachable!("operations incident is witnessed at admission"),
+    };
+    let projection = |snapshot: &Snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == table)
+            .map(|r| (r.id.clone(), r.value.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_ne!(
+        projection(before),
+        projection(after),
+        "case {case:?}: active handler must write {table} before refusal can qualify"
+    );
+}
+
 fn queue_case(c: &mut Controller, table: &str, value: Value) {
     let snapshot = c.snapshot().unwrap();
     let mut queued = Commit::new("property-input", value.clone(), &snapshot);
@@ -649,17 +908,19 @@ fn queue_case(c: &mut Controller, table: &str, value: Value) {
 
 /// State-table "Counter headroom": the rollback property runs the real store,
 /// translation and every fan-out step, with a restart before the retained retry.
-fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
-    let name = format!("property_{case}_{run}");
+fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize) {
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let serial = NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = format!("property_{case:?}_{run}_{serial}").to_lowercase();
     let (repo, mut c, repository, settings) = fixture_with_settings(db, &name);
     c.clock = Box::new(FixedClock);
     let root = intake(&mut c, &repository, 42);
-    if case == 0 {
+    if case == InputCase::Prerequisite {
         let other = intake(&mut c, &repository, 2772);
         ingest(&mut c, root, &[2761]);
         ingest(&mut c, other, &[2761]);
     }
-    if case == 9 {
+    if case == InputCase::Queue {
         let first = intake(&mut c, &repository, 2761);
         let second = intake(&mut c, &repository, 2772);
         ingest(&mut c, first, &[42]);
@@ -679,7 +940,7 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
         world.nodes[0].credit.start = 4;
         persist_world(&mut c, &world, "property-merge-ready");
     }
-    if case == 31 {
+    if case == InputCase::PrivateReplacement {
         event(
             &mut c,
             Event::Command {
@@ -705,8 +966,36 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
             .push(put("replacement", "0".into(), json!(task)));
         c.store.commit(&pending).unwrap();
     }
-    if case == 32 {
+    if case == InputCase::PrivatePriorityReread {
         crate::adapters::github::set_fake_issue(&repo.root.path().join("fakes"), &serde_json::from_value(json!({"number":42,"title":"[P1] fresh priority","body":null,"state":"open","updated_at":"2026-11-05T23:00:00Z"})).unwrap());
+    }
+    activate_handler(&mut c, &repo, case);
+    if case == InputCase::Postmortem {
+        let mut sql = postgres::Config::new()
+            .host(&settings.host)
+            .port(settings.port)
+            .user(&settings.user)
+            .password("tl3-disposable-test-password")
+            .dbname(&settings.database)
+            .connect(postgres::NoTls)
+            .unwrap();
+        sql.execute(
+            "UPDATE tl3_settings SET value = '1' WHERE key = 'postmortem_sample_share'",
+            &[],
+        )
+        .unwrap();
+        event(
+            &mut c,
+            Event::Command {
+                node: root,
+                id: 1,
+                command: Command::Stop,
+            },
+        );
+        confirm(&mut c, root);
+        c.run_postmortems(crate::PostmortemPace { models: vec![] });
+        let snapshot = c.snapshot().unwrap();
+        assert!(c.start_postmortem(&snapshot).unwrap());
     }
     let mut binding = Commit::new("property-pr", json!(null), &c.snapshot().unwrap());
     binding
@@ -716,33 +1005,17 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
     let mut observations = observation_inventory(&mut c, &repo, &repository, payload);
     let table;
     let value;
-    if case < observations.len() {
-        // Inventory drift fails when the accepted enum gains a variant.
-        let names: BTreeSet<String> = observations
-            .iter()
-            .map(|o| json!(o).as_object().unwrap().keys().next().unwrap().clone())
-            .collect();
-        let source = include_str!("../../executor.rs")
-            .split_once("pub enum Observation {")
-            .unwrap()
-            .1
-            .split_once("\n}\n")
-            .unwrap()
-            .0;
-        let declared: BTreeSet<String> = source
-            .lines()
-            .filter(|l| l.starts_with("    ") && !l.starts_with("        "))
-            .map(str::trim)
-            .filter(|l| l.chars().next().is_some_and(char::is_uppercase))
-            .map(|l| {
-                l.split(|c: char| !c.is_alphanumeric() && c != '_')
-                    .next()
-                    .unwrap()
-                    .to_owned()
-            })
-            .collect();
-        assert_eq!(names, declared);
-        if case == 6 {
+    let actual: BTreeSet<_> = observations.iter().map(InputCase::observation).collect();
+    assert_eq!(
+        actual.len(),
+        observations.len(),
+        "duplicate observation fixture"
+    );
+    let observation_index = observations
+        .iter()
+        .position(|o| InputCase::observation(o) == case);
+    if let Some(index) = observation_index {
+        if case == InputCase::Classified {
             c.observe(
                 "classify",
                 comment(&repository, 42, c.bootstrap.rob, "pause"),
@@ -760,12 +1033,29 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
                 .unwrap()
                 .id
                 .clone();
-            observations[case] = Observation::Classified {
+            observations[index] = Observation::Classified {
                 key,
                 reply: Some(json!({"kind":"pause"})),
             };
         }
-        let observation = observations.swap_remove(case);
+        if case == InputCase::Postmortem {
+            let key = c
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|r| r.table == "postmortem_jobs")
+                .unwrap()
+                .id
+                .clone();
+            observations[index] = Observation::Postmortem {
+                key,
+                reply: None,
+                failure: Some("launch_failed".into()),
+                judge_failure: None,
+            };
+        }
+        let observation = observations.swap_remove(index);
         c.observe("property-input", observation).unwrap();
         let snapshot = c.snapshot().unwrap();
         let Some(row) = snapshot
@@ -775,15 +1065,22 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
         else {
             // Trace-log cap and receipt deduplication finish at admission; they
             // cannot reach a kernel step or a headroom refusal.
-            assert_eq!(case, 3);
+            assert_eq!(case, InputCase::TraceLogsCapped);
+            assert!(
+                c.snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "incidents")
+            );
             return;
         };
         table = row.table.clone();
         value = row.value.clone();
     } else {
         use crate::input_errors::PendingKernelInput as Input;
-        let input = match case - observations.len() {
-            0 => Input::Intake {
+        let input = match case {
+            InputCase::PrivateIntake => Input::Intake {
                 issue: LabelledIssue {
                     delivery: "property-new".into(),
                     owner: repository.owner.clone(),
@@ -797,7 +1094,7 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
                 },
                 proposed: None,
             },
-            1 => Input::IssueChange(crate::IssueChange {
+            InputCase::PrivateIssueChange => Input::IssueChange(crate::IssueChange {
                 delivery: "property-edit".into(),
                 owner: repository.owner.clone(),
                 repo: repository.name.clone(),
@@ -807,14 +1104,14 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
                 labels: vec![],
                 updated_at: "2026-11-05T09:01:00Z".parse().unwrap(),
             }),
-            2 => Input::Event(Event::Fact {
+            InputCase::PrivateEvent => Input::Event(Event::Fact {
                 node: root,
                 fact: Fact::Priority(tl3_kernel::Priority::P1),
             }),
-            3 | 4 => {
+            InputCase::PrivateCompletion | InputCase::PrivateCancelAbsent => {
                 let snapshot = c.snapshot().unwrap();
                 let effect = snapshot.pending_effects.last().unwrap();
-                if case - observations.len() == 3 {
+                if case == InputCase::PrivateCompletion {
                     let mut sent = Commit::new("property-sent", json!(null), &snapshot);
                     sent.transitions.push(tl3_store::EffectTransition {
                         key: effect.key.clone(),
@@ -837,8 +1134,8 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
                     }
                 }
             }
-            5 => Input::Replacement { original: root },
-            6 => Input::PriorityReread {
+            InputCase::PrivateReplacement => Input::Replacement { original: root },
+            InputCase::PrivatePriorityReread => Input::PriorityReread {
                 id: "0".into(),
                 row: crate::Reconcile {
                     repository: repository.clone(),
@@ -850,8 +1147,34 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
                 },
                 now: 1_800_000_000_000,
             },
-            _ => unreachable!(),
+            InputCase::Prerequisite
+            | InputCase::ScratchSaved
+            | InputCase::ScratchPruned
+            | InputCase::TraceLogsCapped
+            | InputCase::Progress
+            | InputCase::Quota
+            | InputCase::Classified
+            | InputCase::Postmortem
+            | InputCase::LinkedRequest
+            | InputCase::Queue
+            | InputCase::GitHubComment
+            | InputCase::WorkerFailed
+            | InputCase::WorkerReply
+            | InputCase::Kernel
+            | InputCase::Steering
+            | InputCase::CiFailed
+            | InputCase::WorktreePrepared
+            | InputCase::CheckPlan
+            | InputCase::Checks
+            | InputCase::Plan
+            | InputCase::Made
+            | InputCase::Reviewed
+            | InputCase::RebaseConflict
+            | InputCase::Rebased
+            | InputCase::Merged
+            | InputCase::PullRequest => unreachable!("observation fixture missing: {case:?}"),
         };
+        assert_eq!(InputCase::private(&input), case);
         table = crate::input_errors::PENDING_KERNEL.into();
         value = json!(input);
         queue_case(&mut c, &table, value.clone());
@@ -871,33 +1194,13 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
     baseline.refusal_injection.borrow_mut().visited = 0;
     assert!(
         baseline.consume_kernel_input(&original, &row).unwrap(),
-        "case {case} must have a successful baseline"
+        "case {case:?} must have a successful baseline"
     );
     let reached = baseline.snapshot().unwrap();
-    let witness_table = match case {
-        7 => Some("postmortem_jobs"),
-        16 => Some("check_plans"),
-        22 => Some("rebase_conflicts"),
-        _ => None,
-    };
-    if let Some(table) = witness_table {
-        let projection = |snapshot: &Snapshot| {
-            snapshot
-                .rows
-                .iter()
-                .filter(|r| r.table == table)
-                .map(|r| (r.id.clone(), r.value.clone()))
-                .collect::<Vec<_>>()
-        };
-        assert_ne!(
-            projection(&original),
-            projection(&reached),
-            "case {case}: active handler must write {table} before refusal can qualify"
-        );
-    }
+    assert_handler_reached(case, &original, &reached);
     let checkpoints = baseline.refusal_injection.borrow().visited;
     assert!(checkpoints > 0);
-    if case == 0 || case == 9 {
+    if case == InputCase::Prerequisite || case == InputCase::Queue {
         assert!(
             checkpoints >= 3,
             "fan-out fixture must execute every waiter step"
@@ -915,12 +1218,12 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
         };
         assert!(
             !trial.consume_kernel_input(&original, &row).unwrap(),
-            "case {case}, checkpoint {checkpoint}"
+            "case {case:?}, checkpoint {checkpoint}"
         );
         assert_eq!(
             String::from_utf8(business_bytes(&mut trial)).unwrap(),
             String::from_utf8(before).unwrap(),
-            "refusal mutated case {case}, checkpoint {checkpoint}"
+            "refusal mutated case {case:?}, checkpoint {checkpoint}"
         );
         clear_injected_incident(&mut trial);
         drop(trial);
@@ -932,49 +1235,40 @@ fn check_input_case(db: &mut Database, case: usize, payload: u16, run: usize) {
         assert_eq!(
             String::from_utf8(replay_bytes(&mut trial, initial_revision)).unwrap(),
             String::from_utf8(expected.clone()).unwrap(),
-            "replay diverged for case {case}, checkpoint {checkpoint}"
+            "replay diverged for case {case:?}, checkpoint {checkpoint}"
         );
     }
 }
 
-macro_rules! refusal_group {
-    ($name:ident, $start:expr, $end:expr) => {
-        #[test]
-        fn $name() {
-            let db = std::cell::RefCell::new(Database::start());
-            for case in $start..$end {
-                let run = std::cell::Cell::new(0);
-                let mut runner = TestRunner::new(Config {
-                    cases: 2,
-                    max_shrink_iters: 16,
-                    rng_seed: RngSeed::Fixed(771_400 + case as u64),
-                    source_file: Some(file!()),
-                    failure_persistence: Some(Box::new(
-                        proptest::test_runner::FileFailurePersistence::Direct(concat!(
-                            env!("CARGO_MANIFEST_DIR"),
-                            "/src/merge_dependencies/tests/refusal-regressions.txt"
-                        )),
-                    )),
-                    ..Config::default()
-                });
-                runner
-                    .run(&any::<u16>(), |payload| {
-                        run.set(run.get() + 1);
-                        check_input_case(&mut db.borrow_mut(), case, payload, run.get());
-                        Ok(())
-                    })
-                    .unwrap();
-            }
-        }
-    };
+fn run_input_case(case: InputCase) {
+    let db = std::cell::RefCell::new(Database::start());
+    let run = std::cell::Cell::new(0);
+    let ordinal = InputCase::ALL.iter().position(|c| *c == case).unwrap();
+    let mut runner = TestRunner::new(Config {
+        cases: 2,
+        max_shrink_iters: 16,
+        rng_seed: RngSeed::Fixed(771_400 + ordinal as u64),
+        source_file: Some(file!()),
+        failure_persistence: Some(Box::new(
+            proptest::test_runner::FileFailurePersistence::Direct(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/merge_dependencies/tests/refusal-regressions.txt"
+            )),
+        )),
+        ..Config::default()
+    });
+    runner
+        .run(&any::<u16>(), |payload| {
+            run.set(run.get() + 1);
+            check_input_case(&mut db.borrow_mut(), case, payload, run.get());
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        run.get() >= 2,
+        "every declared case must execute both generated inputs plus persisted regressions"
+    );
 }
-refusal_group!(refusal_observations_0, 0, 4);
-refusal_group!(refusal_observations_1, 4, 8);
-refusal_group!(refusal_observations_2, 8, 12);
-refusal_group!(refusal_observations_3, 12, 16);
-refusal_group!(refusal_observations_4, 16, 20);
-refusal_group!(refusal_observations_5, 20, 24);
-refusal_group!(refusal_direct_inputs, 24, 33);
 
 /// State-table "Counter headroom" / Q39: a queued intake followed by complete
 /// edits retains the final priority through refusal, restart and ordered replay.
@@ -1130,19 +1424,19 @@ fn wait_subscription_is_removed_only_after_input_commit() {
 /// State-table "Counter headroom": postmortem refusal must reach its active job.
 #[test]
 fn handler_reachability_postmortem() {
-    check_input_case(&mut Database::start(), 7, 771, 1);
+    check_input_case(&mut Database::start(), InputCase::Postmortem, 771, 1);
 }
 
 /// State-table "Counter headroom": adoption worktree evidence must write its plan.
 #[test]
 fn handler_reachability_worktree() {
-    check_input_case(&mut Database::start(), 16, 771, 1);
+    check_input_case(&mut Database::start(), InputCase::WorktreePrepared, 771, 1);
 }
 
 /// State-table "Counter headroom": conflict refusal must reach Rebasing writes.
 #[test]
 fn handler_reachability_rebase_conflict() {
-    check_input_case(&mut Database::start(), 22, 771, 1);
+    check_input_case(&mut Database::start(), InputCase::RebaseConflict, 771, 1);
 }
 
 /// State-table "Counter headroom": a slow upstream read must not stop ingress,
@@ -1203,7 +1497,19 @@ fn slow_input_http_does_not_block_other_writers() {
     let bootstrap = c.bootstrap.clone();
     let epoch = c.snapshot().unwrap().epoch.get();
     let fake_root = repo.root.path().join("fakes");
+    crate::adapters::github::set_fake_issue(
+        &fake_root,
+        &serde_json::from_value(json!({
+            "number":9999,"title":"Prerequisite","body":null,"state":"open",
+            "updated_at":"2026-11-05T00:00:00Z"
+        }))
+        .unwrap(),
+    );
     let mut memory = tl3_store::Store::open(&settings).unwrap();
+    memory.claim_memory_feed().unwrap();
+    memory
+        .queue_memory("http-ready-memory", &json!({"summary":"ready"}))
+        .unwrap();
     let mut worker = tl3_store::Store::open(&settings).unwrap();
     let mut ingress = tl3_store::Store::open(&settings).unwrap();
     let mut sql = postgres::Config::new()
@@ -1247,15 +1553,55 @@ fn slow_input_http_does_not_block_other_writers() {
             .find(|r| r.table == "inbox" && r.id == "external:http-input")
             .unwrap()
             .clone();
-        assert!(c.consume_kernel_input(&original, &row).unwrap());
+        let accepted = c.consume_kernel_input(&original, &row).expect(
+            "concurrent allocator commits must retain the input for retry, not escape as a fatal store error"
+        );
+        assert!(
+            !accepted,
+            "the concurrent inbox allocation invalidates the read snapshot"
+        );
+        println!("INPUT_HTTP_RETRY serialization_conflict; input retained");
+        let retained = c.snapshot().unwrap();
+        assert!(
+            retained
+                .rows
+                .iter()
+                .any(|r| r.table == row.table && r.id == row.id)
+        );
+        assert!(!retained.rows.iter().any(|r| r.table == "incidents"));
+        // Retry the retained input with a fresh snapshot and the same upstream
+        // evidence, after the competing writer's commit. No timer is involved.
+        c.adapters = crate::adapters::simulation(&fake_root).unwrap();
+        let current = c.snapshot().unwrap();
+        assert!(c.consume_kernel_input(&current, &row).unwrap());
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == row.table && r.id == row.id)
+        );
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            tl3_kernel::Phase::Auditing
+        );
     });
     entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let locks: Vec<Value> = sql.query("SELECT jsonb_build_object('type', l.locktype, 'table', c.relname, 'mode', l.mode, 'granted', l.granted) FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid LEFT JOIN pg_class c ON c.oid=l.relation WHERE a.datname=current_database() AND a.state='idle in transaction' ORDER BY l.locktype,c.relname,l.mode", &[]).unwrap().into_iter().map(|r| r.get(0)).collect();
     println!("INPUT_HTTP_LOCKS {}", json!(locks));
+    assert!(
+        locks.iter().all(|lock| lock["type"] != "tuple"
+            && (lock["type"] != "relation" || lock["mode"] == "AccessShareLock")),
+        "the blocked read must hold no row or DML relation locks"
+    );
     let (done_tx, done_rx) = mpsc::channel();
     let tx = done_tx.clone();
     let memory_thread = std::thread::spawn(move || {
         let start = Instant::now();
+        memory
+            .set_memory_feed_attempt("http-delivery", false)
+            .unwrap();
+        memory.forget_memory("http-ready-memory").unwrap();
         memory
             .queue_memory("http-independent-memory", &json!({"summary":"independent"}))
             .unwrap();
@@ -1302,11 +1648,11 @@ fn slow_input_http_does_not_block_other_writers() {
     }
     release_tx.send(()).unwrap();
     server.join().unwrap();
+    println!("INPUT_HTTP_WRITERS {}", json!(results));
     input.join().unwrap();
     memory_thread.join().unwrap();
     worker_thread.join().unwrap();
     ingress_thread.join().unwrap();
-    println!("INPUT_HTTP_WRITERS {}", json!(results));
     assert_eq!(
         results.len(),
         3,
