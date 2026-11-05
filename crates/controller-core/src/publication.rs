@@ -35,7 +35,8 @@ pub enum ReconcileRoute {
     Records,
 }
 
-/// Escape: state-table.md:728-735, :743, :751, :755 at cdacce8f; Q27/Q49, #769/#766.
+/// Escape: state-table.md:728-735, :744, :751, :755 at cdacce8f are effect/fence context.
+/// Route precedence preserves github.rs:636-704 at cdacce8f (no rule).
 /// Unbounded finite input domain. The shell fences before selecting this route.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == match output {
@@ -84,7 +85,8 @@ pub enum ReconcileAction {
     Pending,
 }
 
-/// Escape: state-table.md:727-730 at cdacce8f; Q27/Q54, #769/#766.
+/// Escape: preserved existing behaviour (no rule): github.rs:640-651 at cdacce8f;
+/// ee9e40cfe021 introduced pr_evidence -> Found(permanent).
 /// Every permanent pr_evidence read is Found(permanent), never Pending.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == match read {
@@ -113,7 +115,8 @@ pub struct OpenPrEvidence {
     pub evidence_idempotent: bool,
 }
 
-/// Escape: state-table.md:728-730, :745 at cdacce8f; Q27/Q45/Q52, #769/#766.
+/// Escape: state-table.md:746 at cdacce8f is PR reconciliation context.
+/// Exact acceptance preserves publishing.rs:393-408 at cdacce8f (no rule).
 /// Acceptance is exactly this conjunction, for every valuation, without a bound.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (e.open_or_merged && e.valid_body && e.valid_obligations && e.no_gaps && e.evidence_idempotent),
@@ -130,7 +133,8 @@ pub enum ApprovalPreflight {
     Dispatch,
 }
 
-/// Escape: state-table.md:743 at cdacce8f; Q27, #769/#766 duplicate convergence.
+/// Escape: state-table.md:744 at cdacce8f; explicit #766 decision in
+/// state-machine.md:963-969 at cdacce8f; #769 duplicate convergence.
 /// Called after all own-app copies have been PATCHed, not instead of convergence.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if converged { ApprovalPreflight::Observed } else { ApprovalPreflight::Dispatch },
@@ -158,7 +162,9 @@ pub enum ApprovalFailureAction {
     Uncertain,
 }
 
-/// Escape: state-table.md:727-730, :743, :753 at cdacce8f; Q27, #769/#766.
+/// Escape: state-table.md:728, :744, :753 at cdacce8f; explicit #766 decision
+/// in state-machine.md:963-969; #769. Exact failure split preserves
+/// publishing.rs:201-224 at cdacce8f (no additional rule).
 /// A lost POST is sent and non-permanent: Uncertain, never Refused.
 /// The adapter's earlier 404 Refused write is separate and remains in place.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
@@ -184,7 +190,9 @@ pub enum ApprovalObservation {
     Uncertain,
 }
 
-/// Escape: state-table.md:728-730, :743 at cdacce8f; Q27, #769/#766.
+/// Escape: state-table.md:744 at cdacce8f; explicit #766 decision in
+/// state-machine.md:963-969. Exact evidence check preserves
+/// publishing.rs:225-230 at cdacce8f (no additional rule).
 /// A successful response with different approval evidence remains ambiguous.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if approved { ApprovalObservation::Observed } else { ApprovalObservation::Uncertain },
@@ -206,7 +214,8 @@ pub enum Comment {
     Other,
 }
 
-/// Escape: state-table.md:751 at cdacce8f; Q27/Q49, #769/#766.
+/// Escape: state-table.md:751 at cdacce8f is comment-delivery context.
+/// Eligibility preserves github.rs:694-704, :1012-1024 at cdacce8f (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (notice || matches!(comment, Comment::Clarify | Comment::ReplacementDropped)),
 ))]
@@ -223,7 +232,9 @@ pub struct OperationsTarget {
     pub issue: bool,
 }
 
-/// Escape: state-table.md:915 at cdacce8f; Q17/Q27, #769/#766 incident routing.
+/// Escape: state-table.md:915 and Q17 (state-machine.md:502) at cdacce8f
+/// require the operations issue. Exact identity check preserves
+/// github.rs:1025-1036 at cdacce8f (no additional rule).
 /// An incident is admitted iff every configured operations identity field matches.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (!incident || match target {
@@ -247,7 +258,9 @@ pub enum TitleSource {
     Issue,
 }
 
-/// Escape: state-table.md:678, :915 at cdacce8f; Q17/Q27/Q49, #769/#766.
+/// Escape: state-table.md:678, :915; Q17/Q49 (state-machine.md:502/:479)
+/// at cdacce8f are incident/restart context. Exact title-source predicate
+/// preserves github.rs:1046-1052 at cdacce8f (no additional rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if incident || restart_dropped { TitleSource::Context } else { TitleSource::Issue },
 ))]
@@ -267,7 +280,8 @@ pub enum MessageRejection {
     Permanent,
 }
 
-/// Escape: state-table.md:727, :751 at cdacce8f; Q27/Q54, #769/#766.
+/// Escape: preserved existing behaviour (no rule): github.rs:1097-1114 at
+/// cdacce8f; 60e70bc7d280 introduced the Clarify-only rephrase fallback.
 /// Only Clarify receives the fixed rephrase request after message rejection.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == match comment { Comment::Clarify => MessageRejection::Fallback, _ => MessageRejection::Permanent },
@@ -296,7 +310,9 @@ pub enum CloseAction {
     Pending,
 }
 
-/// Escape: state-table.md:696, :728-730 at cdacce8f; Q27/Q49, #769/#766.
+/// Escape: state-table.md:696, :728-730; Q49 (state-machine.md:479) at
+/// cdacce8f are closure/reconciliation context. Exact read/close split
+/// preserves github.rs:714-731 at cdacce8f (no additional rule).
 /// A found summary does not confirm a failed read or a still-open close target.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == match issue { IssueRead::Closed => CloseAction::Complete, IssueRead::Open => CloseAction::Close, IssueRead::Failed => CloseAction::Pending },

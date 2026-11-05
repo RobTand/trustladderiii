@@ -4,7 +4,8 @@ use publication::*;
 use vstd::prelude::*;
 
 verus! {
-/// Escape: state-table.md:728-735, :755 at cdacce8f; Q27/Q49, #769/#766.
+/// Escape: state-table.md:728-735, :744, :751, :755 at cdacce8f are effect/fence context.
+/// Route precedence preserves github.rs:636-704 at cdacce8f (no rule).
 /// Concrete calls reach every route, including publication precedence over steering.
 fn route_witnesses() {
     let witness1 = reconcile_route(Output::Approval, Steering::Correction);
@@ -22,7 +23,8 @@ fn route_witnesses() {
     let witness7 = reconcile_route(Output::Other, Steering::Other);
     assert(witness7 == ReconcileRoute::Records);
 }
-/// Escape: state-table.md:727-730 at cdacce8f; Q27/Q54, #769/#766.
+/// Escape: preserved existing behaviour (no rule): github.rs:640-651 at cdacce8f;
+/// ee9e40cfe021 introduced pr_evidence -> Found(permanent).
 fn permanence_witnesses() {
     let witness8 = publication_reconciliation(PublicationRead::EvidencePermanent);
     assert(witness8 == ReconcileAction::FoundPermanent);
@@ -33,7 +35,8 @@ fn permanence_witnesses() {
     let witness11 = publication_reconciliation(PublicationRead::Reconciled);
     assert(witness11 == ReconcileAction::Preserve);
 }
-/// Escape: state-table.md:728-730, :745 at cdacce8f; Q27/Q45/Q52, #769/#766.
+/// Escape: state-table.md:746 at cdacce8f is PR reconciliation context.
+/// Exact acceptance preserves publishing.rs:393-408 at cdacce8f (no rule).
 /// Each conjunct independently prevents acceptance; no precondition excludes rejection.
 fn acceptance_witnesses() {
     let witness12 = accept_open_pr(OpenPrEvidence {open_or_merged:true, valid_body:true, valid_obligations:true, no_gaps:true, evidence_idempotent:true});
@@ -49,14 +52,17 @@ fn acceptance_witnesses() {
     let witness17 = accept_open_pr(OpenPrEvidence {open_or_merged:true, valid_body:true, valid_obligations:true, no_gaps:true, evidence_idempotent:false});
     assert(!witness17);
 }
-/// Escape: state-table.md:743 at cdacce8f; Q27, #769/#766.
+/// Escape: state-table.md:744 at cdacce8f; explicit #766 decision in
+/// state-machine.md:963-969 at cdacce8f; #769 duplicate convergence.
 fn preflight_witnesses() {
     let witness18 = approval_preflight(true);
     assert(witness18 == ApprovalPreflight::Observed);
     let witness19 = approval_preflight(false);
     assert(witness19 == ApprovalPreflight::Dispatch);
 }
-/// Escape: state-table.md:727-730, :743, :753 at cdacce8f; Q27, #769/#766.
+/// Escape: state-table.md:728, :744, :753 at cdacce8f; explicit #766 decision
+/// in state-machine.md:963-969; #769. Exact failure split preserves
+/// publishing.rs:201-224 at cdacce8f (no additional rule).
 fn outcome_witnesses() {
     let witness20 = failed_approval(ApprovalFailure {sent:false,permanent:false});
     assert(witness20 == ApprovalFailureAction::Refused);
@@ -67,14 +73,17 @@ fn outcome_witnesses() {
     let witness23 = failed_approval(ApprovalFailure {sent:true,permanent:false});
     assert(witness23 == ApprovalFailureAction::Uncertain);
 }
-/// Escape: state-table.md:728-730, :743 at cdacce8f; Q27, #769/#766.
+/// Escape: state-table.md:744 at cdacce8f; explicit #766 decision in
+/// state-machine.md:963-969. Exact evidence check preserves
+/// publishing.rs:225-230 at cdacce8f (no additional rule).
 fn observation_witnesses() {
     let witness24 = observed_approval(true);
     assert(witness24 == ApprovalObservation::Observed);
     let witness25 = observed_approval(false);
     assert(witness25 == ApprovalObservation::Uncertain);
 }
-/// Escape: state-table.md:751 at cdacce8f; Q27/Q49, #769/#766.
+/// Escape: state-table.md:751 at cdacce8f is comment-delivery context.
+/// Eligibility preserves github.rs:694-704, :1012-1024 at cdacce8f (no rule).
 fn message_witnesses() {
     let witness26 = message_delivery(false, Comment::Clarify);
     assert(witness26);
@@ -85,7 +94,9 @@ fn message_witnesses() {
     let witness29 = message_delivery(true, Comment::Other);
     assert(witness29);
 }
-/// Escape: state-table.md:915 at cdacce8f; Q17/Q27, #769/#766.
+/// Escape: state-table.md:915 and Q17 (state-machine.md:502) at cdacce8f
+/// require the operations issue. Exact identity check preserves
+/// github.rs:1025-1036 at cdacce8f (no additional rule).
 fn incident_witnesses() {
     let witness30 = incident_admitted(true,None);
     assert(!witness30);
@@ -102,7 +113,9 @@ fn incident_witnesses() {
     let witness36 = incident_admitted(true,Some(OperationsTarget {owner:true,repository:true,installation:true,issue:false}));
     assert(!witness36);
 }
-/// Escape: state-table.md:678, :915 at cdacce8f; Q17/Q27/Q49, #769/#766.
+/// Escape: state-table.md:678, :915; Q17/Q49 (state-machine.md:502/:479)
+/// at cdacce8f are incident/restart context. Exact title-source predicate
+/// preserves github.rs:1046-1052 at cdacce8f (no additional rule).
 fn title_witnesses() {
     let witness37 = title_source(false,false);
     assert(witness37 == TitleSource::Issue);
@@ -113,7 +126,8 @@ fn title_witnesses() {
     let witness40 = title_source(true,true);
     assert(witness40 == TitleSource::Context);
 }
-/// Escape: state-table.md:727, :751 at cdacce8f; Q27/Q54, #769/#766.
+/// Escape: preserved existing behaviour (no rule): github.rs:1097-1114 at
+/// cdacce8f; 60e70bc7d280 introduced the Clarify-only rephrase fallback.
 fn rejection_witnesses() {
     let witness41 = rejected_message(Comment::Clarify);
     assert(witness41 == MessageRejection::Fallback);
@@ -122,7 +136,9 @@ fn rejection_witnesses() {
     let witness43 = rejected_message(Comment::Other);
     assert(witness43 == MessageRejection::Permanent);
 }
-/// Escape: state-table.md:696, :728-730 at cdacce8f; Q27/Q49, #769/#766.
+/// Escape: state-table.md:696, :728-730; Q49 (state-machine.md:479) at
+/// cdacce8f are closure/reconciliation context. Exact read/close split
+/// preserves github.rs:714-731 at cdacce8f (no additional rule).
 fn close_witnesses() {
     let witness44 = close_after_reconcile(IssueRead::Closed);
     assert(witness44 == CloseAction::Complete);
