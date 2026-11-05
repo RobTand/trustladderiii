@@ -1076,9 +1076,7 @@ impl Supervisor {
                         .find(|row| row.table == "allowances" && row.id == delivery.key)
                         .and_then(|row| row.value["last_quota_attempt"].as_i64())
                         .is_some_and(|held| {
-                            previous
-                                .as_ref()
-                                .is_some_and(|(number, _)| i64::from(*number) > held)
+                            previous.as_ref().is_some_and(|(number, _)| *number > held)
                         })
                     || !matches!(
                         completion.observations.as_slice(),

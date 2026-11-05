@@ -344,8 +344,9 @@ else:
             self.intake(2663);
         }
         self.until(|f| f.hold().is_some() && (!other || f.root.path().join("started-1").exists()));
+        let key = self.hold().unwrap().0;
         self.controller.look_due().unwrap();
-        self.hold().unwrap().0
+        key
     }
     fn attempt(&mut self, key: &str) -> i64 {
         self.store

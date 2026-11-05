@@ -991,6 +991,19 @@ impl Controller {
         observation: &Observation,
     ) -> Result<()> {
         self.model_success_evidence(snapshot, observation, commit)?;
+        // Q53 / #828: two real quota attempts can announce exactly the same
+        // reset. Their durable attempt numbers distinguish endings from replays.
+        let quota_key = if let Observation::Quota {
+            key: held, model, ..
+        } = observation
+        {
+            self.store
+                .latest_worker_quota(held, model.as_deref())?
+                .map(|ending| format!("{key}:quota-attempt:{}", ending.attempt))
+        } else {
+            None
+        };
+        let key = quota_key.as_deref().unwrap_or(key);
         if let Observation::Queue(fact) = observation
             && fact.setup()
         {

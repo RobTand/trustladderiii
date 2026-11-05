@@ -777,6 +777,7 @@ impl Controller {
                 {
                     Ok(Some(completion)) => {
                         self.look_observations(&delivery, completion)?;
+                        state.found = None;
                         state.progress = None;
                         state.progress_ms = now;
                         self.rearm(state);
