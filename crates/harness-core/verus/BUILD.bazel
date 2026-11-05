@@ -1,0 +1,61 @@
+# #835: independent groups over the real production source, with witnesses.
+load("//tools/bazel:verus.bzl", "verus_test")
+
+package(default_visibility = ["//visibility:public"])
+
+verus_test(
+    name = "limits_arithmetic",
+    src = "limits_arithmetic.rs",
+    srcs = ["//crates/harness-core:src/limits.rs"],
+    module = "limits::arithmetic",
+    expected_obligations = 4,
+    tags = ["rust", "verus"],
+    size = "small",
+    timeout = "short",
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+)
+
+verus_test(
+    name = "limits_line",
+    src = "limits_line.rs",
+    srcs = ["//crates/harness-core:src/limits.rs"],
+    module = "limits::line",
+    expected_obligations = 3,
+    tags = ["rust", "verus"],
+    size = "small",
+    timeout = "short",
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+)
+
+verus_test(
+    name = "limits_accumulation",
+    src = "limits_accumulation.rs",
+    srcs = ["//crates/harness-core:src/limits.rs"],
+    module = "limits::accumulation",
+    expected_obligations = 5,
+    tags = ["rust", "verus"],
+    size = "small",
+    timeout = "short",
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+)
+
+verus_test(
+    name = "limits_delay",
+    src = "limits_delay.rs",
+    srcs = ["//crates/harness-core:src/limits.rs"],
+    module = "limits::delay",
+    expected_obligations = 2,
+    tags = ["rust", "verus"],
+    size = "small",
+    timeout = "short",
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+)
+
