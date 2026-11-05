@@ -273,3 +273,13 @@ with patch('sys.argv', ['oracle.py', '--check']):
 stub = runpy.run_path('workers/tests/prompt_render_stub.py')
 with patch('sys.argv', ['prompt_render_stub.py', '--check', binary]):
     stub['main']()
+
+p0 = runpy.run_path('workers/tests/prompt_identity_vectors.py')
+for selected in ('', binary):
+    token = prompt_render.selection.set({})
+    try:
+        with patch.dict(os.environ, {'TL3_RELEASE_BINARY': selected}):
+            assert p0['main'](['--check']) == 0
+    finally:
+        prompt_render.selection.reset(token)
+print('PASS reviewed P0 vectors from Python fallback and selected-release Rust')

@@ -1190,6 +1190,8 @@ filegroup(
     name = "prompt_render_recordings",
     srcs = [
         "fixtures/prompt-render.json.gz",
+        "prompt-identity-vectors.json",
+        "prompt_identity_vectors.py",
         "prompt_render_stub.py",
     ],
     visibility = ["//visibility:public"],

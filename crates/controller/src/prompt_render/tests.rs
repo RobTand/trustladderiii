@@ -24,6 +24,58 @@ fn python_prompt_identity_vectors() {
     }
 }
 
+/// #819: P0's reviewed, real-Python prompt identity is the migration contract.
+#[test]
+fn reviewed_p0_prompt_identities_are_unchanged() {
+    use sha2::{Digest, Sha256};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let rows: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("workers/tests/prompt-identity-vectors.json")).unwrap(),
+    )
+    .unwrap();
+    let mut identities = 0;
+    let mut messages = 0;
+    for (role, vectors) in rows["roles"].as_object().unwrap() {
+        for row in vectors["identities"].as_array().unwrap() {
+            let request = &row["request"];
+            let rendered: serde_json::Value = serde_json::from_str(&render("role", &serde_json::json!({
+                "role": role, "text": request["prompt"]["text"], "test_cpus": request["test_cpus"],
+            }).to_string()).unwrap()).unwrap();
+            let text = rendered["text"].as_str().unwrap();
+            assert_eq!(
+                text.len(),
+                row["role_prompt"]["utf8_bytes"].as_u64().unwrap() as usize,
+                "{role}"
+            );
+            assert_eq!(
+                format!("{:x}", Sha256::digest(text.as_bytes())),
+                row["role_prompt"]["sha256"].as_str().unwrap(),
+                "{role}"
+            );
+            if matches!(role.as_str(), "ingest" | "audit" | "planner") {
+                let rendered: serde_json::Value =
+                    serde_json::from_str(&render("cache", &request.to_string()).unwrap()).unwrap();
+                assert_eq!(rendered["identity"], row["prompt_cache_identity"], "{role}");
+            }
+            identities += 1;
+        }
+        for row in vectors["initial_messages"].as_array().unwrap() {
+            let mut request = row["request"].clone();
+            request["inputs"] = row["inputs"].clone();
+            let rendered: serde_json::Value =
+                serde_json::from_str(&render("prefix", &request.to_string()).unwrap()).unwrap();
+            if rendered["prefix"].is_null() {
+                assert!(row["content"].is_string(), "{role}");
+            } else {
+                assert_eq!(rendered["prefix"], row["content"][0], "{role}");
+            }
+            messages += 1;
+        }
+    }
+    assert_eq!(identities, 22);
+    assert_eq!(messages, 32);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
     /// #819: compose real-Python number/string cases under randomly ordered nested objects.
