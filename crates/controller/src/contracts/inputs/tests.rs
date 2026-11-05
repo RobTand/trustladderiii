@@ -135,7 +135,7 @@ fn input_validator(role: &str) -> &'static jsonschema::Validator {
 fn request_input_corpus(text: &str, count: u64) -> Vec<(&'static str, Value)> {
     let issue = json!({"number":count,"title":text,"body":text,"author":"requester","comments":[]});
     let repo = json!({"readme":text,"file_list":["README.md"]});
-    let brief = json!({"kind":"brief","brief":text,"goals":[{"description":text}],"memory_ids":[]});
+    let brief = json!({"kind":"brief","brief":text,"goals":[{"description":text,"verification":"review"}],"memory_ids":[]});
     let goals = json!([{"id":"g1","description":text}]);
     let forecast =
         json!({"fit_tokens":count,"context_tokens":count+1000,"overhead_tokens":{"fixture":0}});
