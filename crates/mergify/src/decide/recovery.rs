@@ -68,25 +68,42 @@ pub mod budget {
     #[cfg(verus_keep_ghost)]
     vstd::prelude::verus! {
     /// Witnesses for both decisions and boundary values; no bounded search.
-    proof fn witnesses() {
+    fn witnesses() {
 
-        assert(legacy_command(Legacy::Sending, 1u8, 2u8) == Some(1u8));
-        assert(legacy_command(Legacy::Refused, 1u8, 2u8) == Some(2u8));
-        assert(legacy_command(Legacy::Unused, 1u8, 2u8).is_none());
-        assert(inspect_history(Stage::Ready));
-        assert(!inspect_history(Stage::Sending));
-        assert(!inspect_history(Stage::Spent));
-        assert(legacy_binding(true, true));
-        assert(!legacy_binding(false, true));
-        assert(archive_candidate(Binding {repository: true, pull_request: true, head: true}, true));
-        assert(!archive_candidate(Binding {repository: true, pull_request: true, head: false}, true));
-        assert(effect_key_index(0).is_none());
-        assert(effect_key_index(1) == Some(0usize));
-        assert(effect_key_index(usize::MAX) == Some((usize::MAX - 1) as usize));
-        assert(sent(true, true, true));
-        assert(!sent(false, true, true));
-        assert(!sent(true, false, true));
-        assert(!sent(true, true, false));
+        let observed_0 = legacy_command(Legacy::Sending, 1u8, 2u8);
+    assert(observed_0 == Some(1u8));
+        let observed_1 = legacy_command(Legacy::Refused, 1u8, 2u8);
+    assert(observed_1 == Some(2u8));
+        let observed_2 = legacy_command(Legacy::Unused, 1u8, 2u8);
+    assert(observed_2.is_none());
+        let observed_3 = inspect_history(Stage::Ready);
+    assert(observed_3);
+        let observed_4 = inspect_history(Stage::Sending);
+    assert(!observed_4);
+        let observed_5 = inspect_history(Stage::Spent);
+    assert(!observed_5);
+        let observed_6 = legacy_binding(true, true);
+    assert(observed_6);
+        let observed_7 = legacy_binding(false, true);
+    assert(!observed_7);
+        let observed_8 = archive_candidate(Binding {repository: true, pull_request: true, head: true}, true);
+    assert(observed_8);
+        let observed_9 = archive_candidate(Binding {repository: true, pull_request: true, head: false}, true);
+    assert(!observed_9);
+        let observed_10 = effect_key_index(0);
+    assert(observed_10.is_none());
+        let observed_11 = effect_key_index(1);
+    assert(observed_11 == Some(0usize));
+        let observed_12 = effect_key_index(usize::MAX);
+    assert(observed_12 == Some((usize::MAX - 1) as usize));
+        let observed_13 = sent(true, true, true);
+    assert(observed_13);
+        let observed_14 = sent(false, true, true);
+    assert(!observed_14);
+        let observed_15 = sent(true, false, true);
+    assert(!observed_15);
+        let observed_16 = sent(true, true, false);
+    assert(!observed_16);
 
     }
     }
@@ -241,29 +258,48 @@ pub mod eligibility {
     #[cfg(verus_keep_ghost)]
     vstd::prelude::verus! {
     /// Witnesses for both decisions and boundary values; no bounded search.
-    proof fn witnesses() {
+    fn witnesses() {
 
         let r = Repaired {phase: true, paused: false, incident: false, open: true, head_approved: true, checked_approved: true,
             approved_head: None, repository: None, pull_request: None};
-        assert(repaired_head(r) == RepairStep::ApprovedHead);
-        assert(repaired_head(Repaired {approved_head: Some(true), ..r}) == RepairStep::Repository);
-        assert(repaired_head(Repaired {approved_head: Some(true), repository: Some(true), ..r}) == RepairStep::PullRequest);
-        assert(repaired_head(Repaired {approved_head: Some(true), repository: Some(true), pull_request: Some(true), ..r}) == RepairStep::History);
-        assert(repaired_head(Repaired {paused: true, ..r}) == RepairStep::Stop);
-        assert(prior_failure(true, true, PriorFailure::QueueCi, true));
-        assert(prior_failure(true, true, PriorFailure::Conflict, true));
-        assert(!prior_failure(true, true, PriorFailure::Other, true));
-        assert(!prior_failure(true, true, PriorFailure::Conflict, false));
+        let observed_17 = repaired_head(r);
+    assert(observed_17 == RepairStep::ApprovedHead);
+        let observed_18 = repaired_head(Repaired {approved_head: Some(true), ..r});
+    assert(observed_18 == RepairStep::Repository);
+        let observed_19 = repaired_head(Repaired {approved_head: Some(true), repository: Some(true), ..r});
+    assert(observed_19 == RepairStep::PullRequest);
+        let observed_20 = repaired_head(Repaired {approved_head: Some(true), repository: Some(true), pull_request: Some(true), ..r});
+    assert(observed_20 == RepairStep::History);
+        let observed_21 = repaired_head(Repaired {paused: true, ..r});
+    assert(observed_21 == RepairStep::Stop);
+        let observed_22 = prior_failure(true, true, PriorFailure::QueueCi, true);
+    assert(observed_22);
+        let observed_23 = prior_failure(true, true, PriorFailure::Conflict, true);
+    assert(observed_23);
+        let observed_24 = prior_failure(true, true, PriorFailure::Other, true);
+    assert(!observed_24);
+        let observed_25 = prior_failure(true, true, PriorFailure::Conflict, false);
+    assert(!observed_25);
         let e = Eligibility {current_head: true, open: true, merged: false, draft: false, mergeable: true,
             repaired: None, waiting: true, settled: true, eligible_check: true, queue_label: None, held: None, checks_ready: None, reruns_pending: None};
-        assert(recovery_eligible(e) == EligibilityStep::Repaired);
-        assert(recovery_eligible(Eligibility {repaired: Some(true), ..e}) == EligibilityStep::Issue);
-        assert(recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), ..e}) == EligibilityStep::Events);
-        assert(recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), held: Some(false), ..e}) == EligibilityStep::Checks);
-        assert(recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), held: Some(false), checks_ready: Some(true), ..e}) == EligibilityStep::Reruns);
-        assert(recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), held: Some(false), checks_ready: Some(true), reruns_pending: Some(false), ..e}) == EligibilityStep::Eligible);
-        assert(recovery_eligible(Eligibility {draft: true, ..e}) == EligibilityStep::Stop);
-        assert(event_hold(None)); assert(event_hold(Some(true))); assert(!event_hold(Some(false)));
+        let observed_26 = recovery_eligible(e);
+    assert(observed_26 == EligibilityStep::Repaired);
+        let observed_27 = recovery_eligible(Eligibility {repaired: Some(true), ..e});
+    assert(observed_27 == EligibilityStep::Issue);
+        let observed_28 = recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), ..e});
+    assert(observed_28 == EligibilityStep::Events);
+        let observed_29 = recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), held: Some(false), ..e});
+    assert(observed_29 == EligibilityStep::Checks);
+        let observed_30 = recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), held: Some(false), checks_ready: Some(true), ..e});
+    assert(observed_30 == EligibilityStep::Reruns);
+        let observed_31 = recovery_eligible(Eligibility {repaired: Some(true), queue_label: Some(true), held: Some(false), checks_ready: Some(true), reruns_pending: Some(false), ..e});
+    assert(observed_31 == EligibilityStep::Eligible);
+        let observed_32 = recovery_eligible(Eligibility {draft: true, ..e});
+    assert(observed_32 == EligibilityStep::Stop);
+        let observed_33 = event_hold(None);
+    assert(observed_33); let observed_34 = event_hold(Some(true));
+    assert(observed_34); let observed_35 = event_hold(Some(false));
+    assert(!observed_35);
 
     }
     }
@@ -332,19 +368,35 @@ pub mod schedule {
     #[cfg(verus_keep_ghost)]
     vstd::prelude::verus! {
     /// Witnesses for both decisions and boundary values; no bounded search.
-    proof fn witnesses() {
+    fn witnesses() {
 
-        assert(recovery_gate(true, None) == RecoveryGate::Proceed);
-        assert(recovery_gate(false, None) == RecoveryGate::Repaired);
-        assert(recovery_gate(false, Some(false)) == RecoveryGate::Pending);
-        assert(recovery_gate(false, Some(true)) == RecoveryGate::Proceed);
-        assert(ineligible_tick(true)); assert(!ineligible_tick(false));
-        assert(saved_timer(Some(0))); assert(saved_timer(Some(u64::MAX))); assert(!saved_timer(None));
-        assert(dispatch_gate(false, None) == DispatchGate::Holds);
-        assert(dispatch_gate(true, None) == DispatchGate::Eligibility);
-        assert(dispatch_gate(true, Some(false)) == DispatchGate::Ineligible);
-        assert(dispatch_gate(true, Some(true)) == DispatchGate::Holds);
-        assert(fence(Stage::Sending)); assert(!fence(Stage::Ready)); assert(!fence(Stage::Spent));
+        let observed_36 = recovery_gate(true, None);
+    assert(observed_36 == RecoveryGate::Proceed);
+        let observed_37 = recovery_gate(false, None);
+    assert(observed_37 == RecoveryGate::Repaired);
+        let observed_38 = recovery_gate(false, Some(false));
+    assert(observed_38 == RecoveryGate::Pending);
+        let observed_39 = recovery_gate(false, Some(true));
+    assert(observed_39 == RecoveryGate::Proceed);
+        let observed_40 = ineligible_tick(true);
+    assert(observed_40); let observed_41 = ineligible_tick(false);
+    assert(!observed_41);
+        let observed_42 = saved_timer(Some(0));
+    assert(observed_42); let observed_43 = saved_timer(Some(u64::MAX));
+    assert(observed_43); let observed_44 = saved_timer(None);
+    assert(!observed_44);
+        let observed_45 = dispatch_gate(false, None);
+    assert(observed_45 == DispatchGate::Holds);
+        let observed_46 = dispatch_gate(true, None);
+    assert(observed_46 == DispatchGate::Eligibility);
+        let observed_47 = dispatch_gate(true, Some(false));
+    assert(observed_47 == DispatchGate::Ineligible);
+        let observed_48 = dispatch_gate(true, Some(true));
+    assert(observed_48 == DispatchGate::Holds);
+        let observed_49 = fence(Stage::Sending);
+    assert(observed_49); let observed_50 = fence(Stage::Ready);
+    assert(!observed_50); let observed_51 = fence(Stage::Spent);
+    assert(!observed_51);
 
     }
     }
@@ -393,19 +445,33 @@ pub mod command {
     #[cfg(verus_keep_ghost)]
     vstd::prelude::verus! {
     /// Witnesses for both decisions and boundary values; no bounded search.
-    proof fn witnesses() {
+    fn witnesses() {
 
-        assert(command_result(Reply::Accepted) == Outcome::Accepted);
-        assert(command_result(Reply::Http(403)) == Outcome::PermissionDenied);
-        assert(command_result(Reply::Http(400)) == Outcome::Rejected);
-        assert(command_result(Reply::Http(499)) == Outcome::Rejected);
-        assert(command_result(Reply::RateLimited) == Outcome::Rejected);
-        assert(command_result(Reply::Http(399)) == Outcome::Unknown);
-        assert(command_result(Reply::Http(500)) == Outcome::Unknown);
-        assert(command_result(Reply::Http(u16::MAX)) == Outcome::Unknown);
-        assert(command_result(Reply::Other) == Outcome::Unknown);
-        assert(receipt_found(false, true)); assert(!receipt_found(true, true)); assert(!receipt_found(false, false));
-        assert(permission_refusal(Outcome::PermissionDenied)); assert(!permission_refusal(Outcome::Unknown));
+        let observed_52 = command_result(Reply::Accepted);
+    assert(observed_52 == Outcome::Accepted);
+        let observed_53 = command_result(Reply::Http(403));
+    assert(observed_53 == Outcome::PermissionDenied);
+        let observed_54 = command_result(Reply::Http(400));
+    assert(observed_54 == Outcome::Rejected);
+        let observed_55 = command_result(Reply::Http(499));
+    assert(observed_55 == Outcome::Rejected);
+        let observed_56 = command_result(Reply::RateLimited);
+    assert(observed_56 == Outcome::Rejected);
+        let observed_57 = command_result(Reply::Http(399));
+    assert(observed_57 == Outcome::Unknown);
+        let observed_58 = command_result(Reply::Http(500));
+    assert(observed_58 == Outcome::Unknown);
+        let observed_59 = command_result(Reply::Http(u16::MAX));
+    assert(observed_59 == Outcome::Unknown);
+        let observed_60 = command_result(Reply::Other);
+    assert(observed_60 == Outcome::Unknown);
+        let observed_61 = receipt_found(false, true);
+    assert(observed_61); let observed_62 = receipt_found(true, true);
+    assert(!observed_62); let observed_63 = receipt_found(false, false);
+    assert(!observed_63);
+        let observed_64 = permission_refusal(Outcome::PermissionDenied);
+    assert(observed_64); let observed_65 = permission_refusal(Outcome::Unknown);
+    assert(!observed_65);
 
     }
     }
