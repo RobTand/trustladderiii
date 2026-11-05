@@ -32,6 +32,20 @@ pub enum ContractEvidence {
     Ending,
 }
 
+/// Effect-delivery Converges row: only an unfenced unfinished worktree journal
+/// certifies in-flight intent. Completed journals are authoritative separately.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
+    result == if epoch >= fence { ContractEvidence::RecordedIntent }
+        else { ContractEvidence::Absent },
+))]
+pub fn worktree_intent(epoch: i64, fence: i64) -> ContractEvidence {
+    if epoch >= fence {
+        ContractEvidence::RecordedIntent
+    } else {
+        ContractEvidence::Absent
+    }
+}
+
 /// Q53: the classifier retains the durable retry deadline. Role, model, family
 /// and the original operation key remain in the quota facts/status view (#828).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]

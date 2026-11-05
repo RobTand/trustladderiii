@@ -803,7 +803,7 @@ impl Executor for Real {
         &mut self,
         delivery: &Delivery,
     ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
-        use crate::dispatch_liveness::decision::ContractEvidence;
+        use crate::dispatch_liveness::decision::{ContractEvidence, worktree_intent};
         let repo = self.repository(delivery)?;
         let _guard = repo
             .mutex
@@ -811,7 +811,7 @@ impl Executor for Real {
             .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
         Ok(match repo.load(delivery)? {
             Some(record) if record.completion.is_some() => ContractEvidence::Ending,
-            Some(_) => ContractEvidence::RecordedIntent,
+            Some(_) => worktree_intent(delivery.epoch, repo.fence()?),
             None => ContractEvidence::Absent,
         })
     }

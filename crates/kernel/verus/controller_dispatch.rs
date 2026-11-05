@@ -81,6 +81,29 @@ mod dispatch_theorems {
         operation_status(e)
     }
 
+    /// Effect-delivery Converges / #817 r2: a fenced unfinished journal
+    /// yields retry or silence for repair, never dispatch. Current and terminal
+    /// evidence have witnesses. Arbitrary signed epochs, one decision step.
+    fn worktree_epoch_fence(e: Evidence, epoch: i64, fence: i64) -> (result: DispatchStatus)
+        requires !e.incident, !e.ending, e.quota_reset.is_none(),
+        ensures epoch < fence ==> result == if e.deadline {
+            DispatchStatus::Retry(RetryPending::Allowance)
+        } else { DispatchStatus::Silent },
+            epoch >= fence ==> result == DispatchStatus::Dispatched(DeliveryClass::Converges),
+    {
+        let contract = worktree_intent(epoch, fence);
+        let sampled = Evidence { class: DeliveryClass::Converges, intent: true, contract, ..e };
+        let result = classify(Wait::Effect(crate::EffectKind::PrepareWorktree), sampled);
+        let current = worktree_intent(1, 1);
+        assert(current == ContractEvidence::RecordedIntent);
+        let fenced = worktree_intent(1, 2);
+        assert(fenced == ContractEvidence::Absent);
+        let terminal = Evidence { ending: true, contract: ContractEvidence::Ending, ..sampled };
+        let ended = classify(Wait::Effect(crate::EffectKind::PrepareWorktree), terminal);
+        assert(ended == DispatchStatus::Ending);
+        result
+    }
+
     /// State-table effect delivery / #817: witnesses require actual adapter
     /// evidence; neither a worker process nor another class's receipt suffices.
     fn non_worker_contract_witnesses(e: Evidence) {
