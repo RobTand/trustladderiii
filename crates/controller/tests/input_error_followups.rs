@@ -184,6 +184,191 @@ fn seed_node_counter(c: &mut Controller, settings: &tl3_config::Store, field: &s
     Store::open(settings).unwrap().commit(&commit).unwrap();
 }
 
+fn counter_incidents(c: &mut Controller) -> Vec<tl3_store::WorldRow> {
+    c.snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| {
+            r.table == "incidents" && r.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .collect()
+}
+
+fn clear_counter(c: &mut Controller, id: &str, delivery: &str) {
+    c.observe(
+        delivery,
+        Observation::GitHubComment {
+            repository: boot().repos.remove(0),
+            issue: 12,
+            comment: tl3_github::Comment {
+                id: 901,
+                body: format!("clear incident {id}"),
+                user: tl3_github::Actor {
+                    id: 42,
+                    login: "rob".into(),
+                },
+                created_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                updated_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
+            },
+        },
+    )
+    .unwrap();
+}
+
+/// State-table "Counter headroom" / Q39: complete edits survive the halt,
+/// including a return to the unapplied world's priority, and restart.
+#[test]
+fn halted_issue_edits_replay_a_priority_reversal_after_restart() {
+    let mut db = support::Database::start();
+    let settings = db.create("counter_priority_reversal");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    let mut labelled = issue();
+    labelled.labels = vec!["P1".into()];
+    c.intake(labelled).unwrap();
+    let next_seq = c.world().unwrap().nodes[0].next_seq;
+    seed_node_counter(&mut c, &settings, "next_seq", u64::MAX);
+    for (delivery, priority, at) in [
+        ("priority-down", "P2", "2026-11-05T01:00:00Z"),
+        ("priority-back", "P1", "2026-11-05T01:00:01Z"),
+    ] {
+        c.issue_changed(&tl3_controller::IssueChange {
+            delivery: delivery.into(),
+            owner: "owner".into(),
+            repo: "sandbox".into(),
+            installation: 3,
+            number: 12,
+            title: "Fix greeting".into(),
+            labels: vec![priority.into()],
+            updated_at: at.parse().unwrap(),
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        c.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::P1
+    );
+    let incident = counter_incidents(&mut c)[0].id.clone();
+    drop(c);
+    let mut c = open(&settings, root.path());
+    seed_node_counter(&mut c, &settings, "next_seq", next_seq);
+    clear_counter(&mut c, &incident, "clear-priority");
+    drain(&mut c);
+    assert_eq!(
+        c.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::P1,
+        "the later P1 edit must not disappear against the halted world's P1"
+    );
+}
+
+/// State-table "Counter headroom": premature clearance reopens one incident,
+/// then waits for evidence without consuming the retained fact or polling.
+#[test]
+fn clearing_while_exhausted_reopens_once_then_waits_for_evidence() {
+    let mut db = support::Database::start();
+    let settings = db.create("counter_premature_clear");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    seed_node_counter(&mut c, &settings, "next_seq", u64::MAX);
+    c.observe(
+        "held-fact",
+        Observation::Kernel(Event::Fact {
+            node: NodeId(0),
+            fact: tl3_kernel::Fact::Priority(tl3_kernel::Priority::P1),
+        }),
+    )
+    .unwrap();
+    let before = c.world().unwrap();
+    assert!(c.drive_once().unwrap()); // Raise the incident.
+    assert!(c.drive_once().unwrap()); // Post it once.
+    let incident = counter_incidents(&mut c)[0].id.clone();
+    clear_counter(&mut c, &incident, "premature-clear");
+    assert!(c.drive_once().unwrap()); // Authorized clearance.
+    assert!(
+        counter_incidents(&mut c)
+            .iter()
+            .all(|r| r.value["open"] == false)
+    );
+    assert!(c.drive_once().unwrap()); // Reopen because the counter is still full.
+    assert!(c.drive_once().unwrap()); // Post the new incident once.
+    let incidents = counter_incidents(&mut c);
+    assert_eq!(incidents.len(), 2);
+    assert_eq!(
+        incidents.iter().filter(|r| r.value["open"] == true).count(),
+        1
+    );
+    let revision = c.snapshot().unwrap().revision;
+    assert!(!c.drive_once().unwrap());
+    assert!(!c.drive_once().unwrap());
+    assert_eq!(
+        c.snapshot().unwrap().revision,
+        revision,
+        "waiting must not commit or poll"
+    );
+    assert_eq!(c.world().unwrap(), before);
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "inbox" && r.id == "external:held-fact")
+    );
+}
+
+/// State-table "Counter headroom" / progress credit: a valid u64 ledger can
+/// have a balance above u64::MAX; the actual close records it without panic.
+#[test]
+fn close_records_a_balance_above_json_integer_range() {
+    let mut db = support::Database::start();
+    let settings = db.create("counter_wide_close");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    let snapshot = c.snapshot().unwrap();
+    let mut node = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "nodes" && r.id == "0")
+        .unwrap()
+        .value
+        .clone();
+    node["credit"]["ready"] = json!(true);
+    node["credit"]["start"] = json!(258);
+    node["credit"]["added"] = json!(u64::MAX - 255);
+    let mut commit = Commit::new("seed-wide-credit", json!(null), &snapshot);
+    commit.rows.push(RowChange::Put {
+        table: "nodes".into(),
+        id: "0".into(),
+        value: node,
+    });
+    Store::open(&settings).unwrap().commit(&commit).unwrap();
+    let world = c.world().unwrap();
+    assert!(world.headroom_ok());
+    assert_eq!(world.nodes[0].credit.balance(), u64::MAX as i128 + 3);
+    c.observe(
+        "stop-wide",
+        Observation::Steering {
+            node: NodeId(0),
+            command: tl3_kernel::Command::Stop,
+        },
+    )
+    .unwrap();
+    drain(&mut c);
+    assert_eq!(
+        c.world().unwrap().nodes[0].phase,
+        tl3_kernel::Phase::Closed(tl3_kernel::Outcome::Stopped)
+    );
+    let grades = Store::open(&settings).unwrap().code_grades("0").unwrap();
+    let credit = grades.iter().find(|g| g.dimension == "credit").unwrap();
+    assert_eq!(
+        credit.fact["balance"],
+        json!((u64::MAX as i128 + 3).to_string())
+    );
+}
+
 /// #771: ID exhaustion produces an incident without applying command intent.
 #[test]
 fn exhausted_steering_ids_raise_an_incident_without_an_event() {

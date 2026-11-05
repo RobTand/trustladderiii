@@ -727,6 +727,162 @@ mod tests {
         )));
     }
 
+    /// State-table "Counter headroom" / Fact row: a merge and all of its
+    /// waiter deliveries commit atomically, then retry exactly once after repair.
+    #[test]
+    fn exhausted_merge_fanout_retries_both_waiters_exactly_once() {
+        let mut db = Database::start();
+        let (_repo, mut c, repository) = fixture(&mut db, "dependency_fanout_headroom");
+        let root = intake(&mut c, &repository, 2761);
+        let first = intake(&mut c, &repository, 42);
+        let second = intake(&mut c, &repository, 2772);
+        ingest(&mut c, first, &[2761]);
+        ingest(&mut c, second, &[2761]);
+        event(
+            &mut c,
+            Event::Command {
+                node: root,
+                id: 1,
+                command: Command::Stop,
+            },
+        );
+        confirm(&mut c, root);
+        let snapshot = c.snapshot().unwrap();
+        let mut world = c.world().unwrap();
+        world.nodes[0].had_pr = true;
+        world.nodes[0].credit.ready = true;
+        world.nodes[0].credit.start = 4;
+        let next_ticket = world.next_ticket;
+        world.next_ticket = u64::MAX - world.ticket_step_budget().unwrap();
+        assert!(world.headroom_ok());
+        assert!(world.valid());
+        let mut seed = Commit::new("seed-fanout", json!(null), &snapshot);
+        for ((table, id), value) in crate::snapshot::encode(&world).unwrap() {
+            seed.rows.push(put(&table, id, value));
+        }
+        c.store.commit(&seed).unwrap();
+        let before = c.world().unwrap();
+        let revision = c.snapshot().unwrap().revision;
+        c.observe(
+            "merge-with-two-waiters",
+            Observation::Kernel(Event::Fact {
+                node: root,
+                fact: Fact::PrMerged {
+                    head: tl3_kernel::HeadId(1),
+                    approved: true,
+                },
+            }),
+        )
+        .unwrap();
+        assert!(c.drive_once().unwrap());
+        let snapshot = c.snapshot().unwrap();
+        let incident = snapshot
+            .rows
+            .iter()
+            .find(|r| {
+                r.table == "incidents" && r.value["signature"]["class"] == "kernel_counter_headroom"
+            })
+            .expect("the first waiter consumes the reserve before the second");
+        let incident = incident.id.clone();
+        assert_eq!(
+            c.world().unwrap(),
+            before,
+            "fan-out must not commit a merge or partial deliveries at exhaustion"
+        );
+        assert!(
+            !snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "dependency_endings"),
+            "unapplied endings must not be announced"
+        );
+        assert!(
+            snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "inbox" && r.id == "external:merge-with-two-waiters")
+        );
+
+        let mut repaired = c.world().unwrap();
+        repaired.next_ticket = next_ticket;
+        let mut repair = Commit::new("repair-fanout", json!(null), &snapshot);
+        for ((table, id), value) in crate::snapshot::encode(&repaired).unwrap() {
+            repair.rows.push(put(&table, id, value));
+        }
+        c.store.commit(&repair).unwrap();
+        let rob = c.bootstrap.rob;
+        observation(
+            &mut c,
+            Observation::GitHubComment {
+                repository,
+                issue: 2761,
+                comment: tl3_github::Comment {
+                    id: 902,
+                    body: format!("clear incident {incident}"),
+                    user: tl3_github::Actor {
+                        id: rob,
+                        login: "rob".into(),
+                    },
+                    created_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                    updated_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                    issue_url: "https://api.github.com/repos/owner/sandbox/issues/2761".into(),
+                },
+            },
+        );
+        assert!(c.drive_once().unwrap());
+        let world = c.world().unwrap();
+        for waiter in [first, second] {
+            assert_eq!(
+                world
+                    .dependencies()
+                    .iter()
+                    .find(|d| d.node == waiter)
+                    .unwrap()
+                    .status,
+                DependencyStatus::Delivered,
+                "every waiter must be delivered after replay"
+            );
+        }
+        let deliveries = c
+            .store
+            .events_after(revision, 1000)
+            .unwrap()
+            .into_iter()
+            .flat_map(|record| {
+                record.receipt.result["dependency_events"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter_map(|value| serde_json::from_value::<Event>(value).ok())
+            .filter_map(|event| match event {
+                Event::Fact {
+                    node,
+                    fact:
+                        Fact::Dependency {
+                            status: DependencyStatus::Delivered,
+                            ..
+                        },
+                } => Some(node),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            deliveries,
+            [first, second],
+            "each waiter delivery is committed once"
+        );
+        assert_eq!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .filter(|r| r.table == "dependency_endings")
+                .count(),
+            2
+        );
+    }
+
     fn event(c: &mut Controller, event: Event) {
         let snapshot = c.snapshot().unwrap();
         let world = crate::snapshot::decode(&snapshot).unwrap();
