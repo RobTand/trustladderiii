@@ -920,7 +920,7 @@ mod a1_schedules {
 impl QueueFact {
     fn node(&self, snapshot: &Snapshot) -> Result<Option<NodeId>> {
         io::projection("node");
-        for row in snapshot.rows.iter().filter(|row| {
+        if let Some(row) = snapshot.rows.iter().find(|row| {
             row.table == "pull_requests" && row.value["number"].as_u64() == Some(self.number)
         }) {
             return Ok(Some(NodeId(
