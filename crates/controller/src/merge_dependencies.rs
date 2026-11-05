@@ -928,12 +928,21 @@ mod tests {
         db: &mut Database,
         name: &str,
     ) -> (Repo, Controller, Repository, tl3_config::Store) {
+        fixture_with_capacity(db, name, 4, 3)
+    }
+
+    fn fixture_with_capacity(
+        db: &mut Database,
+        name: &str,
+        pool: u8,
+        gate: u32,
+    ) -> (Repo, Controller, Repository, tl3_config::Store) {
         let repo = Repo::new();
         let mut config =
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         config.store = db.create(name);
-        config.limits.agent_pool = 4;
-        config.limits.w = 3;
+        config.limits.agent_pool = pool;
+        config.limits.w = gate;
         let bootstrap = Bootstrap::from_config(&config).unwrap();
         let repository = bootstrap.repos[0].clone();
         for number in [42, 2761, 2772, 2779] {

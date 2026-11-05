@@ -41,7 +41,7 @@ fn reopen(repo: &Repo, c: Controller, settings: &tl3_config::Store) -> Controlle
 #[test]
 fn live_closed_roots_release_nine_and_four_waiter_chains_in_order() {
     let mut db = Database::start();
-    let (repo, mut c, repository, settings) = fixture_with_settings(&mut db, "t839_chains");
+    let (repo, mut c, repository, settings) = fixture_with_capacity(&mut db, "t839_chains", 32, 32);
     for (root, count) in [(2763, 9), (2773, 4), (2779, 1), (2781, 1)] {
         set_issue(&repo, root, "open", None);
         let mut waiters = Vec::new();
@@ -339,6 +339,11 @@ fn startup_reconciles_legacy_abandoned_edge_without_restart_command() {
             },
         },
     );
+    let snapshot = c.snapshot().unwrap();
+    let mut seed = Commit::new("pre-839-terminal-fact", json!(null), &snapshot);
+    seed.rows.push(put("prerequisite_facts", fact_key(&repository, PrerequisiteKind::Issue, 2761),
+        json!({"repository": repository, "kind":PrerequisiteKind::Issue, "number":2761, "status":DependencyStatus::Abandoned})));
+    c.store.commit(&seed).unwrap();
     set_issue(&repo, 2761, "closed", Some("not_planned"));
     let mut c = reopen(&repo, c, &settings);
     assert_eq!(
