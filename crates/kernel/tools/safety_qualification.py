@@ -159,6 +159,12 @@ CASES = {
                                 'node.proposed = Some(head);',
                                 'node.proposed = Some(head);\n                w.file_sets = Vec::new();',
                                 '//crates/kernel:verus_events'),
+    'cleanup_mark_handled_pos': ('crates/kernel/src/command_helpers.rs',
+                                 'm.pos += 1;', 'm.pos += 0;',
+                                 '//crates/kernel:verus_command_helpers_mark_handled'),
+    'cleanup_confirmed_agenda_skipped': ('crates/kernel/src/acknowledgements.rs',
+                                        'confirmed_agenda(m, kind);', 'let _ = kind;',
+                                        '//crates/kernel:verus_acknowledgements_confirmed'),
 }
 
 

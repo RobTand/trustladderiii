@@ -28,6 +28,7 @@ pub(super) fn allowed(kind: QKind, answer: Answer) -> (result: bool) [
 
 kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
     ensures (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
             && old(m).phase is Stopping && matches!(current_item(*old(m)), Some(Item::Teardown(_)))
@@ -39,7 +40,8 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
         final(m).question == old(m).question,
         final(m).phase == old(m).phase,
         final(m).last_cmd == old(m).last_cmd,
-] proof [reveal(distance);] {
+] {
+    kernel_snapshot! { before_handled = *m }
     if let Some(Item::Teardown(kind)) = m.current() {
         match kind {
             EffectKind::StopRun => {
@@ -52,6 +54,14 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
             _ => {}
         }
         m.pos += 1;
+    }
+    kernel_proof! {
+        let before = before_handled@;
+        if before.effect.is_none() && before.question.is_none()
+            && !before.waiting_incident && before.phase is Stopping
+            && matches!(current_item(before), Some(Item::Teardown(_))) {
+            cleanup_lemmas::teardown_progress(before_handled@, *m);
+        }
     }
 }
 }

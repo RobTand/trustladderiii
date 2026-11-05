@@ -591,6 +591,8 @@ def verus_proofs():
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
             "events_input": ("kernel::events_lemmas#selected_input", 1),
             "events_footprints": ("kernel::events_lemmas#footprints_after", 1),
+            "cleanup_teardown_progress": ("kernel::cleanup_lemmas#teardown_progress", 1),
+            "cleanup_resource_distance": ("kernel::cleanup_lemmas#resource_distance", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
