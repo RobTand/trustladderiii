@@ -445,65 +445,66 @@ fn staged_request_carries_the_repository_protected_paths() {
 }
 
 fn always_tests_are_staged_required_and_reported_in_every_round() {
-    const ALWAYS: &str = "Repository always tests";
     for round in [0, 1] {
         for pre_existing in [false, true] {
             for omitted in [false, true] {
-                let root = tempfile::tempdir().unwrap();
-                let mut delivery = run(root.path(), false);
-                delivery.round = round;
-                let mut config =
-                    tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
-                config.github.repos[0].always_tests = vec!["test_rules.py".into()];
-                let mut adapter =
-                    fixture(root.path(), "done").with_repositories(&config.github.repos);
-                let planned = &delivery.checks.as_ref().unwrap().plan[0];
-                let mut results = vec![
-                    serde_json::json!({"name": planned.name, "kind": "demonstrating", "custody": "in-process",
-                    "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]}),
-                ];
-                if !omitted {
-                    results.push(serde_json::json!({"name": ALWAYS, "kind": "regression", "custody": "in-process",
-                        "verdict": if pre_existing { "pass" } else { "fail" }, "tests": [{"test": "test_rules.py", "base": if pre_existing { "assertion" } else { "passed" },
-                        "head": "assertion", "pre_existing": pre_existing, "passed": pre_existing, "message": "Tests must not sleep"}]}));
-                }
-                fs::write(
-                    root.path().join("queue/recorded_results.json"),
-                    serde_json::to_vec(&results).unwrap(),
-                )
-                .unwrap();
-                adapter.execute(&delivery).unwrap();
-                let staged = fs::read_dir(root.path().join("queue"))
-                    .unwrap()
-                    .map(|p| p.unwrap().path())
-                    .find(|p| p.extension().is_some_and(|e| e == "request"))
-                    .unwrap();
-                let request: serde_json::Value =
-                    serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
-                assert_eq!(
-                    request["always_tests"],
-                    serde_json::json!(["test_rules.py"])
-                );
-                match &completion(&mut adapter, &delivery).observations[..] {
-                    [
-                        Observation::Checks {
-                            report,
-                            pass,
-                            failed_tests,
-                            ..
-                        },
-                    ] => {
-                        assert_eq!(*report, !omitted);
-                        assert_eq!(*pass, pre_existing && !omitted);
-                        if !pre_existing && !omitted {
-                            assert_eq!(failed_tests[0].test, "test_rules.py");
-                            assert_eq!(failed_tests[0].message, "Tests must not sleep");
-                        }
-                    }
-                    other => panic!("expected check feedback: {other:?}"),
-                }
+                always_tests_case(round, pre_existing, omitted);
             }
         }
+    }
+}
+
+fn always_tests_case(round: u8, pre_existing: bool, omitted: bool) {
+    const ALWAYS: &str = "Repository always tests";
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.round = round;
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.github.repos[0].always_tests = vec!["test_rules.py".into()];
+    let mut adapter = fixture(root.path(), "done").with_repositories(&config.github.repos);
+    let planned = &delivery.checks.as_ref().unwrap().plan[0];
+    let mut results = vec![
+        serde_json::json!({"name": planned.name, "kind": "demonstrating", "custody": "in-process",
+        "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]}),
+    ];
+    if !omitted {
+        results.push(serde_json::json!({"name": ALWAYS, "kind": "regression", "custody": "in-process",
+            "verdict": if pre_existing { "pass" } else { "fail" }, "tests": [{"test": "test_rules.py", "base": if pre_existing { "assertion" } else { "passed" },
+            "head": "assertion", "pre_existing": pre_existing, "passed": pre_existing, "message": "Tests must not sleep"}]}));
+    }
+    fs::write(
+        root.path().join("queue/recorded_results.json"),
+        serde_json::to_vec(&results).unwrap(),
+    )
+    .unwrap();
+    adapter.execute(&delivery).unwrap();
+    let staged = fs::read_dir(root.path().join("queue"))
+        .unwrap()
+        .map(|p| p.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "request"))
+        .unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
+    assert_eq!(
+        request["always_tests"],
+        serde_json::json!(["test_rules.py"])
+    );
+    match &completion(&mut adapter, &delivery).observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                failed_tests,
+                ..
+            },
+        ] => {
+            assert_eq!(*report, !omitted);
+            assert_eq!(*pass, pre_existing && !omitted);
+            if !pre_existing && !omitted {
+                assert_eq!(failed_tests[0].test, "test_rules.py");
+                assert_eq!(failed_tests[0].message, "Tests must not sleep");
+            }
+        }
+        other => panic!("expected check feedback: {other:?}"),
     }
 }
 
@@ -2675,10 +2676,30 @@ fn main() {
             "stale_always_test_notes_survive_controller_evidence",
             stale_always_test_notes_survive_controller_evidence,
         ),
-        (
-            "always_tests_are_staged_required_and_reported_in_every_round",
-            always_tests_are_staged_required_and_reported_in_every_round,
-        ),
+        ("always_tests_round_0_new_reported", || {
+            always_tests_case(0, false, false)
+        }),
+        ("always_tests_round_0_new_omitted", || {
+            always_tests_case(0, false, true)
+        }),
+        ("always_tests_round_0_pre_existing_reported", || {
+            always_tests_case(0, true, false)
+        }),
+        ("always_tests_round_0_pre_existing_omitted", || {
+            always_tests_case(0, true, true)
+        }),
+        ("always_tests_round_1_new_reported", || {
+            always_tests_case(1, false, false)
+        }),
+        ("always_tests_round_1_new_omitted", || {
+            always_tests_case(1, false, true)
+        }),
+        ("always_tests_round_1_pre_existing_reported", || {
+            always_tests_case(1, true, false)
+        }),
+        ("always_tests_round_1_pre_existing_omitted", || {
+            always_tests_case(1, true, true)
+        }),
         (
             "selected_tests_are_staged_and_their_check_accepted",
             selected_tests_are_staged_and_their_check_accepted,
