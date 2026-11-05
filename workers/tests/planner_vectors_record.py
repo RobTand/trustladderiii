@@ -131,7 +131,7 @@ class Recorder:
             case = self.case('plan_terminal')
             case.update(origin=exception(origin), latest=exception(latest) if latest is not None else None,
                         same_error=latest is origin,
-                        completed=deepcopy(completed), candidate=deepcopy(candidate), kwargs=kwargs)
+                        completed=packed(completed), candidate=deepcopy(candidate), kwargs=kwargs)
             tape = Tape()
             def invoke():
                 with facts(tape):

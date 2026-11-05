@@ -94,7 +94,7 @@ def exception(error, *, observation=False):
                       node_ids=packed(error.node_ids), draft=deepcopy(error.draft),
                       mismatch=packed({name: getattr(error, name) for name in mismatch_fields()}))
         if hasattr(error, 'contract'):
-            result['semantic'] = {'raw': deepcopy(error.raw_draft), 'completed': deepcopy(error.completed_reply),
+            result['semantic'] = {'raw': deepcopy(error.raw_draft), 'completed': packed(error.completed_reply),
                                   'objections': packed(error.objections), 'inputs': deepcopy(error.contract.inputs),
                                   'base_nodes': sorted(error.contract.base_nodes), 'base_sources': dict(error.contract.base_sources)}
         if hasattr(error, 'contract') and hasattr(error.contract, 'manifest'):
@@ -308,7 +308,7 @@ def mismatch_from(value):
         semantic = value['semantic']
         error.base_nodes = set(semantic['base_nodes'])
         error.base_sources = dict(semantic.get('base_sources', {}))
-        error = planner.PlanConsistencyError.semantic(semantic['raw'], semantic['completed'],
+        error = planner.PlanConsistencyError.semantic(semantic['raw'], unpacked(semantic['completed']),
             unpacked(semantic['objections']), semantic['inputs'], error)
     if 'manifest' in value:
         error.contract.manifest = deepcopy(value['manifest'])
@@ -381,7 +381,7 @@ def replay(case):
         latest = origin if case['same_error'] else mismatch_from(case['latest']) if case['latest'] is not None else None
         with facts(tape):
             result = outcome(lambda: planner.terminal(origin, latest,
-                deepcopy(case['completed']), deepcopy(case['candidate']), **case['kwargs']))
+                unpacked(case['completed']), deepcopy(case['candidate']), **case['kwargs']))
         assert_same(result, case['outcome'], case['id'])
         tape.exhausted()
     elif case['operation'] in ('constrain', 'constrain_local', 'repair_contract'):
