@@ -208,14 +208,28 @@ def verus_proofs():
 
 # CC-M2: measure the actual verifier process tree, in addition to its proof receipt.
 def _recovery_verus_test_impl(ctx):
-    proof = _verus_test_impl(ctx)[0]
-    launcher = ctx.actions.declare_file(ctx.label.name + ".measured.sh")
+    if ctx.attr.expected_obligations <= 0 or not ctx.files.srcs:
+        fail("recovery proof requires real source and positive obligations")
+    toolchain = ctx.attr.toolchain[VerusToolchainInfo]
+    launcher = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.write(launcher, """#!/bin/bash
 set -euo pipefail
-export RUNFILES_DIR="${RUNFILES_DIR:-$0.runfiles}"
-exec /usr/bin/time -f 'VERUS_PEAK_RSS_KB %M' "$RUNFILES_DIR/%s/%s"
-""" % (ctx.workspace_name, proof.files_to_run.executable.short_path), is_executable = True)
-    runfiles = proof.default_runfiles.merge(ctx.runfiles(files = [proof.files_to_run.executable]))
+cd "${RUNFILES_DIR:-$0.runfiles}/%s"
+exec /usr/bin/time -f 'VERUS_PEAK_RSS_KB %%M' "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
+""" % (
+        ctx.workspace_name,
+        ctx.executable._runner.short_path,
+        toolchain.verifier.short_path,
+        toolchain.z3.short_path,
+        toolchain.sysroot.short_path,
+        ctx.file.src.short_path,
+        ctx.attr.expected_obligations,
+        ctx.label,
+        ctx.attr.module,
+    ), is_executable = True)
+    runfiles = ctx.runfiles(files = [ctx.file.src, ctx.executable._runner] + ctx.files.srcs + ctx.files.specs,
+                           transitive_files = toolchain.files)
+    runfiles = runfiles.merge(ctx.attr._runner[DefaultInfo].default_runfiles)
     return [DefaultInfo(executable = launcher, runfiles = runfiles)]
 
 recovery_verus_test = rule(
