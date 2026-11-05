@@ -149,6 +149,7 @@ def test_recovered_maker_recompacts_and_resumes(maker_request, tmp_path, monkeyp
                                     {"no_progress_turns": 1000}])
 def test_invalid_allowance_checkpoint_starts_visit_afresh(maker_request, tmp_path, monkeypatch, invalid):
     """#780 recovery: a decided-invalid checkpoint must not wedge every retry."""
+    maker_request["inputs"]["context_size"] = 100_000
     maker_request["session_file"] = str(tmp_path / "maker.json")
     budgets = capture_budget(monkeypatch)
     install(monkeypatch, [edits(1)[0], Killed()])
