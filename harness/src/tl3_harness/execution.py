@@ -72,7 +72,7 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
     scratch = scratch_directory()
     owner = scratch.parent.stat()
     return [
-        "docker", "run", "--interactive", "--rm", "--pull=never", "--network=none", "--read-only",
+        "docker", "run", "--init", "--interactive", "--rm", "--pull=never", "--network=none", "--read-only",
         "--cap-drop=ALL", "--security-opt=no-new-privileges", f"--user={owner.st_uid}:{owner.st_gid}",
         "--pids-limit=128", "--ipc=private", "--workdir=/checkout",
         "--mount", f"type=bind,src={tree},dst=/checkout,readonly",
