@@ -47,7 +47,7 @@ fn mandatory_once_per_silence_period() {
     assert_eq!(state(&r)["read_failures"], 1);
     assert_eq!(state(&r)["incident"], Value::Null);
 }
-/// Q7 / #403: maintenance probes first incidents; postmortems and notices do not escalate.
+/// Preserved existing behaviour (no rule): maintenance, postmortem and notice gates.
 #[test]
 fn mandatory_maintenance_postmortem_notice() {
     let r = io::compare(&Schedule {
@@ -69,7 +69,7 @@ fn mandatory_maintenance_postmortem_notice() {
         assert_eq!(state(&r)["incident"], Value::Null);
     }
 }
-/// #608: a healthy GET cannot clear a refused queue command.
+/// Preserved existing behaviour (no rule): a healthy GET cannot clear a refused queue command.
 #[test]
 fn mandatory_refused_command_hold() {
     let r = io::compare(&Schedule {
@@ -99,7 +99,7 @@ fn mandatory_later_incident() {
     .unwrap();
     assert_eq!(incident["needs_rob"], true);
 }
-/// Q7: unrecoverable, quota, open incident and adapter failures retain their order.
+/// Preserved existing behaviour (no rule): error classes and durable boundaries retain their order.
 #[test]
 fn mandatory_error_classes_and_crashes() {
     for code in 0..12 {
@@ -123,7 +123,7 @@ fn mandatory_error_classes_and_crashes() {
         }
     }
 }
-/// Q7 / #356: changing reads, independent clocks and crash cuts at each durable boundary.
+/// Extraction fidelity: changing reads, independent clocks and crash cuts at each durable boundary.
 #[test]
 fn differential_schedules() {
     use proptest::{
@@ -195,7 +195,7 @@ fn function<'a>(source: &'a str, name: &str, method: bool) -> &'a str {
         + if method { 7 } else { 3 };
     &source[start..end]
 }
-/// #760: SHA-256 pins the whole cdacce8f blob, and every compiled body is verbatim.
+/// Extraction fidelity: SHA-256 pins cdacce8f and every compiled body is verbatim.
 #[test]
 fn source_pins_and_production_copies() {
     let base = include_str!("base-looks.rs.txt");
@@ -262,7 +262,7 @@ fn source_pins_and_production_copies() {
     }
 }
 
-/// Q7, state-table.md:272-275 / #356: the late probe uses a fresh store load.
+/// Q7, state-table.md:274-275: first incidents permit probes. Fresh-load placement is preserved existing behaviour (no rule).
 #[test]
 fn mandatory_reprobe_and_probe_outcomes() {
     for probe in [0, 1, 240, 241, 248] {
@@ -299,7 +299,7 @@ fn mandatory_reprobe_and_probe_outcomes() {
     }
 }
 
-/// State-table.md:577 / #356: a worker stops; upstream queue stalls keep distinct classes.
+/// State-table.md:808-810: a worker stops and GitHub/Mergify report stalls. Class choice is preserved existing behaviour (no rule).
 #[test]
 fn mandatory_worker_and_queue_stalls() {
     for (worker, progress, expected) in [
@@ -319,7 +319,7 @@ fn mandatory_worker_and_queue_stalls() {
     }
 }
 
-/// r1 / Q43: non-empty stop completions must reach queue_observation and its transaction.
+/// Extraction fidelity: non-empty stop completions reach queue_observation and its transaction.
 #[test]
 fn mandatory_observation_commit_persists() {
     let r = io::compare(&Schedule {

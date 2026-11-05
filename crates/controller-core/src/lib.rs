@@ -6,5 +6,6 @@
 //! code, so the Verus proofs hold on amd64 and arm64.
 #![forbid(unsafe_code)]
 pub mod looks;
+pub mod looks;
 pub mod looks_state;
 pub mod worker_events;
