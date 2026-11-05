@@ -57,7 +57,15 @@ safety_qualification.CASES = {'q52': ('crates/mergify/src/decide/translate.rs',
  'queue_report_eager': ('crates/mergify/src/decide/facts.rs',
                         'Some(infra) => infra,',
                         'Some(infra) => { let _ = ci_infra(check); infra },',
-                        '//crates/mergify:verus_check_facts')}
+                        '//crates/mergify:verus_check_facts'),
+ 'enqueuing_contract': ('crates/mergify/src/decide/translate.rs',
+                        'fn enqueuing(self) -> bool {\n'
+                        '        self.phase == Phase::Publishing && self.enqueue_pending\n'
+                        '    }',
+                        'fn enqueuing(self) -> bool {\n'
+                        '        self.phase == Phase::Publishing\n'
+                        '    }',
+                        '//crates/mergify:verus_translate')}
 
 if __name__ == '__main__':
     safety_qualification.main()
