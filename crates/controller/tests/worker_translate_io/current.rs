@@ -87,7 +87,18 @@ impl Shell<'_> {
                         }));
                     }
                 };
-                self.clear_model_quota(snapshot, model.as_deref(), commit);
+                // Legacy quota rows have no ordering identity. Preserve their
+                // once-only reply consumption until fresh quota facts replace them.
+                if let Some(row) = snapshot.rows.iter().find(|row| {
+                    row.table == "model_quotas"
+                        && Some(row.id.as_str()) == model.as_deref()
+                        && row.value["finished_ms"].is_null()
+                }) {
+                    commit.rows.push(RowChange::Delete {
+                        table: row.table.clone(),
+                        id: row.id.clone(),
+                    });
+                }
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {
