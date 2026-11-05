@@ -7,3 +7,4 @@
 #![forbid(unsafe_code)]
 pub mod looks;
 pub mod looks_state;
+pub mod worker_events;
