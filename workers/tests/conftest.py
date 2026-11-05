@@ -129,3 +129,9 @@ def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
     yield
     consumed = int(cursor.read_text()) if cursor.exists() else 0
     assert consumed == len(script), f"unconsumed Rust checker steps in {request.node.nodeid}: {consumed}/{len(script)}"
+
+
+@pytest.fixture(autouse=True)
+def p5_binary(request, tmp_path_factory, monkeypatch, budget_binary):
+    import checker_stub
+    yield from checker_stub.p5_install(request, tmp_path_factory.mktemp("p5-checker"), monkeypatch)

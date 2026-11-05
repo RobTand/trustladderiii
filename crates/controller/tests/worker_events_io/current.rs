@@ -216,18 +216,8 @@ fn decode_event(value: Value, role: Option<&str>, postmortem: bool, inputs: &Val
         && value["role"].as_str() == role
         && role.is_some()
     {
-        let field = match value.get("model") {
-            None => ModelField::Missing,
-            Some(name) if *name == inputs["grade_model"] && name.is_string() => {
-                model = name.as_str().map(str::to_owned);
-                ModelField::GradeModel
-            }
-            Some(_) => ModelField::Other,
-        };
-        WorkerEvent::Quota {
-            model: quota_model(postmortem, field),
-            reset_ms: value["reset_ms"].as_u64(),
-        }
+        model = value["model"].as_str().map(str::to_owned);
+        crate::quota::decode_event(&value, postmortem, inputs)
     } else if size == 3
         && value["event"] == "reply"
         && value["role"].as_str() == role
@@ -244,6 +234,7 @@ fn decode_event(value: Value, role: Option<&str>, postmortem: bool, inputs: &Val
         model,
     }
 }
+
 fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
     let wait: tl3_store::ExternalWait = serde_json::from_value(value.get("wait")?.clone()).ok()?;
     let owner_valid = wait.upstream == "prismabuild";
