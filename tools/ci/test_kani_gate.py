@@ -118,7 +118,8 @@ class BudgetTests(unittest.TestCase):
                 expected = 'pr' if entry['seconds'] <= 600 and not entry.get('lower_bound') else 'nightly'
                 self.assertEqual(entry.get('tier'), expected)
         for name in ('gate_leaf_progress_w2', 'gate_leaf_progress_w3'):
-            self.assertEqual(kani_gate.load_budgets()[name].get('pending'), '#806')
+            if name in kani_gate.load_budgets():
+                self.assertEqual(kani_gate.load_budgets()[name].get('pending'), '#806')
 
     def test_pending_harnesses_are_attempted_alone_instead_of_rejected(self):
         budgets = {'pending': {'seconds': 3301, 'peak_gb': 34, 'pending': '#806'},
@@ -187,7 +188,6 @@ class VerdictTests(unittest.TestCase):
                          ('VERIFICATION:- SUCCESSFUL', [2, 2], 12.5))
         cases = {
             'failed': (FAILURE, 1, False, 'VERIFICATION:- FAILED'),
-            'no line': ('Checking harness proofs::a...\nout of memory\n', 137, False, 'no VERIFICATION line'),
             'exit code': (SUCCESS, 1, False, 'kani exited 1'),
             'no covers': (SUCCESS.replace(' ** 2 of 2 cover properties satisfied\n', ''), 0, False,
                           'no cover results reported'),
@@ -200,6 +200,8 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(result['verdict'], 'FAILED')
                 self.assertIn(reason, result['reason'])
         self.assertEqual(kani_gate.verdict(SUCCESS, -9, True)['verdict'], 'TIMEOUT')
+        self.assertEqual(kani_gate.verdict('killed', 137, False)['verdict'], 'KILLED')
+        self.assertEqual(kani_gate.verdict(FAILURE, -9, True)['verdict'], 'FAILED')
         killed = kani_gate.verdict('Checking harness proofs::a...\nVERIFICATION:- FAILED\n', 137, False)
         self.assertEqual(killed['verdict'], 'FAILED')
         self.assertIn('likely out of memory', killed['reason'])
@@ -325,7 +327,7 @@ def gate_args(directory, mode='pr'):
 
 
 class ControllerTests(unittest.TestCase):
-    budgets = {f'p{i}': {'seconds': 1500.0, 'peak_gb': 4.0} for i in range(24)}
+    budgets = {f'p{i}': {'seconds': 600.0, 'peak_gb': 4.0} for i in range(24)}
 
     def prove(self, records, mode='pr', running=()):
         client = FakeClient(records, running)
@@ -411,6 +413,24 @@ class ControllerTests(unittest.TestCase):
                 summary = Path(directory, 'kani-summary.md').read_text()
                 self.assertIn('pending #806', summary)
                 self.assertIn(verdict, summary)
+
+
+    def test_lost_pending_runner_requires_terminal_evidence_and_preserves_failure(self):
+        class Client:
+            def __init__(self, execution, text):
+                self.execution, self.text = execution, text
+
+            def call(self, method, body):
+                if method == 'GetExecution':
+                    return {'execution': [self.execution]}
+                if method == 'GetLog':
+                    return {'log': {'contents': self.text}}
+                raise AssertionError(method)
+        completed = {'stage': 'COMPLETED', 'status': {'code': 4}}
+        for text, expected in [('', 'TIMEOUT'), (FAILURE, 'FAILED')]:
+            result = kani_gate.pending_runner_result(Client(completed, text), 'inv', 'pending')
+            self.assertEqual(result['verdict'], expected)
+        self.assertIsNone(kani_gate.pending_runner_result(Client({'stage': 'EXECUTING'}, ''), 'inv', 'pending'))
 
 
 

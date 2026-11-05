@@ -116,7 +116,7 @@ jobs:
           if-no-files-found: ignore
 
   kani:
-    # Proves every Kani harness on BuildBuddy when a change can affect a proof,
+    # Proves the measured PR tier on BuildBuddy when a change can affect a proof,
     # and proves nothing otherwise. The required Rust check needs this job.
     name: Kani
     if: github.event_name == 'pull_request'
