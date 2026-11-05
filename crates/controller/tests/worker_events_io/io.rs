@@ -9,6 +9,7 @@ use std::{
 #[derive(Clone, Debug)]
 pub(super) struct Schedule {
     pub frames: Vec<u8>,
+    pub overrides: Vec<(String, usize, u8)>,
     pub chunks: Vec<Vec<u8>>,
     pub initial_attempt: bool,
     pub initial_offset: u64,
@@ -19,6 +20,7 @@ impl Default for Schedule {
     fn default() -> Self {
         Self {
             frames: vec![],
+            overrides: vec![],
             chunks: vec![super::line(0, false)],
             initial_attempt: true,
             initial_offset: 0,
@@ -45,6 +47,9 @@ struct Outcome {
     ended: Vec<PathBuf>,
     active: Vec<(String, i64)>,
     writes: usize,
+    processes: BTreeMap<&'static str, u8>,
+    watches: BTreeMap<i32, PathBuf>,
+    run_watches: Vec<i32>,
 }
 struct Recording {
     schedule: Schedule,
@@ -66,7 +71,14 @@ fn record(op: &str, args: Value, result: Value) {
 }
 fn sample(op: &str, args: Value) -> u8 {
     let word = with(|r| {
-        let v = r.schedule.frames.get(r.reads).copied().unwrap_or(0);
+        let nth = r.trace.iter().filter(|v| v["op"] == op).count();
+        let v = r
+            .schedule
+            .overrides
+            .iter()
+            .find(|(name, index, _)| name == op && *index == nth)
+            .map(|(_, _, word)| *word)
+            .unwrap_or_else(|| r.schedule.frames.get(r.reads).copied().unwrap_or(0));
         r.reads += 1;
         v
     });
@@ -173,6 +185,14 @@ impl BufReader {
     pub fn read_until(&mut self, _delimiter: u8, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
         let word = sample("stdout.read_until", json!(self.position));
         io_error(word)?;
+        if word == 128 {
+            with(|r| {
+                r.files
+                    .entry(PathBuf::from("run/attempt-00000001/stdout.jsonl"))
+                    .or_default()
+                    .extend(super::line(0, false))
+            });
+        }
         let bytes = with(|r| {
             r.files
                 .get(&PathBuf::from("run/attempt-00000001/stdout.jsonl"))
@@ -271,6 +291,15 @@ pub(super) fn inspect_recorded(
     })
 }
 fn execute(schedule: &Schedule, new: bool, cut: Option<Cut>) -> Outcome {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let original = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !info.payload().is::<Crash>() {
+                original(info);
+            }
+        }));
+    });
     RECORDING.with(|r|*r.borrow_mut()=Some(Recording{schedule:schedule.clone(),trace:vec![],sends:vec![],
         persisted:json!({"offset":schedule.recorded,"wait":if schedule.previous_wait {json!({"upstream":"prismabuild","key":"a".repeat(64)})}else{Value::Null}}),
         files:BTreeMap::new(),reads:0,writes:0,cut,call:0}));
@@ -329,10 +358,13 @@ fn execute(schedule: &Schedule, new: bool, cut: Option<Cut>) -> Outcome {
             ended: source.ended,
             active: source.active.values,
             writes: r.writes,
+            processes: run.processes,
+            watches: source.watches,
+            run_watches: run.watches,
         }
     })
 }
-pub(super) fn compare(schedule: &Schedule) -> Outcome {
+fn compare(schedule: &Schedule) -> Outcome {
     let old = execute(schedule, false, None);
     assert_eq!(old, execute(schedule, true, None), "schedule {schedule:?}");
     for write in 0..old.writes {
@@ -367,6 +399,7 @@ pub(super) fn schedules() {
                     recorded,
                     previous_wait,
                     initial_offset: 0,
+                    overrides: vec![],
                 });
                 Ok(())
             },
@@ -402,36 +435,57 @@ pub(super) fn mandatory() {
     );
     for (op, nth) in [
         ("store.worker_reconcilable", 0),
-        ("latest.stat", 1),
+        ("latest.stat", 0),
+        ("watch", 0),
         ("claim.read", 0),
         ("claim.read", 1),
+        ("pidfd", 0),
+        ("pidfd", 1),
         ("stdout.open", 0),
         ("store.worker_progress", 0),
+        ("stdout.seek", 0),
+        ("stdout.read_until", 0),
+        ("store.record_worker_progress", 0),
+        ("send", 0),
         ("inspect_recorded", 0),
     ] {
         for value in [1, 2, 3, 250, 251] {
-            let mut s = Schedule {
+            let s = Schedule {
                 initial_attempt: false,
+                overrides: vec![(op.into(), nth, value)],
                 ..stable.clone()
             };
-            let base = execute(&s, false, None);
-            let index = base
-                .trace
-                .iter()
-                .filter(|v| v["op"] != "stdout.bytes" && v["op"] != "active.add")
-                .enumerate()
-                .filter(|(_, v)| v["op"] == op)
-                .nth(nth)
-                .map(|(n, _)| n);
-            if let Some(index) = index {
-                s.frames = vec![0; index + 1];
-                s.frames[index] = value;
-                let r = compare(&s);
-                assert!(
-                    r.trace
-                        .iter()
-                        .any(|v| v["op"] == op && v["result"] == value)
-                );
+            let r = compare(&s);
+            assert!(
+                r.trace
+                    .iter()
+                    .any(|v| v["op"] == op && v["result"] == value),
+                "missed {op}/{nth}/{value}"
+            );
+            if op == "store.worker_reconcilable" && value == 1 {
+                assert_eq!(r.trace.len(), 1);
+                assert_eq!(r.result, vec![json!(false)]);
+            }
+            if op == "claim.read" && nth == 0 && value == 2 {
+                assert_eq!(r.result, vec![json!(false)]);
+                assert!(r.sends.is_empty());
+            }
+            if op == "claim.read" && nth == 1 && value == 1 {
+                assert_eq!(r.result, vec![json!(true)]);
+                assert!(r.sends.is_empty());
+            }
+            if op == "latest.stat" && value == 1 {
+                assert_eq!(r.result, vec![json!(true)]);
+                assert!(!r.trace.iter().any(|v| v["op"] == "watch"));
+            }
+            if op == "inspect_recorded" && value == 1 {
+                assert_eq!(r.ended.len(), 1);
+                assert_eq!(r.result, vec![json!(false)]);
+            }
+            if op == "inspect_recorded" && value == 2 {
+                assert_eq!(r.ended.len(), 1);
+                assert_eq!(r.sends.len(), 2);
+                assert_eq!(r.result, vec![json!(false)]);
             }
         }
     }

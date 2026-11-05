@@ -1,7 +1,19 @@
 // Function bodies are checked against their pinned source by the harness.
 use super::io::*;
 use super::*;
-impl WorkerOutputSource {
+struct Shell<'a>(&'a mut WorkerOutputSource);
+impl std::ops::Deref for Shell<'_> {
+    type Target = WorkerOutputSource;
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+impl std::ops::DerefMut for Shell<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+    }
+}
+impl Shell<'_> {
     fn refresh(
         &mut self,
         run: &mut Run,
@@ -260,5 +272,5 @@ pub(super) fn parse_reply(
 }
 
 pub(super) fn refresh_run(source: &mut WorkerOutputSource, run: &mut Run) -> Result<bool> {
-    source.refresh(run, &mut Store, &Sender(std::marker::PhantomData))
+    Shell(source).refresh(run, &mut Store, &Sender(std::marker::PhantomData))
 }

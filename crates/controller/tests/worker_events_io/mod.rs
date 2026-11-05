@@ -7,7 +7,7 @@ use crate::{
     cli::Input,
     executor::{Delivery, Observation, Reconciliation},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{collections::BTreeMap, io::SeekFrom, path::PathBuf};
 mod current;
 mod io;
@@ -182,10 +182,167 @@ fn pinned_reference_and_production_copies() {
             function(include_str!("reference.rs"), name)
         );
     }
-    for name in ["refresh", "parse_reply"] {
+    for name in [
+        "refresh",
+        "parse_event",
+        "decode_event",
+        "external_wait",
+        "parse_reply",
+    ] {
         assert_eq!(
             function(production, name),
             function(include_str!("current.rs"), name)
         );
     }
+}
+
+/// C4: typed line decoding round-trips every accepted event shape.
+#[test]
+fn parser_roundtrip() {
+    use proptest::prelude::*;
+    use tl3_controller_core::worker_events::*;
+    runner(256).run(&(0u8..7, 1u64..u64::MAX, "[a-f0-9]{64}", any::<bool>()), |(kind, reset, key, postmortem)| {
+        let role = if postmortem { "postmortem" } else { "ingest" };
+        let (value, expected) = match kind {
+            0 => (json!({"event":"progress","unit":"model_turn"}), WorkerEvent::Progress {unit:ProgressUnit::ModelTurn}),
+            1 => (json!({"event":"progress","unit":"tool_result"}), WorkerEvent::Progress {unit:ProgressUnit::ToolResult}),
+            2 => (json!({"event":"progress","unit":"external_wait","wait":{"upstream":"prismabuild","key":key}}), WorkerEvent::Progress {unit:ProgressUnit::ExternalWait}),
+            3 => (json!({"event":"reply","role":role,"reply":{"arbitrary":"payload"}}), WorkerEvent::Reply),
+            4 => (json!({"event":"quota","role":role,"reset_ms":reset}), WorkerEvent::Quota {model:QuotaModel::Implicit,reset_ms:Some(reset)}),
+            5 => (json!({"event":"quota","role":role,"reset_ms":reset,"model":"grade"}), WorkerEvent::Quota {model:if postmortem {QuotaModel::Grade} else {QuotaModel::Forbidden},reset_ms:Some(reset)}),
+            _ => (json!({"event":"progress","unit":"unknown"}), WorkerEvent::Invalid),
+        };
+        let bytes=serde_json::to_vec(&value).unwrap();
+        let parsed=super::parse_event(&bytes,Some(role),postmortem,&json!({"grade_model":"grade"})).unwrap();
+        prop_assert_eq!(parsed.event,expected);
+        prop_assert_eq!(&parsed.value,&value);
+        if kind==2 {prop_assert_eq!(&parsed.wait.as_ref().unwrap().key,&key);}
+        let encoded=serde_json::to_vec(&parsed.value).unwrap();
+        let again=super::parse_event(&encoded,Some(role),postmortem,&json!({"grade_model":"grade"})).unwrap();
+        prop_assert_eq!(again.event,parsed.event);prop_assert_eq!(again.wait,parsed.wait);
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn mandatory_valid_replies_and_after_reply() {
+    let cases = include_str!("../fixtures/worker-replies-d8e4f2a8.jsonl");
+    let mut valid = 0;
+    for case in cases.lines() {
+        let case: Value = serde_json::from_str(case).unwrap();
+        let output = if case["start"] == "Classify" {
+            json!({"Comment":{"node":0,"kind":"Classify"}})
+        } else {
+            json!({"Effect":{"node":0,"kind":{"StartRun":case["start"]},"seq":1,"head":null}})
+        };
+        let mut d = delivery(false);
+        d.output = serde_json::from_value(output).unwrap();
+        let bytes = case["stdout"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|v| {
+                let mut b = serde_json::to_vec(v).unwrap();
+                b.push(b'\n');
+                b
+            })
+            .collect::<Vec<_>>();
+        let old = outcome(reference::parse_reply(&bytes, &d, &case["inputs"]));
+        assert!(old.get("ok").is_some(), "fixture {case}: {old}");
+        assert_eq!(
+            old,
+            outcome(current::parse_reply(&bytes, &d, &case["inputs"]))
+        );
+        valid += 1;
+        if case["stdout"].as_array().unwrap().last().unwrap()["event"] == "reply" {
+            let mut after = bytes;
+            after.extend(line(0, false));
+            let old = outcome(reference::parse_reply(&after, &d, &case["inputs"]));
+            assert_eq!(old["error"], "event after worker reply");
+            assert_eq!(
+                old,
+                outcome(current::parse_reply(&after, &d, &case["inputs"]))
+            );
+        }
+    }
+    assert!(valid >= 25);
+}
+
+#[test]
+fn valid_reply_streams() {
+    use proptest::prelude::*;
+    let cases = include_str!("../fixtures/worker-replies-d8e4f2a8.jsonl")
+        .lines()
+        .map(|v| serde_json::from_str::<Value>(v).unwrap())
+        .collect::<Vec<_>>();
+    runner(128).run(&(0usize..cases.len(), proptest::collection::vec(0u8..3,0..30),0u8..5), |(index,prefix,tail)| {
+        let case=&cases[index];
+        let output=if case["start"]=="Classify" {json!({"Comment":{"node":0,"kind":"Classify"}})} else {
+            json!({"Effect":{"node":0,"kind":{"StartRun":case["start"]},"seq":1,"head":null}})
+        };
+        let mut d=delivery(false);d.output=serde_json::from_value(output).unwrap();
+        let mut bytes=prefix.into_iter().flat_map(|k|line(k,false)).collect::<Vec<_>>();
+        for value in case["stdout"].as_array().unwrap() {bytes.extend(serde_json::to_vec(value).unwrap());bytes.push(b'\n');}
+        match tail {1=>bytes.extend(line(0,false)),2=>bytes.extend(b"{\n"),3=>{bytes.pop();},4=>bytes.extend(b"\xff\n"),_=>()}
+        prop_assert_eq!(outcome(reference::parse_reply(&bytes,&d,&case["inputs"])),outcome(current::parse_reply(&bytes,&d,&case["inputs"])));
+        Ok(())
+    }).unwrap();
+}
+#[test]
+fn arbitrary_byte_streams() {
+    use proptest::prelude::*;
+    runner(128)
+        .run(
+            &(
+                proptest::collection::vec(any::<u8>(), 0..300),
+                any::<bool>(),
+            ),
+            |(mut bytes, postmortem)| {
+                bytes.push(b'\n');
+                parity(&bytes, postmortem, &Value::Null);
+                Ok(())
+            },
+        )
+        .unwrap();
+}
+#[test]
+fn mandatory_postmortem_model_and_reply() {
+    use tl3_controller_core::worker_events::*;
+    let inputs = json!({"grade_model":"grade"});
+    let reply = crate::postmortems::simulated_reply();
+    let mut bytes =
+        serde_json::to_vec(&json!({"event":"reply","role":"postmortem","reply":reply})).unwrap();
+    bytes.push(b'\n');
+    assert!(parity(&bytes, true, &inputs).get("ok").is_some());
+    assert!(
+        parity(&line(4, true), true, &inputs)["ok"]
+            .get("Quota")
+            .is_some()
+    );
+    assert_eq!(
+        parity(&line(4, true), true, &Value::Null)["error"],
+        "invalid quota model"
+    );
+    assert_eq!(
+        parity(&line(4, false), false, &inputs)["error"],
+        "invalid quota model"
+    );
+    assert_eq!(
+        parity(&line(6, true), true, &inputs)["error"],
+        "invalid quota model"
+    );
+    let mut bad = serde_json::to_vec(
+        &json!({"event":"quota","role":"postmortem","reset_ms":0,"model":false}),
+    )
+    .unwrap();
+    bad.push(b'\n');
+    assert_eq!(parity(&bad, true, &inputs)["error"], "invalid quota model");
+    assert_eq!(
+        super::parse_event(&line(2, true), None, false, &Value::Null)
+            .unwrap()
+            .event,
+        WorkerEvent::Progress {
+            unit: ProgressUnit::ExternalWait
+        }
+    );
 }
