@@ -61,3 +61,13 @@ from production by `sync.py`, which runs on BuildBuddy. Only the current arm use
 The differential schedules supply no provenance, so they check the dormant
 fallback and preserve the existing I/O and failure order. Semantic-provenance
 cases run through the real controller acceptance tests.
+
+#828 keeps the reviewed historical WorkerReply arm from
+683829169d577b921a1bc93e446b49399886a092 for extraction conformance. The only
+intentional difference from production is the legacy model-only quota clear,
+which is now forbidden. Its exact bytes and SHA256 are pinned separately in
+legacy-quota-clear.rs.txt and pins.json. The source check strips only that block
+before comparing all remaining code to
+production. Original differential schedules, I/O assertions and references stay
+unchanged. The real-store quota_hold upgrade regression proves that an older or
+other-family success preserves unknown legacy quota after restart.
