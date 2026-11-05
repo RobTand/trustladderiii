@@ -28,6 +28,12 @@ fn hold_witness() {
     assert(person_events(true, None) == Some(true));
     assert(person_events(false, None) == None);
     assert(fresh(0, Freshness::Snapshot { unresolved: true }));
+    assert(hold_candidate(HoldEvidence::Person));
+    assert(hold_candidate(HoldEvidence::Command));
+    assert(!hold_candidate(HoldEvidence::Other));
+    assert(unresolved_hold(None));
+    assert(unresolved_hold(Some((9, 9))));
+    assert(!unresolved_hold(Some((9, 10))));
     assert(!fresh(9, Freshness::Intent { last_event: Some(9) }));
     assert(fresh(10, Freshness::Intent { last_event: Some(9) }));
 }
@@ -53,7 +59,7 @@ fn newest_witness() {
 fn check_witness() {
     assert(!check_changed(CheckComparison::BothMissing));
     assert(check_changed(CheckComparison::OneMissing));
-    assert(!check_changed(CheckComparison::BothPresent { fields: [true; 10] }));
-    assert(check_changed(CheckComparison::BothPresent { fields: [false; 10] }));
+    assert(!check_changed(CheckComparison::BothPresent { fields: [true, true, true, true, true, true, true, true, true, true] }));
+    assert(check_changed(CheckComparison::BothPresent { fields: [false, false, false, false, false, false, false, false, false, false] }));
 }
 }

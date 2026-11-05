@@ -58,13 +58,18 @@ impl Adapter {
             crate::evidence::publication(delivery, delivery.request_text.as_deref().unwrap_or(""))?;
         let proof = if proof.is_empty() {
             completion_core::Proof::Empty
-        } else if state.pull_request.body.as_deref().unwrap_or_default().contains(&proof) {
+        } else if state
+            .pull_request
+            .body
+            .as_deref()
+            .unwrap_or_default()
+            .contains(&proof)
+        {
             completion_core::Proof::Present
         } else {
             completion_core::Proof::Missing
         };
-        if completion_core::proof_missing(proof)
-        {
+        if completion_core::proof_missing(proof) {
             return Err(Error::Permanent {
                 class: "pr_evidence",
                 source: "Required recorded proof is missing from the PR body".into(),
@@ -248,30 +253,49 @@ impl Adapter {
                     }
                     lifecycle::Effect::Read(need) => requested = Some(need),
                     lifecycle::Effect::Complete(result) => {
-                        return Ok(match completion_core::resolve(result.into(), observed.is_some()) {
-                            completion_core::Resolution::Found { ack, conflict, progress } => {
-                                if conflict {
-                                    observations.push(Observation::Kernel(tl3_kernel::Event::Fact {
-                                        node: delivery.node(), fact: tl3_kernel::Fact::Conflict,
-                                    }));
+                        return Ok(
+                            match completion_core::resolve(result.into(), observed.is_some()) {
+                                completion_core::Resolution::Found {
+                                    ack,
+                                    conflict,
+                                    progress,
+                                } => {
+                                    if conflict {
+                                        observations.push(Observation::Kernel(
+                                            tl3_kernel::Event::Fact {
+                                                node: delivery.node(),
+                                                fact: tl3_kernel::Fact::Conflict,
+                                            },
+                                        ));
+                                    }
+                                    let mut completion = match ack {
+                                        completion_core::Ack::Confirmed => {
+                                            Completion::confirmed(observations)
+                                        }
+                                        completion_core::Ack::Retryable => Completion {
+                                            diagnostic: None,
+                                            ack: Ack::Retryable,
+                                            failure_class: None,
+                                            observations,
+                                            progress: None,
+                                        },
+                                        completion_core::Ack::Permanent(failure) => {
+                                            Completion::permanent(failure.class())
+                                        }
+                                    };
+                                    if progress {
+                                        completion.progress = observed.as_ref().map(|state| {
+                                            crate::executor::ProgressToken::Mergify(Progress::from(
+                                                state,
+                                            ))
+                                        });
+                                    }
+                                    Reconciliation::Found(Box::new(completion))
                                 }
-                                let mut completion = match ack {
-                                    completion_core::Ack::Confirmed => Completion::confirmed(observations),
-                                    completion_core::Ack::Retryable => Completion {
-                                        diagnostic: None, ack: Ack::Retryable, failure_class: None,
-                                        observations, progress: None,
-                                    },
-                                    completion_core::Ack::Permanent(failure) => Completion::permanent(failure.class()),
-                                };
-                                if progress {
-                                    completion.progress = observed.as_ref().map(|state|
-                                        crate::executor::ProgressToken::Mergify(Progress::from(state)));
-                                }
-                                Reconciliation::Found(Box::new(completion))
-                            }
-                            completion_core::Resolution::Pending => Reconciliation::Pending,
-                            completion_core::Resolution::Absent => Reconciliation::Absent,
-                        });
+                                completion_core::Resolution::Pending => Reconciliation::Pending,
+                                completion_core::Resolution::Absent => Reconciliation::Absent,
+                            },
+                        );
                     }
                     _ => return Err(Error::Invalid("unexpected enqueue reconciliation effect")),
                 }
@@ -280,16 +304,16 @@ impl Adapter {
                 lifecycle::Need::Queue => {
                     let (state, facts) = self.read(delivery, snapshot)?;
                     observations = facts;
-                    core.confirmed =
-                        completion_core::confirmed(completion_receipt(&self.records.reconcile(delivery)?));
+                    core.confirmed = completion_core::confirmed(completion_receipt(
+                        &self.records.reconcile(delivery)?,
+                    ));
                     read = Some(lifecycle::QueueRead {
                         head: lifecycle_head(state.pull_request.head.sha == enqueue(delivery)?.1),
                         queue: state.state,
                         merged: state.pull_request.merged_at.is_some(),
                         conflicts: completion_core::conflicts(state.pull_request.mergeable),
-                        held: completion_core::held(state.state, None).map_or_else(
-                            || self.unresolved_human_hold(delivery, snapshot), Ok,
-                        )?,
+                        held: completion_core::held(state.state, None)
+                            .map_or_else(|| self.unresolved_human_hold(delivery, snapshot), Ok)?,
                         check_changed: baseline
                             .as_ref()
                             .is_some_and(|before| before.check_changed(&state.check)),
@@ -318,9 +342,9 @@ impl Adapter {
                 }
                 lifecycle::Need::Person => {
                     let mut removed = false;
-                    if completion_core::person_events(baseline.is_some(), None).map_or_else(
-                        || self.repaired_head(delivery, snapshot), Ok,
-                    )? {
+                    if completion_core::person_events(baseline.is_some(), None)
+                        .map_or_else(|| self.repaired_head(delivery, snapshot), Ok)?
+                    {
                         let events = self.runtime.block_on(
                             self.clients[&delivery.repository.installation].issue_events(
                                 &full_name(&delivery.repository),
@@ -333,11 +357,19 @@ impl Adapter {
                             &events,
                             observed.as_ref().unwrap().pull_request.merged_at.is_some(),
                         ) {
-                            let Some(event) = completion_core::person_event(completion_evidence(&fact.evidence)) else { continue; };
+                            let Some(event) =
+                                completion_core::person_event(completion_evidence(&fact.evidence))
+                            else {
+                                continue;
+                            };
                             let source = if let Some(snapshot) = snapshot {
-                                completion_core::Freshness::Snapshot { unresolved: fact.unresolved_hold(snapshot)? }
+                                completion_core::Freshness::Snapshot {
+                                    unresolved: fact.unresolved_hold(snapshot)?,
+                                }
                             } else {
-                                completion_core::Freshness::Intent { last_event: baseline.as_ref().map(|attempt| attempt.last_event) }
+                                completion_core::Freshness::Intent {
+                                    last_event: baseline.as_ref().map(|attempt| attempt.last_event),
+                                }
                             };
                             let fresh = completion_core::fresh(event, source);
                             if fresh {
@@ -355,7 +387,11 @@ impl Adapter {
                     )?;
                     read.as_mut().unwrap().issue = Some(lifecycle::IssueRead {
                         queue_label: completion_core::has_label(
-                            &current.labels.iter().map(|label| completion_label(&label.name)).collect::<Vec<_>>(),
+                            &current
+                                .labels
+                                .iter()
+                                .map(|label| completion_label(&label.name))
+                                .collect::<Vec<_>>(),
                             completion_core::Label::Queue,
                         ),
                         recovery: None,
@@ -589,29 +625,51 @@ impl Adapter {
         state: &tl3_mergify::Observation,
         issue: &tl3_github::Issue,
     ) -> Result<bool> {
-        let labels: Vec<_> = issue.labels.iter().map(|label| completion_label(&label.name)).collect();
+        let labels: Vec<_> = issue
+            .labels
+            .iter()
+            .map(|label| completion_label(&label.name))
+            .collect();
         let retry = completion_core::retry(
-            completion_core::has_label(&labels, completion_core::Label::Queue), state.state,
+            completion_core::has_label(&labels, completion_core::Label::Queue),
+            state.state,
         );
         match completion_core::dequeue_gate(
-            retry, state.dequeue_rule_concluded,
+            retry,
+            state.dequeue_rule_concluded,
             completion_core::has_label(&labels, completion_core::Label::Dequeued),
         ) {
             completion_core::DequeueGate::Done => return Ok(false),
             completion_core::DequeueGate::Pending => return Ok(true),
-            completion_core::DequeueGate::Events => {},
+            completion_core::DequeueGate::Events => {}
         }
         let events = self.runtime.block_on(
             self.clients[&delivery.repository.installation]
                 .issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
         )?;
-        let events: Vec<_> = events.iter().map(|event| completion_core::LabelEvent {
-            id: event.id,
-            label: event.label.as_ref().map_or(completion_core::Label::Other, |label| completion_label(&label.name)),
-            action: if event.event == "labeled" { completion_core::LabelAction::Labeled } else { completion_core::LabelAction::Other },
-            at: completion_core::time(event.created_at.timestamp(), event.created_at.timestamp_subsec_nanos()),
-        }).collect();
-        let label_event = |label| completion_core::newest(&events, label).map(|index| events[index]);
+        let events: Vec<_> = events
+            .iter()
+            .map(|event| completion_core::LabelEvent {
+                id: event.id,
+                label: event
+                    .label
+                    .as_ref()
+                    .map_or(completion_core::Label::Other, |label| {
+                        completion_label(&label.name)
+                    }),
+                action: if event.event == "labeled" {
+                    completion_core::LabelAction::Labeled
+                } else {
+                    completion_core::LabelAction::Other
+                },
+                at: completion_core::time(
+                    event.created_at.timestamp(),
+                    event.created_at.timestamp_subsec_nanos(),
+                ),
+            })
+            .collect();
+        let label_event =
+            |label| completion_core::newest(&events, label).map(|index| events[index]);
         Ok(lifecycle::dequeue_pending(
             retry,
             state.dequeue_rule_concluded,
@@ -622,8 +680,11 @@ impl Adapter {
                 at: event.at,
             }),
             label_event(completion_core::Label::Queued).map(|event| event.id),
-            state.check.as_ref().and_then(|check| check.completed_at).map(|time|
-                completion_core::time(time.timestamp(), time.timestamp_subsec_nanos())),
+            state
+                .check
+                .as_ref()
+                .and_then(|check| check.completed_at)
+                .map(|time| completion_core::time(time.timestamp(), time.timestamp_subsec_nanos())),
         ))
     }
     fn snapshot(&self) -> Result<Option<Snapshot>> {
@@ -964,21 +1025,26 @@ fn completion_evidence(evidence: &Evidence) -> completion_core::PersonEvidence {
     }
 }
 
-fn completion_check(before: &Option<CheckRun>, current: &Option<CheckRun>) -> completion_core::CheckComparison {
+fn completion_check(
+    before: &Option<CheckRun>,
+    current: &Option<CheckRun>,
+) -> completion_core::CheckComparison {
     match (before, current) {
         (None, None) => completion_core::CheckComparison::BothMissing,
-        (Some(before), Some(current)) => completion_core::CheckComparison::BothPresent { fields: [
-            before.id == current.id,
-            before.pull_requests == current.pull_requests,
-            before.name == current.name,
-            before.head_sha == current.head_sha,
-            before.external_id == current.external_id,
-            before.details_url == current.details_url,
-            before.status == current.status,
-            before.conclusion == current.conclusion,
-            before.app == current.app,
-            before.output == current.output,
-        ] },
+        (Some(before), Some(current)) => completion_core::CheckComparison::BothPresent {
+            fields: [
+                before.id == current.id,
+                before.pull_requests == current.pull_requests,
+                before.name == current.name,
+                before.head_sha == current.head_sha,
+                before.external_id == current.external_id,
+                before.details_url == current.details_url,
+                before.status == current.status,
+                before.conclusion == current.conclusion,
+                before.app == current.app,
+                before.output == current.output,
+            ],
+        },
         _ => completion_core::CheckComparison::OneMissing,
     }
 }
@@ -1049,5 +1115,128 @@ mod a1_boundary {
         assert_eq!(completion_receipt(&Reconciliation::Found(Box::new(Completion::permanent("test")))), completion_core::Receipt::Found);
         assert_eq!(completion_receipt(&Reconciliation::Pending), completion_core::Receipt::Pending);
         assert_eq!(completion_receipt(&Reconciliation::Absent), completion_core::Receipt::Absent);
+    }
+}
+
+fn completion_hold(evidence: &Evidence) -> completion_core::HoldEvidence {
+    match evidence {
+        Evidence::DequeuedByPerson { .. } | Evidence::ClosedByPerson { .. } => {
+            completion_core::HoldEvidence::Person
+        }
+        Evidence::DequeuedByCommand { .. } => completion_core::HoldEvidence::Command,
+        _ => completion_core::HoldEvidence::Other,
+    }
+}
+
+// Snapshot projection uses the verbatim production method; the node/identity
+// boundary records calls so the early returns are compared with the old body.
+#[cfg(test)]
+mod a1_hold_projection {
+    use super::*;
+    use ::std::cell::RefCell;
+    struct Version(i64);
+    impl Version { fn get(&self) -> i64 { self.0 } }
+    impl PartialEq for Version { fn eq(&self, rhs: &Self) -> bool { self.0 == rhs.0 } }
+    impl PartialOrd for Version { fn partial_cmp(&self, rhs: &Self) -> Option<::std::cmp::Ordering> { self.0.partial_cmp(&rhs.0) } }
+    struct Row { table: &'static str, id: String, version: Version }
+    struct Snapshot { rows: Vec<Row> }
+    struct Projection { evidence: Evidence, node: Option<NodeId>, fail: bool, calls: RefCell<Vec<&'static str>> }
+    impl Projection {
+        fn node(&self, _: &Snapshot) -> Result<Option<NodeId>> {
+            self.calls.borrow_mut().push("node");
+            if self.fail { return Err(Error::Invalid("node error")); }
+            Ok(self.node)
+        }
+        fn identity(&self) -> String {
+            self.calls.borrow_mut().push("identity");
+            "fact".into()
+        }
+    fn unresolved_hold(&self, snapshot: &Snapshot) -> Result<bool> {
+        if !completion_core::hold_candidate(completion_hold(&self.evidence)) {
+            return Ok(false);
+        }
+        let Some(node) = self.node(snapshot)? else {
+            return Ok(completion_core::unresolved_hold(None));
+        };
+        let observed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_facts" && row.id == self.identity());
+        let resumed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_resumes" && row.id == node.0.to_string());
+        Ok(completion_core::unresolved_hold(observed.zip(resumed).map(
+            |(observed, resumed)| (observed.version.get(), resumed.version.get()),
+        )))
+    }
+
+    fn legacy(&self, snapshot: &Snapshot) -> Result<bool> {
+        if !matches!(
+            self.evidence,
+            Evidence::DequeuedByPerson { .. }
+                | Evidence::ClosedByPerson { .. }
+                | Evidence::DequeuedByCommand { .. }
+        ) {
+            return Ok(false);
+        }
+        let Some(node) = self.node(snapshot)? else {
+            return Ok(true);
+        };
+        let observed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_facts" && row.id == self.identity());
+        let resumed = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "queue_resumes" && row.id == node.0.to_string());
+        Ok(!observed
+            .zip(resumed)
+            .is_some_and(|(observed, resumed)| resumed.version > observed.version))
+    }
+
+    }
+    /// #608: real version projection is strict, takes the first matching rows,
+    /// and skips node lookup for other evidence, including malformed bindings.
+    #[test]
+    fn mandatory_a1_hold_snapshot_projection() {
+        for evidence in [Evidence::DequeuedByPerson { event: 1 }, Evidence::ClosedByPerson { event: 2 },
+            Evidence::DequeuedByCommand { check: 3, completed_at: None, head: "h".into() },
+            Evidence::PushByOther { head: "h".into() }] {
+            for node in [None, Some(NodeId(0))] {
+                for fail in [false, true] {
+                    for observed in [None, Some(0), Some(9), Some(i64::MAX)] {
+                        for resumed in [None, Some(0), Some(9), Some(10), Some(i64::MAX)] {
+                            let p = Projection { evidence: evidence.clone(), node, fail, calls: RefCell::new(vec![]) };
+                            let mut rows = vec![Row { table: "other", id: "fact".into(), version: Version(1) }];
+                            if let Some(v) = observed { rows.push(Row { table: "queue_facts", id: "fact".into(), version: Version(v) }); }
+                            if let Some(v) = resumed { rows.push(Row { table: "queue_resumes", id: "0".into(), version: Version(v) }); }
+                            // A later duplicate must not replace the first matching row.
+                            if observed.is_some() { rows.push(Row { table: "queue_facts", id: "fact".into(), version: Version(2) }); }
+                            if resumed.is_some() { rows.push(Row { table: "queue_resumes", id: "0".into(), version: Version(2) }); }
+                            let snapshot = Snapshot { rows };
+                            let before = p.legacy(&snapshot).map_err(|e| e.to_string());
+                            let calls = p.calls.replace(vec![]);
+                            let after = p.unresolved_hold(&snapshot).map_err(|e| e.to_string());
+                            assert_eq!(before, after);
+                            assert_eq!(calls, *p.calls.borrow());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /// #760: the extra snapshot method is the production source, and the
+    /// reference remains pinned to the e3292d91 adapter blob already hash-checked.
+    #[test]
+    fn mandatory_a1_hold_projection_source() {
+        fn body<'a>(s: &'a str, name: &str) -> &'a str {
+            let a = s.find(&format!("    fn {name}(")).unwrap();
+            let b = a + s[a..].find("\n    }\n").unwrap() + 7;
+            &s[a..b]
+        }
+        assert_eq!(body(include_str!("../../src/adapters/mergify.rs"), "unresolved_hold"), body(include_str!("current.rs"), "unresolved_hold"));
+        assert_eq!(body(include_str!("base-adapter.rs.txt"), "unresolved_hold"), body(include_str!("current.rs"), "legacy").replace("fn legacy(", "fn unresolved_hold("));
     }
 }

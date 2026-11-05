@@ -197,6 +197,7 @@ fn mandatory_a1_boundary_source() {
         "completion_receipt",
         "completion_evidence",
         "completion_check",
+        "completion_hold",
     ] {
         assert_eq!(
             function(include_str!("../../src/adapters/mergify.rs"), name),

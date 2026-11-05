@@ -66,7 +66,7 @@ def verus_proofs():
             src = "proofs/completion.rs",
             srcs = ["src/decide/completion.rs", "src/decide/check.rs", "src/decide/observe.rs"],
             specs = ["proofs/completion_spec.rs"],
-            expected_obligations = 23,
+            expected_obligations = 25,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",

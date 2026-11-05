@@ -50,7 +50,7 @@ pub enum Resolution<F> {
             Complete::Pending => matches!(out, Resolution::Pending),
             Complete::Absent => matches!(out, Resolution::Absent),
         },))]
-pub fn resolve<F>(result: Complete<F>, observed: bool) -> Resolution<F> {
+pub fn resolve<F: PartialEq>(result: Complete<F>, observed: bool) -> Resolution<F> {
     match result {
         Complete::Confirmed { progress, conflict } => Resolution::Found {
             ack: Ack::Confirmed,
@@ -345,5 +345,31 @@ impl From<super::enqueue::Complete> for Complete<super::enqueue::Failure> {
             C::Pending => Self::Pending,
             C::Absent => Self::Absent,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldEvidence {
+    Person,
+    Command,
+    Other,
+}
+
+/// #608/#373: person and explicit-command holds require a later resume.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == !matches!(evidence, HoldEvidence::Other),))]
+pub fn hold_candidate(evidence: HoldEvidence) -> bool {
+    !matches!(evidence, HoldEvidence::Other)
+}
+
+/// #608: a hold resolves only when both rows exist and resume is strictly newer.
+/// Missing node has no paired rows and remains unresolved.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match versions {
+    Some((observed, resumed)) => resumed <= observed,
+    None => true,
+},))]
+pub fn unresolved_hold(versions: Option<(i64, i64)>) -> bool {
+    match versions {
+        Some((observed, resumed)) => resumed <= observed,
+        None => true,
     }
 }
