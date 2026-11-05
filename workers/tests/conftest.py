@@ -33,7 +33,25 @@ def fake_model_tool_binding(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def budget_binary(request, tmp_path_factory, monkeypatch):
+def stable_git_commits(monkeypatch):
+    import subprocess
+    from pathlib import Path
+
+    original = subprocess.run
+
+    def run(command, *args, **kwargs):
+        if (isinstance(command, (list, tuple)) and command
+                and Path(command[0]).name == 'git' and 'commit' in command):
+            kwargs['env'] = {**kwargs.get('env', os.environ),
+                             'GIT_AUTHOR_DATE': '2000-01-01T00:00:00+0000',
+                             'GIT_COMMITTER_DATE': '2000-01-01T00:00:00+0000'}
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+
+
+@pytest.fixture(autouse=True)
+def budget_binary(request, tmp_path_factory, monkeypatch, stable_git_commits):
     import json
     import subprocess
     import sys
@@ -71,6 +89,7 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
                                             json.loads(kwargs["input"]))
                 code, stdout, stderr = 0, json.dumps(value, ensure_ascii=False), ""
             except RuntimeError as error:
+                print(error, file=sys.stderr)
                 code, stdout, stderr = 1, "", str(error)
             if not (kwargs.get("text") or kwargs.get("encoding") or kwargs.get("universal_newlines")):
                 stdout, stderr = stdout.encode(), stderr.encode()

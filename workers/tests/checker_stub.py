@@ -31,6 +31,29 @@ def vectors():
     return [row for rows in cases().values() for row in rows]
 
 
+def difference(expected, actual, path='$'):
+    if type(expected) is not type(actual):
+        return path + ': type changed'
+    if isinstance(expected, dict):
+        if expected.keys() != actual.keys():
+            return path + ': keys changed'
+        for key in expected:
+            left, right = expected[key], actual[key]
+            if key == 'summary_json':
+                left, right = json.loads(left), json.loads(right)
+            if found := difference(left, right, path + '.' + key):
+                return found
+    elif isinstance(expected, list):
+        if len(expected) != len(actual):
+            return path + ': length changed'
+        for index, (left, right) in enumerate(zip(expected, actual)):
+            if found := difference(left, right, path + f'[{index}]'):
+                return found
+    elif expected != actual:
+        return f'{path}: {str(expected)[:160]!r} != {str(actual)[:160]!r}'
+    return ''
+
+
 def replay(case, cursor, command, document):
     """A unit fake follows its script; Rust checks the original facts elsewhere."""
     with _LOCK:
@@ -44,7 +67,8 @@ def replay(case, cursor, command, document):
         if command[:1] == ['check-harness'] and (
                 json.dumps(row['document'], sort_keys=True, allow_nan=False)
                 != json.dumps(document, sort_keys=True, allow_nan=False)):
-            raise RuntimeError(f"Rust harness document changed in {case} at {position}: {command}")
+            raise RuntimeError(f"Rust harness document changed in {case} at {position}: "
+                               + difference(row['document'], document))
         cursor.write_text(str(position + 1))
         return deepcopy(row["response"])
 
@@ -92,7 +116,8 @@ def main():
         with tempfile.TemporaryDirectory(prefix="tl3-checker-recordings-") as directory:
             environment = {**os.environ, "TL3_BINARY": str(Path(sys.argv[2]).resolve()),
                            "TEST_REAL_CHECKER": "1", "TEST_RECORD_CHECKER_DIR": directory}
-            run = subprocess.run([sys.executable, "-m", "pytest", *sys.argv[3:]], env=environment)
+            run = subprocess.run([sys.executable, "-m", "pytest", *sys.argv[3:]],
+                                 env=environment, cwd=Path(__file__).resolve().parents[1])
             corpus = dict(cases()) if VECTORS.exists() else {}
             for result in sorted(Path(directory).glob("*.json")):
                 corpus.update(json.loads(result.read_text()))

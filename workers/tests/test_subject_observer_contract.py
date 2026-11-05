@@ -142,7 +142,7 @@ def test_review662_request229_replays_saved_contract_and_untouched_setup_error(r
     path = 'tests/test_paced_exports_share_a_tier.py'
     node = path + '::test_a_finished_export_files_its_rate_and_prices_the_next_seal'
     (root / 'produced_spool.py').write_text('class SpoolError(Exception): pass\ndef _local_disk(root):\n    raise SpoolError("spool root must be on a local disk filesystem")\n')
-    (root / path).write_text('import pytest\nfrom produced_spool import _local_disk\n@pytest.fixture\ndef world_roomy(tmp_path):\n    return _local_disk(tmp_path)\ndef test_a_finished_export_files_its_rate_and_prices_the_next_seal(world_roomy):\n    assert world_roomy\n')
+    (root / path).write_text('import pytest\nfrom produced_spool import _local_disk\n@pytest.fixture\ndef world_roomy():\n    return _local_disk("fixture-root")\ndef test_a_finished_export_files_its_rate_and_prices_the_next_seal(world_roomy):\n    assert world_roomy\n')
     git(root, 'add', '.')
     git(root, 'commit', '-qm', 'request 229 untouched base')
     inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')

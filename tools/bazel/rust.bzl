@@ -39,7 +39,11 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {"crates/harness-core": ["//harness:core_vectors"]}
+_RUNTIME = {"crates/harness-core": [
+    "//harness:core_vectors",
+    "//harness:test-vectors/summary/python-envelope.json",
+    "//harness:test-vectors/summary/python-numbers.json",
+]}
 
 # Wave B entry points in crates/harness-core (#818). Each port replaces or removes only its
 # own entry, so parallel ports never share a hunk. Keep the comment line above each entry.
@@ -61,7 +65,11 @@ _WAVE_B_ENTRIES = {
         "srcs": ["tests/summary_bound.rs"],
         "crate_root": "tests/summary_bound.rs",
         "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
-        "data": ["//harness:project_files"],
+        "data": [
+            "//harness:core_vectors",
+            "//harness:test-vectors/summary/python-envelope.json",
+            "//harness:test-vectors/summary/python-numbers.json",
+        ],
         "tags": ["rust", "wave-b-summary-bound"],
     },
     # selector-identity (#823)
@@ -69,7 +77,7 @@ _WAVE_B_ENTRIES = {
         "srcs": ["tests/selector_identity.rs"],
         "crate_root": "tests/selector_identity.rs",
         "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
-        "data": ["//harness:project_files"],
+        "data": ["//harness:core_vectors"],
         "tags": ["rust", "wave-b-selector-identity"],
     },
     # node-id (#824)
