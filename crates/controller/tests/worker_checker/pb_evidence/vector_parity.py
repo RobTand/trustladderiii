@@ -16,7 +16,7 @@ def load(name, path):
 
 
 root = Path(sys.argv[1])
-repo = root.parent.parent.parent.parent
+repo = root.parents[4]
 sys.path.insert(0, str(repo / 'workers/tests'))
 import pb_evidence_vectors as oracle
 import pb_evidence_reference as reference
