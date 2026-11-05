@@ -4,7 +4,7 @@ Usage: uv run --project workers --locked python workers/tests/planner_vectors_re
   --output PATH [--check]
 """
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import replace
 import gzip
@@ -13,6 +13,7 @@ import os
 import re
 from pathlib import Path, PurePosixPath
 import sys
+import tempfile
 from unittest.mock import patch
 
 import pytest
@@ -68,9 +69,9 @@ class Recorder:
             case['outcome'] = {'return': packed(result)}
             return result
         finally:
+            self.active = False
             after(case['outcome'])
             self.cases.append(case)
-            self.active = False
 
     def check(self, original):
         def recorded(inputs, reply, *, rehearsals=None):
@@ -219,6 +220,163 @@ def globs():
              'verdict': PurePosixPath(path).full_match(pattern)}
             for index, (path, pattern) in enumerate(pairs)]
 
+def git_observations(blob, *, size=None, size_error=None, blob_error=None):
+    """Supply external Git observations, never the base-definition decision."""
+    def observed(repo, *args):
+        if args[:2] == ('cat-file', '-s'):
+            if size_error is not None:
+                raise size_error
+            return str(len(blob) if size is None else size).encode()
+        assert args[:2] == ('cat-file', 'blob'), args
+        if blob_error is not None:
+            raise blob_error
+        return blob
+    return observed
+
+
+def observation_cases(recorder, inputs, forecast, execution):
+    from subprocess import CalledProcessError
+    from types import SimpleNamespace
+    from tl3_workers.tools import Worktree
+
+    recorder.source, recorder.node, recorder.ordinal = 'planner_vectors_extra', 'extra/base-observations', 0
+    base = recorder.pure('planner.base_definition', planner.base_definition)
+    node = 'tests/test_base.py::test_present'
+    source = b'def test_present():\n    assert True\n'
+    for git in (
+        git_observations(source),
+        git_observations(b'def test_absent(): pass\n'),
+        git_observations(b'invalid Python source!'),
+        git_observations(b'\xff'),
+        git_observations(source + b'#' * (planner.HARD_CAP_BYTES - len(source))),
+        git_observations(source, size=planner.HARD_CAP_BYTES + 1),
+        git_observations(source, size='not-an-integer'),
+        git_observations(source, size_error=OSError('size unavailable')),
+        git_observations(source, blob_error=CalledProcessError(128, ['git', 'cat-file', 'blob', 'immutable-base:tests/test_base.py'])),
+        git_observations(('é' * (planner.HARD_CAP_BYTES // 2 + 1)).encode(), size=planner.HARD_CAP_BYTES),
+    ):
+        with patch.object(planner, 'git', git):
+            base(node, 'immutable-base')
+
+    previous = Path.cwd()
+    with tempfile.TemporaryDirectory(dir=recorder.temporary_root) as temporary:
+        os.chdir(temporary)
+        try:
+            Path('tests').mkdir()
+            path = Path('tests/test_base.py')
+            for content in (source, source + b'#' * (planner.HARD_CAP_BYTES - len(source)), b'\xff',
+                            ('é' * (planner.HARD_CAP_BYTES // 2 + 1)).encode()):
+                path.write_bytes(content)
+                base(node)
+            edits = recorder.pure('planner.edit_violations', planner.edit_violations)
+            edits([], {'files': ['tests/test_base.py'], 'edits_tests': [node],
+                       'checks': [{'kind': 'demonstrating', 'node_ids': [node]}]})
+            path.unlink()
+            base(node)
+            with patch.object(planner, 'Worktree', lambda root: Worktree('absent-root')):
+                base(node)
+            path.write_bytes(source)
+            close = Worktree.__exit__
+            def failing_close(tree, *exc):
+                close(tree, *exc)
+                raise OSError('worktree close unavailable')
+            with patch.object(Worktree, '__exit__', failing_close):
+                base(node)
+            file = Worktree._file
+            @contextmanager
+            def failing_file_close(tree, *args, **kwargs):
+                with file(tree, *args, **kwargs) as stream:
+                    yield stream
+                raise OSError('file close unavailable')
+            with patch.object(Worktree, '_file', failing_file_close):
+                base(node)
+
+            # The immutable base lacks this test, but local correction reads HEAD.
+            recorder.node, recorder.ordinal = 'extra/local-base-sha-asymmetry', 0
+            path.write_text('def test_only_at_head(): pass\n')
+            head_node = 'tests/test_base.py::test_only_at_head'
+            with patch.object(planner, 'git', git_observations(b'def test_only_at_base(): pass\n')):
+                base(head_node, 'immutable-base')
+            from planner_fixtures import LEAF
+            draft = deepcopy(LEAF)
+            draft['checks'] = [dict(kind='regression', node_ids=['tests/test_base.py'], goal_ids=[0])]
+            request = deepcopy(inputs)
+            request.update(base_sha='immutable-base', repair_plan_consistency=True)
+            check = recorder.check(planner.check_reply)
+            with patch.object(planner, 'Forecaster', lambda _: SimpleNamespace(measure=lambda *args: deepcopy(forecast), problems=[])), \
+                 patch.object(planner, 'execution_forecast', lambda *args, **kwargs: deepcopy(execution)):
+                try:
+                    check(request, deepcopy(draft))
+                except planner.PlanConsistencyError as error:
+                    mismatch = error
+                else:
+                    raise AssertionError('the non-exact base selector must request local correction')
+            reply = deepcopy(draft)
+            reply['checks'][0]['node_ids'] = [head_node]
+            local = recorder.correction('constrain_local', planner.PlanConsistencyError.constrain_local)
+            local(mismatch, reply)
+        finally:
+            os.chdir(previous)
+
+
+def diagnostic_and_byte_cases(recorder, inputs, forecast, execution):
+    from types import SimpleNamespace
+    from planner_fixtures import LEAF
+    from tl3_workers import generated_scope, evidence
+
+    recorder.source, recorder.node, recorder.ordinal = 'planner_vectors_extra', 'extra/diagnostics-and-byte-traps', 0
+    prohibition = recorder.pure('generated_scope.check_ingest_generation_scope', generated_scope.check_ingest_generation_scope)
+    try:
+        prohibition({'issue': {'title': '', 'body': ''}, 'tool_capabilities': [
+            {'tool': 'run_generator', 'executor': 'prismabuild_generator'}]},
+            {'kind': 'brief', 'brief': 'Keep generated outputs unchanged.', 'goals': []})
+    except generated_scope.GeneratedOutputProhibition:
+        pass
+
+    check = recorder.check(planner.check_reply)
+    applicable = recorder.pure('evidence.proof_applicability', evidence.proof_applicability)
+    with patch.object(planner, 'Forecaster', lambda _: SimpleNamespace(measure=lambda *args: deepcopy(forecast), problems=[])), \
+         patch.object(planner, 'execution_forecast', lambda *args, **kwargs: deepcopy(execution)):
+        numeric_inputs = deepcopy(inputs)
+        numeric_inputs['ingest']['goals'] *= 2
+        for goal_ids in ([0, 1], [0, 1.0], [0, True]):
+            reply = deepcopy(LEAF)
+            reply['checks'] = [dict(deepcopy(reply['checks'][0]), goal_ids=goal_ids)]
+            applicable(numeric_inputs['ingest']['goals'], reply['checks'])
+            check(deepcopy(numeric_inputs), reply)
+
+        unicode_inputs = deepcopy(inputs)
+        unicode_inputs['forecast'].update(generator='configured generator', generated_files=[])
+        unicode_inputs['protected_paths'] = ['*.py']
+        reply = deepcopy(LEAF)
+        reply['checks'] = reply['checks'][:1]
+        reply['files'] = ['𐀀.py', 'Ω.py', 'é.py', '\ue000.py', 'Z.py']
+        with patch.object(planner, 'configured_outputs', lambda *args: []):
+            check(unicode_inputs, reply)
+
+        for multibyte in (False, True):
+            for target in (2047, 2048, 2049):
+                reply = deepcopy(LEAF)
+                reply['checks'] = [dict(kind='regression', node_ids=['tests/.py'], goal_ids=[0])]
+                selectors = {0: reply['checks'][0]['node_ids']}
+                minimum = len(str(planner.PlanConsistencyError([], draft=reply, selectors=selectors)).encode())
+                prefix = 'é' * 16 if multibyte else ''
+                node = 'tests/' + prefix + 'x' * (target - minimum - len(prefix.encode())) + '.py'
+                reply['checks'][0]['node_ids'] = [node]
+                selectors = {0: [node]}
+                mismatch = planner.PlanConsistencyError([], draft=reply, selectors=selectors)
+                message = str(mismatch)
+                assert len(message.encode()) == target
+                boundary_inputs = deepcopy(inputs)
+                boundary_inputs['repair_plan_consistency'] = True
+                try:
+                    check(boundary_inputs, reply)
+                except planner.PlanConsistencyError:
+                    pass
+                recorder.cases[-1]['repair_boundary'] = {
+                    'bytes': target, 'characters': len(message), 'selectors': packed(selectors)}
+
+
 def extra_cases(recorder):
     """Reach every correction rejection without expanding the production rules."""
     from planner_fixtures import LEAF, SPLIT
@@ -273,9 +431,8 @@ def extra_cases(recorder):
     ]:
         reply = deepcopy(mismatch.draft)
         change(reply)
-        with patch.object(planner, 'base_definition', lambda *args: (False, False)):
-            constrain(mismatch, reply)
-            local(mismatch, deepcopy(reply))
+        constrain(mismatch, reply)
+        local(mismatch, deepcopy(reply))
     # Boundary-only shape cases cannot be obtained through model schemas.
     from types import SimpleNamespace
     import checker_stub
@@ -285,7 +442,7 @@ def extra_cases(recorder):
     execution = next(value for value in responses if value.get('exploration_declared') and value.get('fits'))
     config = {'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'prompt': 1}}
     inputs = {'must_split': False, 'ingest': {'brief': 'fixture', 'goals': [{'description': 'Preserve behavior.', 'verification': 'test'}]},
-              'protected_paths': [], 'forecast': config}
+              'protected_paths': [], 'forecast': config, 'base_sha': 'vector-base'}
     check = recorder.check(planner.check_reply)
     plans = []
     for change in [lambda r: r.update(files=[]), lambda r: r.update(no_design_questions=False),
@@ -311,7 +468,9 @@ def extra_cases(recorder):
                                 for index in range(20)]
     plans.append(long_selectors)
     for reply in plans:
-        with patch.object(planner, 'base_definition', lambda *args: (reply is oversized, reply is not oversized)), \
+        source = b'def test_api(): pass\ndef test_existing(): pass\n'
+        size = planner.HARD_CAP_BYTES + 1 if reply is oversized else len(source)
+        with patch.object(planner, 'git', git_observations(source, size=size)), \
              patch.object(planner, 'Forecaster', lambda _: SimpleNamespace(measure=lambda *args: deepcopy(forecast), problems=[])), \
              patch.object(planner, 'execution_forecast', lambda *args, **kwargs: deepcopy(execution)):
             check(deepcopy(inputs), reply)
@@ -321,6 +480,8 @@ def extra_cases(recorder):
     with patch.object(planner, 'Forecaster', lambda _: SimpleNamespace(measure=lambda *args: deepcopy(nofit), problems=[])), \
          patch.object(planner, 'execution_forecast', lambda *args, **kwargs: deepcopy(execution)):
         check(deepcopy(inputs), reply)
+    observation_cases(recorder, inputs, forecast, execution)
+    diagnostic_and_byte_cases(recorder, inputs, forecast, execution)
 
 
 def generate(selection=None):
