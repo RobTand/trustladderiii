@@ -152,3 +152,16 @@ fn planner_goal_ids_use_json_number_equality() {
     let typed: PlannerReply = serde_json::from_value(reply.clone()).unwrap();
     assert_eq!(serde_json::to_value(typed).unwrap(), reply);
 }
+
+#[test]
+fn planner_integer_minimum_compares_large_integers_without_float_rounding() {
+    use tl3_controller::contracts::roles::planner_reply::PlanInteger;
+    type Large = PlanInteger<{ u64::MAX }>;
+    for (number, valid) in [
+        ("18446744073709551614", false),
+        ("18446744073709551615", true),
+        ("18446744073709551616.0", true),
+    ] {
+        assert_eq!(serde_json::from_str::<Large>(number).is_ok(), valid, "{number}");
+    }
+}
