@@ -114,6 +114,9 @@ fn json_values() -> BoxedStrategy<Value> {
         Just(Value::Null),
         any::<bool>().prop_map(Value::from),
         any::<i64>().prop_map(Value::from),
+        // Small half-integers round-trip with the workspace's existing JSON parser.
+        // Arbitrary f64 parsing needs serde_json/float_roundtrip, a runtime change.
+        any::<i32>().prop_map(|n| Value::from(f64::from(n) / 2.0)),
         ".{0,24}".prop_map(Value::from)
     ]
     .prop_recursive(3, 32, 5, |inner| {
@@ -164,14 +167,14 @@ proptest! {
 
 fn contexts() -> BoxedStrategy<tl3_controller::contracts::decision_context::DecisionContext> {
     use tl3_controller::contracts::{
-        bounded::{List, Natural, Text},
+        bounded::{JsonObject, List, Natural, Text},
         decision_context::{Decision, DecisionContext, SchemaVersion},
     };
     let nonempty = ".{1,20}".prop_map(|s| Text::new(s).unwrap());
     let scope = proptest::collection::vec(nonempty.clone(), 0..4)
         .prop_map(|values| List::new(values).unwrap());
     let question = proptest::collection::btree_map("[a-z]{1,8}", json_values(), 0..4)
-        .prop_map(|map| map.into_iter().collect());
+        .prop_map(|map| JsonObject(map.into_iter().collect()));
     let decision = (
         nonempty.clone(),
         proptest::option::of(".{0,20}"),

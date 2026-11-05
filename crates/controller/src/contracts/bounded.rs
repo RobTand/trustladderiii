@@ -853,3 +853,49 @@ impl<const MIN: u64> JsonSchema for Natural<MIN> {
         json_schema!({"type": "integer", "minimum": MIN})
     }
 }
+
+/// Schema-only marker for a required nullable string, using the JSON Schema type union.
+/// Pair with `required_nullable` on an `Option<String>` so absence is still an error.
+pub struct NullableString;
+
+impl JsonSchema for NullableString {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "NullableString".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        Option::<String>::json_schema(generator)
+    }
+}
+
+/// An unconstrained JSON object, distinct from arbitrary JSON values.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct JsonObject(pub serde_json::Map<String, serde_json::Value>);
+
+impl JsonSchema for JsonObject {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "JsonObject".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema = <serde_json::Map<String, serde_json::Value>>::json_schema(generator);
+        // Unconstrained maps already allow every additional property. Preserve the
+        // published spelling by omitting only the redundant true keyword.
+        if schema.get("additionalProperties") == Some(&serde_json::Value::Bool(true)) {
+            schema
+                .as_object_mut()
+                .unwrap()
+                .remove("additionalProperties");
+        }
+        schema
+    }
+}

@@ -1,6 +1,8 @@
 //! Controller-recorded decisions, generated without changing decision-context.json (#819).
 
-use super::bounded::{Integer, List, Natural, Text, UNBOUNDED, present, required_nullable};
+use super::bounded::{
+    Integer, JsonObject, List, Natural, NullableString, Text, UNBOUNDED, present, required_nullable,
+};
 use super::render::{self, Layout, SchemaOrder, TypeOrder, TypeUse};
 use schemars::{JsonSchema, Schema, SchemaGenerator, generate::SchemaSettings, json_schema};
 use serde::{Deserialize, Serialize};
@@ -37,15 +39,15 @@ impl JsonSchema for SchemaVersion {
 pub struct Decision {
     pub id: NonEmpty,
     #[serde(deserialize_with = "required_nullable")]
-    #[schemars(required)]
+    #[schemars(with = "NullableString")]
     pub source_comment: Option<String>,
-    pub question: serde_json::Map<String, Value>,
+    pub question: JsonObject,
     pub answer: NonEmpty,
     pub allowed_scope: Scope,
     pub restrictions: Scope,
     pub origin_request_version: Natural<0>,
     #[serde(deserialize_with = "required_nullable")]
-    #[schemars(required)]
+    #[schemars(with = "NullableString")]
     pub superseded_by: Option<String>,
     #[serde(
         default,
