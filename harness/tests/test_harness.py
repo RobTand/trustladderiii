@@ -146,6 +146,36 @@ def test_container_has_only_explicit_mounts_and_no_host_environment(tmp_path, mo
     assert "--cpuset-cpus" not in command
 
 
+def test_container_reaps_orphans(tmp_path, monkeypatch):
+    monkeypatch.setattr('tl3_harness.execution.scratch_directory', lambda: tmp_path / 'scratch')
+    command = container_command(tmp_path, Container(IMAGE), ('test_orphans.py::test_x',))
+    assert '--init' in command[:command.index(IMAGE)]
+    assert '--pids-limit=128' in command
+
+
+def test_verification_suite_reaps_orphans(monkeypatch):
+    import runpy
+
+    verify = runpy.run_path(str(Path(__file__).parents[1] / 'tools/verify.py'))
+    commands = []
+
+    class CapturedSuite(Exception):
+        pass
+
+    def capture(command, **kwargs):
+        commands.append(command)
+        raise CapturedSuite
+
+    monkeypatch.setitem(verify['main'].__globals__, 'require_admission', lambda: None)
+    monkeypatch.setitem(verify['main'].__globals__, 'verify_orphans', lambda container: None)
+    monkeypatch.setattr(sys, 'argv', ['verify.py', IMAGE])
+    monkeypatch.setattr(subprocess, 'run', capture)
+    with pytest.raises(CapturedSuite):
+        verify['main']()
+    assert '--init' in commands[0][:commands[0].index(IMAGE)]
+    assert '--pids-limit=128' in commands[0]
+
+
 def test_requires_pb_admission(tmp_path, monkeypatch):
     monkeypatch.delenv("PRISMABUILD_CONTAINER_OWNER", raising=False)
     with pytest.raises(RuntimeError, match="admitted"):
