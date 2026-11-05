@@ -93,7 +93,9 @@ def main():
             assert 'test result: FAILED' in log and 'panicked at' in log, (
                 'boundary mutant must fail an executed assertion, not compilation')
         verdicts, failed = bazel_gate.classify([target], statuses, {target})
-        assert verdicts['rust'] == 'failure' and failed['rust'] == [target]
+        assert verdicts['rust'] == 'fail' and failed['rust'] == [target]
+        report['rust_verdict'] = verdicts['rust']
+        report['failed_rust_targets'] = failed['rust']
         report['required_rust_check'] = 'failure'
         report['passed'] = True
     finally:
