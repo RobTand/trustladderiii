@@ -35,7 +35,15 @@ export VERUS_Z3_PATH="$work/verus-x86-linux/z3"
 "$work/verus-x86-linux/verus" --version
 "$VERUS_Z3_PATH" --version
 "$work/rust/bin/rustc" --version
-if [[ ${1:-} == --mutants ]]; then
+if [[ ${1:-} == --modules ]]; then
+  shift
+  status=0
+  for module in "$@"; do
+    printf 'PROOF_MODULE %s\n' "$module"
+    /usr/bin/time -v "$work/verus-x86-linux/verus" --num-threads "${TL3_VERUS_THREADS:-1}" --rlimit 30 --multiple-errors 0 -V spinoff-all --sysroot "$work/rust" crates/kernel/verus/progress.rs --edition 2024 --verify-only-module "$module" --time --output-json --smt-option "timeout=${TL3_VERUS_QUERY_TIMEOUT_MS:-10000}" || status=1
+  done
+  exit "$status"
+elif [[ ${1:-} == --mutants ]]; then
   shift
   /usr/bin/time -v python3 crates/kernel/tools/progress_mutants.py "$work/verus-x86-linux/verus" "$work/rust" "$@"
 else
