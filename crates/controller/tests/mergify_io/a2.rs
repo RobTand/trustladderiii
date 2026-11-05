@@ -482,3 +482,48 @@ fn mandatory_a2_shell_new_attempt_ready() {
     assert_eq!(count(&r, "github.command"), 1, "{r:#}");
     assert_eq!(count(&r, "github.add_label"), 0);
 }
+
+/// Preserved existing behaviour (no rule): initial/final non-confirmed completions do not deliver a receipt; Retryable can return Found.
+#[test]
+fn mandatory_a2_shell_nonconfirmed_receipts() {
+    for final_read in [false, true] {
+        let mut s = schedule(Profile::Plain);
+        over(&mut s, "github.pull", "", if final_read { 6 } else { 1 }, 2);
+        let r = compare(&s, Entry::Execute, A2Config::default(), false);
+        assert_eq!(r["result"]["completion"]["ack"], "Retryable", "{r:#}");
+        assert!(file(&r, ".json").is_none());
+        assert_eq!(file(&r, ".applied").is_some(), final_read);
+    }
+    let mut s = schedule(Profile::Plain);
+    over(&mut s, "github.pull", "", 4, 2);
+    over(&mut s, "github.pull", "", 6, 2);
+    let r = compare(&s, Entry::Execute, A2Config::default(), false);
+    assert_eq!(r["result"]["completion"]["ack"], "Retryable", "{r:#}");
+    assert!(file(&r, ".applied").is_none());
+    assert_eq!(count(&r, "github.checks"), 3);
+    let mut refused = schedule(Profile::Command);
+    refused.initial = 4;
+    let r = compare(&refused, Entry::Execute, A2Config::default(), false);
+    assert_eq!(r["result"]["completion"]["ack"], "Permanent", "{r:#}");
+    assert!(file(&r, ".json").is_none());
+    assert_eq!(count(&r, "github.command"), 0);
+}
+/// #447 open-PR self-heal: closed and merged reads skip the body-heal file and upstream edits.
+#[test]
+fn mandatory_a2_shell_closed_and_merged() {
+    for word in [1, 4] {
+        let mut s = schedule(Profile::Body);
+        over(&mut s, "github.pull", "", 1, word);
+        let r = compare(&s, Entry::Read, A2Config::default(), false);
+        assert_eq!(count(&r, "github.patch_body"), 0);
+        assert_eq!(count(&r, "github.runs"), 0);
+        assert!(
+            !r["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["op"] == "file.read"
+                    && c["args"].as_str().unwrap().ends_with(".body-heal"))
+        );
+    }
+}
