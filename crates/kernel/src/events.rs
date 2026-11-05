@@ -4,7 +4,6 @@ use super::*;
 kernel_fn! {
 /// #771: compose the actual event handlers' per-apply counter bounds.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
     requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
@@ -157,6 +156,20 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         }
     }
     kernel_proof! {
+        if before_apply@.nodes@.len() > 0
+            && before_apply@.nodes@[0].phase == Phase::Unplanned
+            && progress_unplanned::obstructed(before_apply@.nodes@[0])
+            && event == progress_unplanned::outside_event(before_apply@.nodes@[0])
+        {
+            assert(match event {
+                Event::Command { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. }
+                    => node == NodeId(0),
+                _ => false,
+            });
+            assert(w.nodes@.len() == before_apply@.nodes@.len());
+            assert forall|j: int| 1 <= j < before_apply@.nodes@.len()
+                implies w.nodes@[j] == before_apply@.nodes@[j] by {}
+        }
         if !progress_gate_apply::resume_selected(before_apply@, event) {
             reveal(progress_gate_apply::resume_apply_post);
         }
