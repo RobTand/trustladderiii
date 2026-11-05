@@ -3140,7 +3140,12 @@ impl Controller {
                 let Some(n) = world.nodes.get(node.0 as usize) else {
                     return Ok(None);
                 };
-                if !n.adopted || commit_sha(snapshot, n.head) != Some(sha.as_str()) {
+                use tl3_controller_core::translate_checks::{Preparation, preparation};
+                if preparation(
+                    n.adopted,
+                    n.adopted && commit_sha(snapshot, n.head) == Some(sha.as_str()),
+                ) == Preparation::Ignore
+                {
                     return Ok(None);
                 }
                 let id = node.0.to_string();

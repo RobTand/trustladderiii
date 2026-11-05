@@ -17,7 +17,11 @@ pub enum Preparation {
     result == if adopted && same_head { Preparation::SavePlan } else { Preparation::Ignore },
 ))]
 pub fn preparation(adopted: bool, same_head: bool) -> Preparation {
-    Preparation::Ignore
+    if adopted && same_head {
+        Preparation::SavePlan
+    } else {
+        Preparation::Ignore
+    }
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -25,7 +29,10 @@ pub fn preparation(adopted: bool, same_head: bool) -> Preparation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanUpdate {
     KeepFixes,
-    Retarget { set_reviewed: bool, replace_tests: bool },
+    Retarget {
+        set_reviewed: bool,
+        replace_tests: bool,
+    },
 }
 
 /// Q42, docs/state-machine.md:109 and docs/state-table.md:234-244 on 751c00ac.
@@ -55,6 +62,15 @@ pub struct ChecksDecision {
     result.record == (job == Some(observed) && current == observed && exact_head),
     result.pass == (passed && exact_head),
 ))]
-pub fn checks_reply(job: Option<u64>, current: u64, observed: u64, exact_head: bool, passed: bool) -> ChecksDecision {
-    ChecksDecision { record: false, pass: false }
+pub fn checks_reply(
+    job: Option<u64>,
+    current: u64,
+    observed: u64,
+    exact_head: bool,
+    passed: bool,
+) -> ChecksDecision {
+    ChecksDecision {
+        record: false,
+        pass: false,
+    }
 }
