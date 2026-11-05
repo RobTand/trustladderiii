@@ -15,10 +15,14 @@ fn recorded_worker_verdicts_match_the_real_rust_decisions() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let vectors: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mut vectors: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // Python's vector writer may respell floating exponents. Compare the same
+    // decoded floats as before arbitrary_precision; integer tokens remain exact.
+    tl3_pb_evidence::python_json::normalize_floats(&mut vectors);
     assert!(vectors.as_array().is_some_and(|rows| !rows.is_empty()));
     let actual = oracle::generate(serde_json::from_value(vectors.clone()).unwrap()).unwrap();
-    let actual = serde_json::to_value(actual).unwrap();
+    let mut actual = serde_json::to_value(actual).unwrap();
+    tl3_pb_evidence::python_json::normalize_floats(&mut actual);
     let actual = actual.as_array().unwrap();
     let expected = vectors.as_array().unwrap();
     assert_eq!(actual.len(), expected.len());
