@@ -1,4 +1,8 @@
 {
+  "crate:tl3-contracts": {
+    "reason": "planner-contracts #730: shared wire-contract crate linked by tl3-controller; #832 adds typed plan-check provenance",
+    "sources": 6
+  },
   "crate:tl3-controller-core": {
     "reason": "ctrl-core #730: new decision-only crate tl3-controller-core (no adapter dependencies) linked by tl3-controller",
     "sources": 4
