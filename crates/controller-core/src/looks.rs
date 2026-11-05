@@ -53,8 +53,8 @@ pub enum IncidentAction {
     Probe,
 }
 
-/// Q7, state-table.md:272-275,577 / #608: maintenance probes recoverable
-/// incidents; a refused command holds; only this effect's incident intercepts a look.
+/// Q7, state-table.md:274-275 at cdacce8f: only the first incident allows a probe.
+/// Maintenance routing, refused-command hold and effect ownership are preserved existing behaviour (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     (out == IncidentAction::Probe) == (!incident.needs_rob && (maintenance || (!incident.refused_command && incident.own_effect))),
     (out == IncidentAction::Continue) == (!maintenance && !incident.refused_command && !incident.own_effect),
@@ -80,13 +80,13 @@ pub fn incident_action(maintenance: bool, incident: IncidentView) -> IncidentAct
     }
 }
 
-/// #403 / Q7, state-table.md:270-275: a postmortem never raises an incident.
+/// Preserved existing behaviour (no rule): a postmortem never raises a read incident.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == !postmortem,))]
 pub fn incident_for_operation(postmortem: bool) -> bool {
     !postmortem
 }
 
-/// Q7, state-table.md:309: an incident notice never escalates itself.
+/// Preserved existing behaviour (no rule): an incident notice never escalates itself.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == !notice,))]
 pub fn incident_for_notice(notice: bool) -> bool {
     !notice
@@ -140,7 +140,7 @@ pub fn counted_failure(failures: u8, incidents: u8) -> FailureCount {
     }
 }
 
-/// State-table.md:270-275 / #356: rearming uses the already sampled clock.
+/// Preserved existing behaviour (no rule): rearming saturates the sum of the sampled clock and delay.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out as int == if (now as int) + (delay as int) > u64::MAX as int { u64::MAX as int } else { (now as int) + (delay as int) },
 ))]
@@ -148,7 +148,8 @@ pub fn rearm_at(now: u64, delay: u64) -> u64 {
     now.saturating_add(delay)
 }
 
-/// State-table.md:577, state-machine.md:442: progress allowance decides a stall.
+/// State-table.md:796,806-814 at cdacce8f: no progress past the allowance is a stall.
+/// Saturating elapsed-time arithmetic is preserved existing behaviour (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (if now >= progress { now - progress >= allowance } else { allowance == 0 }),
 ))]
@@ -177,8 +178,8 @@ pub enum StallAction {
     Ignore,
 }
 
-/// State-table.md:577 / state-machine.md:442 / #356: stop a stalled worker;
-/// report a GitHub/Mergify stall with its queue class. Other owners retain progress.
+/// State-table.md:808-810 at cdacce8f: stop a stalled worker; GitHub/Mergify report a stall; PrismaBuild owns its deadline.
+/// Queue class selection and Worktrees routing are preserved existing behaviour (no rule).
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     (out == StallAction::StopWorker) == (source == StallUpstream::Workers),
     (out == StallAction::Requeue) == ((source == StallUpstream::GitHub || source == StallUpstream::Mergify) && requeue),
