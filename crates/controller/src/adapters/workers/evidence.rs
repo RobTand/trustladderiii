@@ -336,7 +336,7 @@ use tl3_contracts::roles::ingest_retention::{Action, decide};
 
 /// Keep complete fences, their source paragraph, and a test-name index. The index is
 /// discovery context, never a proof obligation. Code remains authoritative verbatim.
-pub fn source_blocks(source: &str) -> Vec<String> {
+fn source_blocks(source: &str) -> Vec<String> {
     let path = Regex::new(r"`([^`\n ]+\.py)`").unwrap();
     let class = Regex::new(r"^class\s+([A-Za-z_][A-Za-z_0-9]*)\b").unwrap();
     let test = Regex::new(r"^(?:async\s+)?def\s+(test_[A-Za-z_0-9]+)\s*\(").unwrap();
@@ -397,7 +397,7 @@ pub fn source_blocks(source: &str) -> Vec<String> {
     blocks
 }
 
-pub(super) fn preserve_ingest(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
+fn preserve_ingest(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
     let ingest = if role == "audit" {
         &inputs["ingest"]
     } else {
