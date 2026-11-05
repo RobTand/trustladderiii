@@ -821,3 +821,89 @@ fn mandatory_shell_shapes_and_error_classes() {
         assert!(run.persisted_rows.is_empty());
     }
 }
+
+#[test]
+fn mandatory_setup_evidence_cannot_reach_kernel_in_shell_or_frozen_route() {
+    use tl3_mergify::decide::translate::{self as frozen, Kind, NodeView, Phase, Route};
+    let kinds = [
+        Kind::ChecksUnavailable,
+        Kind::CheckMissing,
+        Kind::QueueBlocked,
+        Kind::CheckReported,
+    ];
+    for kind in kinds {
+        for phase in [
+            Phase::Publishing,
+            Phase::Queued,
+            Phase::Closed,
+            Phase::Other,
+        ] {
+            for bits in 0u8..16 {
+                let view = NodeView {
+                    phase,
+                    enqueue_pending: bits & 1 != 0,
+                    merged: bits & 2 != 0,
+                };
+                let route = frozen::route(kind, view, bits & 4 != 0, bits & 8 != 0);
+                assert!(
+                    !matches!(route, Route::Kernel(_)),
+                    "setup pair {kind:?}, {view:?}"
+                );
+            }
+        }
+    }
+    // These are executions of the verbatim old and current Queue shells,
+    // including admission, frozen routing, actual incident helpers and sink.
+    for tag in 0..4 {
+        for phase in 0..4 {
+            for bits in 0u8..64 {
+                let mut s = stable(evidence(
+                    tag,
+                    if bits & 1 != 0 { OLD_HEAD } else { NEW_HEAD },
+                    0,
+                ));
+                s.phase = phase;
+                s.enqueue = bits & 2 != 0;
+                s.cancelling = bits & 4 != 0;
+                s.current = if bits & 8 != 0 { Some(1) } else { None };
+                s.approved = if bits & 16 != 0 { Some(1) } else { None };
+                if bits & 32 != 0 {
+                    add_incidents(&mut s, true);
+                }
+                let run = compare(&s);
+                assert!(run.result["event"].is_null(), "setup kernel fact: {s:?}");
+                assert!(run.persisted_intern.values().all(|id| *id == 1));
+            }
+        }
+    }
+    eprintln!(
+        "G1 r1: 256 frozen setup routes and 1024 real-shell setup schedules, plus crash replay"
+    );
+}
+
+#[test]
+fn mandatory_dispatch_rejects_impossible_setup_kernel_pairs() {
+    use tl3_controller_core::translate::{Decision, EvidenceKind, KernelKind, Route, dispatch};
+    for evidence in [
+        EvidenceKind::Setup,
+        EvidenceKind::Missing,
+        EvidenceKind::Blocked,
+        EvidenceKind::Reported,
+    ] {
+        for kernel in [
+            KernelKind::CiFailed { infra: false },
+            KernelKind::PrMerged {
+                checks_passed: true,
+            },
+            KernelKind::Conflict,
+            KernelKind::PrDequeuedByPerson,
+            KernelKind::PrClosedByPerson,
+            KernelKind::PushByOther,
+        ] {
+            assert_eq!(
+                dispatch(Route::Kernel(kernel), evidence),
+                Decision::InvalidKernel
+            );
+        }
+    }
+}
