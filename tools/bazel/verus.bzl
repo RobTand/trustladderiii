@@ -192,7 +192,7 @@ def verus_proofs():
             ("human_hold", "recovery::proof_human_hold", 2),
             ("callers", "recovery::proof_callers", 2),
         ]:
-            verus_test(
+            recovery_verus_test(
                 name = "verus_recovery_" + group,
                 src = ":recovery_schedule_verus.rs",
                 srcs = ["//crates/mergify:src/decide/recovery.rs"],
@@ -205,3 +205,29 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+# CC-M2: measure the actual verifier process tree, in addition to its proof receipt.
+def _recovery_verus_test_impl(ctx):
+    proof = _verus_test_impl(ctx)[0]
+    launcher = ctx.actions.declare_file(ctx.label.name + ".measured.sh")
+    ctx.actions.write(launcher, """#!/bin/bash
+set -euo pipefail
+export RUNFILES_DIR="${RUNFILES_DIR:-$0.runfiles}"
+exec /usr/bin/time -f 'VERUS_PEAK_RSS_KB %M' "$RUNFILES_DIR/%s/%s"
+""" % (ctx.workspace_name, proof.files_to_run.executable.short_path), is_executable = True)
+    runfiles = proof.default_runfiles.merge(ctx.runfiles(files = [proof.files_to_run.executable]))
+    return [DefaultInfo(executable = launcher, runfiles = runfiles)]
+
+recovery_verus_test = rule(
+    implementation = _recovery_verus_test_impl,
+    test = True,
+    attrs = {
+        "src": attr.label(allow_single_file = [".rs"], mandatory = True),
+        "srcs": attr.label_list(allow_files = [".rs"], mandatory = True),
+        "specs": attr.label_list(allow_files = [".rs"]),
+        "expected_obligations": attr.int(mandatory = True),
+        "module": attr.string(),
+        "toolchain": attr.label(default = "@verus_linux_amd64//:toolchain", providers = [VerusToolchainInfo]),
+        "_runner": attr.label(default = "//crates/mergify:verus-runner", executable = True, cfg = "exec"),
+    },
+)

@@ -440,7 +440,7 @@ mod proof_callers {
         let a = dispatch(recovery, waiting);
         let b = dispatch(recovery, legacy);
         assert(a == b);
-        if posts(a) {
+        if a.second == Some(Effect::Write(Write::Command)) {
             assert(a.first == Some(Effect::SaveRecovery));
             assert(ready(a.recovery).command == Command::Sending);
         }

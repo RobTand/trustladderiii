@@ -30,7 +30,7 @@ def main():
     types = ['Command', 'Recovery', 'CommandRead', 'CommandResult', 'Complete',
              'Failure', 'Effect', 'Need', 'Write']
     root = (declaration(check.read_text(), 'Head') + '\npub mod enqueue {\n'
-            'use super::Head;\n' + constants[0] + '\n'
+            'use super::Head;\n#[vstd::prelude::verus_verify]\n' + constants[0] + '\n'
             + '\n'.join(declaration(source, name) for name in types) + '\n}\n'
             '#[path = "../mergify/src/decide/recovery.rs"]\nmod recovery;\nfn main() {}\n')
     output.write_text(root)
