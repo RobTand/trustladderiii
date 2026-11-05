@@ -795,3 +795,74 @@ fn paused_pool_occupant_retains_its_current_retry_evidence() {
             .any(|r| r.table == "incidents" && r.value["open"] == true)
     );
 }
+
+/// #817 / Once: SubmitChecks before execute has no adapter binding yet.
+#[test]
+fn intended_checks_without_an_action_binding_are_a_retry() {
+    use tl3_controller::dispatch_liveness::{DispatchStatus, decision::RetryPending};
+    let mut db = support::Database::start();
+    let settings = db.create("checks_no_binding");
+    let root = tempfile::tempdir().unwrap();
+    let registry = adapters::simulation(root.path()).unwrap();
+    let mut controller = Controller::open(
+        Store::open(&settings).unwrap(),
+        registry,
+        Bootstrap {
+            repos: vec![Repository {
+                owner: "owner".into(),
+                name: "repo".into(),
+                installation: 1,
+            }],
+            operations: None,
+            rob: 42,
+            slots: 2,
+            pool: 2,
+            fail_fast: true,
+        },
+    )
+    .unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "no-binding".into(),
+            owner: "owner".into(),
+            repo: "repo".into(),
+            installation: 1,
+            number: 1,
+            title: "Pending checks".into(),
+            actor: 42,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    for _ in 0..300 {
+        if controller.world().unwrap().nodes[0]
+            .effect
+            .is_some_and(|e| e.kind == EffectKind::SubmitChecks)
+        {
+            let node = controller.world().unwrap().nodes[0];
+            let key = format!("effect:0:{}", node.effect.unwrap().seq);
+            let effect = Store::open(&settings)
+                .unwrap()
+                .effect(&key)
+                .unwrap()
+                .unwrap();
+            assert_eq!(effect.state, tl3_store::EffectState::Intended);
+            let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+            assert!(matches!(
+                adapters::prismabuild::Fake::new(root.path())
+                    .reconcile(&delivery)
+                    .unwrap(),
+                Reconciliation::Absent
+            ));
+            assert_eq!(
+                controller.dispatch_status(NodeId(0)).unwrap(),
+                DispatchStatus::Retry(RetryPending::Allowance),
+                "an immutable intended row has no action binding"
+            );
+            close(controller, &settings);
+            return;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    panic!("did not reach pre-dispatch checks");
+}

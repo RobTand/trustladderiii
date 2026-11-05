@@ -99,3 +99,36 @@ fn every_other_wait_has_a_typed_evidence_requirement() {
         assert_eq!(classify(wait, e), DispatchStatus::Incident);
     }
 }
+
+/// #817 review: an outbox intent is not delivery-class contract evidence.
+#[test]
+fn immutable_intent_alone_never_certifies_non_worker_dispatch() {
+    let mut e = evidence();
+    e.intent = true;
+    for kind in [
+        EffectKind::SubmitChecks,
+        EffectKind::StartRebase,
+        EffectKind::PrepareWorktree,
+        EffectKind::Push,
+        EffectKind::OpenPr,
+        EffectKind::Enqueue,
+        EffectKind::WithdrawJob,
+        EffectKind::ClosePr,
+        EffectKind::RemoveWorktree,
+        EffectKind::PostApproval,
+    ] {
+        assert_eq!(
+            classify(Wait::Effect(kind), e),
+            DispatchStatus::Silent,
+            "{kind:?}"
+        );
+        e.deadline = true;
+        assert_eq!(
+            classify(Wait::Effect(kind), e),
+            DispatchStatus::Retry(
+                tl3_controller::dispatch_liveness::decision::RetryPending::Allowance
+            )
+        );
+        e.deadline = false;
+    }
+}
