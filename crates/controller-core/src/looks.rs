@@ -198,3 +198,25 @@ pub fn stall_action(source: StallUpstream, requeue: bool) -> StallAction {
         StallUpstream::PrismaBuild | StallUpstream::Worktrees => StallAction::Ignore,
     }
 }
+
+/// Q7, state-table.md:270-275,309: mutate only the selected effect's counters.
+/// The mutable argument makes the per-effect frame explicit to the verifier.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    requires old(state).failures < 255,
+    ensures final(state).raise == (old(state).failures >= 1),
+        final(state).failures == (if old(state).failures == 0 { 1u8 } else { 0u8 }),
+        final(state).incidents as int == (if old(state).failures == 0 || old(state).incidents == 255 { old(state).incidents as int } else { old(state).incidents as int + 1 }),
+))]
+pub fn record_failure(state: &mut FailureCount) {
+    *state = counted_failure(state.failures, state.incidents);
+}
+
+/// Q7, state-table.md:270-275: an open incident blocks another read incident.
+/// The kernel's distinct :577 guard and transition are exercised by the real kernel in the I/O test.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    open ==> !out,
+    !open ==> out,
+))]
+pub fn incident_allows_failure(open: bool) -> bool {
+    !open
+}

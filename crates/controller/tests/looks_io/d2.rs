@@ -107,6 +107,7 @@ fn mandatory_d2_alive_allowance_and_effect_read() {
                 failures: 1,
                 progress: true,
                 recent_progress: recent,
+                frames: vec![(0, 0); 64],
                 overrides: vec![
                     ("look".into(), 0, 6),
                     ("store.effect".into(), 0, effect),

@@ -82,7 +82,7 @@ mod postmortems {
 mod snapshot {
     use super::*;
     pub fn decode(_: &Snapshot) -> Result<World> {
-        Ok(World::new(&[1], 1))
+        Ok(io::world())
     }
 }
 fn ended_effect_look(_: &Snapshot, _: &World, _: &Delivery) -> bool {
@@ -211,7 +211,7 @@ macro_rules! controller {
                 })
             }
             fn observe(&self, key: &str, o: Observation) -> Result<()> {
-                io::write("observe", json!([key, o]), |_| {})
+                io::observe(key, o)
             }
             fn retire_wait(&self, _: &Snapshot, d: &Delivery, c: &mut Commit) -> Result<()> {
                 io::record("retire_wait", json!(d.key));
@@ -237,13 +237,17 @@ macro_rules! controller {
             }
             fn world(&self) -> Result<World> {
                 io::read("world", Value::Null)?;
-                Ok(World::new(&[1], 1))
+                Ok(io::world())
             }
             fn complete(&self, key: &str, c: Completion) -> Result<()> {
-                io::write("complete", json!([key, c]), |_| {})
+                io::write("complete", json!([key, c]), |r| {
+                    r.files.insert(format!("completed/{key}"), serde_json::to_vec(&c).unwrap());
+                })
             }
             fn ladder_out_note(&self, s: &AllowanceState, resume: u64, now: u64) -> Result<()> {
-                io::write("ladder_note", json!([s, resume, now]), |_| {})
+                io::write("ladder_note", json!([s, resume, now]), |r| {
+                    r.files.insert(format!("ladder-note/{}", s.delivery.key), serde_json::to_vec(&json!([resume, now])).unwrap());
+                })
             }
             fn remove_hold(&self, d: &Delivery) {
                 io::record("remove_hold", json!(d.key));
@@ -262,7 +266,9 @@ macro_rules! controller {
         ) -> Result<()> {
             let mut c = Controller::new();
             match entry {
-                io::Entry::Failed(code) => c.look_failed(state, io::error(code)),
+                io::Entry::Failed(code) | io::Entry::FailedOther(code) => {
+                    c.look_failed(state, io::error(code))
+                }
                 io::Entry::State => c.look_state(s, state, io::now()),
                 io::Entry::Alive(changed) => c.look_alive(state, changed).map(|_| ()),
                 io::Entry::Probe => c.probe_passed(Some(state), state.incident.as_deref()),

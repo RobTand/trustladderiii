@@ -516,12 +516,12 @@ impl Controller {
             return Ok(());
         }
         let snapshot = self.store.load()?;
-        if state.incident.as_ref().is_some_and(|id| {
+        if !decisions::incident_allows_failure(state.incident.as_ref().is_some_and(|id| {
             snapshot
                 .rows
                 .iter()
                 .any(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
-        }) {
+        })) {
             return Ok(());
         }
         if !decisions::incident_for_notice(matches!(
@@ -541,7 +541,12 @@ impl Controller {
             return Ok(());
         }
         state.counted_failure_ms = Some(now);
-        let count = decisions::counted_failure(state.read_failures, state.read_incidents);
+        let mut count = decisions::FailureCount {
+            failures: state.read_failures,
+            incidents: state.read_incidents,
+            raise: false,
+        };
+        decisions::record_failure(&mut count);
         state.read_failures = count.failures;
         if !count.raise {
             return Ok(());
