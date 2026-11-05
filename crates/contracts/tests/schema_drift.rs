@@ -42,6 +42,30 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/reviewer-input.json",
         include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
     ),
+    (
+        "workers/src/tl3_workers/schemas/ingest-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/ingest-input.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/audit-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/audit-input.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/planner-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/planner-input.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/maker-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/maker-input.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/writer-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/writer-input.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/classifier-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/classifier-input.json"),
+    ),
 ];
 
 #[test]
@@ -74,3 +98,25 @@ fn generated_schemas_match_committed() {
         );
     }
 }
+
+// #819: keep one named red/green case per remaining input root.
+macro_rules! input_drift {
+    ($test:ident, $role:literal) => {
+        #[test]
+        fn $test() {
+            let path = concat!("workers/src/tl3_workers/schemas/", $role, "-input.json");
+            let file = contracts::generated()
+                .into_iter()
+                .find(|f| f.path == path)
+                .unwrap_or_else(|| panic!("missing generated input root: {path}"));
+            let committed = COMMITTED.iter().find(|(p, _)| *p == path).unwrap().1;
+            assert_eq!(file.text, committed, "{path}");
+        }
+    };
+}
+input_drift!(ingest_input_is_generated_byte_identically, "ingest");
+input_drift!(audit_input_is_generated_byte_identically, "audit");
+input_drift!(planner_input_is_generated_byte_identically, "planner");
+input_drift!(maker_input_is_generated_byte_identically, "maker");
+input_drift!(writer_input_is_generated_byte_identically, "writer");
+input_drift!(classifier_input_is_generated_byte_identically, "classifier");
