@@ -1513,16 +1513,6 @@ fn check_pr_merged(phase: Phase) {
     }
 }
 
-proof!(pr_merged_unplanned, check_pr_merged(Phase::Unplanned));
-proof!(
-    pr_merged_planning,
-    check_pr_merged(Phase::Planning {
-        must_split: kani::any()
-    })
-);
-proof!(pr_merged_ready, check_pr_merged(Phase::Ready(kani::any())));
-proof!(pr_merged_making, check_pr_merged(Phase::Making));
-proof!(pr_merged_checking, check_pr_merged(Phase::Checking));
 proof!(pr_merged_reviewing, check_pr_merged(Phase::Reviewing));
 proof!(pr_merged_publishing, check_pr_merged(Phase::Publishing));
 proof!(pr_merged_queued, check_pr_merged(Phase::Queued));

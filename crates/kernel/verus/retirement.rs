@@ -305,6 +305,7 @@ pub(super) fn verify_selected_apply(mut w: World, fact: Fact) -> (result: (World
     kernel_proof! { dependencies::indexable_definition(w); }
     let checked_before = w.check();
     assert!(checked_before.is_ok());
+    kernel_proof! { world_checked_definition(w); }
     let mut out = Outbox::new();
     apply(&mut w, Event::Fact { node: NodeId(0), fact }, &mut out);
     kernel_proof! {

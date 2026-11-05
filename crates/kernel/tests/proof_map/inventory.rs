@@ -103,25 +103,82 @@ struct Function {
     module: String,
     path: String,
     name: String,
+    verifiable: bool,
 }
 
 fn functions(source: &str, module: &str) -> Vec<Function> {
-    fn walk(ts: &[Token], module: &str, owner: &str, result: &mut Vec<Function>) {
+    fn walk(ts: &[Token], module: &str, owner: &str, verifiable: bool, result: &mut Vec<Function>) {
         let mut i = 0;
+        let mut annotated = false;
         while i < ts.len() {
-            if ts[i].name() == Some("macro_rules") {
-                let start = (i..ts.len()).find(|&j| ts[j] == Token::Punct('{')).unwrap();
-                i = closing(ts, start) + 1;
+            if ts[i] == Token::Punct('#') && ts.get(i + 1) == Some(&Token::Punct('[')) {
+                let mut end = i + 2;
+                let mut depth = 1;
+                while depth > 0 {
+                    let token = ts.get(end).expect("unterminated attribute");
+                    if *token == Token::Punct('[') {
+                        depth += 1;
+                    }
+                    if *token == Token::Punct(']') {
+                        depth -= 1;
+                    }
+                    annotated |= token.name() == Some("verus_spec");
+                    end += 1;
+                }
+                i = end;
                 continue;
             }
+            if matches!(
+                ts[i].name(),
+                Some("struct" | "enum" | "static" | "type" | "trait" | "mod")
+            ) {
+                annotated = false;
+            }
+            if ts[i].name() == Some("macro_rules") {
+                let macro_name = ts.get(i + 2).and_then(Token::name).expect("unnamed macro");
+                assert!(
+                    matches!(
+                        macro_name,
+                        "kernel_snapshot"
+                            | "kernel_loop"
+                            | "kernel_while"
+                            | "kernel_proof"
+                            | "kernel_fn"
+                    ),
+                    "new kernel macro needs explicit inventory support: {macro_name}"
+                );
+                let start = (i..ts.len()).find(|&j| ts[j] == Token::Punct('{')).unwrap();
+                let end = closing(ts, start);
+                assert!(
+                    !ts[start..end]
+                        .windows(2)
+                        .any(|pair| pair[0].name() == Some("fn") && pair[1].name().is_some()),
+                    "literal function in a macro definition needs inventory support"
+                );
+                i = end + 1;
+                continue;
+            }
+            if matches!(ts[i].name(), Some("kernel_fn" | "verus"))
+                && ts.get(i + 1) == Some(&Token::Punct('!'))
+                && ts.get(i + 2) == Some(&Token::Punct('{'))
+            {
+                let close = closing(ts, i + 2);
+                walk(&ts[i + 3..close], module, owner, true, result);
+                i = close + 1;
+                continue;
+            }
+            if ts[i].name() == Some("fn")
+                && let Some(name) = ts.get(i + 1).and_then(Token::name)
+            {
+                result.push(Function {
+                    module: module.into(),
+                    path: format!("{owner}::{name}"),
+                    name: name.into(),
+                    verifiable: verifiable || annotated,
+                });
+            }
             if ts[i].name() == Some("fn") {
-                if let Some(name) = ts.get(i + 1).and_then(Token::name) {
-                    result.push(Function {
-                        module: module.into(),
-                        path: format!("{owner}::{name}"),
-                        name: name.into(),
-                    });
-                }
+                annotated = false;
             }
             if ts[i].name() == Some("impl") || ts[i].name() == Some("mod") {
                 let end = (i + 1..ts.len())
@@ -133,12 +190,13 @@ fn functions(source: &str, module: &str) -> Vec<Function> {
                     let name = names.last().expect("unnamed module/impl");
                     if ts[i].name() == Some("mod") {
                         let child = format!("{module}::{name}");
-                        walk(&ts[end + 1..close], &child, &child, result);
+                        walk(&ts[end + 1..close], &child, &child, verifiable, result);
                     } else {
                         walk(
                             &ts[end + 1..close],
                             module,
                             &format!("{module}::{name}"),
+                            verifiable,
                             result,
                         );
                     }
@@ -150,7 +208,7 @@ fn functions(source: &str, module: &str) -> Vec<Function> {
         }
     }
     let mut result = Vec::new();
-    walk(&tokens(source), module, module, &mut result);
+    walk(&tokens(source), module, module, false, &mut result);
     result
 }
 
@@ -195,7 +253,9 @@ fn selectors(source: &str) -> Vec<(String, String)> {
         .collect();
     assert_eq!(texts.len() % 2, 0, "malformed selector table");
     texts
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|s| (s[0].clone(), s[1].clone()))
         .collect()
 }
@@ -211,7 +271,7 @@ fn exemptions(source: &str) -> BTreeMap<String, String> {
         .collect();
     assert_eq!(texts.len() % 2, 0, "malformed unverified table");
     let mut result = BTreeMap::new();
-    for pair in texts.chunks_exact(2) {
+    for pair in texts.as_chunks::<2>().0 {
         assert!(
             !pair[1].trim().is_empty(),
             "unverified function needs a reason"
@@ -245,6 +305,11 @@ fn check(
             .collect();
         if unverified.contains_key(&function.path) {
             used.insert(function.path.clone());
+        } else if !function.verifiable {
+            errors.push(format!(
+                "{}: ordinary Rust function needs an explicit unverified reason",
+                function.path
+            ));
         } else if selected.len() != 1 {
             errors.push(format!(
                 "{}: expected exactly one Verus selector, found {:?}",
@@ -328,6 +393,17 @@ fn unlisted_duplicate_stale_and_reasonless_entries_are_rejected() {
             .contains("kernel::facts::extracted")
     );
     let all = vec![("all".into(), "kernel::facts".into())];
+    let ordinary = functions("fn unchecked() {}", "kernel::facts");
+    assert!(
+        check(&ordinary, &all, &BTreeMap::new())
+            .unwrap_err()
+            .contains("ordinary Rust function")
+    );
+    let acknowledged = BTreeMap::from([(
+        "kernel::facts::unchecked".into(),
+        "Boundary adapter outside the proof".into(),
+    )]);
+    assert!(check(&ordinary, &all, &acknowledged).is_ok());
     assert!(check(&fs, &all, &BTreeMap::new()).is_ok());
     let mut duplicate = all.clone();
     duplicate.extend(one);
@@ -341,6 +417,13 @@ fn unlisted_duplicate_stale_and_reasonless_entries_are_rejected() {
 #[test]
 fn lexical_noise_does_not_hide_a_function_or_invent_one() {
     let source = "/* fn fake() {} /* nested */ */ impl Node { kernel_fn! { fn real() { let s = r###\"fn fake() {}\"###; } } } // fn fake() {}\n mod nested { fn helper() {} }";
+    assert!(
+        std::panic::catch_unwind(|| functions(
+            "macro_rules! hidden { () => { fn escaped() {} } }",
+            "kernel::facts"
+        ))
+        .is_err()
+    );
     let fs = functions(source, "kernel::facts");
     assert_eq!(
         fs.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),

@@ -79,6 +79,24 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::pool_key": "Diagnostic pool-order tuple; real scheduling and its order predicates are verified.",
+            "kernel::Phase::name": "Read-only phase label; ordinary Rust outside the scoped Verus core.",
+            "kernel::Priority::is_unranked": "Read-only classification API; ordinary Rust outside the scoped Verus core.",
+            "kernel::Outbox::get": "Read-only outbox inspection used by tests and adapters.",
+            "kernel::Outbox::is_empty": "Read-only outbox inspection used by tests and adapters.",
+            "kernel::Outbox::contains": "Read-only outbox inspection used by tests and adapters.",
+            "kernel::World::new": "Container constructor; the verified constructors operate on typed nodes.",
+            "kernel::World::measure": "Bounded diagnostic u64 sum; #805 proves the unbounded natural measure.",
+            "kernel::World::valid": "Diagnostic consistency query; the production checker itself is verified.",
+            "kernel::proof_of_event": "Exhaustive proof-map metadata; compiled and checked by proof_map.",
+            "kernel::proofs_of_phase": "Exhaustive proof-map metadata; compiled and checked by proof_map.",
+            "kernel::settle_world": "Reconciliation wrapper outside the scoped event step theorem.",
+            "kernel::step_traced": "Diagnostic trace wrapper; the actual apply and settle bodies are verified.",
+            "kernel::footprint::Footprint::default": "Default delegates to the verified inline constructor.",
+            "kernel::footprint::World::intern_footprint": "Iterator collection at the boundary; sorted interning body is verified.",
+            "kernel::footprint::World::files": "Read-only iterator API outside the scoped Verus core.",
+            "kernel::footprint::World::file_sets": "Read-only storage inspection outside the scoped Verus core.",
+            "kernel::dependencies::World::dependencies": "Read-only storage inspection outside the scoped Verus core.",
             "kernel::tests::scan_budget_checks_the_actual_u32_width": "Rust unit test; absent from the Verus cfg.",
             "kernel::tests::settle_budget_reserves_all_six_internal_moves_per_open_node": "Rust unit test; absent from the Verus cfg.",
             "kernel::footprint::Footprint::any": "Frozen Kani-only constructor; absent from the Verus cfg.",
@@ -134,6 +152,7 @@ def verus_proofs():
             "command_headroom": ("root", 1),
             "retirement": ("kernel::retirement", 6),
             "retirement_witness": ("kernel::retirement_witness", 2),
+            "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
         }
         for name, (module, count) in groups.items():
             verus_test(
@@ -142,7 +161,7 @@ def verus_proofs():
                 srcs = native.glob(["src/**/*.rs"], exclude = ["src/proofs.rs"]) + ["//crates/controller:src/kernel_boundary.rs"],
                 expected_obligations = count,
                 module = module,
-                specs = ["verus/retirement.rs", "verus/retirement_witness.rs"],
+                specs = native.glob(["verus/*.rs"]),
                 tags = ["rust", "verus"],
                 size = "small",
                 timeout = "short",

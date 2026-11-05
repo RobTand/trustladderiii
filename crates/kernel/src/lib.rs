@@ -40,6 +40,9 @@ mod events;
 #[path = "../verus/retirement.rs"]
 mod retirement;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_merge_witness.rs"]
+mod retirement_merge_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_witness.rs"]
 mod retirement_witness;
 #[cfg(verus_keep_ghost)]

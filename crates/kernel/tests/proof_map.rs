@@ -63,6 +63,11 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ),
     ("pr_merged_ingesting", "facts_merge"),
     ("pr_merged_auditing", "facts_merge"),
+    ("pr_merged_unplanned", "facts_merge"),
+    ("pr_merged_planning", "facts_merge"),
+    ("pr_merged_ready", "facts_merge"),
+    ("pr_merged_making", "facts_merge"),
+    ("pr_merged_checking", "facts_merge"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

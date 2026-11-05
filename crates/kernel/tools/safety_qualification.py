@@ -12,9 +12,35 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'tools/ci'))
 import bazel_gate  # noqa: E402
+import remote_gate  # noqa: E402
 
 
 CASES = {
+    'selector_inventory': ('crates/kernel/src/allocation.rs',
+                           'use super::*;',
+                           'use super::*;\nkernel_fn! { fn selector_inventory_unlisted() '
+                           '-> (result: bool) [ ensures result, ] { true } }',
+                           '//crates/kernel:test_test_proof_map'),
+    'retire_merge_unplanned': ('crates/kernel/src/facts.rs',
+                             'm.merged = Some(head);\n            m.pr_open = false;',
+                             'if !matches!(m.phase, Phase::Unplanned) { m.merged = Some(head); }\n            m.pr_open = false;',
+                             '//crates/kernel:verus_facts_merge'),
+    'retire_merge_planning': ('crates/kernel/src/facts.rs',
+                             'm.merged = Some(head);\n            m.pr_open = false;',
+                             'if !matches!(m.phase, Phase::Planning { .. }) { m.merged = Some(head); }\n            m.pr_open = false;',
+                             '//crates/kernel:verus_facts_merge'),
+    'retire_merge_ready': ('crates/kernel/src/facts.rs',
+                             'm.merged = Some(head);\n            m.pr_open = false;',
+                             'if !matches!(m.phase, Phase::Ready(_)) { m.merged = Some(head); }\n            m.pr_open = false;',
+                             '//crates/kernel:verus_facts_merge'),
+    'retire_merge_making': ('crates/kernel/src/facts.rs',
+                             'm.merged = Some(head);\n            m.pr_open = false;',
+                             'if !matches!(m.phase, Phase::Making) { m.merged = Some(head); }\n            m.pr_open = false;',
+                             '//crates/kernel:verus_facts_merge'),
+    'retire_merge_checking': ('crates/kernel/src/facts.rs',
+                             'm.merged = Some(head);\n            m.pr_open = false;',
+                             'if !matches!(m.phase, Phase::Checking) { m.merged = Some(head); }\n            m.pr_open = false;',
+                             '//crates/kernel:verus_facts_merge'),
     'retire_incident': ('crates/kernel/src/facts.rs',
                         'm.incident_needs_rob = false;',
                         'let _ = m.incident_needs_rob;',
@@ -117,10 +143,13 @@ def libtest_summaries(log):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('case', choices=CASES)
+    parser.add_argument('--expected-head', help='require this exact baseline before seeding')
     args = parser.parse_args()
     workspace = bazel_gate.Workspace()
     base = workspace.run('git', 'rev-parse', 'HEAD').strip()
     filename, before, after, target = CASES[args.case]
+    if args.expected_head:
+        assert base == args.expected_head, 'qualification baseline differs from the requested final head'
     report = {'case': args.case, 'head': base, 'target': target}
     try:
         statuses, log = run(workspace, target, 'safety-baseline-' + args.case)
@@ -141,6 +170,8 @@ def main():
                       '-am', 'Seed ' + args.case + ' in the executable source\n\n'
                       'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>')
         report['mutant'] = workspace.run('git', 'rev-parse', 'HEAD').strip()
+        report['mutant_parent'] = workspace.run('git', 'rev-parse', 'HEAD^').strip()
+        assert report['mutant_parent'] == base, 'mutant must be a direct child of the baseline'
         statuses, log = run(workspace, target, 'safety-mutant-' + args.case)
         assert statuses.get(target) == 'FAILED', statuses
         if proof:
@@ -155,6 +186,15 @@ def main():
                 'boundary mutant must fail an executed assertion, not compilation')
         verdicts, failed = bazel_gate.classify([target], statuses, {target})
         assert verdicts['rust'] == 'fail' and failed['rust'] == [target]
+        outputs = remote_gate.outputs({'mode': 'pr', 'verdicts': verdicts})
+        assert outputs['rust'] == 'failure'
+        try:
+            remote_gate.aggregate('rust', {'bazel': {'result': 'failure',
+                'outputs': outputs | {'scopes_uploaded': 'true'}}})
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('required Rust aggregate accepted the mutant')
         report['rust_verdict'] = verdicts['rust']
         report['failed_rust_targets'] = failed['rust']
         report['required_rust_check'] = 'failure'
