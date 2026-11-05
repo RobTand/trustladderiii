@@ -255,7 +255,7 @@ fn schedule(actions: &[u8], index: usize, database: &mut crate::git_tests::suppo
         );
         let (sender, receiver) = crate::sync::mpsc::channel();
         source.poll_once(&mut store, &sender).unwrap();
-        for input in receiver.try_iter() {
+        while let Ok(input) = receiver.try_recv() {
             if let crate::cli::Input::Observation { key, observation } = input {
                 controller.observe(&key, observation).unwrap();
             }
