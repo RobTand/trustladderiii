@@ -225,7 +225,7 @@ CASES = {
     'unplanned_admission': ('crates/kernel/src/ranks.rs',
                             'set_phase(m, Phase::Planning { must_split: false });',
                             'set_phase(m, Phase::Planning { must_split: true });',
-                            '//crates/kernel:verus_ranks'),
+                            '//crates/kernel:verus_ranks_advance_admit'),
     'unplanned_waiting': ('crates/kernel/src/scheduler.rs',
                           'context.admit = w.dependencies_delivered(NodeId(i as u64)) && admits(w, n.repo);',
                           'context.admit = admits(w, n.repo);',
