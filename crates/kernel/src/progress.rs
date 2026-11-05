@@ -162,3 +162,13 @@ pub(super) proof fn settle_measure(before: World, after: World)
     edge_total_compare(before.nodes@, after.nodes@, before.dependencies@, before.dependencies@.len());
 }
 }
+
+verus! {
+/// #805 / #806: empty prerequisite storage leaves only the mathematical node sum.
+pub(super) proof fn empty_edges(w: World)
+    requires w.dependencies@.len() == 0,
+    ensures progress_measure(w) == node_total(w.nodes@),
+{
+    reveal(progress_measure); reveal(edge_total);
+}
+}

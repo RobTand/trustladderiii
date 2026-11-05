@@ -2023,3 +2023,43 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate.rs"]
+mod progress_gate;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_classification.rs"]
+mod progress_gate_classification;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_waiting.rs"]
+mod progress_gate_waiting;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_permutation.rs"]
+mod progress_gate_permutation;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_maker.rs"]
+mod progress_gate_maker;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_fixture.rs"]
+mod progress_gate_fixture;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_covers.rs"]
+mod progress_gate_covers;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_contracts.rs"]
+mod progress_gate_contracts;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: opaque public checker clause; the four-leaf proof exposes it locally.
+pub closed spec fn progress_gate_check_result(w: World, ok: bool) -> bool {
+    progress_gate_contracts::checked(w, ok)
+}
+}

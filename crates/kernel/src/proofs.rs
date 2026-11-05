@@ -1708,148 +1708,9 @@ fn check_gate_planning(width: u8) {
     }
 }
 
-fn check_gate_progress(width: u8) {
-    let mut before = gate_world(width);
-    // Every mixed gate world either has a witness or is waiting-only. The
-    // separate waiting proof establishes that the latter cannot be settled.
-    let Some(event) = before.witness() else {
-        for n in &before.nodes {
-            assert!(!n.paused && !n.holds && !n.pool && n.run.is_none());
-            assert!(matches!(n.phase, Phase::Ready(_) | Phase::Unplanned));
-        }
-        kani::cover!(true, "without a witness every leaf is an unpaused waiter");
-        return;
-    };
-    kani::cover!(
-        before.nodes.iter().filter(|n| n.holds).count() == usize::from(width),
-        "a full gate has a progress event"
-    );
-    kani::cover!(
-        before.nodes.iter().filter(|n| n.pool).count() == usize::from(width),
-        "all W leaves have admitted maker runs"
-    );
-    // A symbolic actor in apply duplicates large Node reads and exhausted
-    // 64 GiB. These independent roots are interchangeable; keep the actor at 0.
-    let (actor, event) = match event {
-        Event::Reply {
-            node,
-            generation,
-            reply,
-        } => (
-            node,
-            Event::Reply {
-                node: NodeId(0),
-                generation,
-                reply,
-            },
-        ),
-        Event::Ack { node, seq, ack } => (
-            node,
-            Event::Ack {
-                node: NodeId(0),
-                seq,
-                ack,
-            },
-        ),
-        Event::Fact { node, fact } => (
-            node,
-            Event::Fact {
-                node: NodeId(0),
-                fact,
-            },
-        ),
-        Event::Command { node, id, command } => (
-            node,
-            Event::Command {
-                node: NodeId(0),
-                id,
-                command,
-            },
-        ),
-        Event::NewRequest { .. } | Event::NewAdoption { .. } => unreachable!(),
-    };
-    let measure = before.measure();
-    for i in 1..4 {
-        if actor == NodeId(i as u64) {
-            before.nodes.swap(0, i);
-        }
-    }
-    require_consistent(&before);
-    assert_eq!(before.measure(), measure);
-    match event {
-        Event::Reply {
-            generation,
-            reply: Reply::MakerDone { head },
-            ..
-        } => {
-            let n = before.nodes[0];
-            assert!(n.phase == Phase::Making && !n.paused);
-            assert_eq!(n.run, Some(generation));
-            assert_eq!(head, n.head.unwrap_or(HeadId(0)));
-        }
-        Event::Fact {
-            fact:
-                Fact::PrMerged {
-                    head,
-                    checks_passed,
-                },
-            ..
-        } => {
-            let n = before.nodes[0];
-            assert!(n.phase == Phase::Queued && !n.paused && checks_passed);
-            assert_eq!(head, n.head.unwrap_or(HeadId(0)));
-        }
-        Event::Command {
-            id,
-            command: Command::Resume,
-            ..
-        } => {
-            assert!(before.nodes[0].paused);
-            assert_eq!(id, before.nodes[0].last_cmd + 1);
-        }
-        _ => unreachable!("gate worlds have only maker, merge or resume witnesses"),
-    }
-}
-
-fn check_gate_waiting_progress(width: u8) {
-    let before = gate_world_with_waiters(width, None, true);
-    assert!(before.witness().is_none());
-    assert!(!before.is_settled());
-    kani::cover!(
-        before
-            .nodes
-            .iter()
-            .all(|n| matches!(n.phase, Phase::Ready(_))),
-        "a world with only ready leaves can advance"
-    );
-    kani::cover!(
-        before.nodes.iter().all(|n| n.phase == Phase::Unplanned),
-        "a world with only unplanned leaves can advance"
-    );
-}
-
 // Together the witness and waiting proofs establish these preconditions for
 // every settled gate world. Prove each application separately to keep the event
 // payload and actor concrete, as in the general per-event proofs.
-fn check_gate_maker_progress(width: u8) {
-    let mut world = gate_world_in_phase(width, Some(Phase::Making));
-    kani::assume(!world.nodes[0].paused);
-    let generation = world.nodes[0].generation;
-    let head = world.nodes[0].head.unwrap_or(HeadId(0));
-    let before_measure = world.measure();
-    let mut out = Outbox::new();
-    // apply dispatches this fixed, valid node directly to on_reply.
-    on_reply(
-        &mut world,
-        0,
-        generation,
-        Reply::MakerDone { head },
-        &mut out,
-    );
-    require_consistent(&world);
-    assert!(world.measure() < before_measure);
-    kani::cover!(true, "maker completion lowers the gate world's measure");
-}
 
 fn check_gate_merge_progress(width: u8) {
     let mut world = gate_world_in_phase(width, Some(Phase::Queued));
@@ -1897,13 +1758,7 @@ proof!(gate_grant_w2, check_gate_grant(2));
 proof!(gate_grant_w3, check_gate_grant(3));
 proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
-proof!(gate_progress_w2, check_gate_progress(2));
-proof!(gate_progress_w3, check_gate_progress(3));
-proof!(gate_waiting_progress_w2, check_gate_waiting_progress(2));
-proof!(gate_waiting_progress_w3, check_gate_waiting_progress(3));
 
-proof!(gate_maker_progress_w2, check_gate_maker_progress(2));
-proof!(gate_maker_progress_w3, check_gate_maker_progress(3));
 proof!(gate_merge_progress_w2, check_gate_merge_progress(2));
 proof!(gate_merge_progress_w3, check_gate_merge_progress(3));
 proof!(gate_resume_progress_w2, check_gate_resume_progress(2));

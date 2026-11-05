@@ -557,20 +557,6 @@
    "seconds": 3301.0,
    "tier": "nightly"
   },
-  "gate_maker_progress_w2": {
-   "cpu_seconds": 191.7,
-   "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
-   "peak_gb": 2.31,
-   "seconds": 189.1,
-   "tier": "pr"
-  },
-  "gate_maker_progress_w3": {
-   "cpu_seconds": 235.0,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 2.31,
-   "seconds": 235.6,
-   "tier": "pr"
-  },
   "gate_merge_progress_w2": {
    "cpu_seconds": 1799.8,
    "invocation": "https://app.buildbuddy.io/invocation/ca64aa05-87d5-4774-b5d0-7b8bfc77dfe4",
@@ -599,20 +585,6 @@
    "seconds": 243.1,
    "tier": "pr"
   },
-  "gate_progress_w2": {
-   "cpu_seconds": 319.3,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 3.43,
-   "seconds": 320.7,
-   "tier": "pr"
-  },
-  "gate_progress_w3": {
-   "cpu_seconds": 307.0,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 3.43,
-   "seconds": 301.2,
-   "tier": "pr"
-  },
   "gate_resume_progress_w2": {
    "cpu_seconds": 203.8,
    "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
@@ -626,20 +598,6 @@
    "peak_gb": 2.32,
    "seconds": 200.1,
    "tier": "pr"
-  },
-  "gate_waiting_progress_w2": {
-   "cpu_seconds": 714.1,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 5.06,
-   "seconds": 712.3,
-   "tier": "nightly"
-  },
-  "gate_waiting_progress_w3": {
-   "cpu_seconds": 662.7,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 5.07,
-   "seconds": 662.4,
-   "tier": "nightly"
   },
   "pool_grant_is_priority_ordered": {
    "cpu_seconds": 187.3,
