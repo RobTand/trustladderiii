@@ -355,6 +355,43 @@ def test_adopt():
 '''
 
 
+# Rehearsal tests exercise execution and custody, not pytest's diagnostic
+# rendering. Keep real exceptions, outcomes, forcing hits and source receipts;
+# give their display reports stable text instead of clock values and addresses.
+REHEARSAL_RUNNER = '''
+import pytest
+import runpy
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).parent))
+import red_message
+
+class StableReports:
+    @pytest.hookimpl(wrapper=True, trylast=True)
+    def pytest_runtest_makereport(self, item, call):
+        report = yield
+        if report.failed:
+            assertion = red_message.rewritten_assertion(call.excinfo.value)
+            message = (red_message.assertion_reason(call.excinfo.value, assertion)
+                       if assertion and assertion[0].msg is not None else '')
+            report.longrepr = f'{item.nodeid}: {call.when}: {call.excinfo.typename}: {message}'
+        return report
+
+    @pytest.hookimpl(wrapper=True, trylast=True)
+    def pytest_make_collect_report(self, collector):
+        report = yield
+        if report.failed:
+            report.longrepr = f'{collector.nodeid}: collection failed'
+        return report
+
+original = pytest.main
+pytest.main = lambda args, plugins: original(args, plugins=[StableReports(), *plugins])
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name='__main__')
+'''
+
+
 def git(root, *args):
     return subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                            *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
@@ -384,7 +421,7 @@ def rehearsal(tmp_path, monkeypatch):
             calls.append(command)
             staged = Path(command[command.index('--cwd') + 1])
             # A fake PB transport drives the real staged harness and runner on free remote compute.
-            # Only the admission/container seams are replaced; the served code is never mocked.
+            # Admission/container and display seams are fixtures; served code still runs.
             script = '''
 import sys
 from pathlib import Path
@@ -396,11 +433,12 @@ execution.require_admission = test_tool.require_admission = lambda: None
 import os
 os.environ['PRISMABUILD_ACTION_PROGRESS_PATH'] = str(Path('progress.json').resolve())
 os.environ['PRISMABUILD_ACTION_PROGRESS_TOKEN'] = 'fixture'
-test_tool.container_command = lambda tree, container, tests: [sys.executable, '-I', '-B',
+test_tool.container_command = lambda tree, container, tests: [sys.executable, '-I', '-B', '-c', RUNNER,
     str(Path(execution.__file__).with_name('runner.py')), '-', str(tree)]
 sys.argv = ['action.py', *json.loads(sys.argv[1])]
 test_tool.main()
 '''
+            script = script.replace('RUNNER', repr(REHEARSAL_RUNNER))
             args = command[command.index('action.py') + 1:]
             child = subprocess.run([sys.executable, '-c', script, json.dumps(args)], cwd=staged,
                                    capture_output=True, text=True, check=True)

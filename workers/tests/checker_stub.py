@@ -6,6 +6,7 @@ from the real Rust functions. Unexpected commands and extra calls fail closed.
 """
 from copy import deepcopy
 from functools import cache
+import fcntl
 import json
 import os
 import tempfile
@@ -32,29 +33,63 @@ def vectors():
 
 def prepare_replay(case, cursor):
     """Decode the corpus in the fixture process, never in each checker child."""
-    script = [{"command": row["command"], "document": {"kind": row["document"].get("kind")},
+    script = [{"command": row["command"],
+               "document": row["document"] if row["command"][:1] == ["check-harness"]
+               else {"kind": row["document"].get("kind")},
                "response": row["response"]} for row in cases().get(case, [])]
     cursor.with_name(cursor.name + ".script.json").write_text(
         json.dumps({"case": case, "script": script}, ensure_ascii=False), encoding="utf-8")
 
 
-def replay(case, cursor, command, document):
+def difference(expected, actual, path='$'):
+    if type(expected) is not type(actual):
+        return path + ': type changed'
+    if isinstance(expected, dict):
+        if expected.keys() != actual.keys():
+            return path + ': keys changed'
+        for key in expected:
+            left, right = expected[key], actual[key]
+            if key == 'summary_json':
+                left, right = json.loads(left), json.loads(right)
+            if found := difference(left, right, path + '.' + key):
+                return found
+    elif isinstance(expected, list):
+        if len(expected) != len(actual):
+            return path + ': length changed'
+        for index, (left, right) in enumerate(zip(expected, actual)):
+            if found := difference(left, right, path + f'[{index}]'):
+                return found
+    elif expected != actual:
+        return f'{path}: {str(expected)[:160]!r} != {str(actual)[:160]!r}'
+    return ''
+
+
+def replay(case, cursor, command, document, *, script=None):
     """A unit fake follows its script; Rust checks the original facts elsewhere."""
-    with _LOCK:
+    # Parent threads and separately launched checker processes share one cursor.
+    with _LOCK, cursor.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
         position = int(cursor.read_text()) if cursor.exists() else 0
-        prepared = cursor.with_name(cursor.name + ".script.json")
-        if prepared.exists():
-            recording = json.loads(prepared.read_text(encoding="utf-8"))
-            if recording["case"] != case:
-                raise RuntimeError(f"wrong Rust checker recording for {case}")
-            script = recording["script"]
-        else:
-            script = cases().get(case, [])
+        if script is None:
+            prepared = cursor.with_name(cursor.name + ".script.json")
+            if prepared.exists():
+                recording = json.loads(prepared.read_text(encoding="utf-8"))
+                if recording["case"] != case:
+                    raise RuntimeError(f"wrong Rust checker recording for {case}")
+                script = recording["script"]
+            else:
+                script = cases().get(case, [])
+
         if position >= len(script):
             raise RuntimeError(f"unrecorded Rust checker call in {case}: {command}")
         row = script[position]
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
+        if command[:1] == ['check-harness'] and (
+                json.dumps(row['document'], sort_keys=True, allow_nan=False)
+                != json.dumps(document, sort_keys=True, allow_nan=False)):
+            raise RuntimeError(f"Rust harness document changed in {case} at {position}: "
+                               + difference(row['document'], document))
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(mode="w", dir=cursor.parent,
@@ -67,6 +102,7 @@ def replay(case, cursor, command, document):
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
+
         return deepcopy(row["response"])
 
 
@@ -119,12 +155,14 @@ def main():
         with tempfile.TemporaryDirectory(prefix="tl3-checker-recordings-") as directory:
             environment = {**os.environ, "TL3_BINARY": str(Path(sys.argv[2]).resolve()),
                            "TEST_REAL_CHECKER": "1", "TEST_RECORD_CHECKER_DIR": directory}
-            subprocess.run([sys.executable, "-m", "pytest", *sys.argv[3:]], env=environment, check=True)
+            run = subprocess.run([sys.executable, "-m", "pytest", *sys.argv[3:]],
+                                 env=environment, cwd=Path(__file__).resolve().parents[1])
             corpus = dict(cases()) if VECTORS.exists() else {}
             for result in sorted(Path(directory).glob("*.json")):
                 corpus.update(json.loads(result.read_text()))
             data = json.dumps(dict(sorted(corpus.items())), ensure_ascii=False, separators=(",", ":")).encode()
             VECTORS.write_bytes(gzip.compress(data, mtime=0))
+            run.check_returncode()
         return
     if sys.argv[1:] == ["--vectors"]:
         json.dump(vectors(), sys.stdout, ensure_ascii=False)
@@ -146,11 +184,16 @@ def main():
             data = json.dumps(corpus, ensure_ascii=False, separators=(",", ":")).encode()
             VECTORS.write_bytes(gzip.compress(data, mtime=0))
         return
+    if len(sys.argv) >= 6 and sys.argv[1] == "--replay-file":
+        result = replay(sys.argv[3], Path(sys.argv[4]), sys.argv[5:], json.load(sys.stdin),
+                        script=json.loads(Path(sys.argv[2]).read_text()))
+        print(json.dumps(result, ensure_ascii=False))
+        return
     if len(sys.argv) >= 5 and sys.argv[1] == "--replay":
         result = replay(sys.argv[2], Path(sys.argv[3]), sys.argv[4:], json.load(sys.stdin))
         print(json.dumps(result, ensure_ascii=False))
         return
-    raise RuntimeError("usage: checker_stub.py --check/--generate <oracle> or --replay <case> <cursor> <command>")
+    raise RuntimeError("usage: checker_stub.py --check/--generate <oracle> or --replay-file <script> <case> <cursor> <command>")
 
 
 if __name__ == "__main__":

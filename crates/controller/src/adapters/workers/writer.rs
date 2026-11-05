@@ -264,6 +264,29 @@ impl Writer for FakeWriter {
     }
 }
 
+// #833/#432: trust the complete typed name, never a prefix of another resource.
+fn mask_resource(text: &str, name: &str) -> String {
+    let mut masked = String::with_capacity(text.len());
+    let mut copied = 0;
+    for (start, _) in text.match_indices(name) {
+        let end = start + name.len();
+        if text[end..].chars().next().is_some_and(|c| {
+            !c.is_ascii_whitespace()
+                && !matches!(
+                    c,
+                    '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\'' | '`' | '*'
+                )
+        }) {
+            continue;
+        }
+        masked.push_str(&text[copied..start]);
+        masked.push_str("the resource");
+        copied = end;
+    }
+    masked.push_str(&text[copied..]);
+    masked
+}
+
 pub fn checked_draft(
     writer: &mut dyn Writer,
     key: &str,
@@ -287,6 +310,13 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    let resource_failure = input
+        .facts
+        .get("input_resource_failure")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .map(crate::decode_stored::<crate::input_resources::Failure>)
+        .transpose()?;
     let input_failure = input
         .facts
         .get("worker_input_failure")
@@ -409,12 +439,30 @@ pub fn checked_draft(
                 } else {
                     written.to_owned()
                 };
+                // #833: only the exact adapter-supplied resource names are trusted facts.
+                // Other references supplied by the writer still pass the normal checks.
+                let mut written = written;
+                if let Some(failure) = &resource_failure {
+                    written = mask_resource(&written, &failure.requested.to_string());
+                    if let crate::input_resources::Problem::KindMismatch { observed } =
+                        &failure.problem
+                    {
+                        written = mask_resource(&written, &observed.to_string());
+                    }
+                }
                 message::check_prose(&written, &policy).map(|_| text.text.clone())
             }
             _ => Err(vec![Violation::WrongReplyShape]),
         };
         match checked {
             Ok(mut text) => {
+                if let Some(failure) = &resource_failure {
+                    // #833: identifying the resource is mandatory even when the writer omits it.
+                    let description = crate::redaction::text(&failure.to_string())?;
+                    if !text.contains(&description) {
+                        text.push_str(&format!("\n\n{description}"));
+                    }
+                }
                 if let Some(quote) = &change_quote {
                     // Indentation keeps Markdown inert; embedded markers must also be neutralised.
                     let quote = quote
