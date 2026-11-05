@@ -749,3 +749,49 @@ fn t817_pause_classifies_without_an_incident() {
     t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::Resume);
     assert_eq!(runs.borrow().starts.len(), 2);
 }
+
+/// Q39 / Pausing: a paused occupant retains its current operation's retry
+/// coverage; its ungranted neighbour still has a valid pool obstruction.
+#[test]
+fn paused_pool_occupant_retains_its_current_retry_evidence() {
+    use tl3_controller::dispatch_liveness::{DispatchStatus, decision::RetryPending};
+    let mut db = support::Database::start();
+    let settings = db.create("t817_paused_occupant");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    for number in 1..=3 {
+        intake(&mut controller, number);
+    }
+    tl3_store::ConsoleCommands::open(&settings)
+        .unwrap()
+        .submit(
+            "00000000-0000-4000-8000-000000000818",
+            0,
+            &serde_json::json!({"kind":"pause"}),
+        )
+        .unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].waiting_on(),
+        tl3_kernel::Wait::Resume
+    );
+    assert_eq!(
+        controller.dispatch_status(NodeId(0)).unwrap(),
+        DispatchStatus::Retry(RetryPending::Allowance)
+    );
+    assert_eq!(
+        controller.dispatch_status(NodeId(2)).unwrap(),
+        DispatchStatus::PoolWait
+    );
+    assert_eq!(runs.borrow().starts.len(), 2);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.value["open"] == true)
+    );
+}
