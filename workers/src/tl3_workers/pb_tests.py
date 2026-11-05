@@ -4,7 +4,7 @@ from functools import cache
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import secrets
 import shutil
@@ -17,10 +17,10 @@ from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, Check, Kind, Proof, Pro
 from tl3_harness.proof import assemble_proof
 from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.node_ids import selects
-from tl3_harness.selector_identity import selection_matches
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
-from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
+from tl3_harness.test_tool import SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
 from tl3_harness.trees import export, configuration
+from tl3_workers.pb_evidence import check as _check_pb, encoded, ending_facts
 
 
 @dataclass(frozen=True)
@@ -32,37 +32,20 @@ class TestSettings:
     quiet_seconds: int = 120
 
     def __post_init__(self):
-        if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
-            raise ValueError("Use an immutable container image digest")
-        if not Path(self.tools_path).is_absolute():
-            raise ValueError("PrismaBuild tools_path must be absolute")
-        if any(type(v) is not int or v < 1 for v in (self.cpus, self.mem_gb, self.quiet_seconds)):
-            raise ValueError("Test resource and quiet allowances must be positive integers")
-
+        _check_pb('settings', value={'image': self.image, 'tools_path': str(self.tools_path),
+                                    'cpus': self.cpus, 'mem_gb': self.mem_gb,
+                                    'quiet_seconds': self.quiet_seconds})
 
 # Avoid pytest treating this settings type as a test class.
 TestSettings.__test__ = False
 
 
 def _selectors(tests):
-    if not isinstance(tests, list) or len(tests) > 256:
-        raise ValueError("Use a list of at most 256 test selectors")
-    for test in tests:
-        if (not isinstance(test, str) or not test or len(test) > 2048
-                or any(c in test for c in ("\x00", "\\", "\n", "\r"))):
-            raise ValueError("Use relative pytest paths or node IDs")
-        path = test.split("::", 1)[0]
-        if (not path or path.startswith(("/", "-"))
-                or any(part in ("..", ".git") for part in PurePosixPath(path).parts)):
-            raise ValueError("Use relative pytest paths or node IDs")
-    return tuple(dict.fromkeys(tests))
+    return tuple(_check_pb('selectors', value=tests, is_list=isinstance(tests, list)))
 
 
 def _priority(priority):
-    # PrismaBuild runs a higher priority sooner. TL3's checks run at -10; requests stay at or below default.
-    if priority is not None and (type(priority) is not int or not -10 <= priority <= 0):
-        raise ValueError("Use priority -10 to 0, or leave it out for PrismaBuild's default")
-    return priority
+    return _check_pb('priority', value=priority)
 
 
 def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forcing=None, declared_symptom=None, selected=()):
@@ -155,12 +138,7 @@ def _machine_record_supported(runtime: str) -> bool:
                                     stdout=output, stderr=subprocess.DEVNULL)
             output.seek(0)
             raw = output.read(4097)
-        if result.returncode or len(raw) > 4096 or not raw.endswith(b"\n") or raw.count(b"\n") != 1:
-            return False
-        value = json.loads(raw.decode("utf-8"))
-        return (isinstance(value, dict) and set(value) == {"schema", "machine_record_fd"}
-                and value["schema"] == "prismabuild.machine_record_capability.v1"
-                and type(value["machine_record_fd"]) is int and value["machine_record_fd"] >= 1)
+        return _check_pb('capability', code=result.returncode, raw=encoded(raw))
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
@@ -170,7 +148,6 @@ def _json_command(command):
         from tl3_workers.facts import record_prismabuild_fallback
         record_prismabuild_fallback(Path(command[1]).stem)
         return _stdout_json_command(command)
-    cause = "machine_record_io_failed"
     try:
         with tempfile.TemporaryFile(mode="w+b") as channel:
             fd = channel.fileno()
@@ -178,156 +155,63 @@ def _json_command(command):
                 raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel",
                                        "machine_record_descriptor_unavailable")
             os.fchmod(fd, 0o600)
-            # PB flags precede the payload separator. Public output is never a
-            # result source, even when the private channel is empty or corrupt.
             args = [*command[:2], "--machine-record-fd", str(fd), *command[2:]]
             result = subprocess.run(args, pass_fds=(fd,), stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL)
             channel.seek(0)
             raw = channel.read(2_097_153)
-        if result.returncode < 0:
-            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel",
-                                   "machine_record_command_killed")
-        if not raw and result.returncode and "--detach" in command:
-            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_submission",
-                                   f"submission_refused_exit_{result.returncode}")
-        if not raw:
-            cause = "machine_record_empty"
-        elif len(raw) > 2_097_152:
-            cause = "machine_record_too_large"
-        elif not raw.endswith(b"\n"):
-            cause = "machine_record_unterminated"
-        else:
-            cause = "machine_record_invalid_json"
-            value = json.loads(raw.decode("utf-8"))
-            if isinstance(value, dict):
-                return result.returncode, value
-            cause = "machine_record_not_object"
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause) from error
-    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_channel", cause)
+        try:
+            _check_pb('machine-record', private=True, code=0, raw='', detach=False, io_error=True)
+        except ExecutionFailure as failure:
+            raise failure from error
+    return tuple(_check_pb('machine-record', private=True, code=result.returncode,
+                           raw=encoded(raw), detach='--detach' in command))
 
 
 def _stdout_json_command(command):
     """Pre-fd runtimes publish submission and terminal records on stdout."""
-    cause = "stdout_record_io_failed"
     try:
         with tempfile.TemporaryFile(mode="w+b") as output:
             result = subprocess.run(command, stdout=output, stderr=subprocess.DEVNULL)
             output.seek(0)
             raw = output.read(2_097_153)
-        if result.returncode < 0:
-            cause = "stdout_record_command_killed"
-        elif not raw and result.returncode and "--detach" in command:
-            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_submission",
-                                   f"submission_refused_exit_{result.returncode}")
-        elif len(raw) > 2_097_152:
-            cause = "stdout_record_too_large"
-        else:
-            cause = "stdout_record_invalid_json"
-            value = json.loads(raw)
-            if isinstance(value, dict):
-                return result.returncode, value
-            cause = "stdout_record_not_object"
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_stdout", cause) from error
-    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_stdout", cause)
+        try:
+            _check_pb('machine-record', private=False, code=0, raw='', detach=False, io_error=True)
+        except ExecutionFailure as failure:
+            raise failure from error
+    return tuple(_check_pb('machine-record', private=False, code=result.returncode,
+                           raw=encoded(raw), detach='--detach' in command))
 
 
 def _summary(ending, key):
-    cause = "invalid_ending"
+    facts = ending_facts(ending)
+    log = _check_pb('summary-start', ending=facts, key=key)
     try:
-        if (ending["action_key"] != key or ending["status"] not in ("executed", "cache_hit")
-                or ending["exit_code"] != 0 or not ending["succeeded"]):
-            raise ValueError("PrismaBuild action did not succeed")
-        cause = "unverified_receipt"
-        evidence = ending["result"]
-        if (evidence["verified"] is not True or not isinstance(evidence["receipt_sha256"], str)
-                or not re.fullmatch("[0-9a-f]{64}", evidence["receipt_sha256"])):
-            raise ValueError("PrismaBuild result lacks verified receipt evidence")
-        cause = "invalid_log_receipt"
-        log = evidence["stdout"]
-        if type(log["bytes"]) is not int or not 0 <= log["bytes"] <= 1_048_576:
-            raise ValueError("PrismaBuild result log exceeded its limit")
-        with open(log["path"], "rb") as stream:
+        with open(log['path'], 'rb') as stream:
             raw = stream.read(1_048_577)
-        if len(raw) != log["bytes"] or hashlib.sha256(raw).hexdigest() != log["sha256"]:
-            raise ValueError("PrismaBuild result log changed")
-        cause = "missing_unique_summary"
-        records = [line[len(PREFIX):] for line in raw.decode().splitlines() if line.startswith(PREFIX)]
-        if len(records) != 1:
-            raise ValueError("PrismaBuild returned no unique test summary")
-        cause = "invalid_summary"
-        result = json.loads(records[0])
-        if result.get('declared_symptom') is not None:
-            run_records = [json.loads(line.removeprefix('TL3_SYMPTOM_RUN ')) for line in raw.decode().splitlines()
-                           if line.startswith('TL3_SYMPTOM_RUN ')]
-            summaries = result.get('symptom_runs', [])
-            if len(run_records) != len(summaries):
-                raise ValueError('missing symptom run receipt')
-            for index, (record, summary) in enumerate(zip(run_records, summaries), 1):
-                encoded = json.dumps(record['records'], sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
-                if (record['run'] != index or record['sha256'] != hashlib.sha256(encoded).hexdigest()
-                        or summary != {key: value for key, value in record.items() if key != 'records'}):
-                    raise ValueError('symptom run receipt changed')
-        if (not isinstance(result, dict) or result.get("status") not in ("completed", "infrastructure_error", "not_available")
-                or not isinstance(result.get("tests"), list) or not isinstance(result.get("note"), str)
-                or not isinstance(result.get("totals"), dict) or set(result["totals"]) != set(OUTCOMES)
-                or any(type(count) is not int or count < 0 for count in result["totals"].values())
-                or any(not isinstance(item, dict) or not isinstance(item.get("test"), str)
-                       or item.get("outcome") not in OUTCOMES for item in result["tests"])):
-            raise ValueError("Invalid summary structure")
-        result["action_key"] = key
-        # What a maker cites and a reviewer can check against PrismaBuild's own record.
-        result["receipts"] = [{"action_key": key, "status": ending["status"], "exit_code": ending["exit_code"],
-                               "receipt_sha256": evidence["receipt_sha256"], "log_sha256": log["sha256"]}]
-        receipt = result["receipts"][0]
-        if type(ending.get("attempt")) is int and ending["attempt"] > 0:
-            receipt["attempt"] = ending["attempt"]
-        generation = (ending.get("publication") or {}).get("generation")
-        if isinstance(generation, str) and re.fullmatch("[0-9a-f]{64}", generation):
-            receipt["generation"] = generation
-        return bounded(result, limit=SUMMARY_BYTES - 512)
     except (OSError, ValueError, KeyError, TypeError) as error:
-        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", cause) from error
+        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, 'summary', 'invalid_log_receipt') from error
+    result = _check_pb('summary-finish', ending=facts, key=key, raw=encoded(raw))
+    return bounded(result, limit=SUMMARY_BYTES - 512)
 
 
 def _failure_receipt(ending, settings):
-    """Keep failure diagnosis without copying PB's private scheduler metadata."""
-    diagnostics = ending.get("diagnostics") or {}
-    receipt = {"action_key": ending["action_key"], "status": ending["status"],
-               "exit_code": ending.get("exit_code")}
-    if receipt["exit_code"] is None:
-        receipt["exit_code"] = diagnostics.get("returncode")
-    reason = diagnostics.get("termination_reason") or ending.get("reason")
-    # Older pbwait consumer endings omit termination_reason. Read only this
-    # failed action's terminal record, from the same installed fleet layout
-    # used by the controller, and require its publication to match the ending.
-    publication = ending.get("publication") or {}
-    published = publication.get("published_unix")
-    if reason != "memory_limit_oom" and published is not None:
-        path = Path(settings.tools_path).parent.parent / "pb-queue" / "failed" / f"{ending['action_key']}.json"
+    facts = ending_facts(ending)
+    record = None
+    if _check_pb('failure-read', ending=facts):
+        path = Path(settings.tools_path).parent.parent / 'pb-queue' / 'failed' / f"{ending['action_key']}.json"
         try:
-            with path.open("rb") as stream:
+            with path.open('rb') as stream:
                 raw = stream.read(2_097_153)
-            record = json.loads(raw) if len(raw) <= 2_097_152 else {}
-            if (isinstance(record, dict) and record.get("action_key") == ending["action_key"]
-                    and record.get("published_unix") == published):
-                reason = (record.get("detail") or {}).get("termination_reason") or reason
+            value = json.loads(raw) if len(raw) <= 2_097_152 else None
+            if isinstance(value, dict):
+                record = {'action_key': value.get('action_key'), 'published_unix': value.get('published_unix'),
+                          'termination_reason': (value.get('detail') or {}).get('termination_reason')}
         except (OSError, ValueError, TypeError):
             pass
-    if isinstance(reason, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", reason):
-        receipt["termination_reason"] = reason
-    if type(ending.get("attempt")) is int and ending["attempt"] > 0:
-        receipt["attempt"] = ending["attempt"]
-    generation = publication.get("generation")
-    if isinstance(generation, str) and re.fullmatch("[0-9a-f]{64}", generation):
-        receipt["generation"] = generation
-    scope = (diagnostics.get("resource_profile") or {}).get("scope") or {}
-    peak = scope.get("memory_peak_bytes")
-    if type(peak) is int and peak >= 0:
-        receipt["memory_peak_bytes"] = peak
-    return receipt
+    return _check_pb('failure-receipt', ending=facts, record=record)
 
 
 def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None, _checks=None):
@@ -366,20 +250,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                                   selectors=list(selected))
                 else:
                     result = _summary(endings[0], key)
-                if base:
-                    result["base_sha"] = base_sha
-                    result["base_semantics"] = "base_subject_head_observer" if proof and proof["mode"] == "head-observer" else "untouched_base"
-                    result["demonstrating_proof"] = "pending_checking"
-                    if result["status"] == "completed" and result.get("proof") != proof:
-                        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "proof_mismatch")
-                if tree is not None:
-                    result["tree"] = tree
-                if forcing is not None and result["status"] == "completed" and (
-                        result.get("forcing") != forcing.as_json()
-                        or not selection_matches(result.get("selectors"), selected)):
-                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "forcing_or_selection_mismatch")
-                if declared_symptom is not None and result.get("declared_symptom") != declared_symptom:
-                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "symptom_mismatch")
+                result = _check_pb('consistency', result=result, expected={
+                    'base': base, 'base_sha': base_sha, 'tree': tree, 'selected': list(selected),
+                    'proof': proof, 'forcing': forcing.as_json() if forcing is not None else None,
+                    'declared_symptom': declared_symptom})
                 return bounded(result, limit=SUMMARY_BYTES)
             if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
                 raise ValueError("PrismaBuild could not verify completion")

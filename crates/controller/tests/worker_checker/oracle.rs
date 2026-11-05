@@ -36,6 +36,10 @@ pub fn generate(mut vectors: Vec<Vector>) -> Result<Vec<Vector>> {
                     serde_json::value::to_raw_value(&Response { result })?
                 }
             }
+            ["check-pb", operation] => serde_json::value::to_raw_value(&tl3_pb_evidence::decide(
+                operation,
+                vector.document.clone(),
+            ))?,
             ["check-reply", role] => {
                 let inputs = &vector.document["inputs"];
                 let reply = &vector.document["reply"];

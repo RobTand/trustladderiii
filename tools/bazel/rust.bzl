@@ -114,6 +114,7 @@ _CONTROLLER_WORKERS = [
     "test_test_writer_references",
     "test_test_budget_parity",
     "test_test_worker_checker",
+    "test_test_pb_evidence",
     "test_test_worker_budget_orchestration",
 ]
 _CONTROLLER_BINARIES = {
@@ -132,6 +133,7 @@ _CONTROLLER_BINARIES = {
 _CONTROLLER_RUNTIME = {
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
+    "test_test_pb_evidence": ["//workers/tests:checker_recordings", "//crates/pb-evidence:sources"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],

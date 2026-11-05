@@ -30,6 +30,8 @@ schemars = "1"
 
 tl3-worktrees = { path = "../worktrees" }
 
+tl3-pb-evidence = { path = "../pb-evidence" }
+
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
 loom = "0.7"

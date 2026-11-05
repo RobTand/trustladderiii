@@ -6,11 +6,11 @@ from pathlib import Path
 import re
 
 from tl3_harness import Check, Forcing, Kind, HarnessInputError
-from tl3_harness.node_ids import selects
 from tl3_harness.forcing_ownership import ForcingError, preflight_owner
 from tl3_workers.evidence import proof_applicability
 from tl3_workers.pb_tests import TestSettings, make_test_tool, _git
 from tl3_workers.session import save
+from tl3_workers.pb_evidence import check as _check_pb
 
 
 MAX_REHEARSALS = 8
@@ -38,48 +38,24 @@ GUIDANCE = (
 
 
 def identity(base_sha, selectors, forcing, declared_symptom=None):
-    if declared_symptom is not None:
-        return {"base_sha": base_sha, "selectors": list(selectors), "forcing": forcing.as_json(),
-                "declared_symptom": deepcopy(declared_symptom)}
-    return {'base_sha': base_sha, 'selectors': list(selectors), 'forcing': forcing.as_json()}
+    return _check_pb('identity', base_sha=base_sha, selectors=list(selectors),
+                     forcing=forcing.as_json(), declared_symptom=declared_symptom)
 
 
 def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    return _check_pb('canonical', value=value)
 
 
 def bound_identity(candidate):
-    return canonical({**{key: candidate[key] for key in ('base_sha', 'selectors', 'forcing')},
-                      'declared_symptom': candidate.get('declared_symptom')})
+    return _check_pb('bound-identity', candidate=candidate)
 
 
 def execution_identity(candidate):
-    forcing = candidate['forcing']
-    patches = forcing['patches']
-    targets = [patch['target'] for patch in patches]
-    # Repeated attributes may alias, and a parent patch can change a later owner.
-    independent = all(left.rsplit('.', 1)[-1] != right.rsplit('.', 1)[-1]
-                      and not left.startswith(right + '.') and not right.startswith(left + '.')
-                      for index, left in enumerate(targets) for right in targets[index + 1:])
-    return canonical({'declared_symptom': candidate.get('declared_symptom'), 'base_sha': candidate['base_sha'], 'selectors': sorted(set(candidate['selectors'])),
-                      'forcing': {'environment': forcing['environment'],
-                                  'patches': sorted(patches, key=canonical) if independent else patches}})
+    return _check_pb('execution-identity', candidate=candidate)
 
 
 def unusable(result, selectors, outcome):
-    if result.get('status') != 'completed' or not result.get('receipts'):
-        return (f"missing completed, verified receipt: status={result.get('status', 'unknown')}; "
-                f"{result.get('message', 'no diagnostic')}")
-    if len(result['tests']) != sum(result['totals'].values()):
-        return 'incomplete node results'
-    for selector in selectors:
-        nodes = [item for item in result['tests'] if selects(selector, item['test'])]
-        if not nodes:
-            return f'missing node result for {selector}'
-        for node in nodes:
-            if node['outcome'] != outcome:
-                return f"{node['test']} ended {node['outcome']}; expected {outcome}"
-    return None
+    return _check_pb('unusable', result=result, selectors=list(selectors), outcome=outcome)
 
 
 class ForcingInfrastructureError(Exception):
@@ -301,17 +277,8 @@ class ForcingRehearsals:
         return deepcopy(result)
 
     def violations(self, base_sha, checks):
-        if self.failure:
-            return [self.failure['message']]
-        errors = []
-        for check in checks:
-            if 'forcing' not in check:
-                continue
-            wanted = identity(base_sha, check['node_ids'], Forcing.parse(check['forcing']), check.get('declared_symptom'))
-            if not any(bound_identity(receipt) == bound_identity(wanted) for receipt in self.receipts):
-                errors.append('Q55 check lacks a matching forcing rehearsal receipt for the exact base, '
-                              'selectors and forcing: ' + ', '.join(check['node_ids']))
-        return errors
+        return _check_pb('violations', failure=self.failure, receipts=self.receipts,
+                         base_sha=base_sha, checks=checks)
 
 
 def make_rehearsal_tool(worktree):

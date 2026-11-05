@@ -1,6 +1,5 @@
 """Submit the configured generator and import only its verified output artifact."""
 import base64
-import hashlib
 import json
 import math
 import os
@@ -15,6 +14,7 @@ from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.supervision import ExecutionFailure
 from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
+from tl3_workers.pb_evidence import check as _check_pb, encoded, ending_facts
 
 
 def _elapsed(ending):
@@ -23,32 +23,18 @@ def _elapsed(ending):
 
 
 def _artifact(ending, key):
-    if (ending["action_key"] != key or ending["status"] not in ("executed", "cache_hit")
-            or ending["exit_code"] != 0 or ending["succeeded"] is not True):
-        raise ValueError("Generator action did not succeed; inspect its PrismaBuild terminal record.")
-    evidence = ending["result"]
-    if evidence["verified"] is not True or not re.fullmatch("[0-9a-f]{64}", evidence["receipt_sha256"]):
-        raise ValueError("Generator action has no verified PrismaBuild receipt.")
-    log = evidence["stdout"]
-    if type(log["bytes"]) is not int or not 0 < log["bytes"] <= generator.ARTIFACT_BYTES:
-        raise ValueError("Generator artifact exceeds its limit.")
-    with open(log["path"], "rb") as stream:
+    facts = ending_facts(ending)
+    log = _check_pb('generator-start', ending=facts, key=key)
+    with open(log['path'], 'rb') as stream:
         raw = stream.read(generator.ARTIFACT_BYTES + 1)
-    if len(raw) != log["bytes"] or hashlib.sha256(raw).hexdigest() != log["sha256"]:
-        raise ValueError("Generator artifact digest mismatch.")
-    records = [line[len(generator.PREFIX):] for line in raw.decode().splitlines()
-               if line.startswith(generator.PREFIX)]
-    if len(records) != 1:
-        raise ValueError("Generator action returned no unique complete artifact.")
-    artifact = json.loads(records[0])
-    return artifact, {"action_key": key, "artifact_sha256": log["sha256"],
-                      "receipt_sha256": evidence["receipt_sha256"], "exit_code": artifact["exit_code"],
-                      "command": artifact.get("command"), "argv": artifact.get("argv"),
-                      "identity": artifact.get("identity"), "budget": artifact.get("budget"),
-                      "phase": artifact.get("phase"), "timings": artifact.get("timings"),
-                      "inner": {"status": artifact["status"], "exit_code": artifact["exit_code"]},
-                      "outer": {"status": ending["status"], "exit_code": ending["exit_code"],
-                                "elapsed_s": _elapsed(ending)}}
+    return tuple(_check_pb('generator-finish', ending=facts, key=key, raw=encoded(raw)))
+
+
+def _validate_artifact(artifact, before, contract, settings, selected, *, check_identity=False):
+    return _check_pb('generator-validate', artifact=artifact, before=before, check_identity=check_identity,
+                     contract={'command': contract['command'], 'argv': generator.configured_argv(contract['command']),
+                               'generated_files': contract['generated_files'], 'protected_paths': contract['protected_paths'],
+                               'image': settings.image, 'implementation': generator.IMPLEMENTATION, 'budget': selected})
 
 
 def _import(worktree, outputs):
@@ -161,7 +147,7 @@ def make_generator_tool(worktree, *, restore_only=False):
         if restore_only:
             return {"status": "not_available", "message": "Generation checkpoint is stale for the current worktree."}
         if state.get("phase") == "importing":
-            after = generator.validate_artifact(state["artifact"], state["before"], contract)
+            after = _validate_artifact(state["artifact"], state["before"], contract, settings, selected)
             if any(current.get(name) not in (state["before"].get(name), after.get(name))
                    for name in current.keys() | state["before"].keys() | after.keys()):
                 raise ValueError("Stale input tree during generator import; source work was preserved.")
@@ -226,17 +212,15 @@ def make_generator_tool(worktree, *, restore_only=False):
                     raise ValueError("PrismaBuild could not verify generator completion.")
             diagnostics.update(outer=_failure_receipt(waited["endings"][0], settings), phase="artifact_validation")
             artifact, receipt = _artifact(waited["endings"][0], key)
-            if (artifact.get("command") != command or artifact.get("identity") != {
-                    "implementation": generator.IMPLEMENTATION, "image": settings.image, "budget": selected}
-                    or artifact.get("budget") != selected):
-                raise ValueError("Generator artifact identity differs from its configured command/image/budget.")
+            _check_pb('generator-identity', artifact=artifact, command=command,
+                      image=settings.image, implementation=generator.IMPLEMENTATION, budget=selected)
             if artifact["status"] != "completed" or artifact["exit_code"] != 0:
                 result = {**receipt, "status": "failed", "message": artifact["message"]}
                 state.update(phase="failed", receipt=result)
                 record()
                 worktree.generation_receipt = result
                 return result
-            after = generator.validate_artifact(artifact, current, contract)
+            after = _validate_artifact(artifact, current, contract, settings, selected)
             if generator.manifest(checkout) != current:
                 raise ValueError("Generator artifact input tree is stale; source work was preserved.")
             state.update(phase="importing", artifact=artifact, receipt=receipt)

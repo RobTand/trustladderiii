@@ -209,6 +209,1901 @@
       }
     },
     {
+      "case": "artifact-bytes-below",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 857,
+              "sha256": "b91bf5f0a91df43a1450e69ba8d77186fca4720069227190978d3e63943a1177"
+            }
+          }
+        },
+        "log": "TL3_GENERATOR_ARTIFACT {\"status\": \"completed\", \"exit_code\": 0, \"message\": \"Generator completed.\", \"command\": \"python3 generate.py\", \"argv\": [\"python3\", \"generate.py\"], \"identity\": {\"implementation\": \"tl3-generator-v4\", \"image\": \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}}, \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}, \"phase\": \"completed\", \"timings\": {}, \"input_manifest\": \"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\", \"output_manifest\": \"a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01\", \"outputs\": [{\"path\": \"tests/BUILD.bazel\", \"entry\": {\"sha256\": \"8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf\", \"bytes\": 12, \"mode\": 420}, \"data\": \"IyBnZW5lcmF0ZWQK\"}]}\n",
+        "contract": {
+          "command": "python3 generate.py",
+          "generated_files": [
+            "**/BUILD.bazel"
+          ],
+          "protected_paths": [],
+          "files": [
+            "tests/BUILD.bazel"
+          ]
+        },
+        "before": {},
+        "artifact": {
+          "status": "completed",
+          "exit_code": 0,
+          "message": "Generator completed.",
+          "command": "python3 generate.py",
+          "argv": [
+            "python3",
+            "generate.py"
+          ],
+          "identity": {
+            "implementation": "tl3-generator-v4",
+            "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            }
+          },
+          "budget": {
+            "cpus": 1,
+            "mem_gb": 2,
+            "timeout_s": 120,
+            "outer_timeout_s": 180
+          },
+          "phase": "completed",
+          "timings": {},
+          "input_manifest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+          "outputs": [
+            {
+              "path": "tests/BUILD.bazel",
+              "entry": {
+                "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+                "bytes": 12,
+                "mode": 420
+              },
+              "data": "IyBnZW5lcmF0ZWQK"
+            }
+          ]
+        },
+        "log_padding": 50331647
+      },
+      "output": {
+        "return": {
+          "artifact": {
+            "status": "completed",
+            "exit_code": 0,
+            "message": "Generator completed.",
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "input_manifest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+            "outputs": [
+              {
+                "path": "tests/BUILD.bazel",
+                "entry": {
+                  "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+                  "bytes": 12,
+                  "mode": 420
+                },
+                "data": "IyBnZW5lcmF0ZWQK"
+              }
+            ]
+          },
+          "receipt": {
+            "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifact_sha256": "3c2a6e73e9cb204c3ee268e1471300005d113215beaa8c484f041b7db81285a2",
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "exit_code": 0,
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "inner": {
+              "status": "completed",
+              "exit_code": 0
+            },
+            "outer": {
+              "status": "executed",
+              "exit_code": 0,
+              "elapsed_s": null
+            }
+          },
+          "result": {
+            "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifact_sha256": "3c2a6e73e9cb204c3ee268e1471300005d113215beaa8c484f041b7db81285a2",
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "exit_code": 0,
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "inner": {
+              "status": "completed",
+              "exit_code": 0
+            },
+            "outer": {
+              "status": "executed",
+              "exit_code": 0,
+              "elapsed_s": null
+            },
+            "status": "completed",
+            "input_tree": "1111111111111111111111111111111111111111",
+            "output_tree": "2222222222222222222222222222222222222222",
+            "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+            "output_count": 1
+          },
+          "files": {
+            "tests/BUILD.bazel": "# generated\n"
+          }
+        }
+      }
+    },
+    {
+      "case": "artifact-bytes-at",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 857,
+              "sha256": "b91bf5f0a91df43a1450e69ba8d77186fca4720069227190978d3e63943a1177"
+            }
+          }
+        },
+        "log": "TL3_GENERATOR_ARTIFACT {\"status\": \"completed\", \"exit_code\": 0, \"message\": \"Generator completed.\", \"command\": \"python3 generate.py\", \"argv\": [\"python3\", \"generate.py\"], \"identity\": {\"implementation\": \"tl3-generator-v4\", \"image\": \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}}, \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}, \"phase\": \"completed\", \"timings\": {}, \"input_manifest\": \"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\", \"output_manifest\": \"a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01\", \"outputs\": [{\"path\": \"tests/BUILD.bazel\", \"entry\": {\"sha256\": \"8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf\", \"bytes\": 12, \"mode\": 420}, \"data\": \"IyBnZW5lcmF0ZWQK\"}]}\n",
+        "contract": {
+          "command": "python3 generate.py",
+          "generated_files": [
+            "**/BUILD.bazel"
+          ],
+          "protected_paths": [],
+          "files": [
+            "tests/BUILD.bazel"
+          ]
+        },
+        "before": {},
+        "artifact": {
+          "status": "completed",
+          "exit_code": 0,
+          "message": "Generator completed.",
+          "command": "python3 generate.py",
+          "argv": [
+            "python3",
+            "generate.py"
+          ],
+          "identity": {
+            "implementation": "tl3-generator-v4",
+            "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            }
+          },
+          "budget": {
+            "cpus": 1,
+            "mem_gb": 2,
+            "timeout_s": 120,
+            "outer_timeout_s": 180
+          },
+          "phase": "completed",
+          "timings": {},
+          "input_manifest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+          "outputs": [
+            {
+              "path": "tests/BUILD.bazel",
+              "entry": {
+                "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+                "bytes": 12,
+                "mode": 420
+              },
+              "data": "IyBnZW5lcmF0ZWQK"
+            }
+          ]
+        },
+        "log_padding": 50331648
+      },
+      "output": {
+        "return": {
+          "artifact": {
+            "status": "completed",
+            "exit_code": 0,
+            "message": "Generator completed.",
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "input_manifest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+            "outputs": [
+              {
+                "path": "tests/BUILD.bazel",
+                "entry": {
+                  "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+                  "bytes": 12,
+                  "mode": 420
+                },
+                "data": "IyBnZW5lcmF0ZWQK"
+              }
+            ]
+          },
+          "receipt": {
+            "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifact_sha256": "771749ab5efff2004869b2c87b4809ab2361b5ea1572902fe1db74c8120e1205",
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "exit_code": 0,
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "inner": {
+              "status": "completed",
+              "exit_code": 0
+            },
+            "outer": {
+              "status": "executed",
+              "exit_code": 0,
+              "elapsed_s": null
+            }
+          },
+          "result": {
+            "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifact_sha256": "771749ab5efff2004869b2c87b4809ab2361b5ea1572902fe1db74c8120e1205",
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "exit_code": 0,
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "inner": {
+              "status": "completed",
+              "exit_code": 0
+            },
+            "outer": {
+              "status": "executed",
+              "exit_code": 0,
+              "elapsed_s": null
+            },
+            "status": "completed",
+            "input_tree": "1111111111111111111111111111111111111111",
+            "output_tree": "2222222222222222222222222222222222222222",
+            "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+            "output_count": 1
+          },
+          "files": {
+            "tests/BUILD.bazel": "# generated\n"
+          }
+        }
+      }
+    },
+    {
+      "case": "artifact-bytes-above",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 857,
+              "sha256": "b91bf5f0a91df43a1450e69ba8d77186fca4720069227190978d3e63943a1177"
+            }
+          }
+        },
+        "log": "TL3_GENERATOR_ARTIFACT {\"status\": \"completed\", \"exit_code\": 0, \"message\": \"Generator completed.\", \"command\": \"python3 generate.py\", \"argv\": [\"python3\", \"generate.py\"], \"identity\": {\"implementation\": \"tl3-generator-v4\", \"image\": \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}}, \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}, \"phase\": \"completed\", \"timings\": {}, \"input_manifest\": \"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\", \"output_manifest\": \"a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01\", \"outputs\": [{\"path\": \"tests/BUILD.bazel\", \"entry\": {\"sha256\": \"8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf\", \"bytes\": 12, \"mode\": 420}, \"data\": \"IyBnZW5lcmF0ZWQK\"}]}\n",
+        "contract": {
+          "command": "python3 generate.py",
+          "generated_files": [
+            "**/BUILD.bazel"
+          ],
+          "protected_paths": [],
+          "files": [
+            "tests/BUILD.bazel"
+          ]
+        },
+        "before": {},
+        "artifact": {
+          "status": "completed",
+          "exit_code": 0,
+          "message": "Generator completed.",
+          "command": "python3 generate.py",
+          "argv": [
+            "python3",
+            "generate.py"
+          ],
+          "identity": {
+            "implementation": "tl3-generator-v4",
+            "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            }
+          },
+          "budget": {
+            "cpus": 1,
+            "mem_gb": 2,
+            "timeout_s": 120,
+            "outer_timeout_s": 180
+          },
+          "phase": "completed",
+          "timings": {},
+          "input_manifest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+          "outputs": [
+            {
+              "path": "tests/BUILD.bazel",
+              "entry": {
+                "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+                "bytes": 12,
+                "mode": 420
+              },
+              "data": "IyBnZW5lcmF0ZWQK"
+            }
+          ]
+        },
+        "log_padding": 50331649
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Generator artifact exceeds its limit."
+        }
+      }
+    },
+    {
+      "case": "file-bytes-below",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          16777215
+        ]
+      },
+      "output": {
+        "return": {
+          "outputs": 1,
+          "bytes": 16777215,
+          "manifest": "9d07c6820265a79174f41ac6ad2f60b2e7033a2bb42925c7210e4cb6f4fb6558"
+        }
+      }
+    },
+    {
+      "case": "file-bytes-at",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          16777216
+        ]
+      },
+      "output": {
+        "return": {
+          "outputs": 1,
+          "bytes": 16777216,
+          "manifest": "2e0512a5b5e00d463c4388a5d8e4bec73eebeeb4450d72c566e39ef652af6825"
+        }
+      }
+    },
+    {
+      "case": "file-bytes-above",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          16777217
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator output exceeds the file size limit"
+        }
+      }
+    },
+    {
+      "case": "total-bytes-below",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          16777216,
+          16777215
+        ]
+      },
+      "output": {
+        "return": {
+          "outputs": 2,
+          "bytes": 33554431,
+          "manifest": "f124813987659460bb829e61cebb2e56125d31acfb974d9c027c36b584dcc002"
+        }
+      }
+    },
+    {
+      "case": "total-bytes-at",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          16777216,
+          16777216
+        ]
+      },
+      "output": {
+        "return": {
+          "outputs": 2,
+          "bytes": 33554432,
+          "manifest": "6efbc40e013b6c858c0560e950a1a439abc3c71faed5e2383e07d70d54737c2a"
+        }
+      }
+    },
+    {
+      "case": "total-bytes-above",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          16777216,
+          16777216,
+          1
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator output exceeds total size limit"
+        }
+      }
+    },
+    {
+      "case": "outputs-below",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "output": {
+        "return": {
+          "outputs": 127,
+          "bytes": 127,
+          "manifest": "0d70eff9abda7f9d6bd85bdcb07e795f56727c018f91b7947270997db632dd25"
+        }
+      }
+    },
+    {
+      "case": "outputs-at",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "output": {
+        "return": {
+          "outputs": 128,
+          "bytes": 128,
+          "manifest": "5c6ec590fb037d066cd19e506281cdac0ceebae6e6808e0b34c3acdd89859f67"
+        }
+      }
+    },
+    {
+      "case": "outputs-above",
+      "input": {
+        "operation": "validate",
+        "sizes": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator output file count exceeds limit"
+        }
+      }
+    },
+    {
+      "case": "changed-count-below",
+      "input": {
+        "operation": "changed-count",
+        "count": 127
+      },
+      "output": {
+        "return": [
+          "tests/0/BUILD.bazel",
+          "tests/1/BUILD.bazel",
+          "tests/10/BUILD.bazel",
+          "tests/100/BUILD.bazel",
+          "tests/101/BUILD.bazel",
+          "tests/102/BUILD.bazel",
+          "tests/103/BUILD.bazel",
+          "tests/104/BUILD.bazel",
+          "tests/105/BUILD.bazel",
+          "tests/106/BUILD.bazel",
+          "tests/107/BUILD.bazel",
+          "tests/108/BUILD.bazel",
+          "tests/109/BUILD.bazel",
+          "tests/11/BUILD.bazel",
+          "tests/110/BUILD.bazel",
+          "tests/111/BUILD.bazel",
+          "tests/112/BUILD.bazel",
+          "tests/113/BUILD.bazel",
+          "tests/114/BUILD.bazel",
+          "tests/115/BUILD.bazel",
+          "tests/116/BUILD.bazel",
+          "tests/117/BUILD.bazel",
+          "tests/118/BUILD.bazel",
+          "tests/119/BUILD.bazel",
+          "tests/12/BUILD.bazel",
+          "tests/120/BUILD.bazel",
+          "tests/121/BUILD.bazel",
+          "tests/122/BUILD.bazel",
+          "tests/123/BUILD.bazel",
+          "tests/124/BUILD.bazel",
+          "tests/125/BUILD.bazel",
+          "tests/126/BUILD.bazel",
+          "tests/13/BUILD.bazel",
+          "tests/14/BUILD.bazel",
+          "tests/15/BUILD.bazel",
+          "tests/16/BUILD.bazel",
+          "tests/17/BUILD.bazel",
+          "tests/18/BUILD.bazel",
+          "tests/19/BUILD.bazel",
+          "tests/2/BUILD.bazel",
+          "tests/20/BUILD.bazel",
+          "tests/21/BUILD.bazel",
+          "tests/22/BUILD.bazel",
+          "tests/23/BUILD.bazel",
+          "tests/24/BUILD.bazel",
+          "tests/25/BUILD.bazel",
+          "tests/26/BUILD.bazel",
+          "tests/27/BUILD.bazel",
+          "tests/28/BUILD.bazel",
+          "tests/29/BUILD.bazel",
+          "tests/3/BUILD.bazel",
+          "tests/30/BUILD.bazel",
+          "tests/31/BUILD.bazel",
+          "tests/32/BUILD.bazel",
+          "tests/33/BUILD.bazel",
+          "tests/34/BUILD.bazel",
+          "tests/35/BUILD.bazel",
+          "tests/36/BUILD.bazel",
+          "tests/37/BUILD.bazel",
+          "tests/38/BUILD.bazel",
+          "tests/39/BUILD.bazel",
+          "tests/4/BUILD.bazel",
+          "tests/40/BUILD.bazel",
+          "tests/41/BUILD.bazel",
+          "tests/42/BUILD.bazel",
+          "tests/43/BUILD.bazel",
+          "tests/44/BUILD.bazel",
+          "tests/45/BUILD.bazel",
+          "tests/46/BUILD.bazel",
+          "tests/47/BUILD.bazel",
+          "tests/48/BUILD.bazel",
+          "tests/49/BUILD.bazel",
+          "tests/5/BUILD.bazel",
+          "tests/50/BUILD.bazel",
+          "tests/51/BUILD.bazel",
+          "tests/52/BUILD.bazel",
+          "tests/53/BUILD.bazel",
+          "tests/54/BUILD.bazel",
+          "tests/55/BUILD.bazel",
+          "tests/56/BUILD.bazel",
+          "tests/57/BUILD.bazel",
+          "tests/58/BUILD.bazel",
+          "tests/59/BUILD.bazel",
+          "tests/6/BUILD.bazel",
+          "tests/60/BUILD.bazel",
+          "tests/61/BUILD.bazel",
+          "tests/62/BUILD.bazel",
+          "tests/63/BUILD.bazel",
+          "tests/64/BUILD.bazel",
+          "tests/65/BUILD.bazel",
+          "tests/66/BUILD.bazel",
+          "tests/67/BUILD.bazel",
+          "tests/68/BUILD.bazel",
+          "tests/69/BUILD.bazel",
+          "tests/7/BUILD.bazel",
+          "tests/70/BUILD.bazel",
+          "tests/71/BUILD.bazel",
+          "tests/72/BUILD.bazel",
+          "tests/73/BUILD.bazel",
+          "tests/74/BUILD.bazel",
+          "tests/75/BUILD.bazel",
+          "tests/76/BUILD.bazel",
+          "tests/77/BUILD.bazel",
+          "tests/78/BUILD.bazel",
+          "tests/79/BUILD.bazel",
+          "tests/8/BUILD.bazel",
+          "tests/80/BUILD.bazel",
+          "tests/81/BUILD.bazel",
+          "tests/82/BUILD.bazel",
+          "tests/83/BUILD.bazel",
+          "tests/84/BUILD.bazel",
+          "tests/85/BUILD.bazel",
+          "tests/86/BUILD.bazel",
+          "tests/87/BUILD.bazel",
+          "tests/88/BUILD.bazel",
+          "tests/89/BUILD.bazel",
+          "tests/9/BUILD.bazel",
+          "tests/90/BUILD.bazel",
+          "tests/91/BUILD.bazel",
+          "tests/92/BUILD.bazel",
+          "tests/93/BUILD.bazel",
+          "tests/94/BUILD.bazel",
+          "tests/95/BUILD.bazel",
+          "tests/96/BUILD.bazel",
+          "tests/97/BUILD.bazel",
+          "tests/98/BUILD.bazel",
+          "tests/99/BUILD.bazel"
+        ]
+      }
+    },
+    {
+      "case": "changed-count-at",
+      "input": {
+        "operation": "changed-count",
+        "count": 128
+      },
+      "output": {
+        "return": [
+          "tests/0/BUILD.bazel",
+          "tests/1/BUILD.bazel",
+          "tests/10/BUILD.bazel",
+          "tests/100/BUILD.bazel",
+          "tests/101/BUILD.bazel",
+          "tests/102/BUILD.bazel",
+          "tests/103/BUILD.bazel",
+          "tests/104/BUILD.bazel",
+          "tests/105/BUILD.bazel",
+          "tests/106/BUILD.bazel",
+          "tests/107/BUILD.bazel",
+          "tests/108/BUILD.bazel",
+          "tests/109/BUILD.bazel",
+          "tests/11/BUILD.bazel",
+          "tests/110/BUILD.bazel",
+          "tests/111/BUILD.bazel",
+          "tests/112/BUILD.bazel",
+          "tests/113/BUILD.bazel",
+          "tests/114/BUILD.bazel",
+          "tests/115/BUILD.bazel",
+          "tests/116/BUILD.bazel",
+          "tests/117/BUILD.bazel",
+          "tests/118/BUILD.bazel",
+          "tests/119/BUILD.bazel",
+          "tests/12/BUILD.bazel",
+          "tests/120/BUILD.bazel",
+          "tests/121/BUILD.bazel",
+          "tests/122/BUILD.bazel",
+          "tests/123/BUILD.bazel",
+          "tests/124/BUILD.bazel",
+          "tests/125/BUILD.bazel",
+          "tests/126/BUILD.bazel",
+          "tests/127/BUILD.bazel",
+          "tests/13/BUILD.bazel",
+          "tests/14/BUILD.bazel",
+          "tests/15/BUILD.bazel",
+          "tests/16/BUILD.bazel",
+          "tests/17/BUILD.bazel",
+          "tests/18/BUILD.bazel",
+          "tests/19/BUILD.bazel",
+          "tests/2/BUILD.bazel",
+          "tests/20/BUILD.bazel",
+          "tests/21/BUILD.bazel",
+          "tests/22/BUILD.bazel",
+          "tests/23/BUILD.bazel",
+          "tests/24/BUILD.bazel",
+          "tests/25/BUILD.bazel",
+          "tests/26/BUILD.bazel",
+          "tests/27/BUILD.bazel",
+          "tests/28/BUILD.bazel",
+          "tests/29/BUILD.bazel",
+          "tests/3/BUILD.bazel",
+          "tests/30/BUILD.bazel",
+          "tests/31/BUILD.bazel",
+          "tests/32/BUILD.bazel",
+          "tests/33/BUILD.bazel",
+          "tests/34/BUILD.bazel",
+          "tests/35/BUILD.bazel",
+          "tests/36/BUILD.bazel",
+          "tests/37/BUILD.bazel",
+          "tests/38/BUILD.bazel",
+          "tests/39/BUILD.bazel",
+          "tests/4/BUILD.bazel",
+          "tests/40/BUILD.bazel",
+          "tests/41/BUILD.bazel",
+          "tests/42/BUILD.bazel",
+          "tests/43/BUILD.bazel",
+          "tests/44/BUILD.bazel",
+          "tests/45/BUILD.bazel",
+          "tests/46/BUILD.bazel",
+          "tests/47/BUILD.bazel",
+          "tests/48/BUILD.bazel",
+          "tests/49/BUILD.bazel",
+          "tests/5/BUILD.bazel",
+          "tests/50/BUILD.bazel",
+          "tests/51/BUILD.bazel",
+          "tests/52/BUILD.bazel",
+          "tests/53/BUILD.bazel",
+          "tests/54/BUILD.bazel",
+          "tests/55/BUILD.bazel",
+          "tests/56/BUILD.bazel",
+          "tests/57/BUILD.bazel",
+          "tests/58/BUILD.bazel",
+          "tests/59/BUILD.bazel",
+          "tests/6/BUILD.bazel",
+          "tests/60/BUILD.bazel",
+          "tests/61/BUILD.bazel",
+          "tests/62/BUILD.bazel",
+          "tests/63/BUILD.bazel",
+          "tests/64/BUILD.bazel",
+          "tests/65/BUILD.bazel",
+          "tests/66/BUILD.bazel",
+          "tests/67/BUILD.bazel",
+          "tests/68/BUILD.bazel",
+          "tests/69/BUILD.bazel",
+          "tests/7/BUILD.bazel",
+          "tests/70/BUILD.bazel",
+          "tests/71/BUILD.bazel",
+          "tests/72/BUILD.bazel",
+          "tests/73/BUILD.bazel",
+          "tests/74/BUILD.bazel",
+          "tests/75/BUILD.bazel",
+          "tests/76/BUILD.bazel",
+          "tests/77/BUILD.bazel",
+          "tests/78/BUILD.bazel",
+          "tests/79/BUILD.bazel",
+          "tests/8/BUILD.bazel",
+          "tests/80/BUILD.bazel",
+          "tests/81/BUILD.bazel",
+          "tests/82/BUILD.bazel",
+          "tests/83/BUILD.bazel",
+          "tests/84/BUILD.bazel",
+          "tests/85/BUILD.bazel",
+          "tests/86/BUILD.bazel",
+          "tests/87/BUILD.bazel",
+          "tests/88/BUILD.bazel",
+          "tests/89/BUILD.bazel",
+          "tests/9/BUILD.bazel",
+          "tests/90/BUILD.bazel",
+          "tests/91/BUILD.bazel",
+          "tests/92/BUILD.bazel",
+          "tests/93/BUILD.bazel",
+          "tests/94/BUILD.bazel",
+          "tests/95/BUILD.bazel",
+          "tests/96/BUILD.bazel",
+          "tests/97/BUILD.bazel",
+          "tests/98/BUILD.bazel",
+          "tests/99/BUILD.bazel"
+        ]
+      }
+    },
+    {
+      "case": "changed-count-above",
+      "input": {
+        "operation": "changed-count",
+        "count": 129
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator output file count exceeds limit"
+        }
+      }
+    },
+    {
+      "case": "validate-failed",
+      "input": {
+        "operation": "validate-failed"
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "fixture generator failed"
+        }
+      }
+    },
+    {
+      "case": "control-text",
+      "input": {
+        "operation": "text",
+        "hex": "610062"
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator output must be text"
+        }
+      }
+    },
+    {
+      "case": "invalid-utf8",
+      "input": {
+        "operation": "text",
+        "hex": "ff"
+      },
+      "output": {
+        "raise": {
+          "type": "UnicodeDecodeError",
+          "message": "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+        }
+      }
+    },
+    {
+      "case": "allowed-text-controls",
+      "input": {
+        "operation": "text",
+        "hex": "090a0d20"
+      },
+      "output": {
+        "return": null
+      }
+    },
+    {
+      "case": "deleted-output",
+      "input": {
+        "operation": "changed",
+        "before": {
+          "tests/BUILD.bazel": {
+            "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+            "bytes": 12,
+            "mode": 420
+          }
+        },
+        "after": {}
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator deleted an output: tests/BUILD.bazel"
+        }
+      }
+    },
+    {
+      "case": "changed-mode",
+      "input": {
+        "operation": "changed",
+        "before": {
+          "tests/BUILD.bazel": {
+            "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+            "bytes": 12,
+            "mode": 420
+          }
+        },
+        "after": {
+          "tests/BUILD.bazel": {
+            "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+            "bytes": 12,
+            "mode": 493
+          }
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator changed an output mode: tests/BUILD.bazel; new outputs require mode 0644"
+        }
+      }
+    },
+    {
+      "case": "path-control",
+      "input": {
+        "operation": "path-control"
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator path must be a canonical relative file path"
+        }
+      }
+    },
+    {
+      "case": "invalid-interpreter",
+      "input": {
+        "operation": "argv",
+        "command": "./generate.py"
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use an explicit configured image interpreter, such as python3 tools/bazel/build_files.py"
+        }
+      }
+    },
+    {
+      "case": "artifact-failed",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 858,
+              "sha256": "671d71e1edbf2e019a490ecd875a972188fcbf3d577c5f8a8e874f9fe43e3ad5"
+            }
+          }
+        },
+        "log": "TL3_GENERATOR_ARTIFACT {\"status\": \"failed\", \"exit_code\": 0, \"message\": \"fixture generator failed\", \"command\": \"python3 generate.py\", \"argv\": [\"python3\", \"generate.py\"], \"identity\": {\"implementation\": \"tl3-generator-v4\", \"image\": \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}}, \"budget\": {\"cpus\": 1, \"mem_gb\": 2, \"timeout_s\": 120, \"outer_timeout_s\": 180}, \"phase\": \"completed\", \"timings\": {}, \"input_manifest\": \"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\", \"output_manifest\": \"a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01\", \"outputs\": [{\"path\": \"tests/BUILD.bazel\", \"entry\": {\"sha256\": \"8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf\", \"bytes\": 12, \"mode\": 420}, \"data\": \"IyBnZW5lcmF0ZWQK\"}]}\n",
+        "contract": {
+          "command": "python3 generate.py",
+          "generated_files": [
+            "**/BUILD.bazel"
+          ],
+          "protected_paths": [],
+          "files": [
+            "tests/BUILD.bazel"
+          ]
+        },
+        "before": {},
+        "artifact": {
+          "status": "completed",
+          "exit_code": 0,
+          "message": "Generator completed.",
+          "command": "python3 generate.py",
+          "argv": [
+            "python3",
+            "generate.py"
+          ],
+          "identity": {
+            "implementation": "tl3-generator-v4",
+            "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            }
+          },
+          "budget": {
+            "cpus": 1,
+            "mem_gb": 2,
+            "timeout_s": 120,
+            "outer_timeout_s": 180
+          },
+          "phase": "completed",
+          "timings": {},
+          "input_manifest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+          "outputs": [
+            {
+              "path": "tests/BUILD.bazel",
+              "entry": {
+                "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+                "bytes": 12,
+                "mode": 420
+              },
+              "data": "IyBnZW5lcmF0ZWQK"
+            }
+          ]
+        }
+      },
+      "output": {
+        "return": {
+          "artifact": {
+            "status": "failed",
+            "exit_code": 0,
+            "message": "fixture generator failed",
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "input_manifest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "output_manifest": "a1c390b61e0991587be3b22f97714c5faf378420b82f176b8eedcfac70e25b01",
+            "outputs": [
+              {
+                "path": "tests/BUILD.bazel",
+                "entry": {
+                  "sha256": "8e91845e3b2e8793a97b7a0e7c33c58ad92761e7d2ed7ffe60f8fb0e196649cf",
+                  "bytes": 12,
+                  "mode": 420
+                },
+                "data": "IyBnZW5lcmF0ZWQK"
+              }
+            ]
+          },
+          "receipt": {
+            "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifact_sha256": "671d71e1edbf2e019a490ecd875a972188fcbf3d577c5f8a8e874f9fe43e3ad5",
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "exit_code": 0,
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "inner": {
+              "status": "failed",
+              "exit_code": 0
+            },
+            "outer": {
+              "status": "executed",
+              "exit_code": 0,
+              "elapsed_s": null
+            }
+          },
+          "result": {
+            "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifact_sha256": "671d71e1edbf2e019a490ecd875a972188fcbf3d577c5f8a8e874f9fe43e3ad5",
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "exit_code": 0,
+            "command": "python3 generate.py",
+            "argv": [
+              "python3",
+              "generate.py"
+            ],
+            "identity": {
+              "implementation": "tl3-generator-v4",
+              "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "budget": {
+                "cpus": 1,
+                "mem_gb": 2,
+                "timeout_s": 120,
+                "outer_timeout_s": 180
+              }
+            },
+            "budget": {
+              "cpus": 1,
+              "mem_gb": 2,
+              "timeout_s": 120,
+              "outer_timeout_s": 180
+            },
+            "phase": "completed",
+            "timings": {},
+            "inner": {
+              "status": "failed",
+              "exit_code": 0
+            },
+            "outer": {
+              "status": "executed",
+              "exit_code": 0,
+              "elapsed_s": null
+            },
+            "status": "failed",
+            "message": "fixture generator failed"
+          },
+          "files": {}
+        }
+      }
+    },
+    {
+      "case": "path-bytes-at",
+      "input": {
+        "operation": "path",
+        "size": 3072,
+        "component": false
+      },
+      "output": {
+        "return": [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ]
+      }
+    },
+    {
+      "case": "path-bytes-above",
+      "input": {
+        "operation": "path",
+        "size": 3073,
+        "component": false
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator path must be a canonical relative file path"
+        }
+      }
+    },
+    {
+      "case": "component-bytes-at",
+      "input": {
+        "operation": "path",
+        "size": 255,
+        "component": true
+      },
+      "output": {
+        "return": [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ]
+      }
+    },
+    {
+      "case": "component-bytes-above",
+      "input": {
+        "operation": "path",
+        "size": 256,
+        "component": true
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator path must be a canonical relative file path"
+        }
+      }
+    },
+    {
+      "case": "budget-cpus-below",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "cpus": 0
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600"
+        }
+      }
+    },
+    {
+      "case": "budget-cpus-min",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "cpus": 1
+        }
+      },
+      "output": {
+        "return": {
+          "cpus": 1,
+          "mem_gb": 2,
+          "timeout_s": 120,
+          "outer_timeout_s": 180
+        }
+      }
+    },
+    {
+      "case": "budget-cpus-at",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "cpus": 16
+        }
+      },
+      "output": {
+        "return": {
+          "cpus": 16,
+          "mem_gb": 2,
+          "timeout_s": 120,
+          "outer_timeout_s": 180
+        }
+      }
+    },
+    {
+      "case": "budget-cpus-above",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "cpus": 17
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600"
+        }
+      }
+    },
+    {
+      "case": "budget-mem_gb-below",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "mem_gb": 0
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600"
+        }
+      }
+    },
+    {
+      "case": "budget-mem_gb-min",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "mem_gb": 1
+        }
+      },
+      "output": {
+        "return": {
+          "cpus": 1,
+          "mem_gb": 1,
+          "timeout_s": 120,
+          "outer_timeout_s": 180
+        }
+      }
+    },
+    {
+      "case": "budget-mem_gb-at",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "mem_gb": 64
+        }
+      },
+      "output": {
+        "return": {
+          "cpus": 1,
+          "mem_gb": 64,
+          "timeout_s": 120,
+          "outer_timeout_s": 180
+        }
+      }
+    },
+    {
+      "case": "budget-mem_gb-above",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "mem_gb": 65
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600"
+        }
+      }
+    },
+    {
+      "case": "budget-timeout_s-below",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "timeout_s": 0
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600"
+        }
+      }
+    },
+    {
+      "case": "budget-timeout_s-min",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "timeout_s": 1
+        }
+      },
+      "output": {
+        "return": {
+          "cpus": 1,
+          "mem_gb": 2,
+          "timeout_s": 1,
+          "outer_timeout_s": 61
+        }
+      }
+    },
+    {
+      "case": "budget-timeout_s-at",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "timeout_s": 600
+        }
+      },
+      "output": {
+        "return": {
+          "cpus": 1,
+          "mem_gb": 2,
+          "timeout_s": 600,
+          "outer_timeout_s": 660
+        }
+      }
+    },
+    {
+      "case": "budget-timeout_s-above",
+      "input": {
+        "operation": "budget",
+        "value": {
+          "timeout_s": 601
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600"
+        }
+      }
+    },
+    {
       "case": "key",
       "input": {
         "ending": {

@@ -1,6 +1,9 @@
 #[path = "tl3/redaction.rs"]
 mod redaction_cli;
 
+#[path = "tl3/pb_evidence.rs"]
+mod pb_evidence_cli;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(command @ ("redact" | "redaction-policy")) = args.first().map(String::as_str) {
@@ -10,7 +13,9 @@ fn main() {
         }
         return;
     }
-    let result = if std::env::args().nth(1).as_deref() == Some("check-budget") {
+    let result = if args.first().map(String::as_str) == Some("check-pb") {
+        pb_evidence_cli::run(&args[1..])
+    } else if std::env::args().nth(1).as_deref() == Some("check-budget") {
         tl3_controller::budget::check()
     } else if std::env::args().nth(1).as_deref() == Some("check-reply") {
         tl3_controller::classifier::check_reply(std::env::args().nth(2).as_deref())

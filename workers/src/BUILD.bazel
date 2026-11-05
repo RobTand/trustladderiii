@@ -92,6 +92,7 @@ py_library(
         "tl3_workers/generated_scope.py",
         "tl3_workers/judges.py",
         "tl3_workers/memory.py",
+        "tl3_workers/pb_evidence.py",
         "tl3_workers/pb_generators.py",
         "tl3_workers/pb_tests.py",
         "tl3_workers/prerequisites.py",
