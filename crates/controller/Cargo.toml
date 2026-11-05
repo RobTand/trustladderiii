@@ -20,10 +20,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tl3-prismabuild = { path = "../prismabuild" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net", "process", "sync", "macros"] }
 tl3-kernel = { path = "../kernel", features = ["serde"] }
+tl3-harness-core = { path = "../harness-core" }
 tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
-tl3-controller-core = { path = "../controller-core" }
 tl3-contracts = { path = "../contracts" }
+tl3-controller-core = { path = "../controller-core" }
 tl3-github = { path = "../github" }
 tl3-mergify = { path = "../mergify" }
 chrono = { version = "0.4", features = ["serde"] }

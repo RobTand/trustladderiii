@@ -267,13 +267,11 @@ pub(super) fn parse_reply(
         .ok_or(Error::Invalid("worker output without supported start"))?;
     let mut reply = None;
     let mut plan_check = None;
+    let mut line_end = 0;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
+        line_end += line.len();
         let parsed = parse_event(line, Some(role), delivery.is_postmortem(), inputs)?;
-        match reply_step(
-            parsed.event,
-            reply.is_some(),
-            bytes.split_inclusive(|b| *b == b'\n').next_back() == Some(line),
-        ) {
+        match reply_step(parsed.event, reply.is_some(), line_end, bytes.len()) {
             ReplyDecision::Progress => continue,
             ReplyDecision::AfterReply => return Err(Error::Invalid("event after worker reply")),
             ReplyDecision::InvalidEvent => return Err(Error::Invalid("invalid worker event")),

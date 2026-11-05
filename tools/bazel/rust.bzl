@@ -61,12 +61,15 @@ _WAVE_B_ENTRIES = {
     "summary-bound": _WAVE_B_STUB,
     # selector-identity (#823)
     "selector-identity": _WAVE_B_STUB,
-    # node-id (#824)
-    "node-id": _WAVE_B_STUB,
     # limits (S4)
     "limits": _WAVE_B_STUB,
     # red-match (S4)
-    "red-match": _WAVE_B_STUB,
+    "red-match": {
+        "srcs": [":sources"],
+        "crate_root": "tests/red_match.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde", "@crates//:serde_json"],
+        "tags": ["rust", "wave-b-entry-point"],
+    },
 }
 
 # rust_gate.py runs the controller's github binary as two timed groups.
@@ -88,6 +91,7 @@ _SCENARIO_SHARDS = {
 _LIBTEST_SHARDS = {
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
+    "tl3-controller/operations_quota": 4,
     "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 8,
     "tl3-controller/redaction_generated": 8,
@@ -143,6 +147,7 @@ _CONTROLLER_RUNTIME = {
         "//workers/tools:scripts",
         "//workers/src:prompts",
         "//workers/tests:fixtures",
+        "//workers/tests:prompt_render_recordings",
     ],
     # The shared harness check-report vectors (#734) the typed contracts parse (#741).
     "test_test_contracts": ["//harness:project_files"],

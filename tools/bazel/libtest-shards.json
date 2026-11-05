@@ -482,5 +482,15 @@
   "UnavailableRequestError": 15.903,
   "UnavailableRetryLimit": 16.096,
   "Waits": 29.063
+ },
+ "tl3-controller/operations_quota": {
+  "clear_survives_replay_check": 5.697,
+  "clears_and_wakes_atomically": 5.527,
+  "configured_without_hold_replies_without_effects": 1.634,
+  "duplicate_comments_apply_once": 13.116,
+  "incident_and_quota_share_authorization_and_parser_boundary": 38.048,
+  "later_quota_report_records_normally": 26.583,
+  "status_reports_operator_clear": 13.639,
+  "unknown_and_unconfigured_models_reply_without_mutation": 12.12
  }
 }

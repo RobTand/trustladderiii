@@ -29,9 +29,9 @@ def _reject_constant(_constant):
     raise ValueError("nonstandard validator constant")
 
 
-def run_check(command, document, *, name="reply"):
+def run_check(command, document, *, name="reply", binary=None):
     """One process boundary and strict JSON reader for every Rust validator."""
-    binary = os.environ.get("TL3_BINARY")
+    binary = os.environ.get("TL3_BINARY") if binary is None else binary
     if not binary:
         raise ReplyCheckInfrastructureError(f"{name} validator could not start")
     try:

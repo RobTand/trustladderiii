@@ -31,7 +31,10 @@ fn production_decision_witnesses() {
         (EvidenceKind::Blocked, IncidentAction::Blocked),
         (EvidenceKind::Reported, IncidentAction::Clear),
     ] {
-        assert_eq!(dispatch(Route::Incident, kind), Decision::Incident(action));
+        assert_eq!(
+            dispatch(begin(false).unwrap(), Route::Incident, kind),
+            Decision::Incident(action)
+        );
     }
     assert_eq!(
         clear_reported(&[

@@ -1,3 +1,5 @@
+use tl3_mergify::decide::heal as heal_core;
+
 // Real private projection helpers; source-pinned by recovery_projections.rs.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -204,10 +206,11 @@ fn raw_approved_head(snapshot: &Snapshot, approved: Option<tl3_kernel::HeadId>) 
 }
 
 pub(crate) fn heal_phase(phase: Option<tl3_kernel::Phase>) -> bool {
-    matches!(
-        phase,
-        Some(tl3_kernel::Phase::Publishing | tl3_kernel::Phase::Queued)
-    )
+    heal_core::phase(match phase {
+        Some(tl3_kernel::Phase::Publishing) => heal_core::Phase::Publishing,
+        Some(tl3_kernel::Phase::Queued) => heal_core::Phase::Queued,
+        _ => heal_core::Phase::Other,
+    })
 }
 
 fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
