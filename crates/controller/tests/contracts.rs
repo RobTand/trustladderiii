@@ -968,7 +968,7 @@ mod typed {
                         head,
                         pre_existing,
                         passed,
-                        message: ClippedText::clipped(&message),
+                        message: Some(ClippedText::clipped(&message)),
                         head_forced,
                         phases,
                     }

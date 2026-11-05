@@ -222,11 +222,11 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
                 .take(MAX_FAILED_TESTS)
                 .map(|test| FailedTest {
                     test: clipped(test.test.as_str(), 4096),
-                    message: if test.message.as_str().trim().is_empty() {
+                    message: if test.message().trim().is_empty() {
                         "The harness rejected this named test; no failure message was supplied."
                             .into()
                     } else {
-                        clipped(test.message.as_str(), MAX_MESSAGE_CHARS)
+                        clipped(test.message(), MAX_MESSAGE_CHARS)
                     },
                 })
                 .collect();
@@ -243,7 +243,7 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
             results = parsed
                 .results
                 .iter()
-                .map(serde_json::to_value)
+                .map(stored_result)
                 .collect::<std::result::Result<_, _>>()?;
         } else if harness_error(&raw, job) {
             failure = Some(HARNESS);
@@ -255,6 +255,21 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
         ));
     }
     Ok((report, pass, results, failed_tests, failure))
+}
+
+// Stored rows historically included the parsed report's default empty messages.
+// Preserve that consumer behavior while the shared wire type retains omission.
+fn stored_result(result: &CheckResult) -> serde_json::Result<serde_json::Value> {
+    let mut value = serde_json::to_value(result)?;
+    for (encoded, test) in value["tests"]
+        .as_array_mut()
+        .expect("typed test array")
+        .iter_mut()
+        .zip(result.tests.iter())
+    {
+        encoded["message"] = serde_json::json!(test.message());
+    }
+    Ok(value)
 }
 
 fn harness_error(raw: &[u8], job: &Job) -> bool {
