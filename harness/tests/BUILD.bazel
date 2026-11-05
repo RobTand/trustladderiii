@@ -1,4 +1,4 @@
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_python//python:defs.bzl", "py_binary", boundary_py_test = "py_test")
 
 # gazelle:resolve py _pytest.assertion.rewrite @tl3_pip//pytest
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
@@ -318,8 +318,8 @@ tl3_py_test(
     ],
 )
 
-# #835: boundary fixtures remain beside the Rust fixtures; execute the Python edge here.
-tl3_py_test(
+# #835: keep the standalone boundary outside package-wide harness inputs.
+boundary_py_test(
     name = "test_limits_boundary",
     size = "small",
     timeout = "short",
