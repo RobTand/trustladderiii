@@ -2787,14 +2787,16 @@ fn main() {
             println!("test {name} ... ok");
         });
     }
-    let mut database = support::Database::start();
+    let mut database = None;
     for (name, test) in database_cases {
         shard.run(*name, || {
-            test(&mut database);
+            test(database.get_or_insert_with(support::Database::start));
             println!("test {name} ... ok");
         });
     }
-    database.stop();
+    if let Some(database) = database {
+        database.stop();
+    }
     shard.finish("PrismaBuild adapter");
 }
 
