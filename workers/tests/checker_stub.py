@@ -5,15 +5,11 @@ remain in the parity corpus so the controller's --check regenerates every reply
 from the real Rust functions. Unexpected commands and extra calls fail closed.
 """
 from copy import deepcopy
-import base64
 from functools import cache
-import gzip
 import json
-import hashlib
 import os
 import tempfile
 from pathlib import Path
-import subprocess
 import sys
 from threading import Lock
 
@@ -24,6 +20,8 @@ _LOCK = Lock()
 
 @cache
 def cases():
+    import gzip
+
     with gzip.open(VECTORS, "rt", encoding="utf-8") as source:
         return json.load(source)
 
@@ -38,6 +36,8 @@ def rebound(response, recorded, current):
     Verdicts stay recorded. Only unambiguous input values copied into the Rust
     response move with a fixture's temporary paths, receipts and tree hashes.
     """
+    import base64
+
     bindings = {}
 
     def key(value):
@@ -84,25 +84,54 @@ def rebound(response, recorded, current):
 
     return replace(response)
 
+def prepare_replay(case, cursor):
+    """Decode the corpus in the fixture process, never in each checker child."""
+    script = [{"command": row["command"], "document": (row["document"] if row["command"][0] == "check-pb"
+                                                else {"kind": row["document"].get("kind")}),
+               "response": row["response"]} for row in cases().get(case, [])]
+    cursor.with_name(cursor.name + ".script.json").write_text(
+        json.dumps({"case": case, "script": script}, ensure_ascii=False), encoding="utf-8")
+
 
 def replay(case, cursor, command, document):
     """A unit fake follows its script; Rust checks the original facts elsewhere."""
     with _LOCK:
         position = int(cursor.read_text()) if cursor.exists() else 0
-        script = cases().get(case, [])
+        prepared = cursor.with_name(cursor.name + ".script.json")
+        if prepared.exists():
+            recording = json.loads(prepared.read_text(encoding="utf-8"))
+            if recording["case"] != case:
+                raise RuntimeError(f"wrong Rust checker recording for {case}")
+            script = recording["script"]
+        else:
+            script = cases().get(case, [])
         if position >= len(script):
             raise RuntimeError(f"unrecorded Rust checker call in {case}: {command}")
         row = script[position]
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
-        cursor.write_text(str(position + 1))
-        if command[0] == 'check-pb':
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=cursor.parent,
+                                             prefix=cursor.name + ".", delete=False) as target:
+                temporary = Path(target.name)
+                target.write(str(position + 1))
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, cursor)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        if command[0] == "check-pb":
             return rebound(row["response"], row["document"], document)
         return deepcopy(row["response"])
 
 
 def record(case, temporary, monkeypatch):
     """Capture a unit scenario, including its child workers, with an explicit oracle."""
+    import hashlib
+    import subprocess
+
     binary = os.environ["TL3_BINARY"]
     rows = temporary / "rust-verdicts.jsonl"
     checker = temporary / "record-rust-checker"
@@ -141,6 +170,9 @@ def record(case, temporary, monkeypatch):
 
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] == "--record":
+        import gzip
+        import subprocess
+
         with tempfile.TemporaryDirectory(prefix="tl3-checker-recordings-") as directory:
             environment = {**os.environ, "TL3_BINARY": str(Path(sys.argv[2]).resolve()),
                            "TEST_REAL_CHECKER": "1", "TEST_RECORD_CHECKER_DIR": directory}
@@ -155,6 +187,9 @@ def main():
         json.dump(vectors(), sys.stdout, ensure_ascii=False)
         return
     if len(sys.argv) == 3 and sys.argv[1] in {"--check", "--generate"}:
+        import gzip
+        import subprocess
+
         requests = [{"command": row["command"], "document": row["document"]} for row in vectors()]
         result = subprocess.run([sys.argv[2]], input=json.dumps(requests, ensure_ascii=False),
                                 capture_output=True, text=True, check=True)
