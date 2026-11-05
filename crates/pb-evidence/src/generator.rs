@@ -309,7 +309,7 @@ pub enum Helper {
     Changed {
         before: Value,
         after: Value,
-        contract: GeneratorContract,
+        contract: Box<GeneratorContract>,
     },
     Budget {
         value: Value,

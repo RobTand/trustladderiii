@@ -168,7 +168,7 @@ fn summary_shape(value: &Value) -> bool {
             totals.len() == 4
                 && outcomes
                     .iter()
-                    .all(|o| totals.get(*o).is_some_and(|n| nonnegative_integer(n)))
+                    .all(|o| totals.get(*o).is_some_and(nonnegative_integer))
         }),
         value["tests"].as_array().is_some_and(|tests| {
             tests.iter().all(|t| {
