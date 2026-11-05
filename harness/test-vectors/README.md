@@ -13,8 +13,8 @@ python harness/tests/core_vectors.py
 python harness/tests/core_vectors.py --check
 ```
 
-Run checks on BuildBuddy, following `docs/bazel.md`. Run generation on an
-admitted PrismaBuild worker. `--output DIR` can write to a shared staging
+Run checks on BuildBuddy, following `docs/bazel.md`. Run generation on
+BuildBuddy or an admitted PrismaBuild worker. `--output DIR` can write to a shared staging
 directory for copying the generated files back to the checkout. Commit the
 outputs after an intended behavior change. The Python test names the kind
 and case on drift, following the `contracts/` generator/check pattern.
@@ -39,13 +39,18 @@ then add missing or mismatched RED-evidence cases. RED cases use pytest's real
 assertion rewriting and the production capture function. Phase cases feed
 captured tuples to the real `Reporter.pytest_runtest_logreport` fold.
 
-Wave B entry points are each case's `input` and `expected`. Rust currently
-consumes the exact node-ID grammar in `reproducing.rs` and verifies that all
-seven files parse with serde_json. The other behavior consumers
-are unwritten until their ports exist, as #749 permits. No failing stub or
-manual Bazel target is added. This corpus adds no production implementation,
-proof or test pruning. Glob parity belongs to the later selection/config port;
-this ticket's seven kinds do not port path matching. Unicode `\w` is covered
+Wave B entry points are each case's `input` and `expected`. The parse-only
+loader in `crates/harness-core/tests/vectors.rs` reads all eight kinds and
+retains Python code points, including surrogates. The exact node-ID grammar
+consumer stays in the controller's `adapters/workers/reproducing.rs` because
+calling it from harness-core would require a controller dependency.
+`//crates/harness-core:wave_b_<kind>` targets are failing entry points for
+the eight unported crate consumers. They use underscores in kind names and
+carry `manual` and `wave-b-entry-point` tags. Their shared source lives outside
+Cargo's test discovery, so neither Cargo nor the Gate runs them. Replace each
+stub with its real consumer when that port lands. This corpus adds no
+production implementation, proof or test pruning. Glob parity belongs to the later selection/config port;
+these kinds do not port path matching. Unicode `\w` is covered
 by forcing targets; none of these current functions uses a `\d` regex.
 
 The checker compares canonical JSON encodings, including numeric types.
@@ -61,3 +66,37 @@ The coverage revision also pins file-prefix selection boundaries, exactly 20
 `always_tests`, forbidden path characters, Python's rejection of combining
 marks and join controls in `\w`, U+001F trimming, and complete long or multiline
 RED messages.
+
+`finish-teardown` separates traceback classification from the exit mapping.
+`run-pytest` inputs carry `finished`, `raised`, and the production classifier's
+`worker_teardown_exhausted` fact. Python drives `run_pytest` with real exception
+tracebacks from compiled `teardown_nodes` frames in `xdist/workermanage.py`.
+Wrong paths, frame names, exception types, subclasses and messages are separate
+negative cases. Rust ports the mapping over those facts. `return_code` applies
+when pytest returns normally. The reporter mode is checking or summary.
+`parse` cases cover exits 0 through 5 with matching, missing and mismatched
+finish records. Checking calls `report.parse`; summary drives the production
+`test_tool._run_current` parser with a recorded transport. Both refuse exit 3.
+These cases preserve #804: finish precedes xdist teardown, and only its thread
+exhaustion can keep a finish after an exception. Other hook failures return 3.
+
+Two summary cases carry `divergence: {"reason": "...", "property": "..."}`.
+`expected` still pins today's Python output exactly, including its byte count.
+Python checks never waive parity for this field. A Rust consumer must check
+the named property instead of comparing its output with Python's `expected`:
+
+- `serialized_size_le_envelope_for_any_group_count`: the output fits the input
+  `limit` for any group count. The 48-check grouped base fixture follows
+  `pb_tests.py`'s aggregate shape with real `Summary` outputs and PB receipts.
+  Python's fallback retains enough receipts to exceed the 16 KiB envelope.
+  The fixture measures 66,155 bytes before bounding and 19,055 bytes afterward.
+- `red_survives_whenever_any_entry_survives_with_proof_and_totals_kept`: keep
+  `red_test` in `red_check` whenever any display entry survives, preserving
+  proof and totals. Python drops that demonstrating RED before unplanned errors.
+  This fixture shrinks from 33,577 to 16,270 bytes, leaving 45 unplanned error
+  entries and no demonstrating entry.
+
+`json_bytes` uses the envelope check's exact serializer in `test_tool.bounded`:
+`len(json.dumps(result).encode())`. This is default ASCII-escaped JSON with
+spaces, not compact JSON or `ensure_ascii=False`. Divergence fixtures use
+the real 16,384-byte envelope.

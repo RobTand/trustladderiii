@@ -3077,6 +3077,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tl3-harness-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tl3-kernel"
 version = "0.1.0"
 dependencies = [
