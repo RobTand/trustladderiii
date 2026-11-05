@@ -164,6 +164,8 @@ _CONTROLLER_RUNTIME = {
 _CONTROLLER_TEST_SOURCES = {
     "tests/direct_merge.rs": ["tests/mergify.rs", "tests/mergify/**", "tests/support/**", "tests/fixtures/mergify/**"],
     "src/lib.rs": ["tests/worker_events_io/**"],
+    # CC-P: exact source replay and persistent differential schedules.
+    "tests/prismabuild_schedule/main.rs": ["tests/prismabuild_schedule/io.rs", "tests/prismabuild_schedule/reference.rs", "tests/prismabuild_schedule/extracted.rs", "tests/prismabuild_schedule/io_schedule-regressions.txt"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
