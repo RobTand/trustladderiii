@@ -283,10 +283,9 @@ fn finish_parts(
                 if let Some(fields) = without.as_object_mut() {
                     fields.remove("records");
                 }
+                let records_digest = sha(dumps(get(record, "records")?, false, true).as_bytes());
                 let sequence = equal(get(record, "run")?, &json!(index + 1));
-                let digest = !sequence
-                    || *get(record, "sha256")?
-                        == sha(dumps(get(record, "records")?, false, true).as_bytes());
+                let digest = !sequence || *get(record, "sha256")? == records_digest;
                 let summary = !(sequence && digest) || equal(&summary, &without);
                 if !crate::decision::symptom(sequence, digest, summary) {
                     return Err(Refusal::value("symptom run receipt changed"));
