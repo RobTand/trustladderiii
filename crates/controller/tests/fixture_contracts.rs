@@ -238,6 +238,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
             title: "A request".into(),
             summary: "Work needs help.".into(),
             id: "probe".into(),
+            resource_failure: None,
         };
         assert!(router.input_incident(&incident, 3).is_err());
         assert!(router.wait_record("key", Path::new("checkout")).is_err());

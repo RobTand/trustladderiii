@@ -765,7 +765,15 @@ impl CatchUp {
                     }],
                     since,
                 ))
-                .map_err(|error| Error::Adapter(Box::new(error)))?;
+                .map_err(|error| {
+                    crate::input_resources::github(
+                        error,
+                        crate::input_resources::Resource::GithubEndpoint {
+                            path: format!("repos/{name}"),
+                        },
+                        repo.installation,
+                    )
+                })?;
             cursor = Some(cursor.map_or(result.next_cursor, |old: DateTime<Utc>| {
                 old.min(result.next_cursor)
             }));
@@ -776,10 +784,15 @@ impl CatchUp {
                             runtime
                                 .block_on(client.issue(&name, *number))
                                 .map_err(|error| {
-                                    Error::Adapter(Box::new(tl3_github::Error::CatchUp {
-                                        endpoint: format!("repos/{name}/issues/{number}"),
-                                        source: Box::new(error),
-                                    }))
+                                    crate::input_resources::github(
+                                        error,
+                                        crate::input_resources::Resource::prerequisite(
+                                            repo,
+                                            tl3_kernel::PrerequisiteKind::Issue,
+                                            *number,
+                                        ),
+                                        repo.installation,
+                                    )
                                 })?,
                         );
                     }

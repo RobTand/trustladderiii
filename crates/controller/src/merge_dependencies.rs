@@ -334,6 +334,11 @@ impl Controller {
                     "merge prerequisite quote does not match the source issue",
                 ));
             }
+            // Q59/#833: validate authoritative identity even when a retained fact is terminal.
+            let observed = self
+                .adapters
+                .get(executor::Upstream::GitHub)?
+                .prerequisite(&request.repo, kind, number)?;
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
             let status =
                 if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
@@ -344,9 +349,7 @@ impl Controller {
                     {
                         DependencyStatus::Delivered
                     } else {
-                        self.adapters
-                            .get(executor::Upstream::GitHub)?
-                            .prerequisite(&request.repo, kind, number)?
+                        observed
                     };
                     let status = if observed == DependencyStatus::Pending {
                         root.map_or(observed, |root| root_status(world, root))

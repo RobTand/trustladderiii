@@ -77,6 +77,8 @@ pub struct IncidentNotice {
     pub title: String,
     pub summary: String,
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_failure: Option<crate::input_resources::Failure>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -92,9 +94,34 @@ pub(crate) struct InputFailure {
     retry_after_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) memory_version: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) resource_failure: Option<crate::input_resources::Failure>,
 }
 
 impl InputFailure {
+    pub(crate) fn resource(
+        target: IssueTarget,
+        title: &str,
+        node: NodeId,
+        class: &str,
+        failure: crate::input_resources::Failure,
+    ) -> Self {
+        Self {
+            scope: format!(
+                "request:{}:{class}:{}",
+                node.0,
+                serde_json::to_string(&failure.requested).expect("resource serialization")
+            ),
+            target: Some(target),
+            title: title.into(),
+            posted: true,
+            attempted_epoch: None,
+            post_failure: None,
+            retry_after_ms: None,
+            memory_version: None,
+            resource_failure: Some(failure),
+        }
+    }
     pub(crate) fn memory(title: &str, lineage: &str, version: i64) -> Self {
         Self {
             scope: lineage.into(),
@@ -105,6 +132,7 @@ impl InputFailure {
             post_failure: None,
             retry_after_ms: None,
             memory_version: Some(version),
+            resource_failure: None,
         }
     }
 
@@ -646,6 +674,19 @@ impl Controller {
         eprintln!("input failed for {scope}: {error}");
         let target = target.filter(|target| target.issue > 0);
         let class = crate::looks::failure_class(&error);
+        let resource_failure = crate::input_resources::of(&error).cloned();
+        // #833: observations change with every generation; the missing resource does not.
+        let resource_scope = resource_failure
+            .as_ref()
+            .filter(|_| node.is_some())
+            .map(|failure| {
+                format!(
+                    "request:{}:{class}:{}",
+                    node.expect("resource request").0,
+                    serde_json::to_string(&failure.requested).expect("resource serialization")
+                )
+            });
+        let scope = resource_scope.as_deref().unwrap_or(scope);
         let previous = snapshot
             .rows
             .iter()
@@ -690,6 +731,7 @@ impl Controller {
             summary.clone_from(message);
         }
         crate::worker_inputs::append(&mut summary, crate::worker_inputs::of(&error));
+        crate::worker_inputs::append(&mut summary, resource_failure.as_ref());
         let incident = Incident {
             id: id.clone(),
             node,
@@ -708,6 +750,7 @@ impl Controller {
                         | "worker_input_schema"
                         | "kernel_counter_headroom"
                         | "worker_dispatch_missing"
+                        | crate::input_resources::MISMATCH
                 ) || class == crate::postmortems::PAUSED
                 {
                     crate::looks::Cause::Tl3
@@ -724,6 +767,7 @@ impl Controller {
                 post_failure: None,
                 retry_after_ms: None,
                 memory_version: None,
+                resource_failure,
             }),
         };
         commit.rows.push(put("incidents", id, json!(incident)));
@@ -762,6 +806,7 @@ impl Controller {
                     title: failure.title.clone(),
                     summary: incident.summary.clone(),
                     id: incident.id.clone(),
+                    resource_failure: failure.resource_failure.clone(),
                 };
                 match self
                     .adapters

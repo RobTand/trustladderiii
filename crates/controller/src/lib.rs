@@ -29,6 +29,7 @@ mod goals;
 mod http;
 pub mod ingress;
 pub mod input_errors;
+pub mod input_resources;
 mod kernel_boundary;
 pub mod looks;
 #[cfg(all(test, loom))]
@@ -1299,6 +1300,23 @@ impl Controller {
                     }
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
+                    if let Err(error) = &result
+                        && let Some(failure) = input_resources::of(error)
+                    {
+                        let snapshot = self.store.load()?;
+                        let mut commit = Commit::new(
+                            format!("input-resource:{}:{}", effect.key, snapshot.revision.get()),
+                            json!({"input_resource_failure":effect.key}),
+                            &snapshot,
+                        );
+                        input_resources::record(
+                            &mut commit,
+                            delivery.node(),
+                            delivery.generation,
+                            failure,
+                        );
+                        self.store.commit(&commit)?;
+                    }
                     match result {
                         Ok(completion) => {
                             self.complete(&effect.key, completion)?;
@@ -2386,6 +2404,19 @@ impl Controller {
                     source = executor::Upstream::Workers;
                     class = blocked::CLASS.into();
                 }
+                let resource_failure = input_resources::current(snapshot, commit, node)?;
+                if let Some(failure) = &resource_failure {
+                    match failure.problem {
+                        input_resources::Problem::KindMismatch { .. } => {
+                            source = executor::Upstream::Workers;
+                            class = input_resources::MISMATCH.into();
+                        }
+                        input_resources::Problem::NotFound => {
+                            source = executor::Upstream::GitHub;
+                            class = "not_found".into();
+                        }
+                    }
+                }
                 let signature = looks::IncidentSignature {
                     upstream: source,
                     class: class.clone(),
@@ -2403,6 +2434,7 @@ impl Controller {
                     app_login.as_deref(),
                 );
                 worker_inputs::append(&mut summary, input_failure.as_ref());
+                worker_inputs::append(&mut summary, resource_failure.as_ref());
                 let occurrences = 1 + snapshot
                     .rows
                     .iter()
@@ -2487,7 +2519,18 @@ impl Controller {
                     json!(looks::Incident {
                         id: id.clone(),
                         node: Some(node),
-                        input_failure: None,
+                        input_failure: resource_failure.clone().map(|failure| {
+                            input_errors::InputFailure::resource(
+                                input_errors::IssueTarget {
+                                    repository: request.repo.clone(),
+                                    issue: request.issue,
+                                },
+                                &request.title,
+                                node,
+                                &class,
+                                failure,
+                            )
+                        }),
                         open: true,
                         needs_rob,
                         blocking: n.waiting_incident,
@@ -2506,7 +2549,7 @@ impl Controller {
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
                         delivery.repository.owner, delivery.repository.name, delivery.issue),
-                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences,"worker_input_failure":input_failure}));
+                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences,"worker_input_failure":input_failure,"input_resource_failure":resource_failure}));
                 if let Some(operations) = &self.bootstrap.operations {
                     delivery.repository = Repository {
                         owner: operations.owner.clone(),
@@ -3477,13 +3520,34 @@ impl Controller {
                             });
                     }
                 }
+                if role == "ingest" && reply["kind"] == "brief" {
+                    let checkpoint = commit.rows.len();
+                    if let Err(error) =
+                        self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)
+                    {
+                        if let Some(failure) = input_resources::of(&error)
+                            && matches!(
+                                failure.problem,
+                                input_resources::Problem::KindMismatch { .. }
+                            )
+                        {
+                            // Q7/Q51: invalid ingest output uses the existing bounded run-failure path.
+                            // Discard partial declarations from this reply, atomically with its rejection.
+                            commit.rows.truncate(checkpoint);
+                            input_resources::record(commit, node, generation, failure);
+                            return Ok(Some(Event::Reply {
+                                node,
+                                generation,
+                                reply: Reply::RunFailed,
+                            }));
+                        }
+                        return Err(error);
+                    }
+                }
                 if let Some(document) = document {
                     commit
                         .rows
                         .push(put(document, node.0.to_string(), reply.clone()));
-                }
-                if role == "ingest" && reply["kind"] == "brief" {
-                    self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)?;
                 }
                 if role == "ingest" {
                     commit.rows.push(put(

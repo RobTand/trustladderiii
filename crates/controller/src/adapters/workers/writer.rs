@@ -285,6 +285,13 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    let resource_failure = input
+        .facts
+        .get("input_resource_failure")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .map(crate::decode_stored::<crate::input_resources::Failure>)
+        .transpose()?;
     let input_failure = input
         .facts
         .get("worker_input_failure")
@@ -413,6 +420,13 @@ pub fn checked_draft(
         };
         match checked {
             Ok(mut text) => {
+                if let Some(failure) = &resource_failure {
+                    // #833: identifying the resource is mandatory even when the writer omits it.
+                    text.push_str(&format!(
+                        "\n\n{}",
+                        crate::redaction::text(&failure.to_string())?
+                    ));
+                }
                 if let Some(quote) = &change_quote {
                     // Indentation keeps Markdown inert; embedded markers must also be neutralised.
                     let quote = quote
