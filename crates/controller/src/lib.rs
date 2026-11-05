@@ -2656,8 +2656,19 @@ impl Controller {
                 && o.installation_id == repository.installation
                 && o.number == issue
         });
-        let request_incident = if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
-        {
+        enum OperationsCommand<'a> {
+            ClearIncident(&'a str),
+            ClearQuota(&'a str),
+        }
+        let body = comment.body.trim();
+        let command = body
+            .strip_prefix("clear incident ")
+            .map(OperationsCommand::ClearIncident)
+            .or_else(|| {
+                body.strip_prefix("clear quota ")
+                    .map(OperationsCommand::ClearQuota)
+            });
+        let request_incident = if let Some(OperationsCommand::ClearIncident(id)) = command {
             snapshot
                 .rows
                 .iter()
@@ -2704,7 +2715,7 @@ impl Controller {
         {
             return Ok(true);
         }
-        if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+        if let Some(OperationsCommand::ClearIncident(id)) = command
             && let Some(row) = snapshot
                 .rows
                 .iter()
@@ -2716,6 +2727,37 @@ impl Controller {
                 format!("incident-clear:{}:{id}", comment.id),
                 commit,
             )?;
+        }
+        if operations && let Some(OperationsCommand::ClearQuota(model)) = command {
+            commit.event_key = format!("model-quota-clear:{model}:{}", comment.id);
+            let configured = self
+                .adapters
+                .get(executor::Upstream::Workers)?
+                .configured_model(model);
+            let line = if !configured {
+                format!("{model} is not a configured model; no quota hold changed.")
+            } else if !snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "model_quotas" && row.id == model)
+            {
+                format!("no quota hold recorded for {model}")
+            } else {
+                let now = self.now_ms();
+                self.operator_clear_quota(snapshot, model, now, commit)?;
+                commit.rows.push(put(
+                    "model_quota_clears",
+                    model.into(),
+                    json!({
+                        "cleared_ms": now, "comment_id": comment.id, "operator": comment.user.id
+                    }),
+                ));
+                let at = chrono::DateTime::from_timestamp_millis(now as i64)
+                    .map(|at| at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| now.to_string());
+                format!("quota for {model} cleared by operator at {at}")
+            };
+            self.quota_clear_reply(snapshot, repository, issue, comment.id, line, commit);
         }
         commit.rows.push(put(
             "operations_comments",
@@ -2846,9 +2888,11 @@ impl Controller {
             }
             Observation::Queue(mut fact) => {
                 let identity = fact.identity();
-                if fact.recorded(snapshot)? {
+                let Some(translation) =
+                    tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
+                else {
                     return Ok(None);
-                }
+                };
                 let Some(node) = fact.node(snapshot)? else {
                     return Ok(None);
                 };
@@ -2964,7 +3008,7 @@ impl Controller {
                     Evidence::PushByOther { .. } => core::EvidenceKind::PushByOther,
                     _ => core::EvidenceKind::Other,
                 };
-                let kernel = match core::dispatch(route, kind) {
+                let kernel = match core::dispatch(translation, route, kind) {
                     Decision::Record => {
                         commit.rows.push(put("queue_facts", identity, value));
                         return Ok(None);
@@ -3096,9 +3140,11 @@ impl Controller {
                 issue,
                 comment,
             } => {
-                if comment.user.id == self.bootstrap.rob
-                    && self.bootstrap.repos.contains(&repository)
-                {
+                let author_matches = comment.user.id == self.bootstrap.rob;
+                if tl3_controller_core::translate_misc::admit_comment(
+                    author_matches,
+                    author_matches && self.bootstrap.repos.contains(&repository),
+                ) {
                     let id = format!(
                         "{}/{}/{}/{}",
                         repository.owner.to_ascii_lowercase(),
@@ -3106,12 +3152,15 @@ impl Controller {
                         repository.installation,
                         comment.id
                     );
-                    if !self.store.comment_retired(&id)?
-                        && !snapshot
-                            .rows
-                            .iter()
-                            .any(|row| row.table == "github_comments" && row.id == id)
-                    {
+                    let retired = self.store.comment_retired(&id)?;
+                    if tl3_controller_core::translate_misc::record_comment(
+                        retired,
+                        !retired
+                            && snapshot
+                                .rows
+                                .iter()
+                                .any(|row| row.table == "github_comments" && row.id == id),
+                    ) {
                         let value =
                             json!({"repository": repository, "issue": issue, "comment": comment});
                         commit
@@ -3141,7 +3190,12 @@ impl Controller {
                 let Some(n) = world.nodes.get(node.0 as usize) else {
                     return Ok(None);
                 };
-                if !n.adopted || commit_sha(snapshot, n.head) != Some(sha.as_str()) {
+                use tl3_controller_core::translate_checks::{Preparation, preparation};
+                if preparation(
+                    n.adopted,
+                    n.adopted && commit_sha(snapshot, n.head) == Some(sha.as_str()),
+                ) == Preparation::Ignore
+                {
                     return Ok(None);
                 }
                 let id = node.0.to_string();
@@ -3182,13 +3236,20 @@ impl Controller {
                     && let Some(mut fixes) = self
                         .store
                         .worker_document(&node.0.to_string(), "review_fixes")?
-                    && fixes["head_sha"].as_str() == commit_sha(snapshot, n.head)
+                    && let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
+                        set_reviewed,
+                        replace_tests,
+                    } = tl3_controller_core::translate_checks::plan_update(
+                        fixes["head_sha"].as_str() == commit_sha(snapshot, n.head),
+                        run.reviewed_sha.is_some(),
+                        run.reproducing_unavailable.is_some(),
+                    )
                 {
                     fixes["head_sha"] = json!(sha);
-                    if let Some(reviewed) = &run.reviewed_sha {
+                    if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
                         fixes["reviewed_sha"] = json!(reviewed);
                     }
-                    if let Some(reason) = &run.reproducing_unavailable {
+                    if replace_tests && let Some(reason) = &run.reproducing_unavailable {
                         for finding in fixes["findings"].as_array_mut().unwrap() {
                             if finding.get("tests").is_some() {
                                 finding.as_object_mut().unwrap().remove("tests");
@@ -3227,7 +3288,14 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
-                if n.job == Some(generation) && n.generation == generation && exact_head {
+                let decision = tl3_controller_core::translate_checks::checks_reply(
+                    n.job,
+                    n.generation,
+                    generation,
+                    exact_head,
+                    pass,
+                );
+                if decision.record {
                     let prefix = format!("{}:", node.0);
                     let earlier: Vec<_> = snapshot
                         .rows
@@ -3288,7 +3356,7 @@ impl Controller {
                     generation,
                     reply: Reply::ChecksDone {
                         report,
-                        pass: pass && exact_head,
+                        pass: decision.pass,
                         in_footprint,
                     },
                 }
@@ -3765,7 +3833,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
@@ -3789,7 +3865,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
