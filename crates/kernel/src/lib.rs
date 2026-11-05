@@ -120,6 +120,9 @@ mod proofs;
 #[path = "../verus/progress_phase.rs"]
 mod progress_phase;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase_late_witness.rs"]
+mod progress_phase_late_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_phase_measure.rs"]
 mod progress_phase_measure;
 #[cfg(verus_keep_ghost)]

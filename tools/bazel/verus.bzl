@@ -172,6 +172,8 @@ def verus_proofs():
             "progress_phase_measure": ("kernel::progress_phase_measure", 1),
             "progress_phase": ("kernel::progress_phase", 5),
             "progress_phase_witness": ("kernel::progress_phase_witness", 2),
+            "progress_phase_late_world": ("kernel::progress_phase_late_witness#world", 1),
+            "progress_phase_late_cover": ("kernel::progress_phase_late_witness#cover", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
