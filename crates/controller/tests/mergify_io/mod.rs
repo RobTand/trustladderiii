@@ -1740,3 +1740,82 @@ mod required_payload_c1 {
         );
     }
 }
+
+// ctrl-core A2: independent source inclusions for configurable shell witnesses.
+#[derive(Clone, Copy, Default)]
+struct A2Config {
+    epoch: i64,
+    no_policy: bool,
+    no_branches: bool,
+    foreign: bool,
+    empty_reruns: bool,
+    inactive: bool,
+}
+macro_rules! a2_entry {
+    ($waiting:expr) => {
+        pub(super) fn a2_run(entry: io::Entry, d: &Delivery, config: A2Config, heal: bool) -> Value {
+            let mut a = Adapter::new();
+            a.epoch = config.epoch;
+            if config.no_policy { a.policies.clear(); }
+            if config.no_branches { a.branches = None; }
+            if config.empty_reruns { a.policies[0].1.reruns.clear(); }
+            if heal {
+                let mut pull = io::c1_pull();
+                if config.foreign { pull.head.branch = "foreign".into(); }
+                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false };
+                match a.heal_body(d, &pull, Some(&snapshot)) {
+                    Ok(edited) => json!({"edited":edited}),
+                    Err(error) => json!({"error":error.to_string()}),
+                }
+            } else {
+                run_entry!(a, entry, d, $waiting)
+            }
+        }
+    }
+}
+#[allow(clippy::needless_question_mark)]
+mod a2_reference {
+    adapter!();
+    include!("reference.rs");
+    mod ci_evidence {
+        use crate::mergify_io::io::mock_std as std;
+        include!("reference-ci.rs");
+    }
+    mod waiting {
+        include!("reference-waiting.rs");
+    }
+    mod head_checks {
+        include!("reference-head.rs");
+    }
+    a2_entry!(false);
+}
+#[allow(clippy::needless_question_mark)]
+mod a2_current {
+    adapter!();
+    include!("current.rs");
+    mod ci_evidence {
+        use crate::mergify_io::io::mock_std as std;
+        include!("current-ci.rs");
+    }
+    mod waiting {
+        include!("current-waiting.rs");
+    }
+    mod head_checks {
+        include!("current-head.rs");
+    }
+    a2_entry!(None);
+}
+#[test]
+fn a2_boundary_helpers_are_production_source() {
+    fn free<'a>(source: &'a str, name: &str) -> &'a str {
+        let a = source.find(&format!("fn {name}(")).unwrap();
+        let b = a + source[a..].find("\n}\n").unwrap() + 3;
+        &source[a..b]
+    }
+    for name in ["execution_receipt", "heal_record"] {
+        assert_eq!(
+            free(include_str!("../../src/adapters/mergify.rs"), name),
+            free(include_str!("current.rs"), name)
+        );
+    }
+}

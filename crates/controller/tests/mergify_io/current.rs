@@ -1,3 +1,4 @@
+use tl3_mergify::decide::{heal as heal_core, plan as execute_core};
 use super::*;
 use crate::mergify_io::io::mock_std as std;
 use lifecycle::Requeue;
@@ -100,22 +101,23 @@ impl Adapter {
         pull: &tl3_github::PullRequest,
         snapshot: Option<&Snapshot>,
     ) -> Result<bool> {
-        let Some((_, policy)) = self
+        let matches: Vec<_> = self
             .policies
             .iter()
-            .find(|(repo, _)| *repo == delivery.repository)
-        else {
+            .map(|(repo, _)| *repo == delivery.repository)
+            .collect();
+        let Some(policy) = heal_core::policy(&matches).map(|index| &self.policies[index].1) else {
             return Ok(false);
         };
         let rules = &policy.rules;
-        if pull.state != "open" || pull.merged_at.is_some() {
+        if !heal_core::available(pull.state == "open", pull.merged_at.is_some()) {
             return Ok(false);
         }
         let ours = match &self.branches {
-            Some(branches) => branches.matches(delivery, &pull.head.branch)?,
-            None => false,
+            Some(branches) => Some(branches.matches(delivery, &pull.head.branch)?),
+            None => None,
         };
-        if !ours {
+        if !heal_core::owned(ours) {
             return Ok(false);
         }
         let github = &self.clients[&delivery.repository.installation];
@@ -134,25 +136,21 @@ impl Adapter {
         };
         let body = pull.body.as_deref().unwrap_or_default();
         let gaps = crate::pr_body::gaps(body, rules);
-        let pending = heal
-            .as_ref()
-            .is_some_and(|heal| heal.head == *head && !heal.reran);
+        let pending = heal_core::pending(heal.as_ref().map(|saved| heal_record(saved, head)));
         // Read the world only when there is something to do.
-        if (gaps.is_empty() && !pending) || !heal_phase(Self::phase(delivery, snapshot)?) {
+        if !heal_core::needs_phase(gaps.is_empty(), pending)
+            || !heal_phase(Self::phase(delivery, snapshot)?)
+        {
             return Ok(false);
         }
         let mut edited = false;
-        let request = if gaps.is_empty() {
-            None
-        } else {
-            // The issue's own instruction names the value; read it only to heal.
-            match &delivery.request_text {
-                Some(text) => Some(text.clone()),
-                None => {
-                    self.runtime
-                        .block_on(github.issue(&repo, delivery.issue))?
-                        .body
-                }
+        let request = match heal_core::request(gaps.is_empty(), delivery.request_text.is_some()) {
+            heal_core::Request::None => None,
+            heal_core::Request::Saved => delivery.request_text.clone(),
+            heal_core::Request::Issue => {
+                self.runtime
+                    .block_on(github.issue(&repo, delivery.issue))?
+                    .body
             }
         };
         if let Some(healed) =
@@ -176,10 +174,11 @@ impl Adapter {
         // The edit's completion triggers the reruns, once per head. Closing and
         // reopening the PR would also rerun them, but TL3 would read it as a
         // person closing its PR.
-        let Some(heal) = heal.filter(|heal| heal.head == *head && !heal.reran) else {
+        let Some(heal) = heal.filter(|saved| heal_core::pending(Some(heal_record(saved, head))))
+        else {
             return Ok(edited);
         };
-        let runs = if policy.reruns.is_empty() {
+        let runs = if !heal_core::read_runs(policy.reruns.is_empty()) {
             Vec::new()
         } else {
             self.runtime
@@ -187,7 +186,9 @@ impl Adapter {
                 .map_err(Error::from)?
         };
         for run in body_edit_reruns(&runs, head, &policy.reruns) {
-            if let Err(error) = self.runtime.block_on(github.rerun_failed_jobs(&repo, run)) {
+            if let heal_core::Rerun::KeepPending(error) =
+                heal_core::rerun_result(self.runtime.block_on(github.rerun_failed_jobs(&repo, run)))
+            {
                 // The next read of this PR retries; the heal stays pending.
                 eprintln!("PR-body policy: rerun of {repo} run {run} failed: {error}");
                 return Ok(edited);
@@ -444,149 +445,32 @@ impl Adapter {
         }
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
-        self.fence(delivery)?;
-        match self.read_enqueue(delivery)? {
-            Reconciliation::Found(completion) => {
-                if completion.ack == Ack::Confirmed
-                    && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
-                {
-                    self.records
-                        .deliver(delivery, Completion::confirmed(vec![]))?;
-                }
-                return Ok(*completion);
-            }
-            Reconciliation::Pending => {
-                return Err(Error::Invalid("Mergify acceptance is still unknown"));
-            }
-            Reconciliation::Absent => {}
+        let node = delivery.node();
+        if delivery.pull_request.is_none() {
+            return Err(crate::Error::Invalid("enqueue needs a PR number"));
         }
-        let snapshot = self.snapshot()?;
-        let (state, _) = self.read(delivery, snapshot.as_ref())?;
-        let (number, head) = enqueue(delivery)?;
-        let github = self.clients[&delivery.repository.installation].clone();
-        let repo = full_name(&delivery.repository);
-        let issue = self.runtime.block_on(github.issue(&repo, number))?;
-        let pending = self.dequeue_pending(delivery, &state, &issue)?;
-        let (_, gate) = lifecycle::decide(
-            lifecycle::EnqueueState::default(),
-            lifecycle::QueueEvent::ExecuteGate {
-                dequeue_pending: pending,
-                checks_ready: None,
-            },
-        );
-        for effect in gate {
-            match effect {
-                lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
-                lifecycle::Effect::Read(lifecycle::Need::HeadChecks) => {
-                    self.rerun_head_checks(delivery, &state)?;
-                    let ready = self
-                        .runtime
-                        .block_on(head_checks::read(&github, &repo, &state.pull_request))?
-                        .ready;
-                    let (_, gate) = lifecycle::decide(
-                        lifecycle::EnqueueState::default(),
-                        lifecycle::QueueEvent::ExecuteGate {
-                            dequeue_pending: false,
-                            checks_ready: Some(ready),
-                        },
-                    );
-                    for effect in gate {
-                        if let lifecycle::Effect::Error(failure) = effect {
-                            return Err(lifecycle_error(failure));
-                        }
-                    }
-                }
-                _ => return Err(Error::Invalid("unexpected enqueue execution gate")),
-            }
-        }
-        let attempt = match self.baseline(delivery)? {
-            Some(attempt) => attempt,
-            None => Attempt {
-                before: state.check.clone(),
-                last_event: self
-                    .runtime
-                    .block_on(github.issue_events(&repo, number))?
-                    .iter()
-                    .map(|event| event.id)
-                    .max()
-                    .unwrap_or(0),
-                requeue: issue
-                    .labels
-                    .iter()
-                    .any(|label| label.name == QUEUE_LABEL)
-                    .then_some(Requeue::Ready),
-            },
+        let observations = match delivery.output {
+            Out::Effect {
+                kind: EffectKind::Enqueue,
+                ..
+            } => vec![Observation::Merged {
+                node,
+                sha: delivery
+                    .head_sha
+                    .clone()
+                    .ok_or(crate::Error::Invalid("queue needs a head"))?,
+                checks_passed: true,
+            }],
+            _ => return Err(crate::Error::Invalid("unsupported Mergify effect")),
         };
-        let (prepared, effects) = lifecycle::decide(
-            lifecycle::EnqueueState {
-                intent: Some(lifecycle::Intent {
-                    requeue: attempt.requeue,
-                }),
-                ..Default::default()
-            },
-            lifecycle::QueueEvent::Prepare {
-                dequeue_pending: false,
-                checks_ready: true,
-                queue_label: issue.labels.iter().any(|label| label.name == QUEUE_LABEL),
-            },
-        );
-        let mut effects = std::collections::VecDeque::from(effects);
-        while let Some(effect) = effects.pop_front() {
-            match effect {
-                lifecycle::Effect::SaveIntent => {
-                    self.records.write(
-                        &self.records.path(&delivery.key).with_extension("intent"),
-                        &serde_json::to_vec(&attempt)?,
-                    )?;
-                    self.fence(delivery)?;
-                }
-                lifecycle::Effect::Read(lifecycle::Need::Command) => {
-                    if let Reconciliation::Found(completion) = self.queue_command(delivery, None)? {
-                        return Ok(*completion);
-                    }
-                }
-                lifecycle::Effect::Read(lifecycle::Need::LabelPull) => {
-                    let pull = self.runtime.block_on(github.pull_request(&repo, number))?;
-                    let (_, next) = lifecycle::decide(
-                        prepared,
-                        lifecycle::QueueEvent::LabelRead {
-                            head: lifecycle_head(pull.head.sha == head),
-                            open: pull.state == "open",
-                            merged: pull.merged_at.is_some(),
-                        },
-                    );
-                    effects.extend(next);
-                }
-                lifecycle::Effect::Write(lifecycle::Write::Label) => {
-                    self.runtime
-                        .block_on(github.add_label(&repo, number, QUEUE_LABEL))?;
-                }
-                lifecycle::Effect::Complete(lifecycle::Complete::Retryable) => {
-                    return match self.completion(delivery, self.snapshot()?.as_ref())? {
-                        Reconciliation::Found(completion) => Ok(*completion),
-                        _ => Err(Error::Invalid("PR changed during enqueue")),
-                    };
-                }
-                lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
-                _ => return Err(Error::Invalid("unexpected enqueue execution effect")),
-            }
-        }
-        self.records.write(
-            &self.records.path(&delivery.key).with_extension("applied"),
-            b"true",
-        )?;
-        match self.read_enqueue(delivery)? {
-            Reconciliation::Found(completion) => {
-                if completion.ack == Ack::Confirmed {
-                    self.records
-                        .deliver(delivery, Completion::confirmed(vec![]))?;
-                }
-                Ok(*completion)
-            }
-            _ => Err(Error::Invalid(
-                "enqueue request sent; Mergify acceptance is still unknown",
-            )),
-        }
+        self.records.deliver(
+            delivery,
+            Completion::confirmed(if self.hold_merges {
+                vec![]
+            } else {
+                observations
+            }),
+        )
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         match self.read_enqueue(delivery) {
@@ -697,7 +581,7 @@ impl Adapter {
             .transpose()?)
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
-        if delivery.epoch < self.epoch {
+        if execute_core::fenced(delivery.epoch, self.epoch) {
             return Err(Error::Invalid("Mergify effect epoch is fenced"));
         }
         self.records.fence(delivery.epoch)?;
@@ -957,37 +841,38 @@ pub(crate) fn body_edit_reruns(
     head: &str,
     workflows: &[String],
 ) -> Vec<u64> {
-    let listed = |path: &str| {
-        let file = path.rsplit('/').next().unwrap_or(path);
-        workflows.iter().any(|listed| listed == file)
-    };
-    let mut latest: BTreeMap<&str, &tl3_github::WorkflowRun> = BTreeMap::new();
-    for run in runs
-        .iter()
-        .filter(|run| run.head_sha == head && run.event == "pull_request" && listed(&run.path))
-    {
-        let entry = latest.entry(run.path.as_str()).or_insert(run);
-        if run.id > entry.id {
-            *entry = run;
-        }
+    // Exact paths are grouped at the upstream boundary. BTreeMap retains the
+    // original path order, and each group retains input order for equal ids.
+    let mut groups: BTreeMap<&str, Vec<heal_core::Run>> = BTreeMap::new();
+    for run in runs {
+        let file = run.path.rsplit('/').next().unwrap_or(&run.path);
+        groups.entry(&run.path).or_default().push(heal_core::Run {
+            id: run.id,
+            current_head: run.head_sha == head,
+            pull_request: run.event == "pull_request",
+            listed: workflows.iter().any(|listed| listed == file),
+            completed: run.status == "completed",
+            failed: matches!(
+                run.conclusion.as_deref(),
+                Some("failure" | "cancelled" | "timed_out" | "startup_failure")
+            ),
+        });
     }
-    latest
+    groups
         .into_values()
-        .filter(|run| {
-            run.status == "completed"
-                && matches!(
-                    run.conclusion.as_deref(),
-                    Some("failure" | "cancelled" | "timed_out" | "startup_failure")
-                )
+        .filter_map(|runs| {
+            heal_core::newest(&runs)
+                .filter(|&index| heal_core::failed(&runs[index]))
+                .map(|index| runs[index].id)
         })
-        .map(|run| run.id)
         .collect()
 }
 pub(crate) fn heal_phase(phase: Option<tl3_kernel::Phase>) -> bool {
-    matches!(
-        phase,
-        Some(tl3_kernel::Phase::Publishing | tl3_kernel::Phase::Queued)
-    )
+    heal_core::phase(match phase {
+        Some(tl3_kernel::Phase::Publishing) => heal_core::Phase::Publishing,
+        Some(tl3_kernel::Phase::Queued) => heal_core::Phase::Queued,
+        _ => heal_core::Phase::Other,
+    })
 }
 fn suite_statuses(suites: &[tl3_github::CheckSuite]) -> Vec<tl3_mergify::decide::Status> {
     suites
@@ -1266,5 +1151,27 @@ mod a1_hold_projection {
         }
         assert_eq!(body(include_str!("../../src/adapters/mergify.rs"), "unresolved_hold"), body(include_str!("current.rs"), "unresolved_hold"));
         assert_eq!(body(include_str!("base-adapter.rs.txt"), "unresolved_hold"), body(include_str!("current.rs"), "legacy").replace("fn legacy(", "fn unresolved_hold("));
+    }
+}
+
+fn execution_receipt(receipt: Reconciliation) -> execute_core::Receipt<Box<Completion>> {
+    match receipt {
+        Reconciliation::Found(value) => {
+            let ack = if value.ack == Ack::Confirmed {
+                execute_core::Ack::Confirmed
+            } else {
+                execute_core::Ack::Other
+            };
+            execute_core::Receipt::Found { value, ack }
+        }
+        Reconciliation::Pending => execute_core::Receipt::Pending,
+        Reconciliation::Absent => execute_core::Receipt::Absent,
+    }
+}
+
+fn heal_record(saved: &BodyHeal, head: &str) -> heal_core::Record {
+    heal_core::Record {
+        same_head: saved.head == head,
+        reran: saved.reran,
     }
 }
