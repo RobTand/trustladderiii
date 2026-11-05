@@ -108,7 +108,7 @@ def verus_proofs():
         for name, module, count in [
             ("observe", "observe", 11),
             ("check", "check", 12),
-            ("check_facts", "facts", 14),
+            ("check_facts", "facts", 26),
             ("observe_witness", "observe_witness", 8),
             ("observe_properties", "observe_properties", 2),
         ]:

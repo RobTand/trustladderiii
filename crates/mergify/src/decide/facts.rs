@@ -256,7 +256,15 @@ pub fn queue_outcome<C: Copy>(
             check,
             infra: match head_infra {
                 Some(infra) => infra,
-                None => ci_infra(check),
+                None => {
+                    let infra = ci_infra(check);
+                    decide_proof! {
+                        assert(ci_infra.ensures((check,), infra));
+                        assert(exists|r: bool| ci_infra.ensures((check,), r)
+                            && Some(Outcome::CiFailed { check, infra }) == outcome_result(state, Some(check), head_infra, r));
+                    }
+                    infra
+                }
             },
         }),
         // Mergify dequeued it with no reason TL3 knows: treat the CI as broken.
@@ -353,12 +361,15 @@ pub fn person_fact(event: IssueEvent) -> Option<PersonFact> {
         } else { person_sequence(events@, 0) },
 ))]
 pub fn person_facts(events: &[IssueEvent], merged: bool) -> PersonFacts<'_> {
+    decide_proof! { reveal(PersonFacts::valid); reveal(PersonFacts::remaining); }
     let mut merge_seen = merged;
     if !merged {
         let mut i = 0;
         decide_while! { (i < events.len()) [
-            invariant i <= events@.len(), !merge_seen,
+            invariant i <= events@.len(),
+            invariant_except_break !merge_seen,
                 forall|j: int| 0 <= j < i ==> events@[j].kind != EventKind::Merged,
+            ensures merge_seen == (exists|j: int| 0 <= j < events@.len() && events@[j].kind == EventKind::Merged),
             decreases events@.len() - i,
         ] {
             if events[i].kind == EventKind::Merged {
@@ -394,6 +405,7 @@ impl PersonFacts<'_> {
             },
     ))]
     pub fn next_fact(&mut self) -> Option<PersonFact> {
+        decide_proof! { reveal(PersonFacts::valid); reveal(PersonFacts::remaining); }
         if self.suppressed {
             self.position = self.events.len();
             return None;

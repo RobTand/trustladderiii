@@ -86,12 +86,14 @@ proof fn person_bound(events: Seq<IssueEvent>, start: int)
 /// #743/K-person-facts: constructor and cursor represent every output, including merge suppression.
 fn person_total(events: &[IssueEvent], merged: bool) {
     let iter = person_facts(events, merged);
-    proof { person_bound(events@, 0); }
-    assert(iter.remaining().len() <= events@.len());
-    if merged || exists|i: int| 0 <= i < events@.len() && events@[i].kind == EventKind::Merged {
-        assert(iter.remaining() == Seq::<PersonFact>::empty());
-    } else {
-        assert(iter.remaining() == person_sequence(events@, 0));
+    proof {
+        person_bound(events@, 0);
+        assert(iter.remaining().len() <= events@.len());
+        if merged || exists|i: int| 0 <= i < events@.len() && events@[i].kind == EventKind::Merged {
+            assert(iter.remaining() == Seq::<PersonFact>::empty());
+        } else {
+            assert(iter.remaining() == person_sequence(events@, 0));
+        }
     }
 }
 /// #743/K-facts-outcome: all entry and merge-plan assertions hold over the full typed domain.
