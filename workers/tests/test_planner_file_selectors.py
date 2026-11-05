@@ -159,3 +159,42 @@ def test_nonexact_selectors_use_planner_chosen_base_nodes(planner_request, file_
     assert len(model.calls) == 2
     assert events[-1]['reply']['violations'] == []
     assert events[-1]['reply']['checks'] == fixed['checks']
+
+
+@pytest.mark.parametrize('at_base', [True, False], ids=['missing-from-worktree', 'only-in-worktree'])
+def test_selector_correction_uses_original_base(planner_request, file_plan, monkeypatch, at_base, request):
+    import checker_stub
+    from worker_process import git
+    from tl3_workers import runtime
+
+    # Reuse real Rust budget responses for the same three-check correction.
+    budget_case = ('tests/test_planner_file_selectors.py::'
+                   'test_nonexact_selectors_use_planner_chosen_base_nodes[' + FILE + ']')
+    monkeypatch.setitem(checker_stub.cases(), request.node.nodeid,
+                        copy.deepcopy(checker_stub.cases()[budget_case]))
+    root = Path(planner_request['worktree'])
+    if not at_base:
+        (root / FILE).unlink()
+    git(root, 'init', '-q')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'original planner base')
+    planner_request['inputs']['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    if at_base:
+        (root / FILE).unlink()
+    else:
+        (root / FILE).write_text(SOURCE)
+    # A demonstrating observer is allowed to be new. Only selector correction
+    # requires its replacement to be an exact definition from the original base.
+    file_plan['checks'][2].update(kind='demonstrating', proof={
+        'subjects': [], 'observer_support': [], 'red_message': 'expected regression'})
+    fixed = corrected(file_plan)
+    fixed['checks'][2]['node_ids'] = [NODES[0]]
+    model = model_for(monkeypatch, file_plan, fixed)
+    events = []
+    runtime.run(planner_request, events.append)
+
+    assert len(model.calls) == 2
+    expected = [] if at_base else [
+        f'Corrected check must name a test defined at the base: {NODES[0]}']
+    assert events[-1]['reply']['violations'] == expected
+    assert events[-1]['reply']['checks'] == fixed['checks']
