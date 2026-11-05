@@ -12,6 +12,7 @@ tl3_crate(
         "//crates/contracts:tl3_contracts",
         "//crates/controller-core:tl3_controller_core",
         "//crates/github:tl3_github",
+        "//crates/harness-core:tl3_harness_core",
         "//crates/kernel:tl3_kernel",
         "//crates/mergify:tl3_mergify",
         "//crates/pb-evidence:tl3_pb_evidence",

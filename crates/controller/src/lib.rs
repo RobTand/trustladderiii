@@ -47,6 +47,7 @@ pub use postmortems::PostmortemPace;
 pub mod pr_body;
 pub mod priority;
 pub mod production;
+pub mod prompt_render;
 pub mod prompts;
 mod protected_requests;
 pub mod publication_failure;
@@ -2655,8 +2656,19 @@ impl Controller {
                 && o.installation_id == repository.installation
                 && o.number == issue
         });
-        let request_incident = if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
-        {
+        enum OperationsCommand<'a> {
+            ClearIncident(&'a str),
+            ClearQuota(&'a str),
+        }
+        let body = comment.body.trim();
+        let command = body
+            .strip_prefix("clear incident ")
+            .map(OperationsCommand::ClearIncident)
+            .or_else(|| {
+                body.strip_prefix("clear quota ")
+                    .map(OperationsCommand::ClearQuota)
+            });
+        let request_incident = if let Some(OperationsCommand::ClearIncident(id)) = command {
             snapshot
                 .rows
                 .iter()
@@ -2703,7 +2715,7 @@ impl Controller {
         {
             return Ok(true);
         }
-        if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+        if let Some(OperationsCommand::ClearIncident(id)) = command
             && let Some(row) = snapshot
                 .rows
                 .iter()
@@ -2715,6 +2727,37 @@ impl Controller {
                 format!("incident-clear:{}:{id}", comment.id),
                 commit,
             )?;
+        }
+        if operations && let Some(OperationsCommand::ClearQuota(model)) = command {
+            commit.event_key = format!("model-quota-clear:{model}:{}", comment.id);
+            let configured = self
+                .adapters
+                .get(executor::Upstream::Workers)?
+                .configured_model(model);
+            let line = if !configured {
+                format!("{model} is not a configured model; no quota hold changed.")
+            } else if !snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "model_quotas" && row.id == model)
+            {
+                format!("no quota hold recorded for {model}")
+            } else {
+                let now = self.now_ms();
+                self.operator_clear_quota(snapshot, model, now, commit)?;
+                commit.rows.push(put(
+                    "model_quota_clears",
+                    model.into(),
+                    json!({
+                        "cleared_ms": now, "comment_id": comment.id, "operator": comment.user.id
+                    }),
+                ));
+                let at = chrono::DateTime::from_timestamp_millis(now as i64)
+                    .map(|at| at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| now.to_string());
+                format!("quota for {model} cleared by operator at {at}")
+            };
+            self.quota_clear_reply(snapshot, repository, issue, comment.id, line, commit);
         }
         commit.rows.push(put(
             "operations_comments",
@@ -2845,9 +2888,11 @@ impl Controller {
             }
             Observation::Queue(mut fact) => {
                 let identity = fact.identity();
-                if fact.recorded(snapshot)? {
+                let Some(translation) =
+                    tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
+                else {
                     return Ok(None);
-                }
+                };
                 let Some(node) = fact.node(snapshot)? else {
                     return Ok(None);
                 };
@@ -2963,7 +3008,7 @@ impl Controller {
                     Evidence::PushByOther { .. } => core::EvidenceKind::PushByOther,
                     _ => core::EvidenceKind::Other,
                 };
-                let kernel = match core::dispatch(route, kind) {
+                let kernel = match core::dispatch(translation, route, kind) {
                     Decision::Record => {
                         commit.rows.push(put("queue_facts", identity, value));
                         return Ok(None);
@@ -3095,9 +3140,11 @@ impl Controller {
                 issue,
                 comment,
             } => {
-                if comment.user.id == self.bootstrap.rob
-                    && self.bootstrap.repos.contains(&repository)
-                {
+                let author_matches = comment.user.id == self.bootstrap.rob;
+                if tl3_controller_core::translate_misc::admit_comment(
+                    author_matches,
+                    author_matches && self.bootstrap.repos.contains(&repository),
+                ) {
                     let id = format!(
                         "{}/{}/{}/{}",
                         repository.owner.to_ascii_lowercase(),
@@ -3105,12 +3152,15 @@ impl Controller {
                         repository.installation,
                         comment.id
                     );
-                    if !self.store.comment_retired(&id)?
-                        && !snapshot
-                            .rows
-                            .iter()
-                            .any(|row| row.table == "github_comments" && row.id == id)
-                    {
+                    let retired = self.store.comment_retired(&id)?;
+                    if tl3_controller_core::translate_misc::record_comment(
+                        retired,
+                        !retired
+                            && snapshot
+                                .rows
+                                .iter()
+                                .any(|row| row.table == "github_comments" && row.id == id),
+                    ) {
                         let value =
                             json!({"repository": repository, "issue": issue, "comment": comment});
                         commit
@@ -3140,7 +3190,12 @@ impl Controller {
                 let Some(n) = world.nodes.get(node.0 as usize) else {
                     return Ok(None);
                 };
-                if !n.adopted || commit_sha(snapshot, n.head) != Some(sha.as_str()) {
+                use tl3_controller_core::translate_checks::{Preparation, preparation};
+                if preparation(
+                    n.adopted,
+                    n.adopted && commit_sha(snapshot, n.head) == Some(sha.as_str()),
+                ) == Preparation::Ignore
+                {
                     return Ok(None);
                 }
                 let id = node.0.to_string();
@@ -3181,13 +3236,20 @@ impl Controller {
                     && let Some(mut fixes) = self
                         .store
                         .worker_document(&node.0.to_string(), "review_fixes")?
-                    && fixes["head_sha"].as_str() == commit_sha(snapshot, n.head)
+                    && let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
+                        set_reviewed,
+                        replace_tests,
+                    } = tl3_controller_core::translate_checks::plan_update(
+                        fixes["head_sha"].as_str() == commit_sha(snapshot, n.head),
+                        run.reviewed_sha.is_some(),
+                        run.reproducing_unavailable.is_some(),
+                    )
                 {
                     fixes["head_sha"] = json!(sha);
-                    if let Some(reviewed) = &run.reviewed_sha {
+                    if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
                         fixes["reviewed_sha"] = json!(reviewed);
                     }
-                    if let Some(reason) = &run.reproducing_unavailable {
+                    if replace_tests && let Some(reason) = &run.reproducing_unavailable {
                         for finding in fixes["findings"].as_array_mut().unwrap() {
                             if finding.get("tests").is_some() {
                                 finding.as_object_mut().unwrap().remove("tests");
@@ -3226,7 +3288,14 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
-                if n.job == Some(generation) && n.generation == generation && exact_head {
+                let decision = tl3_controller_core::translate_checks::checks_reply(
+                    n.job,
+                    n.generation,
+                    generation,
+                    exact_head,
+                    pass,
+                );
+                if decision.record {
                     let prefix = format!("{}:", node.0);
                     let earlier: Vec<_> = snapshot
                         .rows
@@ -3287,7 +3356,7 @@ impl Controller {
                     generation,
                     reply: Reply::ChecksDone {
                         report,
-                        pass: pass && exact_head,
+                        pass: decision.pass,
                         in_footprint,
                     },
                 }
@@ -3298,11 +3367,13 @@ impl Controller {
                 failure_class,
                 failure_message,
             } => {
+                use tl3_controller_core::translate_worker as worker;
                 let n = world
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if n.run != Some(generation) || n.generation != generation {
+                if worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                {
                     return Ok(None);
                 }
                 commit.rows.push(put(
@@ -3326,22 +3397,36 @@ impl Controller {
                 mut reply,
                 model,
             } => {
+                use tl3_controller_core::translate_worker as worker;
                 let n = world
                     .nodes
                     .get(node.0 as usize)
                     .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if n.run != Some(generation) || n.generation != generation {
+                if worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                {
                     return Ok(None);
                 }
-                let valid_role = matches!(
-                    (n.phase, role.as_str()),
-                    (tl3_kernel::Phase::Ingesting, "ingest")
-                        | (tl3_kernel::Phase::Auditing, "audit")
-                        | (tl3_kernel::Phase::Making, "maker")
-                        | (tl3_kernel::Phase::Planning { .. }, "planner")
-                        | (tl3_kernel::Phase::Reviewing, "reviewer")
-                );
+                let phase = match n.phase {
+                    tl3_kernel::Phase::Ingesting => worker::Phase::Ingesting,
+                    tl3_kernel::Phase::Auditing => worker::Phase::Auditing,
+                    tl3_kernel::Phase::Planning { .. } => worker::Phase::Planning,
+                    tl3_kernel::Phase::Making => worker::Phase::Making,
+                    tl3_kernel::Phase::Reviewing => worker::Phase::Reviewing,
+                    _ => worker::Phase::Other,
+                };
+                let worker_role = match role.as_str() {
+                    "ingest" => worker::Role::Ingest,
+                    "audit" => worker::Role::Audit,
+                    "planner" => worker::Role::Planner,
+                    "maker" => worker::Role::Maker,
+                    "reviewer" => worker::Role::Reviewer,
+                    "writer" => worker::Role::Writer,
+                    "classifier" => worker::Role::Classifier,
+                    "postmortem" => worker::Role::Postmortem,
+                    _ => worker::Role::Unknown,
+                };
+                let valid_role = worker::valid_role(phase, worker_role);
                 let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
                     Ok(reply) if valid_role => reply,
                     _ => {
@@ -3426,13 +3511,25 @@ impl Controller {
                             "blocking_findings":reply["blocking_findings"]}),
                         ),
                     ));
-                    if reply["verdict"] == "approve" {
-                        mapped =
-                            adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
-                                head: n.head.ok_or(Error::Invalid("review has no head"))?,
-                            });
+                    let verdict = match reply["verdict"].as_str() {
+                        Some("approve") => worker::ReviewVerdict::Approve,
+                        Some("changes") => worker::ReviewVerdict::Changes,
+                        _ => worker::ReviewVerdict::Other,
+                    };
+                    let route = worker::review_route(verdict, n.head.map(|head| head.0));
+                    match route {
+                        worker::ReviewRoute::Approve(head) => {
+                            mapped =
+                                adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
+                                    head: HeadId(head),
+                                });
+                        }
+                        worker::ReviewRoute::MissingHead => {
+                            return Err(Error::Invalid("review has no head"));
+                        }
+                        _ => {}
                     }
-                    if reply["verdict"] == "changes" {
+                    if route == worker::ReviewRoute::Changes {
                         let mut feedback = self
                             .store
                             .worker_document(&node.0.to_string(), "maker_findings")?
@@ -3440,22 +3537,35 @@ impl Controller {
                         let reports = feedback
                             .as_array_mut()
                             .ok_or(Error::Invalid("invalid maker findings"))?;
-                        let mut remaining = findings::MAX_REPORT_CHARS;
-                        for (index, finding) in blockers
+                        let formatted: Vec<_> = blockers
                             .iter()
                             .take(findings::MAX_REVIEW_FINDINGS)
-                            .enumerate()
+                            .map(|finding| {
+                                format!(
+                                    "{}: {}",
+                                    findings::clipped(
+                                        &finding.problem,
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                    findings::clipped(
+                                        &finding.evidence,
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                )
+                            })
+                            .collect();
+                        let lengths: Vec<_> = formatted
+                            .iter()
+                            .map(|report| report.chars().count())
+                            .collect();
+                        let count = worker::findings_prefix(
+                            &lengths,
+                            findings::MAX_REVIEW_FINDINGS,
+                            findings::MAX_REPORT_CHARS,
+                        );
+                        for (index, (finding, report)) in
+                            blockers.iter().zip(formatted).take(count).enumerate()
                         {
-                            let report = format!(
-                                "{}: {}",
-                                findings::clipped(&finding.problem, findings::MAX_MESSAGE_CHARS),
-                                findings::clipped(&finding.evidence, findings::MAX_MESSAGE_CHARS),
-                            );
-                            let length = report.chars().count();
-                            if length > remaining {
-                                break;
-                            }
-                            remaining -= length;
                             let goal_ids = if finding.citation.kind
                                 == adapters::workers::review::CitationKind::Goal
                             {
@@ -3488,13 +3598,12 @@ impl Controller {
                         detailed_review = true;
                     }
                 }
-                let document = match role.as_str() {
-                    "ingest" => Some("briefs"),
-                    "audit" => Some("audits"),
-                    "reviewer" => None,
-                    "maker" => Some("maker_replies"),
-                    _ => Some("plans"),
-                };
+                let document = worker::document(worker_role).map(|document| match document {
+                    worker::Document::Briefs => "briefs",
+                    worker::Document::Audits => "audits",
+                    worker::Document::MakerReplies => "maker_replies",
+                    worker::Document::Plans => "plans",
+                });
                 if role == "planner" {
                     let mut findings = self
                         .store
@@ -3576,10 +3685,12 @@ impl Controller {
                         let current = findings::current_review(&feedback, n.round, previous);
                         let reviewed = current.head;
                         let fixes = adapters::workers::reproducing::check(&reply, current);
-                        if expected != checked
-                            || checks.len() != goals.len()
-                            || crate::goals::handover(goals, &checks).is_err()
-                        {
+                        let same_goals = expected == checked;
+                        let same_count = checks.len() == goals.len();
+                        let handover_valid = same_goals
+                            && same_count
+                            && crate::goals::handover(goals, &checks).is_ok();
+                        if !worker::maker_self_check(same_goals, same_count, handover_valid) {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
                             if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
@@ -3722,7 +3833,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
@@ -3746,7 +3865,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
@@ -3799,51 +3926,69 @@ impl Controller {
                 return Ok(None);
             }
         };
-        let finding = match event {
-            Event::Reply {
-                node,
-                generation,
-                reply,
-            } if world.nodes.get(node.0 as usize).is_some_and(|n| {
-                (n.run == Some(generation) || n.job == Some(generation))
-                    && n.generation == generation
-            }) =>
-            {
-                let n = &world.nodes[node.0 as usize];
-                let report = match (n.phase, reply) {
-                    (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
-                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
-                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
-                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) if !detailed_review => Some((
-                        findings::Kind::ReviewFinding,
-                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
-                    )),
-                    (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
-                        findings::Kind::ReviewFinding,
-                        commit.rows.iter().find_map(|row| match row {
-                            RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
-                            _ => None,
-                        }).unwrap_or_else(|| "The maker could not meet the goals.".into()),
-                    )),
-                    _ => None,
-                };
-                report.map(|(kind, report)| (node, kind, report))
-            }
-            Event::Fact {
-                node,
-                fact: Fact::CiFailed { infra: false },
-            } if world
-                .nodes
-                .get(node.0 as usize)
-                .is_some_and(|n| n.phase == tl3_kernel::Phase::Queued) =>
-            {
-                Some((
+        let finding = {
+            use tl3_controller_core::translate_tail as tail;
+            let (node, input) = match event {
+                Event::Reply {
                     node,
-                    findings::Kind::FailedCheck,
-                    findings::ci_report(&ci_checks, &failed_tests),
-                ))
-            }
-            _ => None,
+                    generation,
+                    reply,
+                } => (
+                    Some(node),
+                    tail::Input::Reply {
+                        generation,
+                        reply: match reply {
+                            Reply::ChecksDone {
+                                report,
+                                pass,
+                                in_footprint,
+                            } => tail::Reply::ChecksDone {
+                                report,
+                                pass,
+                                in_footprint,
+                            },
+                            Reply::ChangesRequested => tail::Reply::ChangesRequested,
+                            Reply::MakerCantMeet => tail::Reply::MakerCantMeet,
+                            _ => tail::Reply::Other,
+                        },
+                    },
+                ),
+                Event::Fact {
+                    node,
+                    fact: Fact::CiFailed { infra },
+                } => (Some(node), tail::Input::CiFailed { infra }),
+                _ => (None, tail::Input::Other),
+            };
+            let current = node
+                .and_then(|node| world.nodes.get(node.0 as usize))
+                .map(|n| tail::Node {
+                    phase: match n.phase {
+                        tl3_kernel::Phase::Checking => tail::Phase::Checking,
+                        tl3_kernel::Phase::Reviewing => tail::Phase::Reviewing,
+                        tl3_kernel::Phase::Making => tail::Phase::Making,
+                        tl3_kernel::Phase::Queued => tail::Phase::Queued,
+                        _ => tail::Phase::Other,
+                    },
+                    generation: n.generation,
+                    run: n.run,
+                    job: n.job,
+                });
+            let report = match tail::finding(current, input, detailed_review) {
+                tail::Finding::Check { pass, in_footprint } => Some((findings::Kind::FailedCheck,
+                    findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
+                tail::Finding::Review => Some((findings::Kind::ReviewFinding,
+                    "The independent reviewer requested changes. No detailed review report was supplied.".into())),
+                tail::Finding::Maker => Some((findings::Kind::ReviewFinding,
+                    commit.rows.iter().find_map(|row| match row {
+                        RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
+                        _ => None,
+                    }).unwrap_or_else(|| "The maker could not meet the goals.".into()))),
+                tail::Finding::Ci => Some((findings::Kind::FailedCheck,
+                    findings::ci_report(&ci_checks, &failed_tests))),
+                tail::Finding::None => None,
+            };
+            node.zip(report)
+                .map(|(node, (kind, report))| (node, kind, report))
         };
         if let Some((node, kind, report)) = finding {
             let materials = self.store.worker_materials(&node.0.to_string())?;

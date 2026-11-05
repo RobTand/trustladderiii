@@ -3047,6 +3047,7 @@ dependencies = [
  "tl3-contracts",
  "tl3-controller-core",
  "tl3-github",
+ "tl3-harness-core",
  "tl3-kernel",
  "tl3-mergify",
  "tl3-pb-evidence",
@@ -3091,6 +3092,7 @@ dependencies = [
 name = "tl3-harness-core"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "serde",
  "serde_json",
 ]
@@ -3131,6 +3133,16 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tl3-contracts",
+]
+
+[[package]]
+name = "tl3-plan-check"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "tl3-contracts",
+ "tl3-harness-core",
 ]
 
 [[package]]

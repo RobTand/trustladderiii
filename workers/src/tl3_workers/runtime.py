@@ -25,14 +25,15 @@ from jsonschema import ValidationError
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
-from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
+from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, coverage_stop, planner_schema_reply
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
 from tl3_workers.exploration import ExplorationMiddleware
-from tl3_workers.turns import TurnControl, repaired
+from tl3_workers.turns import InvalidReply, TurnControl, repaired
 from tl3_workers.session import is_unaccepted_session
+from tl3_workers.prompt_render import render as render_prompt, selection as prompt_renderer
 
 
 BUILTIN_TOOL_DESCRIPTIONS = {
@@ -140,6 +141,9 @@ run_test_cpus = ContextVar("run_test_cpus", default=1)
 
 def role_prompt(role, *, text=None, test_cpus=None):
     supplied = run_prompt.get() if text is None else text
+    if rendered := render_prompt('role', {'role': role.name, 'text': supplied,
+                                        'test_cpus': run_test_cpus.get() if test_cpus is None else test_cpus}):
+        return rendered['text']
     prompt = supplied if supplied is not None else files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     if role.name in {"ingest", "audit", "planner"}:
         prompt += "\n\n" + forcing_guidance(run_test_cpus.get() if test_cpus is None else test_cpus)
@@ -159,6 +163,11 @@ def prompt_cache_identity(request):
     if role.name not in {"ingest", "audit", "planner"}:
         return session_identity(request)
     prompt = request.get("prompt", {})
+    supplied = prompt.get('text')
+    if supplied is None:
+        supplied = run_prompt.get()
+    if rendered := render_prompt('cache', {**request, 'prompt': {**prompt, 'text': supplied}}):
+        return rendered['identity']
     shared = {
         "role": role.name,
         "version": prompt.get("version"),
@@ -174,6 +183,17 @@ def prompt_cache_identity(request):
 
 
 def initial_message(request, inputs):
+    rendered = render_prompt('prefix', {**request, 'inputs': inputs})
+    if rendered is not None:
+        prefix = rendered['prefix']
+        if prefix is None:
+            return HumanMessage(content=json.dumps(inputs, ensure_ascii=False))
+        prefix = {'type': prefix['type'], 'text': prefix['text'],
+                  **{name: value for name, value in prefix.items() if name not in {'type', 'text'}}}
+        specific = {name: value for name, value in inputs.items() if name not in {'repo', 'base_sha'}}
+        return HumanMessage(content=[prefix, {
+            'type': 'text', 'text': json.dumps(specific, ensure_ascii=False)[1:],
+        }])
     shared = shared_inputs(inputs) if request["role"] in {"ingest", "audit", "planner"} else {}
     if not shared:
         return HumanMessage(content=json.dumps(inputs, ensure_ascii=False))
@@ -256,6 +276,7 @@ def run(request, emit: Callable[[dict], None]):
         token = current.set(summary)
         prompt = run_prompt.set(request.get("prompt", {}).get("text"))
         test_cpus = run_test_cpus.set(request.get("test_cpus", 1))
+        renderer = prompt_renderer.set({})
         summary.save()
         reply, error = None, None
         try:
@@ -266,6 +287,7 @@ def run(request, emit: Callable[[dict], None]):
             raise
         finally:
             summary.finish(reply, error)
+            prompt_renderer.reset(renderer)
             run_prompt.reset(prompt)
             run_test_cpus.reset(test_cpus)
             current.reset(token)
@@ -310,9 +332,12 @@ def _run(request, emit):
                     'remaining_candidates': 8 - ledger.attempts}}
             history = [initial_message(request, model_inputs)]
             draft_error = None
+            planner_checks = 0
 
             def checked(text):
-                nonlocal draft_error
+                nonlocal draft_error, planner_checks
+                if role.name == 'planner':
+                    planner_checks += 1
                 if ledger is not None:
                     ledger.raise_infrastructure()
                 if ledger is not None and ledger.failure:
@@ -330,6 +355,11 @@ def _run(request, emit):
                     if ledger is not None and any(item['status'] == 'refused' for item in ledger.candidates):
                         return refused_final()
                     raise
+                if planner_checks > 1:
+                    result['violations'] = [
+                        'Planner coverage correction attempts: 1.'
+                        if item == 'Planner coverage correction attempts: 0.' else item
+                        for item in result['violations']]
                 if draft_error is not None:
                     draft_error.constrain(result)
                 return result
@@ -340,8 +370,13 @@ def _run(request, emit):
                     'kind': 'cant_meet', 'files': [], 'evidence_contract': [],
                     'report': rejected['message']}, worktree=worktree)
 
-            reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
-                             checked)
+            try:
+                reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
+                                 checked)
+            except (PlanConsistencyError, InvalidReply) as error:
+                reply = coverage_stop(error) if role.name == 'planner' else None
+                if reply is None:
+                    raise
         else:
             reply = role.run(model, request, worktree, emit)
             if not role.validates_reply:

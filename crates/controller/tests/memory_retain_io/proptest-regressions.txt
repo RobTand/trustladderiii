@@ -1,0 +1,2 @@
+# Real newly generated failures are saved to writable test outputs.
+cc 0f7604a7e1b46c3f6d3a4767d4756289718b4f090843f5251de17e6222963d33 # shrinks to (1, [], false)

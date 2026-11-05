@@ -71,10 +71,12 @@ pub enum ReplyDecision {
     AfterQuota,
 }
 
-/// State-table cdacce8f docs/state-table.md:277,787,800; Q43/Q53;
-/// #759 and reply-shape incidents #682/#691/#696. Total over every event kind.
-/// The base checks equality with the last line, not its index. Preserve that
-/// distinction for duplicate quota bytes; changing it requires a separate fix.
+/// Q53, docs/state-table.md:277,787 on d8f58cc3 define quota/model handling;
+/// #759 defines the postmortem grade-model charge. Q43 and :800 define progress.
+/// Positional finality enforces source.rs parse_reply's existing terminal-quota
+/// rule: a quota ends at output_end, even if later event bytes are identical.
+/// Other validation precedence is preserved existing behaviour (no rule).
+/// Total for all events and full-width positions, without a stream-length bound.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if reply_seen { ReplyDecision::AfterReply } else { match event {
         WorkerEvent::Progress { .. } => ReplyDecision::Progress,
@@ -83,12 +85,17 @@ pub enum ReplyDecision {
         WorkerEvent::Quota { model, reset_ms } => {
             if model == QuotaModel::Forbidden { ReplyDecision::InvalidQuotaModel }
             else if match reset_ms { Some(n) => n == 0, None => true } { ReplyDecision::InvalidQuotaReset }
-            else if !last_line_equal { ReplyDecision::AfterQuota }
+            else if line_end != output_end { ReplyDecision::AfterQuota }
             else { ReplyDecision::Quota }
         },
     } },
 ))]
-pub fn reply_step(event: WorkerEvent, reply_seen: bool, last_line_equal: bool) -> ReplyDecision {
+pub fn reply_step(
+    event: WorkerEvent,
+    reply_seen: bool,
+    line_end: usize,
+    output_end: usize,
+) -> ReplyDecision {
     if reply_seen {
         return ReplyDecision::AfterReply;
     }
@@ -104,7 +111,7 @@ pub fn reply_step(event: WorkerEvent, reply_seen: bool, last_line_equal: bool) -
                 Some(n) if n > 0 => (),
                 _ => return ReplyDecision::InvalidQuotaReset,
             }
-            if !last_line_equal {
+            if line_end != output_end {
                 return ReplyDecision::AfterQuota;
             }
             ReplyDecision::Quota

@@ -29,10 +29,29 @@ pub struct Generated {
 
 /// Every file this module generates.
 pub fn generated() -> Vec<Generated> {
-    vec![Generated {
-        path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
-        text: render(&check_report_schema()),
-    }]
+    let mut files = vec![
+        Generated {
+            path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
+            text: render(&check_report_schema()),
+        },
+        decision_context::generated().unwrap_or_else(|error| panic!("{error}")),
+        request::generated().unwrap_or_else(|error| panic!("{error}")),
+        roles::postmortem_input::generated().unwrap_or_else(|error| panic!("{error}")),
+    ];
+    files.extend(
+        [
+            ("ingest", roles::ingest_reply::schema_text()),
+            ("classifier", roles::classifier_reply::schema_text()),
+            ("maker", roles::maker_reply::schema_text()),
+            ("writer", roles::writer_reply::schema_text()),
+        ]
+        .into_iter()
+        .map(|(role, text)| Generated {
+            path: format!("{SCHEMA_DIRECTORY}/{role}-reply.json"),
+            text,
+        }),
+    );
+    files
 }
 
 /// The harness check report's schema: self-contained, with every definition in `$defs`.
@@ -78,3 +97,10 @@ fn render(schema: &Value) -> String {
     text.push('\n');
     text
 }
+
+pub mod render;
+
+pub mod decision_context;
+
+pub mod request;
+pub mod roles;

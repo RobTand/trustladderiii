@@ -1,0 +1,2 @@
+# Fixed-seed differential regressions for the G2a rebase arm boundary.
+# proptest appends minimized seeds here on failure.
