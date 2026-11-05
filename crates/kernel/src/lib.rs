@@ -68,7 +68,7 @@ mod proofs;
 
 /// Starting credit is the request's size in leaves plus this reserve.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-pub const RESERVE: u32 = 3;
+pub const RESERVE: u64 = 3;
 /// Rechecks after clean rebases that cost nothing, per leaf.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const FREE_RECHECKS: u8 = 3;
@@ -419,10 +419,10 @@ pub struct Question {
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Credit {
     pub ready: bool,
-    pub start: u32,
-    pub earned: u32,
-    pub added: u32,
-    pub spent: u32,
+    pub start: u64,
+    pub earned: u64,
+    pub added: u64,
+    pub spent: u64,
     pub merge_credited: bool,
     /// Declared prerequisites withhold the ledger until planning admission.
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
@@ -431,7 +431,7 @@ pub struct Credit {
 
 impl Credit {
     kernel_fn! {
-        pub fn balance(&self) -> (balance: i64) [
+        pub fn balance(&self) -> (balance: i128) [
             ensures balance as int == if self.withheld { 0int } else {
                 self.start as int + self.earned as int + self.added as int - self.spent as int
             },
@@ -445,29 +445,29 @@ impl Credit {
     }
 
     kernel_fn! {
-        fn ledger_balance(&self) -> (balance: i64) [
+        fn ledger_balance(&self) -> (balance: i128) [
             ensures balance as int == self.start as int + self.earned as int
                 + self.added as int - self.spent as int,
         ] {
-            self.start as i64 + self.earned as i64 + self.added as i64 - self.spent as i64
+            self.start as i128 + self.earned as i128 + self.added as i128 - self.spent as i128
         }
     }
 
     kernel_fn! {
     /// Q18 / #771: compare spendable credit, including dependency withholding.
-    fn can_spend(&self, cost: u32) -> (result: bool) [
+    fn can_spend(&self, cost: u64) -> (result: bool) [
         ensures result == (!self.withheld && self.start as int + self.earned as int
             + self.added as int >= self.spent as int + cost as int
             || self.withheld && cost == 0),
     ] {
-        self.balance() >= cost as i64
+        self.balance() >= cost as i128
     }
     }
 
     kernel_fn! {
         /// State-table credit ledger: one unit per paid retry or continuation.
-        fn spend(&mut self, cost: u32) -> (result: ()) [
-            requires old(self).spent as int + cost as int <= u32::MAX as int,
+        fn spend(&mut self, cost: u64) -> (result: ()) [
+            requires old(self).spent as int + cost as int <= u64::MAX as int,
             ensures final(self).spent as int == old(self).spent as int + cost as int,
                 final(self).start == old(self).start,
                 final(self).earned == old(self).earned,
@@ -482,13 +482,13 @@ impl Credit {
         /// State-table credit ledger: Rob's answers top up the shortfall first.
         /// #771: consistent ledgers are nonnegative; withholding permits only
         /// zero-cost continuations. Hence automatic top-up adds at most cost.
-        fn pay(&mut self, cost: u32) -> (result: ()) [
+        fn pay(&mut self, cost: u64) -> (result: ()) [
             requires
                 old(self).start as int + old(self).earned as int + old(self).added as int
                     >= old(self).spent as int,
                 old(self).withheld ==> cost == 0,
-                old(self).added as int + (if cost as int > (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) { cost as int - (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) } else { 0int }) <= u32::MAX as int,
-                old(self).spent as int + cost as int <= u32::MAX as int,
+                old(self).added as int + (if cost as int > (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) { cost as int - (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) } else { 0int }) <= u64::MAX as int,
+                old(self).spent as int + cost as int <= u64::MAX as int,
             ensures
                 final(self).added as int == old(self).added as int + (if cost as int > (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) { cost as int - (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) } else { 0int }),
                 final(self).ready == old(self).ready,
@@ -502,9 +502,9 @@ impl Credit {
                 final(self).start as int + final(self).earned as int + final(self).added as int
                     >= final(self).spent as int,
         ] {
-            let short = cost as i64 - self.balance();
+            let short = cost as i128 - self.balance();
             if short > 0 {
-                self.added += short as u32;
+                self.added += short as u64;
             }
             self.spent += cost;
         }
@@ -517,8 +517,8 @@ impl Credit {
                 old(self).start as int + old(self).earned as int + old(self).added as int
                     >= old(self).spent as int,
                 old(self).withheld ==> cost == 0,
-                old(self).added as int + 255 <= u32::MAX as int,
-                old(self).spent as int + cost as int <= u32::MAX as int,
+                old(self).added as int + 255 <= u64::MAX as int,
+                old(self).spent as int + cost as int <= u64::MAX as int,
             ensures final(self).added as int >= old(self).added as int,
                 final(self).added as int <= old(self).added as int + 255,
                 final(self).spent as int == old(self).spent as int + cost as int,
@@ -534,8 +534,8 @@ impl Credit {
                             + old(self).added as int + deposit as int - old(self).spent as int)
                     } else { 0int },
         ] {
-            self.added += deposit as u32;
-            self.pay(cost as u32);
+            self.added += deposit as u64;
+            self.pay(cost as u64);
         }
     }
 }
@@ -1726,7 +1726,7 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
         assert forall|j: int| 0 <= j < world.nodes@.len() implies
             world.nodes@[j].generation as int + generation_capacity(world.nodes@[j]) <= u64::MAX as int
                 && world.nodes@[j].next_seq as int + effect_capacity(world.nodes@[j]) <= u64::MAX as int
-                && world.nodes@[j].credit.earned as int + merge_capacity(world.nodes@[j]) <= u32::MAX as int
+                && world.nodes@[j].credit.earned as int + merge_capacity(world.nodes@[j]) <= u64::MAX as int
         by { local_capacities(world.nodes@[j]); }
         assert(settle_ready(world));
     }
@@ -1893,7 +1893,7 @@ proof fn checked_reserves(w: World)
     assert forall|j: int| 0 <= j < w.nodes@.len() implies
         w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int
             && w.nodes@[j].next_seq as int + effect_capacity(w.nodes@[j]) <= u64::MAX as int
-            && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u32::MAX as int
+            && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u64::MAX as int
     by { local_capacities(w.nodes@[j]); }
     open_prefix_monotone(w.nodes@, 0, w.nodes@.len());
     reveal(open_prefix);
@@ -1947,7 +1947,7 @@ pub closed spec fn settle_ready(w: World) -> bool {
         && (forall|j: int| 0 <= j < w.nodes@.len() ==> settle_shape(w.nodes@[j])
             && w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int
             && w.nodes@[j].next_seq as int + effect_capacity(w.nodes@[j]) <= u64::MAX as int
-            && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u32::MAX as int)
+            && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u64::MAX as int)
         && w.next_ticket as int + potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| ticket_capacity(n)) <= u64::MAX as int
         && potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int
 }

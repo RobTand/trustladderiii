@@ -176,7 +176,7 @@ impl crate::Controller {
                 ));
             }
             if world.nodes[node.0 as usize].priority != *priority {
-                self.apply(
+                self.apply_or_defer(
                     &snapshot,
                     world,
                     tl3_kernel::Event::Fact {

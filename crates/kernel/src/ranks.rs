@@ -580,7 +580,7 @@ pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> boo
         && n.generation as int + generation_capacity(n) <= u64::MAX as int
         && n.next_seq as int + effect_capacity(n) <= u64::MAX as int
         && ticket as int + ticket_capacity(n) <= u64::MAX as int
-        && n.credit.earned as int + merge_capacity(n) <= u32::MAX as int
+        && n.credit.earned as int + merge_capacity(n) <= u64::MAX as int
 }
 
 /// #771: bounds proved for the actual local transition. This is a postcondition,

@@ -71,9 +71,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
-use tl3_store::{
-    Commit, CreditEntry, Effect, EffectState, EffectTransition, RowChange, Snapshot, Store,
-};
+use tl3_store::{Commit, Effect, EffectState, EffectTransition, RowChange, Snapshot, Store};
 
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
@@ -587,6 +585,18 @@ impl Controller {
             json!({"labelled_issue": issue, "proposed": proposed}),
             &snapshot,
         );
+        if input_errors::kernel_backlog(&snapshot)
+            || !self.kernel_headroom(&snapshot, &world, &mut commit)?
+        {
+            commit.event_key = format!("held-intake:{}", issue.delivery);
+            commit.rows.push(put(
+                input_errors::PENDING_KERNEL,
+                format!("intake:{}", issue.delivery),
+                json!(input_errors::PendingKernelInput::Intake { issue, proposed }),
+            ));
+            self.store.commit(&commit)?;
+            return Ok(true);
+        }
         let event =
             match self.prepare_intake(&snapshot, &issue, repository.clone(), proposed, &mut commit)
             {
@@ -627,7 +637,7 @@ impl Controller {
                 }
             };
         if let Some(event) = event {
-            self.apply(&snapshot, world, event, &mut commit)?;
+            self.apply_or_defer(&snapshot, world, event, &mut commit)?;
         }
         self.store.commit(&commit)?;
         self.retry_held_effects(executor::Upstream::GitHub);
@@ -780,7 +790,7 @@ impl Controller {
             ));
         }
         if priority != n.priority {
-            self.apply(
+            self.apply_or_defer(
                 &snapshot,
                 world,
                 Event::Fact {
@@ -1075,6 +1085,9 @@ impl Controller {
         if self.reconcile_memory(&snapshot)? || self.post_input_incident(&snapshot)? {
             return Ok(true);
         }
+        if let Some(progressed) = self.pause_kernel_inputs(&snapshot)? {
+            return Ok(progressed);
+        }
         for row in snapshot
             .rows
             .iter()
@@ -1126,7 +1139,16 @@ impl Controller {
         } else {
             snapshot
         };
-        if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "inbox" || r.table == input_errors::PENDING_KERNEL)
+            .min_by_key(|r| r.arrival)
+        {
+            if row.table == input_errors::PENDING_KERNEL {
+                self.replay_kernel_input(&snapshot, row)?;
+                return Ok(true);
+            }
             let observation: Observation = decode_stored(row.value.clone())?;
             let mut waiting_for_queue = false;
             if let Observation::Queue(fact) = &observation
@@ -1185,10 +1207,14 @@ impl Controller {
                         )?;
                     }
                 }
-                commit.rows.push(RowChange::Delete {
-                    table: "inbox".into(),
-                    id: row.id.clone(),
-                });
+                if input_errors::deferred(&commit) {
+                    input_errors::held_attempt(&mut commit, &snapshot);
+                } else {
+                    commit.rows.push(RowChange::Delete {
+                        table: "inbox".into(),
+                        id: row.id.clone(),
+                    });
+                }
                 self.store.commit(&commit)?;
                 return Ok(true);
             }
@@ -1642,7 +1668,7 @@ impl Controller {
             to: EffectState::Cancelled,
         });
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
-            self.apply(
+            self.apply_or_defer(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
                 Event::Ack {
@@ -1778,7 +1804,7 @@ impl Controller {
             } else {
                 completion.ack
             };
-            self.apply(
+            self.apply_or_defer(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
                 Event::Ack { node, seq, ack },
@@ -2489,14 +2515,14 @@ impl Controller {
                 .map(|n| n.credit)
                 .unwrap_or_default();
             let delta = node.credit.balance() - old.balance();
-            if delta != 0 {
-                commit.credit.push(CreditEntry {
-                    node: index.to_string(),
-                    root: index.to_string(),
-                    reason: commit.event_key.clone(),
-                    amount: delta,
-                });
-            }
+            let reason = if input_errors::deferred(commit) {
+                format!("held:{}:{}", snapshot.revision.get(), commit.event_key)
+            } else {
+                commit.event_key.clone()
+            };
+            commit
+                .credit
+                .extend(snapshot::credit_entries(index, &reason, delta));
         }
         let closed: BTreeSet<_> = world
             .nodes

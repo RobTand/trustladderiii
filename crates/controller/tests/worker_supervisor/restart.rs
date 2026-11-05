@@ -223,11 +223,10 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
     controller
         .observe(
             "cleanup-current-run",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: KernelCommand::Stop,
-            }),
+            },
         )
         .unwrap();
     drive(&mut controller);

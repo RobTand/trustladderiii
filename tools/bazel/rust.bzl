@@ -269,15 +269,16 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         deps = deps + script,
     )
     for name in bins:
+        standalone_verifier = name == "verus-runner" and directory == "crates/mergify"
         rust_binary(
             name = name,
             crate_name = name.replace("-", "_"),
             crate_root = "src/bin/%s.rs" % name,
-            srcs = library_sources,
+            srcs = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources,
             edition = "2024",
             crate_features = features,
             aliases = aliases(),
-            deps = deps + [":" + crate],
+            deps = ["@crates//:serde_json"] if standalone_verifier else deps + [":" + crate],
         )
     test_deps = all_crate_deps(normal = True, normal_dev = True) + local_deps + [":" + crate] + script
     for name, source in examples.items():
@@ -299,7 +300,10 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     )
     _crate_test("lib", package, crate, "src/lib.rs", True, options)
     for name in bins:
-        _crate_test("bin", package, name, "src/bin/%s.rs" % name, True, options)
+        binary_options = dict(options)
+        if name == "verus-runner" and directory == "crates/mergify":
+            binary_options["deps"] = ["@crates//:serde_json"]
+        _crate_test("bin", package, name, "src/bin/%s.rs" % name, True, binary_options)
     for name, source in examples.items():
         _crate_test("example", package, name, source, True, options)
     declared = [spec["path"] for spec in declared_tests.values()]
@@ -320,6 +324,8 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
 def _crate_test(kind, package, name, source, harness, options):
     binary = "%s/%s" % (package, name)
     sources = [":sources", source]
+    if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
+        sources = [source]
     compile_data = options["compile_data"]
     if native.package_name() == "crates/controller":
         sources = [":library_sources", source] + native.glob(

@@ -6,6 +6,63 @@ use tl3_store::{RowChange, Snapshot};
 
 pub(crate) type Rows = BTreeMap<(String, String), Value>;
 
+/// #771 / credit ledger: preserve the full-width balance delta in the existing
+/// signed-bigint journal. Parts share one atomic commit. Ordinary deltas keep
+/// their original reason and amount, and old journal rows remain readable.
+pub(crate) fn credit_entries(
+    node: usize,
+    reason: &str,
+    mut delta: i128,
+) -> Vec<tl3_store::CreditEntry> {
+    let mut entries = Vec::new();
+    while delta != 0 {
+        let amount = delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+        let part = entries.len();
+        entries.push(tl3_store::CreditEntry {
+            node: node.to_string(),
+            root: node.to_string(),
+            reason: if part == 0 {
+                reason.into()
+            } else {
+                format!("credit-part:{}:{part}", json!(reason))
+            },
+            amount,
+        });
+        delta -= amount as i128;
+    }
+    entries
+}
+
+#[cfg(test)]
+mod credit_tests {
+    /// #771: full-width changes remain exact without altering old journal rows.
+    #[test]
+    fn journal_parts_preserve_wide_signed_deltas() {
+        for delta in [
+            0,
+            1,
+            -1,
+            i64::MAX as i128 + 1,
+            i64::MIN as i128 - 1,
+            3 * u64::MAX as i128,
+            -(3 * u64::MAX as i128),
+        ] {
+            let parts = super::credit_entries(0, "consume:input", delta);
+            assert!(parts.len() <= 7);
+            assert_eq!(
+                parts.iter().map(|entry| entry.amount as i128).sum::<i128>(),
+                delta
+            );
+            if let Some(first) = parts.first() {
+                assert_eq!(first.reason, "consume:input");
+            }
+            let reasons: std::collections::BTreeSet<_> =
+                parts.iter().map(|entry| &entry.reason).collect();
+            assert_eq!(reasons.len(), parts.len());
+        }
+    }
+}
+
 pub(crate) fn encode(world: &World) -> Result<Rows> {
     let Value::Object(mut fields) = serde_json::to_value(world)? else {
         unreachable!()

@@ -124,6 +124,13 @@ The apply boundary checks the pure headroom helper before every event. The same
 mechanism covers dependency reconciliation's individual `step` calls and startup
 capacity reconciliation's `settle_world`. Failed checks raise
 `kernel counter headroom exhausted: <counter>` without applying that transition.
+The input stays queued. One existing counter incident halts further kernel
+inputs across wakes and restarts until authorized clearance. Clearance does not
+restore numeric headroom; an operator repair or release must do that first.
+Trusted internal acknowledgements and deferred intake use private durable inputs
+and share arrival order with the inbox. Rob's clearance can pass the retained
+queue through the existing operations-comment path. This new halt rule awaits
+Rob's Q27 approval before merge.
 The contracts on `step_with_passes`, `apply`, `settle`, and their actual
 handlers establish the bounds below. Helper equivalence alone would not do so.
 
@@ -134,13 +141,15 @@ handlers establish the bounds below. Helper equivalence alone would not do so.
 | `next_seq` | u64 | 2 | At least about 9.22e18 events affecting one request under this conservative bound. Apply and settle can each emit at most one effect per node. |
 | `next_question` | u64 | 1 | About 1.84e19 events globally. Allocations occur only in apply. |
 | `next_ticket` | u64 | `2 * (nodes.len() + 1)` | At least about 4.61e18 events before the conservative headroom check can fail from an empty world. See the charging argument below. |
-| `credit.start` | u32 | 258 | Initialized once to at most `u8::MAX + RESERVE`; fresh requests cannot exhaust it. |
-| `credit.earned` | u32 | 1 | Merge credit applies once per request; fresh requests cannot exhaust it. |
-| `credit.added` | u32 | 255 | 16,843,009 maximal AddCredit answers. This includes automatic top-ups, which add at most one for a continuation. |
-| `credit.spent` | u32 | 1 | About 4.29 billion paid events on one request. |
+| `credit.start` | u64 | 258 | Initialized once to at most `u8::MAX + RESERVE`; fresh requests cannot exhaust it. |
+| `credit.earned` | u64 | 1 | Merge credit applies once per request; fresh requests cannot exhaust it. |
+| `credit.added` | u64 | 255 | 72,340,172,838,076,673 maximal AddCredit answers. This includes automatic top-ups, which add at most one for a continuation. |
+| `credit.spent` | u64 | 1 | About 1.84e19 paid events on one request. |
 
-Credit's derived arithmetic uses i64, which contains the sum and difference of
-all four u32 entries. A consistent ledger is nonnegative. Withheld credit allows
+Credit's derived arithmetic uses i128, which contains the sum and difference of
+all four u64 entries. Serialized old u32 values remain valid JSON integers.
+The controller preserves large signed journal deltas as several i64 rows in one
+atomic commit, with their exact sum unchanged. A consistent ledger is nonnegative. Withheld credit allows
 only zero-cost question continuations. For an AddCredit answer, the deposit
 covers the one-unit continuation unless the deposit is zero; that case tops up
 by one. Thus deposit plus automatic top-up is at most 255, not 256. The local

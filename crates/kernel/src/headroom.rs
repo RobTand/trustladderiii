@@ -44,10 +44,10 @@ pub(super) proof fn open_prefix_compare(before: Seq<Node>, after: Seq<Node>, end
 pub open spec fn node_headroom(node: Node) -> bool {
     node.generation as int + GENERATION_STEP_BUDGET <= u64::MAX as int
         && node.next_seq as int + EFFECT_STEP_BUDGET <= u64::MAX as int
-        && node.credit.start as int + CREDIT_START_STEP_BUDGET <= u32::MAX as int
-        && node.credit.earned as int + CREDIT_EARNED_STEP_BUDGET <= u32::MAX as int
-        && node.credit.added as int + CREDIT_ADDED_STEP_BUDGET <= u32::MAX as int
-        && node.credit.spent as int + CREDIT_SPENT_STEP_BUDGET <= u32::MAX as int
+        && node.credit.start as int + CREDIT_START_STEP_BUDGET <= u64::MAX as int
+        && node.credit.earned as int + CREDIT_EARNED_STEP_BUDGET <= u64::MAX as int
+        && node.credit.added as int + CREDIT_ADDED_STEP_BUDGET <= u64::MAX as int
+        && node.credit.spent as int + CREDIT_SPENT_STEP_BUDGET <= u64::MAX as int
 }
 
 /// #771: mathematical statement of the executable apply-boundary scope.
@@ -181,26 +181,26 @@ pub const EFFECT_STEP_BUDGET: u64 = 2;
 /// failure's question, or one clarifying question. Settle allocates none.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const QUESTION_STEP_BUDGET: u64 = 1;
-/// #771: u32 starting-credit reserve. Ingest initializes this field once to
+/// #771: u64 starting-credit reserve. Ingest initializes this field once to
 /// `size + RESERVE`, where size is u8, or `1 + RESERVE` for an early end.
 /// The largest assignment is 255 + 3 = 258; it never accumulates deposits.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-pub const CREDIT_START_STEP_BUDGET: u32 = u8::MAX as u32 + crate::RESERVE;
-/// #771: u32 added-credit reserve. `Credit::fund_and_pay` combines a u8 deposit
+pub const CREDIT_START_STEP_BUDGET: u64 = u8::MAX as u64 + crate::RESERVE;
+/// #771: u64 added-credit reserve. `Credit::fund_and_pay` combines a u8 deposit
 /// with the continuation's automatic top-up. A valid continuation costs <= 1.
 /// A nonzero deposit covers that cost; a zero deposit tops up by at most one.
 /// Therefore the combined increase is <= 255, including automatic top-ups.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-pub const CREDIT_ADDED_STEP_BUDGET: u32 = u8::MAX as u32;
-/// #771: u32 spent-credit reserve. Apply either spends one credit directly or
+pub const CREDIT_ADDED_STEP_BUDGET: u64 = u8::MAX as u64;
+/// #771: u64 spent-credit reserve. Apply either spends one credit directly or
 /// pays one question continuation; settle spends none. Valid questions cost
 /// zero or one, as checked by `World::check_node`.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-pub const CREDIT_SPENT_STEP_BUDGET: u32 = 1;
-/// #771: u32 earned-credit reserve. `merge_credit` increases this field by one
+pub const CREDIT_SPENT_STEP_BUDGET: u64 = 1;
+/// #771: u64 earned-credit reserve. `merge_credit` increases this field by one
 /// and latches `merge_credited`, preventing another increase during the step.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-pub const CREDIT_EARNED_STEP_BUDGET: u32 = 1;
+pub const CREDIT_EARNED_STEP_BUDGET: u64 = 1;
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -321,13 +321,13 @@ kernel_fn! {
             Some("generation")
         } else if node.next_seq > u64::MAX - EFFECT_STEP_BUDGET {
             Some("next_seq")
-        } else if node.credit.start > u32::MAX - CREDIT_START_STEP_BUDGET {
+        } else if node.credit.start > u64::MAX - CREDIT_START_STEP_BUDGET {
             Some("credit.start")
-        } else if node.credit.earned > u32::MAX - CREDIT_EARNED_STEP_BUDGET {
+        } else if node.credit.earned > u64::MAX - CREDIT_EARNED_STEP_BUDGET {
             Some("credit.earned")
-        } else if node.credit.added > u32::MAX - CREDIT_ADDED_STEP_BUDGET {
+        } else if node.credit.added > u64::MAX - CREDIT_ADDED_STEP_BUDGET {
             Some("credit.added")
-        } else if node.credit.spent > u32::MAX - CREDIT_SPENT_STEP_BUDGET {
+        } else if node.credit.spent > u64::MAX - CREDIT_SPENT_STEP_BUDGET {
             Some("credit.spent")
         } else {
             None

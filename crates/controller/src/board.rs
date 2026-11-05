@@ -191,7 +191,7 @@ pub struct Card {
     pub round: u8,
     pub retries: Retries,
     /// None until ingest sets up the request's credit.
-    pub credit: Option<i64>,
+    pub credit: Option<i128>,
     /// When the request entered its current phase, in Unix milliseconds.
     pub phase_since_ms: Option<i64>,
     pub last_progress: Option<String>,

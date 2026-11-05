@@ -688,11 +688,11 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
     }
     outputs.sort_by_key(Value::to_string);
     for (index, node) in world.nodes.iter().enumerate() {
-        let ledger_balance: i64 = snapshot
+        let ledger_balance: i128 = snapshot
             .credit
             .iter()
             .filter(|record| record.entry.node == index.to_string())
-            .map(|record| record.entry.amount)
+            .map(|record| i128::from(record.entry.amount))
             .sum();
         assert_eq!(
             ledger_balance,

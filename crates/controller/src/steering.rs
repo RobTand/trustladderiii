@@ -1042,7 +1042,7 @@ impl Controller {
             if let Some(event) =
                 self.linked_request(snapshot, old.repo, issue, original, &mut commit)?
             {
-                self.apply(snapshot, snapshot::decode(snapshot)?, event, &mut commit)?;
+                self.apply_or_defer(snapshot, snapshot::decode(snapshot)?, event, &mut commit)?;
             }
             self.store.commit(&commit)?;
             return Ok(true);

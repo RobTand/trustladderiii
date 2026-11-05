@@ -292,6 +292,24 @@ fn exhausted_inputs_remain_queued_until_clearance_then_retry_in_order() {
         incidents(&mut c)[0].value["summary"],
         "kernel counter headroom exhausted: next_seq"
     );
+    let mut later_issue = issue();
+    later_issue.delivery = "later-label".into();
+    later_issue.number = 13;
+    assert!(c.intake(later_issue).unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes.len(),
+        1,
+        "intake must join the halt queue"
+    );
+    assert_eq!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "requests")
+            .count(),
+        1
+    );
     drop(c);
     let mut c = open(&settings, root.path());
     drain(&mut c);
@@ -347,6 +365,15 @@ fn exhausted_inputs_remain_queued_until_clearance_then_retry_in_order() {
         tl3_kernel::Priority::P2
     );
     assert!(pending(&mut c).is_empty());
+    assert!(c.drive_once().unwrap());
+    assert_eq!(c.world().unwrap().nodes.len(), 2);
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "pending_kernel_events")
+    );
 }
 
 /// #771: widening the serialized ledger reads old JSON unchanged, and the

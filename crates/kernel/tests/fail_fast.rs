@@ -151,7 +151,7 @@ impl Run {
         self.confirm();
     }
 
-    fn spent(&self) -> u32 {
+    fn spent(&self) -> u64 {
         self.node().credit.spent
     }
 
@@ -161,7 +161,7 @@ impl Run {
 
     /// Stopped for TL3 review: no credit, no question, the attempt unchanged,
     /// and teardown ends in Closed(Stopped) with the summary.
-    fn assert_stopped_for_review(&mut self, step: ReviewStop, spent: u32, attempt: u8) {
+    fn assert_stopped_for_review(&mut self, step: ReviewStop, spent: u64, attempt: u8) {
         assert_eq!(self.phase(), Phase::Closed(Outcome::Stopped));
         let n = self.node();
         assert_eq!(n.review_stop, Some(step));

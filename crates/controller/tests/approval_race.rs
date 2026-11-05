@@ -1043,11 +1043,10 @@ fn stop_retires_ambiguous_approval_and_allows_upgrade() {
     controller
         .observe(
             "stop",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node,
-                id: 77,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);
@@ -1815,11 +1814,10 @@ fn gap_catchup_repairs_late_approval_after_closure() {
     controller
         .observe(
             "stop-before-late-a",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node: case.delivery().node(),
-                id: 171,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);
@@ -2111,11 +2109,10 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
     controller
         .observe(
             "stop-at-deploy",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node: delivery.node(),
-                id: 172,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);

@@ -1067,7 +1067,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let credit = c.world().unwrap().nodes[0].credit.balance();
     if mode.starts_with("q46-") {
         let node = c.world().unwrap().nodes[0];
-        assert_eq!(node.credit.spent, u32::from(mode != "q46-clean"));
+        assert_eq!(node.credit.spent, u64::from(mode != "q46-clean"));
         assert_eq!(node.rechecks, 0);
         assert!(node.question.is_none());
         let main = git(&f.remote, &["rev-parse", "main"]);

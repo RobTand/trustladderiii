@@ -131,7 +131,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
 kernel_fn! {
     /// Q18 / #771: merge credit is allocated once, increasing earned by at most one.
     pub(super) fn merge_credit(m: &mut Node) -> (result: ()) [
-        requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
+        requires old(m).credit.merge_credited || old(m).credit.earned < u64::MAX,
         ensures
             *final(m) == (Node { credit: Credit {
                 earned: final(m).credit.earned, merge_credited: true, ..old(m).credit
@@ -160,7 +160,7 @@ kernel_fn! {
 
 kernel_fn! {
     pub(super) fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) -> (result: ()) [
-    requires old(m).credit.merge_credited || old(m).credit.earned < u32::MAX,
+    requires old(m).credit.merge_credited || old(m).credit.earned < u64::MAX,
         old(out).len + 2 <= OUTBOX,
     ensures final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
         *final(m) == (Node { phase: Phase::Closed(outcome), pos: 0, ticket: None,

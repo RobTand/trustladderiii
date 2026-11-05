@@ -7,7 +7,54 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tl3_kernel::NodeId;
-use tl3_store::{Commit, Snapshot};
+use tl3_store::{Commit, RowChange, Snapshot};
+
+pub(crate) const COUNTER_HEADROOM: &str = "kernel_counter_headroom";
+pub(crate) const PENDING_KERNEL: &str = "pending_kernel_events";
+
+#[derive(Serialize, Deserialize)]
+pub(crate) enum PendingKernelInput {
+    Event(tl3_kernel::Event),
+    Intake {
+        issue: crate::LabelledIssue,
+        proposed: Option<crate::adoption::ProposedPullRequest>,
+    },
+}
+
+/// After a halt, direct producers join the retained queue until it drains.
+pub(crate) fn kernel_backlog(snapshot: &Snapshot) -> bool {
+    snapshot
+        .rows
+        .iter()
+        .any(|row| row.table == "incidents" && row.value["signature"]["class"] == COUNTER_HEADROOM)
+        && snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox" || row.table == PENDING_KERNEL)
+}
+
+fn counter_incident(row: &tl3_store::WorldRow) -> bool {
+    row.table == "incidents"
+        && row.value["open"] == true
+        && row.value["signature"]["class"] == COUNTER_HEADROOM
+}
+
+fn retain_input(commit: &mut Commit) {
+    if !commit.result.is_object() {
+        commit.result = json!({});
+    }
+    commit.result["kernel_deferred"] = json!(true);
+}
+
+pub(crate) fn deferred(commit: &Commit) -> bool {
+    commit.result["kernel_deferred"] == true
+}
+
+/// #771 / facts are never dropped. Failed attempts cannot consume the stable
+/// receipt key that the eventual successful retry must use.
+pub(crate) fn held_attempt(commit: &mut Commit, snapshot: &Snapshot) {
+    commit.event_key = format!("held:{}:{}", snapshot.revision.get(), commit.event_key);
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct IssueTarget {
@@ -81,12 +128,136 @@ fn post_backoff_ms(class: &str) -> u64 {
 }
 
 impl Controller {
+    /// #771 / Q27 approval pending: a persisted counter incident halts kernel
+    /// inputs across wakes and restarts. Only its authorized clearance can pass
+    /// the retained head of the queue. A repair must also restore headroom.
+    pub(crate) fn pause_kernel_inputs(&mut self, snapshot: &Snapshot) -> Result<Option<bool>> {
+        let incident = snapshot.rows.iter().find(|row| counter_incident(row));
+        let pending = snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox" || row.table == PENDING_KERNEL);
+        if incident.is_none() && !pending {
+            return Ok(None);
+        }
+        if let Some(incident) = incident {
+            for row in snapshot.rows.iter().filter(|row| row.table == "inbox") {
+                let observation: Observation = crate::decode_stored(row.value.clone())?;
+                let Observation::GitHubComment {
+                    repository,
+                    issue,
+                    comment,
+                } = observation
+                else {
+                    continue;
+                };
+                if comment.user.id != self.bootstrap.rob
+                    || comment.body.trim() != format!("clear incident {}", incident.id)
+                {
+                    continue;
+                }
+                let mut commit =
+                    Commit::new(format!("consume:{}", row.id), row.value.clone(), snapshot);
+                if self.operations_comment(snapshot, &repository, issue, &comment, &mut commit)? {
+                    commit.rows.push(RowChange::Delete {
+                        table: "inbox".into(),
+                        id: row.id.clone(),
+                    });
+                    self.store.commit(&commit)?;
+                    return Ok(Some(true));
+                }
+            }
+            return Ok(Some(false));
+        }
+        let world = crate::snapshot::decode(snapshot)?;
+        let mut commit = Commit::new(
+            format!("kernel-headroom:{}", snapshot.revision.get()),
+            json!({"kernel_headroom": false}),
+            snapshot,
+        );
+        if self.kernel_headroom(snapshot, &world, &mut commit)? {
+            return Ok(None);
+        }
+        self.store.commit(&commit)?;
+        Ok(Some(true))
+    }
+
+    /// Trusted internal events already constructed by the controller, such as
+    /// effect acknowledgements, retain their order with external inbox inputs.
+    /// This table is private storage, not a raw-command observation API.
+    pub(crate) fn apply_or_defer(
+        &mut self,
+        snapshot: &Snapshot,
+        world: tl3_kernel::World,
+        event: tl3_kernel::Event,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if kernel_backlog(snapshot) {
+            retain_input(commit);
+        } else {
+            self.apply(snapshot, world, event, commit)?;
+        }
+        if deferred(commit) {
+            commit.rows.push(put(
+                PENDING_KERNEL,
+                format!("{}:kernel", commit.event_key),
+                json!(PendingKernelInput::Event(event)),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn replay_kernel_input(
+        &mut self,
+        snapshot: &Snapshot,
+        row: &tl3_store::WorldRow,
+    ) -> Result<()> {
+        let input: PendingKernelInput = crate::decode_stored(row.value.clone())?;
+        let world = crate::snapshot::decode(snapshot)?;
+        let mut commit = Commit::new(format!("consume:{}", row.id), row.value.clone(), snapshot);
+        let event = match input {
+            PendingKernelInput::Event(event) => Some(event),
+            PendingKernelInput::Intake { issue, proposed } => {
+                let repository = self
+                    .intake_repository(&issue)
+                    .ok_or(Error::Invalid("retained intake is no longer authorized"))?;
+                commit.event_key = format!("github:{}", issue.delivery);
+                commit.event = json!({"labelled_issue": issue, "proposed": proposed});
+                self.prepare_intake(snapshot, &issue, repository, proposed, &mut commit)?
+            }
+        };
+        if let Some(event) = event {
+            self.apply(snapshot, world, event, &mut commit)?;
+        }
+        if deferred(&commit) {
+            held_attempt(&mut commit, snapshot);
+        } else {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+        self.store.commit(&commit)?;
+        Ok(())
+    }
+
     pub(crate) fn kernel_headroom(
         &self,
         snapshot: &Snapshot,
         world: &tl3_kernel::World,
         commit: &mut Commit,
     ) -> Result<bool> {
+        if snapshot.rows.iter().any(counter_incident)
+            || commit.rows.iter().any(|row| {
+                matches!(row,
+                RowChange::Put { table, value, .. }
+                    if table == "incidents" && value["open"] == true
+                        && value["signature"]["class"] == COUNTER_HEADROOM)
+            })
+        {
+            retain_input(commit);
+            return Ok(false);
+        }
         let Some(exhausted) = world.counter_exhaustion() else {
             return Ok(true);
         };
@@ -106,6 +277,7 @@ impl Controller {
         node: Option<NodeId>,
         message: String,
     ) -> Result<()> {
+        retain_input(commit);
         let target = node
             .map(|node| {
                 crate::request(snapshot, node).map(|request| IssueTarget {

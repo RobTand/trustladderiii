@@ -15,10 +15,10 @@ fn each_counter_has_its_own_headroom_check() {
         ("next_seq", |w| w.nodes[0].next_seq = u64::MAX),
         ("next_ticket", |w| w.next_ticket = u64::MAX),
         ("next_question", |w| w.next_question = u64::MAX),
-        ("credit.start", |w| w.nodes[0].credit.start = u32::MAX),
-        ("credit.earned", |w| w.nodes[0].credit.earned = u32::MAX),
-        ("credit.added", |w| w.nodes[0].credit.added = u32::MAX),
-        ("credit.spent", |w| w.nodes[0].credit.spent = u32::MAX),
+        ("credit.start", |w| w.nodes[0].credit.start = u64::MAX),
+        ("credit.earned", |w| w.nodes[0].credit.earned = u64::MAX),
+        ("credit.added", |w| w.nodes[0].credit.added = u64::MAX),
+        ("credit.spent", |w| w.nodes[0].credit.spent = u64::MAX),
     ];
     assert!(fixture().headroom_ok());
     for (counter, exhaust) in cases {

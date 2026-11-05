@@ -30,7 +30,7 @@ pub(super) fn finish_ingest_node(m: &mut Node, size: u8, early_end: Option<Early
     requires old(m).generation < u64::MAX,
     ensures *final(m) == (Node {
         credit: Credit { ready: true,
-            start: if old(m).credit.ready { old(m).credit.start } else { (size as u32 + RESERVE) as u32 },
+            start: if old(m).credit.ready { old(m).credit.start } else { (size as u64 + RESERVE) as u64 },
             ..old(m).credit },
         early_end, phase: Phase::Auditing, pos: 0, ticket: None,
         generation: (old(m).generation + 1) as u64,
@@ -42,7 +42,7 @@ pub(super) fn finish_ingest_node(m: &mut Node, size: u8, early_end: Option<Early
 ] {
     if !m.credit.ready {
         m.credit.ready = true;
-        m.credit.start = size as u32 + RESERVE;
+        m.credit.start = size as u64 + RESERVE;
     }
     m.early_end = early_end;
     set_phase(m, Phase::Auditing);
