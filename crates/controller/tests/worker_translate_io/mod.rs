@@ -23,6 +23,8 @@ mod findings;
 mod goals;
 mod helpers;
 mod io;
+#[path = "resource.rs"]
+mod input_resources;
 mod memory;
 mod properties;
 mod quota;
