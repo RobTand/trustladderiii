@@ -232,3 +232,23 @@ def test_repeat_keeps_legacy_twenty_failure_ids_without_byte_pressure(monkeypatc
         {'run':number, 'status':'completed', 'totals':result['totals'],
          'failed':[f't.py::t{index:02}' for index in range(20)]}
         for number in (1, 2)]
+
+
+def test_repeat_keeps_legacy_half_envelope_run_list_cap(monkeypatch, tmp_path):
+    # #823 review cap audit: the old run-list byte cap can fire while the complete
+    # result still fits 14 KiB. Its diagnostic note is observable too.
+    nodes = [f't.py::t{index:02}' + 'x' * 130 for index in range(21)]
+    def observed(tree, container, tests, parallel, summary):
+        for node in nodes:
+            summary.add(node, 'failed')
+        return summary.result
+    monkeypatch.setattr(test_tool, 'run_current', observed)
+    result = test_tool.run(tmp_path, None, (), repeat=3)
+    assert len(json.dumps(result).encode()) < 14_336
+    runs = [{'run':number, 'status':'completed', 'totals':result['totals'], 'failed':nodes[:20]}
+            for number in (1, 2, 3)]
+    for entry in reversed(runs):
+        while entry['failed'] and len(json.dumps(runs).encode()) > 8192:
+            entry['failed'].pop()
+    assert result['runs'] == runs
+    assert result['note'] == 'Truncated: test entries or failure messages were cut. Totals include all results.'
