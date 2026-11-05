@@ -924,14 +924,14 @@ impl Controller {
         let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::Queue(fact) = &observation {
             let identity = fact.identity();
-            if fact.recorded(&snapshot)?
-                || snapshot.rows.iter().any(|row| {
+            let recorded = fact.recorded(&snapshot)?;
+            let inboxed = !recorded && snapshot.rows.iter().any(|row| {
                     row.table == "inbox"
                         && serde_json::from_value::<Observation>(row.value.clone())
                             .ok()
                             .is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
-                })
-            {
+                });
+            if tl3_mergify::decide::translate::intake_duplicate(recorded, inboxed) {
                 return Ok(());
             }
         }
@@ -988,10 +988,12 @@ impl Controller {
             && fact.setup()
         {
             let identity = fact.identity();
-            if fact.recorded(snapshot)? || snapshot.rows.iter().any(|row| {
+            let recorded = fact.recorded(snapshot)?;
+            let inboxed = !recorded && snapshot.rows.iter().any(|row| {
                 row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
                     .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
-            }) {
+            });
+            if tl3_mergify::decide::translate::intake_duplicate(recorded, inboxed) {
                 return Ok(());
             }
             let id = inbox_key(

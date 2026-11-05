@@ -177,3 +177,18 @@ pub fn route(kind: Kind, node: NodeView, head_current: bool, approved_head: bool
         Kind::PushByOther => Route::Kernel(KernelFact::PushByOther),
     }
 }
+
+/// #373/Q52 intake: a recorded or inboxed identity is consumed once.
+pub fn intake_duplicate(_recorded: bool, _inboxed: bool) -> bool {
+    todo!("CC-T intake extraction")
+}
+
+/// Q52: setup receipt identities are scoped to a snapshot revision.
+pub fn intake_revision(_setup: bool, _revision: i64) -> Option<i64> {
+    todo!("CC-T setup receipt extraction")
+}
+
+/// Q52/#447: incident openings record evidence; a report only clears.
+pub fn record_incident(_route: Route) -> bool {
+    todo!("CC-T incident extraction")
+}

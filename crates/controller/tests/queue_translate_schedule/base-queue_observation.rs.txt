@@ -1,0 +1,50 @@
+    pub(crate) fn queue_observation(
+        &mut self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        key: &str,
+        index: usize,
+        observation: &Observation,
+    ) -> Result<()> {
+        if let Observation::Queue(fact) = observation
+            && fact.setup()
+        {
+            let identity = fact.identity();
+            if fact.recorded(snapshot)? || snapshot.rows.iter().any(|row| {
+                row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
+                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
+            }) {
+                return Ok(());
+            }
+            let id = inbox_key(
+                &format!("{key}:{}", snapshot.revision.get()),
+                index,
+                observation,
+            )?;
+            commit.rows.push(put("inbox", id, json!(observation)));
+            return Ok(());
+        }
+        let id = inbox_key(key, index, observation)?;
+        let aliases = [
+            id.clone(),
+            format!("{key}:{index:08}"),
+            format!("external:look:{key}:{index}:{}", evidence_key(observation)?),
+        ];
+        let value = json!(observation);
+        if snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox" && aliases.contains(&row.id) && row.value == value)
+            || self.store.event_matches(
+                &aliases
+                    .iter()
+                    .map(|id| format!("consume:{id}"))
+                    .collect::<Vec<_>>(),
+                &value,
+            )?
+        {
+            return Ok(());
+        }
+        commit.rows.push(put("inbox", id, value));
+        Ok(())
+    }

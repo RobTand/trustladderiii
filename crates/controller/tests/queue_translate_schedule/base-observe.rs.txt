@@ -1,0 +1,83 @@
+    pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
+        let snapshot = self.store.load()?;
+        if self.queue_message_reconciliation(&snapshot, key, &observation)? {
+            return Ok(());
+        }
+        if let Observation::TraceLogsCapped { evicted } = observation {
+            // #430: an operations note (#81), once while it stays open.
+            let mut commit = Commit::new(
+                format!("trace-logs-capped:{key}:{}", snapshot.revision.get()),
+                json!({"trace_logs_capped": evicted}),
+                &snapshot,
+            );
+            self.input_failed(
+                &snapshot,
+                "worker-trace-logs",
+                None,
+                "Held worker span logs",
+                None,
+                executor::Upstream::Workers,
+                Error::Invalid(
+                    "held span logs reached their disk cap; the oldest unshipped ones were dropped",
+                ),
+                &mut commit,
+            )?;
+            if !commit.rows.is_empty() {
+                self.store.commit(&commit)?;
+            }
+            return Ok(());
+        }
+        let news = observation_upstream(&snapshot, &observation)?;
+        if let Observation::Queue(fact) = &observation {
+            let identity = fact.identity();
+            if fact.recorded(&snapshot)?
+                || snapshot.rows.iter().any(|row| {
+                    row.table == "inbox"
+                        && serde_json::from_value::<Observation>(row.value.clone())
+                            .ok()
+                            .is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
+                })
+            {
+                return Ok(());
+            }
+        }
+        if let Observation::GitHubComment {
+            repository,
+            comment,
+            ..
+        } = &observation
+        {
+            let id = format!(
+                "{}/{}/{}/{}",
+                repository.owner.to_ascii_lowercase(),
+                repository.name.to_ascii_lowercase(),
+                repository.installation,
+                comment.id
+            );
+            if self.store.comment_retired(&id)?
+                || snapshot.rows.iter().any(|row| {
+                    (row.table == "github_comments" && row.id == id)
+                        || (row.table == "inbox" && row.id == format!("external:{key}"))
+                })
+            {
+                self.retry_held_effects(executor::Upstream::GitHub);
+                return Ok(());
+            }
+        }
+        // Setup gaps describe current health. A fresh read after a clear must
+        // not be suppressed by the receipt for an earlier observation.
+        let key = if matches!(&observation, Observation::Queue(fact) if fact.setup()) {
+            format!("{key}:{}", snapshot.revision.get())
+        } else {
+            key.to_owned()
+        };
+        let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
+        commit
+            .rows
+            .push(put("inbox", format!("external:{key}"), json!(&observation)));
+        self.store.commit(&commit)?;
+        if let Some(source) = news {
+            self.retry_held_effects(source);
+        }
+        Ok(())
+    }
