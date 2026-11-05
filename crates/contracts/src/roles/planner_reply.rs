@@ -178,11 +178,10 @@ fn zero_min_items(s: &mut Schema) {
     s.insert("minItems".into(), 0.into());
 }
 
-// These definitions are owned by P1a/P1b. The packaged schemas validate them at the
-// boundary; the wrapper preserves their raw fields until those typed roots are merged.
+// External references keep the published schema pointers while parsing shared types.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct DecisionContext(pub BTreeMap<String, Value>);
+pub struct DecisionContext(pub crate::decision_context::DecisionContext);
 impl JsonSchema for DecisionContext {
     fn inline_schema() -> bool {
         true
@@ -196,6 +195,7 @@ impl JsonSchema for DecisionContext {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
+// P1b owns the shared evidence type; replace this inner value after its reviewed merge.
 pub struct EvidenceContract(pub Vec<Value>);
 impl JsonSchema for EvidenceContract {
     fn inline_schema() -> bool {

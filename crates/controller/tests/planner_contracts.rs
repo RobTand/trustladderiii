@@ -37,7 +37,10 @@ fn planner_proof_omissions_are_explicit_and_round_trip() {
 #[test]
 fn planner_variants_round_trip_and_reject_unknown_fields() {
     let cases = [
-        json!({"kind":"leaf","files":[],"checks":[],"no_design_questions":true,"lands_on_its_own":false}),
+        json!({"kind":"leaf","files":[],"checks":[],"no_design_questions":true,"lands_on_its_own":false,
+            "decision_context":{"schema_version":1.0,"request_version":0.0,"decisions":[{
+                "id":"approval","source_comment":null,"question":{},"answer":"Approved.",
+                "allowed_scope":[],"restrictions":[],"origin_request_version":0.0,"superseded_by":null}]}}),
         json!({"kind":"split","reason":"multiple_repos","pieces":[]}),
         json!({"kind":"cant_meet","report":"No useful change.","files":[]}),
     ];

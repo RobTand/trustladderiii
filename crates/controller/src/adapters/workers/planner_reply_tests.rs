@@ -100,6 +100,14 @@ fn planner_reply_mapping_preserves_nested_schema_acceptance() {
         "violations":[]});
     assert!(matches!(legacy(&leaf).unwrap(), Reply::PlanLeaf { .. }));
     let mut cases = vec![leaf.clone()];
+    for version in [json!(1), json!(1.0)] {
+        let mut case = leaf.clone();
+        case["decision_context"] = json!({"schema_version":version,"request_version":0.0,
+            "decisions":[{"id":"approval","source_comment":null,"question":{},
+                "answer":"Approved.","allowed_scope":[],"restrictions":[],
+                "origin_request_version":0.0,"superseded_by":null}]});
+        cases.push(case);
+    }
     for exception in ["module.Erreuré", "module.A\u{301}", "module.Error\n"] {
         let mut case = leaf.clone();
         case["checks"][0]["declared_symptom"]["exception"] = exception.into();
