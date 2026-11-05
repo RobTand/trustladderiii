@@ -151,6 +151,16 @@ CASES = {
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
                     '//crates/kernel:verus_controller_boundary'),
+    'phase_measure_node_sum': ('crates/kernel/src/lib.rs',
+                               'total += self.nodes[i].distance();',
+                               'total += 0 * self.nodes[i].distance();',
+                               '//crates/kernel:verus_kernel'),
+    'phase_measure_dependency': ('crates/kernel/src/lib.rs',
+                                 'if d.status != DependencyStatus::Delivered\n'
+                                 '                && !self.nodes[d.node.0 as usize].phase.is_closed()',
+                                 'if d.status == DependencyStatus::Delivered\n'
+                                 '                && !self.nodes[d.node.0 as usize].phase.is_closed()',
+                                 '//crates/kernel:verus_kernel'),
 }
 
 

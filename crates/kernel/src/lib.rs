@@ -116,6 +116,10 @@ pub use queries::Wait;
 #[cfg(kani)]
 mod proofs;
 
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase_measure.rs"]
+mod progress_phase_measure;
+
 /// Starting credit is the request's size in leaves plus this reserve.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const RESERVE: u64 = 3;
@@ -1472,21 +1476,63 @@ impl World {
     }
     }
 
-    /// The sum of every node's distance to Closed.
-    pub fn measure(&self) -> u64 {
-        let mut total = 0;
-        for n in &self.nodes {
-            total += n.distance();
-        }
-        total += self
-            .dependencies
-            .iter()
-            .filter(|d| {
-                d.status != DependencyStatus::Delivered
-                    && !self.nodes[d.node.0 as usize].phase.is_closed()
-            })
-            .count() as u64;
+    kernel_fn! {
+    /// #806: the executable sum equals #805's natural progress measure.
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    pub fn measure(&self) -> (result: u64) [
+        requires progress_measure(*self) <= u64::MAX,
+            dependencies::edges_indexable(*self),
+        ensures result as nat == progress_measure(*self),
+    ] proof [progress::measure_definition(*self, 0);
+        dependencies::indexable_definition(*self);] {
+        let mut total = 0u64;
+        let mut i = 0usize;
+        kernel_while! { (i < self.nodes.len()) [
+            invariant i <= self.nodes.len(),
+                total as nat == node_total(self.nodes@.take(i as int)),
+                node_total(self.nodes@) + progress::edge_total(self.nodes@,
+                    self.dependencies@, self.dependencies@.len()) <= u64::MAX,
+            decreases self.nodes.len() - i,
+        ] {
+            kernel_proof! {
+                progress_phase_measure::node_prefix_bound(self.nodes@, (i + 1) as nat);
+                ranks::node_distance_definition(self.nodes@[i as int]);
+                assert(self.nodes@.take(i as int + 1).drop_last() == self.nodes@.take(i as int));
+                assert(self.nodes@.take(i as int + 1).last() == self.nodes@[i as int]);
+            }
+            total += self.nodes[i].distance();
+            i += 1;
+        } }
+        kernel_proof! { assert(self.nodes@.take(i as int) == self.nodes@); }
+        let mut count = 0usize;
+        let mut i = 0usize;
+        kernel_while! { (i < self.dependencies.len()) [
+            invariant i <= self.dependencies.len(), count <= i,
+                self.nodes@.len() <= usize::MAX,
+                count as nat == progress::edge_total(self.nodes@, self.dependencies@, i as nat),
+                total as nat == node_total(self.nodes@),
+                node_total(self.nodes@) + progress::edge_total(self.nodes@,
+                    self.dependencies@, self.dependencies@.len()) <= u64::MAX,
+                dependencies::edges_indexable(*self),
+            decreases self.dependencies.len() - i,
+        ] {
+            let d = &self.dependencies[i];
+            kernel_proof! {
+                dependencies::indexable_definition(*self);
+                progress::measure_definition(*self, (i + 1) as nat);
+                assert((d.node.0 as int) < self.nodes@.len());
+                assert(d.node.0 as usize as int == d.node.0 as int);
+            }
+            if d.status != DependencyStatus::Delivered
+                && !self.nodes[d.node.0 as usize].phase.is_closed() {
+                count += 1;
+            }
+            i += 1;
+            kernel_proof! { progress::measure_definition(*self, i as nat); }
+        } }
+        total += count as u64;
         total
+    }
     }
 
     /// Everything the kernel promises about a world at rest: consistent and settled.

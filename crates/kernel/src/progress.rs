@@ -23,6 +23,21 @@ pub closed spec fn progress_measure(w: World) -> nat {
     node_total(w.nodes@) + edge_total(w.nodes@, w.dependencies@, w.dependencies@.len())
 }
 
+/// #806: expose the existing natural sum and one dependency scan step.
+pub(super) proof fn measure_definition(w: World, end: nat)
+    requires end <= w.dependencies@.len(),
+    ensures progress_measure(w) == node_total(w.nodes@)
+            + edge_total(w.nodes@, w.dependencies@, w.dependencies@.len()),
+        edge_total(w.nodes@, w.dependencies@, 0) == 0,
+        end > 0 ==> edge_total(w.nodes@, w.dependencies@, end)
+            == edge_total(w.nodes@, w.dependencies@, (end - 1) as nat)
+                + if w.dependencies@[end as int - 1].status != DependencyStatus::Delivered
+                    && !(w.nodes@[w.dependencies@[end as int - 1].node.0 as int].phase is Closed)
+                    { 1nat } else { 0nat },
+{
+    reveal(progress_measure); reveal(edge_total); reveal(edge_weight);
+}
+
 /// #805: delivery only reconciles wait flags, which do not enter node distance.
 proof fn wait_flags_distance(before: Node, after: Node)
     requires after == (Node {
