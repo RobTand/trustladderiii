@@ -676,3 +676,27 @@ def test_generated_scope_keeps_protected_paths_excluded():
     forecast = {"generator": {"command": ["generate"]},
                 "generated_files": ["tests/BUILD.bazel", "src/BUILD.bazel"]}
     assert configured_outputs(None, forecast, ["tests/**"]) == ["src/BUILD.bazel"]
+
+
+@pytest.mark.parametrize("issue", [2713, 2815, 2817])
+def test_audit_objects_to_real_unavailable_executor_obligations(issue):
+    fixture = Path(__file__).with_name("fixtures") / "intake-executor-capability" / f"prismabuild-{issue}.json"
+    case = json.loads(fixture.read_text())
+    inputs = {
+        "issue": {"title": "", "body": "\n".join(
+            requirement.get("provenance", {}).get("quote", "")
+            for requirement in case["ingest"]["evidence_contract"])},
+        "ingest": copy.deepcopy(case["ingest"]),
+        "tool_capabilities": case["tool_capabilities"],
+    }
+    reply = copy.deepcopy(case["audit"])
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+
+    assert reply["verdict"] == "disagree", (
+        f"PB #{issue}: audit must object before planning to an unavailable executor or runner feature")
+    assert reply["objections"]
+    assert all(requirement in reply["evidence_contract"]
+               for requirement in case["ingest"]["evidence_contract"])
+    blocker = "saved Bazel source closure" if issue == 2713 else "BuildBuddy"
+    assert blocker in "\n".join(reply["objections"])
