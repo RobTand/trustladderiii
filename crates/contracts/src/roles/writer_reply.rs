@@ -1,5 +1,5 @@
-use crate::contracts::bounded::*;
-use crate::contracts::render::{Layout, TypeOrder, TypeUse};
+use crate::bounded::*;
+use crate::render::{Layout, TypeOrder, TypeUse};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -104,7 +104,7 @@ pub fn schema_text() -> String {
             order: &types[3],
         },
     ];
-    crate::contracts::render::render(
+    crate::render::render(
         "writer-reply.json",
         &schema_value(),
         &Layout {
@@ -115,7 +115,7 @@ pub fn schema_text() -> String {
     .expect("published reply schema order is exhaustive")
 }
 
-pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["$schema", "$id", "oneOf", "$defs"]),
     ("/oneOf/0", &["$ref"]),
     (
@@ -126,9 +126,9 @@ pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
     ("/oneOf/1/properties/text", &["$ref"]),
     ("/$defs", &["text", "option", "options", "question"]),
 ];
-pub const TEXT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] =
+pub const TEXT_ORDER: &[crate::render::ObjectOrder<'static>] =
     &[("", &["type", "minLength", "pattern"])];
-pub const OPTION_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const OPTION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],
@@ -137,11 +137,11 @@ pub const OPTION_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
     ("/properties/action", &["$ref"]),
     ("/properties/outcome", &["$ref"]),
 ];
-pub const OPTIONS_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const OPTIONS_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["type", "items", "minItems", "maxItems"]),
     ("/items", &["$ref"]),
 ];
-pub const QUESTION_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const QUESTION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],

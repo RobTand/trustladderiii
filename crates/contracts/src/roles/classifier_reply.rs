@@ -1,5 +1,5 @@
-use crate::contracts::bounded::{Text as BoundedText, *};
-use crate::contracts::render::{Layout, TypeOrder, TypeUse};
+use crate::bounded::{Text as BoundedText, *};
+use crate::render::{Layout, TypeOrder, TypeUse};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -289,7 +289,7 @@ pub fn schema_text() -> String {
         pointer: "/$defs/decision",
         order: &types[0],
     }];
-    crate::contracts::render::render(
+    crate::render::render(
         "classifier-reply.json",
         &schema_value(),
         &Layout {
@@ -300,7 +300,7 @@ pub fn schema_text() -> String {
     .expect("published reply schema order is exhaustive")
 }
 
-pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["$schema", "$id", "oneOf", "$defs"]),
     (
         "/oneOf/0",
@@ -450,7 +450,7 @@ pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
     ),
     ("/$defs", &["decision"]),
 ];
-pub const DECISION_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const DECISION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],

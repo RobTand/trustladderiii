@@ -1,5 +1,5 @@
-use crate::contracts::bounded::{Text as BoundedText, *};
-use crate::contracts::render::{Layout, TypeOrder, TypeUse};
+use crate::bounded::{Text as BoundedText, *};
+use crate::render::{Layout, TypeOrder, TypeUse};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -505,7 +505,7 @@ pub enum TestRunBaseSemantics {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ReviewerInputJsonExternalProof(pub crate::contracts::report::ProofReceipt);
+pub struct ReviewerInputJsonExternalProof(pub crate::report::ProofReceipt);
 impl JsonSchema for ReviewerInputJsonExternalProof {
     fn inline_schema() -> bool {
         true
@@ -650,7 +650,7 @@ pub struct Totals {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct PlannerExternalProof(pub crate::contracts::checks::ProofDeclaration);
+pub struct PlannerExternalProof(pub crate::checks::ProofDeclaration);
 impl JsonSchema for PlannerExternalProof {
     fn inline_schema() -> bool {
         true
@@ -1098,7 +1098,7 @@ pub fn schema_text() -> String {
             order: &types[7],
         },
     ];
-    crate::contracts::render::render(
+    crate::render::render(
         "maker-reply.json",
         &schema_value(),
         &Layout {
@@ -1109,7 +1109,7 @@ pub fn schema_text() -> String {
     .expect("published reply schema order is exhaustive")
 }
 
-pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["$schema", "$id", "oneOf", "$defs"]),
     (
         "/oneOf/0",
@@ -1353,7 +1353,7 @@ pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
         ],
     ),
 ];
-pub const BUDGET_EXHAUSTION_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const BUDGET_EXHAUSTION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &[
@@ -1453,7 +1453,7 @@ pub const BUDGET_EXHAUSTION_ORDER: &[crate::contracts::render::ObjectOrder<'stat
         &["type", "minLength"],
     ),
 ];
-pub const CHECKING_HANDOFF_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const CHECKING_HANDOFF_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],
@@ -1496,7 +1496,7 @@ pub const CHECKING_HANDOFF_ORDER: &[crate::contracts::render::ObjectOrder<'stati
     ("/properties/checks/items/properties/tests/items", &["type"]),
     ("/properties/checks/items/properties/mode", &["const"]),
 ];
-pub const GENERATION_RECEIPT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const GENERATION_RECEIPT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],
@@ -1714,7 +1714,7 @@ pub const GENERATION_RECEIPT_ORDER: &[crate::contracts::render::ObjectOrder<'sta
         &["type", "minimum"],
     ),
 ];
-pub const SELECTOR_IDENTITY_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const SELECTOR_IDENTITY_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &[
@@ -1732,7 +1732,7 @@ pub const SELECTOR_IDENTITY_ORDER: &[crate::contracts::render::ObjectOrder<'stat
     ("/properties/prefix", &["type", "maxItems", "items"]),
     ("/properties/prefix/items", &["type", "maxLength"]),
 ];
-pub const TEST_RUN_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const TEST_RUN_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &[
@@ -1859,7 +1859,7 @@ pub const TEST_RUN_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
     ("/properties/runs/items/properties/status", &["const"]),
     ("/properties/runs/items/properties/totals", &["$ref"]),
 ];
-pub const TOTALS_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const TOTALS_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],
@@ -1870,7 +1870,7 @@ pub const TOTALS_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
     ("/properties/error", &["type", "minimum"]),
     ("/properties/skipped", &["type", "minimum"]),
 ];
-pub const REPRODUCTION_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const REPRODUCTION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["oneOf"]),
     (
         "/oneOf/0",

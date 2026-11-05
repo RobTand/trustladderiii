@@ -1,5 +1,5 @@
-use crate::contracts::bounded::{Text as BoundedText, *};
-use crate::contracts::render::{Layout, TypeOrder, TypeUse};
+use crate::bounded::{Text as BoundedText, *};
+use crate::render::{Layout, TypeOrder, TypeUse};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -506,7 +506,7 @@ pub fn schema_text() -> String {
             order: &types[4],
         },
     ];
-    crate::contracts::render::render(
+    crate::render::render(
         "ingest-reply.json",
         &schema_value(),
         &Layout {
@@ -517,7 +517,7 @@ pub fn schema_text() -> String {
     .expect("published reply schema order is exhaustive")
 }
 
-pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["$schema", "$id", "oneOf", "$defs"]),
     (
         "/oneOf/0",
@@ -799,7 +799,7 @@ pub const ROOT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
         ],
     ),
 ];
-pub const FORECAST_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const FORECAST_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &[
@@ -836,7 +836,7 @@ pub const FORECAST_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
     ("/properties/context_tokens", &["type", "minimum"]),
     ("/properties/fits", &["type"]),
 ];
-pub const TOOL_CAPABILITY_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const TOOL_CAPABILITY_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],
@@ -887,7 +887,7 @@ pub const TOOL_CAPABILITY_ORDER: &[crate::contracts::render::ObjectOrder<'static
         &["type", "minLength", "maxLength"],
     ),
 ];
-pub const EVIDENCE_REQUIREMENT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const EVIDENCE_REQUIREMENT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &["type", "properties", "required", "additionalProperties"],
@@ -968,9 +968,9 @@ pub const EVIDENCE_REQUIREMENT_ORDER: &[crate::contracts::render::ObjectOrder<'s
     ("/properties/provenance/oneOf/1/properties", &["kind"]),
     ("/properties/provenance/oneOf/1/properties/kind", &["const"]),
 ];
-pub const EVIDENCE_CONTRACT_ORDER: &[crate::contracts::render::ObjectOrder<'static>] =
+pub const EVIDENCE_CONTRACT_ORDER: &[crate::render::ObjectOrder<'static>] =
     &[("", &["type", "items", "maxItems"]), ("/items", &["$ref"])];
-pub const PROOF_OBLIGATION_ORDER: &[crate::contracts::render::ObjectOrder<'static>] = &[
+pub const PROOF_OBLIGATION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "",
         &[

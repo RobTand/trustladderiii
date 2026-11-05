@@ -1137,3 +1137,51 @@ filegroup(
     ],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "pb_evidence_vectors",
+    srcs = ["pb_evidence_vectors.py"],
+    data = glob(["pb-evidence-vectors/*.json"]),  # keep
+    visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "//workers/src",
+    ],
+)
+
+tl3_py_test(
+    name = "test_pb_evidence_vectors",
+    srcs = ["test_pb_evidence_vectors.py"],
+    deps = [
+        ":conftest",
+        ":pb_evidence_vectors",
+    ],
+)
+
+py_binary(
+    name = "prompt_identity_vectors",
+    srcs = ["prompt_identity_vectors.py"],
+    data = ["prompt-identity-vectors.json"],  # keep: --check reads its baseline beside __file__
+    visibility = ["//visibility:public"],
+    deps = ["//workers/src"],
+)
+
+tl3_py_test(
+    name = "test_prompt_identity",
+    srcs = ["test_prompt_identity.py"],
+    deps = [
+        ":conftest",
+        ":prompt_identity_vectors",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_schema_identity",
+    srcs = ["test_schema_identity.py"],
+    deps = [
+        ":conftest",
+        "@tl3_pip//pytest",
+    ],
+)
