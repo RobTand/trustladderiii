@@ -500,3 +500,56 @@ fn root_selectors_cover_constants_clones_and_qualified_methods_once() {
     duplicate.push(("duplicate".into(), "kernel#*::rank".into()));
     assert!(check(&fs, &duplicate, &BTreeMap::new()).is_err());
 }
+
+fn rejects_definition_only_reason(source: &str) {
+    let fs = functions(source, "kernel");
+    let reason = BTreeMap::from([(
+        "kernel::candidate".into(),
+        "Logical definition; no standalone obligation.".into(),
+    )]);
+    assert!(
+        check(&fs, &[], &reason)
+            .expect_err(source)
+            .contains("definition-only reason"),
+        "{source}"
+    );
+}
+
+#[test]
+fn executable_functions_cannot_use_definition_only_reasons() {
+    rejects_definition_only_reason("verus! { fn candidate() -> bool { true } }");
+}
+
+#[test]
+fn block_contracts_cannot_hide_a_decreases_clause() {
+    for clause in ["recommends", "requires"] {
+        rejects_definition_only_reason(&format!(
+            "verus! {{ spec fn candidate(n: nat) -> nat\n\
+             {clause} if n == 0 {{ true }} else {{ n > 0 }},\n\
+             decreases n,\n\
+             {{ if n == 0 {{ 0 }} else {{ candidate(n - 1) }} }} }}"
+        ));
+    }
+}
+
+#[test]
+fn later_line_decreases_cannot_use_definition_only_reasons() {
+    rejects_definition_only_reason(
+        "verus! { spec fn candidate(n: nat) -> nat\n\
+         decreases\n n,\n\
+         { if n == 0 { 0 } else { candidate(n - 1) } } }",
+    );
+}
+
+#[test]
+fn plain_spec_definitions_can_use_definition_only_reasons() {
+    let fs = functions(
+        "verus! { spec fn candidate(n: nat) -> nat { if n == 0 { 0 } else { n } } }",
+        "kernel",
+    );
+    let reason = BTreeMap::from([(
+        "kernel::candidate".into(),
+        "Logical definition; no standalone obligation.".into(),
+    )]);
+    assert!(check(&fs, &[], &reason).is_ok());
+}
