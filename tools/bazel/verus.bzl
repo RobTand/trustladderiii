@@ -218,6 +218,7 @@ def verus_proofs():
             ("required_check", "required_check", "enqueue#required_check", 1),
             ("required_check_types", "required_check", "enqueue#RequiredState::clone", 1),
             ("required_check_witness", "required_check", "witness#covers", 1),
+            ("required_check_oracle_witness", "required_check", "witness#oracle", 1),
             ("rerun_budget", "rerun_budget", "enqueue#decide", 1),
             ("rerun_budget_consumed_receipt_witness", "rerun_budget", "witness#consumed_receipt", 1),
             ("rerun_budget_retained_budget_witness", "rerun_budget", "witness#retained_budget", 1),
@@ -241,6 +242,7 @@ def verus_proofs():
                 ],
                 specs = [
                     "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_refused_sticky_spec.rs",
                     "proofs/enqueue_" + root + "_spec.rs",
                     "proofs/enqueue_" + root + "_witness.rs",
                 ],

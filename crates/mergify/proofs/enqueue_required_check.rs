@@ -17,8 +17,10 @@ const MERGIFY_APP_SLUG: &str = "mergify";
 const QUEUE_CHECK: &str = "Mergify Merge Queue";
 const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
 mod enqueue_helpers;
-#[path = "enqueue_required_check_spec.rs"]
+#[path = "enqueue_refused_sticky_spec.rs"]
 mod enqueue_contract;
+#[path = "enqueue_required_check_spec.rs"]
+mod required_check_spec;
 #[path = "enqueue_required_check_witness.rs"]
 mod witness;
 fn main() {}

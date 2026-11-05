@@ -4,6 +4,13 @@ use crate::enqueue::{required_check, RequiredState};
 use vstd::prelude::*;
 
 verus! {
+/// Direct replacement of the old Kani assertion over arbitrary CheckView and
+/// runner inputs. Its independent oracle retains every arm of that assertion.
+fn oracle(check: CheckView, runner: bool) {
+    let actual = required_check(check, runner);
+    assert(actual == crate::required_check_spec::expected(check, runner));
+}
+
 /// Port of enqueue_required_check's six covers at base 504f10b0:343-354.
 /// Q47, docs/state-machine.md:681-688; state-table.md:540-541,575.
 /// Exact enum partition is preserved existing behaviour (no rule).
