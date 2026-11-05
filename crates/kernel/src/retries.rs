@@ -339,7 +339,7 @@ pub(super) fn recheck_transition(w: &mut World, i: usize, target: Phase, free: b
         final(w).next_question as int == old(w).next_question as int
             + if !free && !retirement_retry::can_pay(old(w).nodes@[i as int]) { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retry_bounds);] {
+] proof [reveal(retry_bounds); reveal(retirement_retry::continued);] {
     kernel_snapshot! { before = *w }
     let m = &mut w.nodes[i];
     if free || m.credit.can_spend(1) {
@@ -362,7 +362,7 @@ pub(super) fn recheck_transition(w: &mut World, i: usize, target: Phase, free: b
     kernel_proof! {
         if matches!(target, Phase::Checking | Phase::Ready(Resume::Checking)) {
         assert(w.nodes@[i as int] == retirement_retry::recheck_core(before@.nodes@[i as int], target, free, before@.next_question)) by {
-            reveal(retirement_retry::recheck_core); reveal(retirement_retry::continued);
+            reveal(retirement_retry::recheck_core);
         }
         }
     }
@@ -374,9 +374,21 @@ pub(super) fn recheck_transition(w: &mut World, i: usize, target: Phase, free: b
 }
 
 kernel_fn! {
-/// Q50 / #806: the real paid/free continuation writes. The complete field frame
-/// keeps the exact update tractable without a whole-Node equality query.
+/// Q50 / #806: publish the exact continuation result from its complete field frame.
 pub(super) fn continue_recheck(m: &mut Node, target: Phase, free: bool) -> (result: ()) [
+    requires !(target is Closed), old(m).generation < u64::MAX, old(m).credit.spent < u64::MAX,
+    ensures *final(m) == retirement_retry::continued(*old(m), target, free),
+] {
+    kernel_snapshot! { before = *m }
+    continue_recheck_fields(m, target, free);
+    kernel_proof! { retirement_retry_frame::continuation(before@, *m, target, free); }
+}
+}
+
+kernel_fn! {
+/// Q50 / #806: the unchanged optional debit followed by hold release and phase change.
+/// Keep all fields explicit here; the surrounding wrapper proves the Node equality.
+pub(super) fn continue_recheck_fields(m: &mut Node, target: Phase, free: bool) -> (result: ()) [
     requires !(target is Closed), old(m).generation < u64::MAX, old(m).credit.spent < u64::MAX,
     ensures final(m).phase == (target),
         final(m).pos == (0),

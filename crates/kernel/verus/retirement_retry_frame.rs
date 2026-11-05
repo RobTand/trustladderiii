@@ -1,0 +1,55 @@
+//! Q50 / #806: the complete continuation field frame implies its exact node result.
+use super::*;
+
+verus! {
+/// State-table recheck row: convert the existing complete field contract once,
+/// before the World-level credit/question branch joins. No state bound is added.
+pub(super) proof fn continuation(before: Node, after: Node, target: Phase, free: bool)
+    requires after.phase == (target),
+        after.pos == (0),
+        after.repo == (before.repo),
+        after.footprint == (before.footprint),
+        after.generation == ((before.generation + 1) as u64),
+        after.next_seq == (before.next_seq),
+        after.effect == (match before.effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None }),
+        after.run == (before.run),
+        after.job == (before.job),
+        after.pool == (before.pool),
+        after.ticket == (None),
+        after.holds == (if holding(target) { before.holds } else { false }),
+        after.paused == (before.paused),
+        after.last_cmd == (before.last_cmd),
+        after.question == (before.question),
+        after.attempt == (before.attempt),
+        after.round == (before.round),
+        after.replanned == (before.replanned),
+        after.plan_retries == (before.plan_retries),
+        after.audit_rounds == (before.audit_rounds),
+        after.early_end == (before.early_end),
+        after.run_failures == (before.run_failures),
+        after.run_incidents == (before.run_incidents),
+        after.fx_failures == (before.fx_failures),
+        after.fx_incidents == (before.fx_incidents),
+        after.waiting_incident == (before.waiting_incident),
+        after.incident_needs_rob == (before.incident_needs_rob),
+        after.proposed == (before.proposed),
+        after.adopted == (before.adopted),
+        after.head == (before.head),
+        after.checked == (before.checked),
+        after.approved == (before.approved),
+        after.merged == (before.merged),
+        after.pr_open == (before.pr_open),
+        after.had_pr == (before.had_pr),
+        after.worktree == (before.worktree),
+        after.rechecks == (before.rechecks),
+        after.review_restarted == (before.review_restarted),
+        after.credit == (if free { before.credit } else { Credit { spent: (before.credit.spent + 1) as u64, ..before.credit } }),
+        after.priority == (before.priority),
+        after.review_stop == (before.review_stop),
+        after.planning_started == (before.planning_started),
+        after.waiting_prerequisite == (before.waiting_prerequisite),
+    ensures after == retirement_retry::continued(before, target, free),
+{
+    reveal(retirement_retry::continued);
+}
+}

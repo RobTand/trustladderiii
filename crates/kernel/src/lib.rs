@@ -69,6 +69,15 @@ mod retirement_publishing;
 #[path = "../verus/retirement_retry.rs"]
 mod retirement_retry;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry_apply.rs"]
+mod retirement_retry_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry_frame.rs"]
+mod retirement_retry_frame;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry_rules.rs"]
+mod retirement_retry_rules;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_retry_witness.rs"]
 mod retirement_retry_witness;
 #[cfg(verus_keep_ghost)]

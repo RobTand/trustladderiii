@@ -1,4 +1,6 @@
 //! Q50/Q54 / #806: exact retry decisions shared by real CI and outside-push paths.
+pub(super) use super::retirement_retry_apply::*;
+pub(super) use super::retirement_retry_rules::*;
 use super::*;
 
 verus! {
@@ -116,49 +118,13 @@ pub(super) proof fn recheck_distance(n: Node, target: Phase, free: bool, id: u64
     reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
 }
 
-/// State-table consistency: ticket and question allocation only enlarge old ID bounds.
-pub(super) proof fn question_frame(before: World, after: World, n: Node)
-    requires before.gates@ == after.gates@, before.file_sets@ == after.file_sets@,
-        before.next_ticket <= after.next_ticket, before.next_question <= after.next_question,
-        retirement::node_rules(before, n),
-    ensures retirement::node_rules(after, n),
-{
-    reveal(retirement::node_rules);
-    footprint::storage_frame(before, after, n.footprint, n.footprint);
-}
 
-/// Q54 / #806: the real failed-fix ladder preserves every production node rule.
-/// One branch, no unwind. The old phase can be either CI-accepting phase.
-pub(super) proof fn rung_rules(w: World, n: Node, fast: bool, id: u64)
-    requires retirement::node_rules(w, n), node_headroom(n),
-        matches!(n.phase, Phase::Publishing | Phase::Queued),
-        rung_asks(n, fast) ==> id < w.next_question,
-    ensures retirement::node_rules(w, rung(n, fast, id, ReviewStop::CiFailed)),
-{
-    reveal(retirement::node_rules); reveal(rung); reveal(retirement::stopped);
-}
 
-/// Q54 / #806: a free fix preserves readiness without consuming credit.
-pub(super) proof fn failed_rules(w: World, n: Node, fast: bool, id: u64)
-    requires retirement::node_rules(w, n), node_headroom(n),
-        matches!(n.phase, Phase::Publishing | Phase::Queued),
-        n.round != 0 && rung_asks(n, fast) ==> id < w.next_question,
-    ensures retirement::node_rules(w, failed(n, fast, id, ReviewStop::CiFailed)),
-{
-    reveal(failed);
-    if n.round == 0 { reveal(retirement::node_rules); }
-    else { rung_rules(w, n, fast, id); }
-}
 
-/// Q50 / #806: a changed observed head preserves full node consistency after recheck.
-pub(super) proof fn outside_rules(w: World, n: Node, head: HeadId, id: u64)
-    requires retirement::node_rules(w, n), node_headroom(n),
-        n.had_pr && matches!(n.phase, Phase::Publishing | Phase::Queued | Phase::Ready(Resume::Publishing))
-            && n.rechecks >= FREE_RECHECKS && !can_pay(n) ==> id < w.next_question,
-    ensures retirement::node_rules(w, fact_result(n, Fact::PushByOther { head }, w.fail_fast, id).0),
-{
-    reveal(retirement::node_rules); reveal(fact_result); reveal(rechecked); reveal(recheck_core); reveal(continued);
-}
+
+
+
+
 }
 
 verus! {
@@ -177,96 +143,7 @@ pub(super) open spec fn node_post(b: Node, n: Node, fast: bool) -> bool {
             && n.phase == Phase::Stopping(Outcome::Stopped) && n.credit == b.credit && n.question.is_none())
 }
 
-/// Q50/Q54 / #806: exact retry updates imply the original shared transition rules.
-pub(super) proof fn fact_transition_rules(w: World, n: Node, fact: Fact)
-    requires retirement::node_rules(w, n), node_headroom(n), selected(fact),
-    ensures node_post(n, fact_result(n, fact, w.fail_fast, w.next_question).0, w.fail_fast),
-        fact_result(n, fact, w.fail_fast, w.next_question).0.repo == n.repo,
-        fact_result(n, fact, w.fail_fast, w.next_question).0.footprint == n.footprint,
-        fact_result(n, fact, w.fail_fast, w.next_question).0.credit.withheld == n.credit.withheld,
-        !fact_result(n, fact, w.fail_fast, w.next_question).0.holds || n.holds,
-        !fact_result(n, fact, w.fail_fast, w.next_question).0.pool || n.pool,
-        fact_result(n, fact, w.fail_fast, w.next_question).0.ticket.is_none()
-            || fact_result(n, fact, w.fail_fast, w.next_question).0.ticket == n.ticket,
-{
-    reveal(retirement::node_rules); reveal(fact_result); reveal(failed); reveal(rung);
-    reveal(rechecked); reveal(recheck_core); reveal(continued); reveal(retirement::fact_node); reveal(retirement::stopped);
-}
 
-/// Q50 / #806: CI and outside push preserve the complete checker acceptance.
-pub(super) proof fn fact_preserves_world(before: World, after: World, fact: Fact)
-    requires retirement::domain(before), retirement::accepted(before), selected(fact),
-        node_headroom(before.nodes@[0]),
-        after.nodes@ == before.nodes@.update(0, fact_result(before.nodes@[0], fact, before.fail_fast, before.next_question).0),
-        after.next_question as int == before.next_question as int
-            + if fact_result(before.nodes@[0], fact, before.fail_fast, before.next_question).1 { 1int } else { 0int },
-        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
-        after.next_ticket == before.next_ticket, after.pool_capacity == before.pool_capacity,
-        after.dependencies@ == before.dependencies@,
-    ensures retirement::domain(after), retirement::accepted(after),
-        node_post(before.nodes@[0], after.nodes@[0], before.fail_fast),
-{
-    reveal(retirement::accepted);
-    fact_transition_rules(before, before.nodes@[0], fact);
-    question_frame(before, after, before.nodes@[0]);
-    question_frame(before, after, before.nodes@[1]);
-    reveal(fact_result);
-    match fact {
-        Fact::CiFailed { infra } => {
-            let n = before.nodes@[0];
-            if n.phase == Phase::Queued || (n.phase == Phase::Publishing && current_item(n) == Some(Item::Do(EffectKind::Enqueue))) {
-                if infra {
-                    retirement::fact_preserves_node(after, n, fact);
-                } else {
-                    let m = if n.phase == Phase::Publishing { Node { effect: match n.effect {
-                        Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
-                    }, ..n } } else { n };
-                    assert(retirement::node_rules(after, m)) by { reveal(retirement::node_rules); }
-                    failed_rules(after, m, before.fail_fast, before.next_question);
-                }
-            }
-        },
-        Fact::PushByOther { head } => outside_rules(after, before.nodes@[0], head, before.next_question),
-        _ => {},
-    }
-    assert forall|r: int| 0 <= r < 2 implies
-        retirement::holders(after, RepoId(r as u64), 2) <= after.gates@[r].w by {
-        assert(retirement::holders(after, RepoId(r as u64), 2) <= retirement::holders(before, RepoId(r as u64), 2));
-    }
-    footprint::storage_frame(before, after, before.nodes@[0].footprint, before.nodes@[1].footprint);
-}
-}
 
-kernel_fn! {
-/// Q50/Q54 / #806: one real apply, original two-node domain, weaker counter bounds.
-/// No settledness is required; notice-only output proves all check_outputs assertions.
-pub(super) fn verify_retry_apply(mut w: World, fact: Fact) -> (result: (World, Outbox)) [
-    requires retirement::domain(w), retirement::accepted(w), retirement::bounded(w), storage_ordered(w), selected(fact),
-    ensures retirement::domain(result.0), retirement::accepted(result.0),
-        result.0.nodes@ == w.nodes@.update(0, fact_result(w.nodes@[0], fact, w.fail_fast, w.next_question).0),
-        result.0.next_question as int == w.next_question as int
-            + if fact_result(w.nodes@[0], fact, w.fail_fast, w.next_question).1 { 1int } else { 0int },
-        retirement::notices_only(result.1), node_post(w.nodes@[0], result.0.nodes@[0], w.fail_fast),
-        result.0.nodes@[1] == w.nodes@[1],
-] proof [
-    reveal(world_headroom); reveal_with_fuel(open_prefix, 3); reveal(storage_ordered);
-    reveal(empty_outbox); reveal(retirement::notices_only); reveal(retirement_domain); reveal(retirement_accepted);
-    reveal(retirement::accepted); reveal(retirement::bounded);
-] {
-    kernel_snapshot! { before = w }
-    kernel_proof! {
-        open_prefix_monotone(w.nodes@, 0, w.nodes@.len());
-        assert forall|j: int| 0 <= j < w.nodes@.len() implies node_headroom(w.nodes@[j]) by {}
-        dependencies::indexable_definition(w);
-    }
-    let checked_before = w.check();
-    assert!(checked_before.is_ok());
-    kernel_proof! { world_checked_definition(w); }
-    let mut out = Outbox::new();
-    apply(&mut w, Event::Fact { node: NodeId(0), fact }, &mut out);
-    kernel_proof! { fact_preserves_world(before@, w, fact); }
-    let checked = w.check();
-    assert!(checked.is_ok());
-    (w, out)
-}
+
 }
