@@ -638,6 +638,7 @@ mod properties {
                     "snapshot",
                     "fence",
                     "check_changed",
+                    "unresolved_hold",
                 ],
             ),
             (

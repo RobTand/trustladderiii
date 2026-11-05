@@ -87,7 +87,7 @@ fn check_witness() {
     assert(!actual_25);
     let bad = [false, false, false, false, false, false, false, false, false, false];
     let actual_26 = check_changed(CheckComparison::BothPresent { fields: bad });
-    assert(!bad[0]);
+    assert(!bad@[0]);
     assert(actual_26);
 }
 }

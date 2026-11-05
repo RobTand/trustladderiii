@@ -336,7 +336,7 @@ pub enum CheckComparison {
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == match comparison {
             CheckComparison::BothMissing => false,
             CheckComparison::OneMissing => true,
-            CheckComparison::BothPresent { fields } => exists|j: int| 0 <= j < 10 && !fields[j],
+            CheckComparison::BothPresent { fields } => exists|j: int| 0 <= j < 10 && !fields@[j],
         },))]
 pub fn check_changed(comparison: CheckComparison) -> bool {
     match comparison {
@@ -346,13 +346,13 @@ pub fn check_changed(comparison: CheckComparison) -> bool {
             let mut i = 0;
             completion_while! { (i < fields.len()) [
                 invariant i <= 10,
-                    forall|j: int| 0 <= j < i ==> fields[j],
+                    forall|j: int| 0 <= j < i ==> fields@[j],
                 decreases 10 - i,
             ] {
                 if !fields[i] {
                     completion_proof! {
-                        assert(exists|j: int| 0 <= j < 10 && !fields[j]) by {
-                            assert(!fields[i as int]);
+                        assert(exists|j: int| 0 <= j < 10 && !fields@[j]) by {
+                            assert(!fields@[i as int]);
                         }
                     }
                     return true;
