@@ -74,6 +74,19 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+        for name, count in {"once": 8, "converges": 24, "dedup": 8, "approval": 25, "fence": 19}.items():
+            verus_test(
+                name = "verus_" + name,
+                src = "proofs/" + name + ".rs",
+                srcs = ["src/step.rs", "src/mirror.rs", "src/upstream.rs"],
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
 
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])

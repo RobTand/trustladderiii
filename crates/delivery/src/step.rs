@@ -161,6 +161,8 @@ pub fn key_matches(left: &[u8], right: &[u8]) -> bool {
         }
         index += 1;
     }}
+    #[cfg(verus_keep_ghost)]
+    vstd::prelude::verus_exec_expr! { proof { assert(left@ =~= right@); } }
     true
 }
 

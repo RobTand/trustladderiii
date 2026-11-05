@@ -29,7 +29,7 @@ struct Script {
     answers: VecDeque<Answer>,
     calls: Vec<String>,
 }
-struct Recording(Arc<Mutex<Script>>);
+struct Recording(Arc<Mutex<Script>>, tl3_config::Store);
 impl Executor for Recording {
     fn observations(
         &mut self,
@@ -43,6 +43,11 @@ impl Executor for Recording {
         Ok(vec![])
     }
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        assert_eq!(
+            actual(&self.1, &delivery.key),
+            State::Sent,
+            "Sent must be durable before execute"
+        );
         let mut script = self.0.lock().unwrap();
         script.calls.push(format!("execute:{}", delivery.key));
         match script.answers.pop_front().unwrap() {
@@ -75,7 +80,7 @@ fn repo() -> Repository {
 }
 fn open(settings: &tl3_config::Store, script: Arc<Mutex<Script>>) -> Controller {
     let mut registry = Registry::default();
-    registry.register(Upstream::GitHub, Recording(script));
+    registry.register(Upstream::GitHub, Recording(script, settings.clone()));
     Controller::open(
         Store::open(settings).unwrap(),
         registry,
