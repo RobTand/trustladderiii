@@ -633,6 +633,7 @@ impl Controller {
                 .adapters
                 .get(executor::Upstream::GitHub)?
                 .prerequisite_detail(&request.repo, kind, number)?;
+            let observed_at = observed.updated_at;
             let observed_reason = observed.reason.clone();
             let observed = observed.status;
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
@@ -645,7 +646,7 @@ impl Controller {
                 snapshot,
                 commit,
                 ExternalFact {
-                    updated_at: None,
+                    updated_at: observed_at,
                     reason: observed_reason,
                     repository: request.repo.clone(),
                     kind,
