@@ -189,6 +189,15 @@ else:
             }
         }
         self.drain();
+        let incidents: Vec<_> = self
+            .controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.table == "incidents")
+            .collect();
+        assert!(incidents.is_empty(), "fixture incident: {incidents:?}");
     }
     fn until(&mut self, mut ready: impl FnMut(&mut Self) -> bool) {
         let end = Instant::now() + Duration::from_secs(30);
