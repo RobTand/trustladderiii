@@ -81,3 +81,34 @@ impl<'de> DeserializeSeed<'de> for DocumentSeed {
 pub(crate) fn parse(bytes: &[u8]) -> Result<Value, serde_json::Error> {
     serde_json::from_slice::<Document>(bytes).map(|v| v.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+
+    #[test]
+    fn scalar_tokens_keep_the_existing_controller_number_and_object_contract() {
+        let value = parse(
+            br#"{"integer":18446744073709551616,"float":0.1,"negative":-0.0,"$serde_json::private::Number":"literal"}"#,
+        )
+        .unwrap();
+        assert!(value["integer"].is_f64());
+        assert_eq!(
+            value["integer"].as_f64(),
+            Some(18_446_744_073_709_551_616.0)
+        );
+        assert_eq!(value["float"].as_f64(), Some(0.1));
+        assert_eq!(value["negative"].to_string(), "-0.0");
+        assert_eq!(value["$serde_json::private::Number"], "literal");
+        assert!(parse(br#"{"nested":[{"a":1,"\u0061":2}]}"#).is_err());
+        assert!(parse(b"1e400").is_err());
+    }
+
+    #[test]
+    fn raw_scalar_decoding_retains_the_original_nesting_limit() {
+        for (depth, accepted) in [(127, true), (128, false)] {
+            let raw = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
+            assert_eq!(parse(raw.as_bytes()).is_ok(), accepted, "depth {depth}");
+        }
+    }
+}
