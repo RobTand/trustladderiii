@@ -42,7 +42,7 @@ fn business_bytes(c: &mut Controller) -> Vec<u8> {
     serde_json::to_vec(&dump).unwrap()
 }
 
-fn comment(repository: &Repository, number: u64, body: &str) -> Observation {
+fn comment(repository: &Repository, number: u64, actor: u64, body: &str) -> Observation {
     Observation::GitHubComment {
         repository: repository.clone(),
         issue: number,
@@ -50,7 +50,7 @@ fn comment(repository: &Repository, number: u64, body: &str) -> Observation {
             id: 7714,
             body: body.into(),
             user: tl3_github::Actor {
-                id: 42,
+                id: actor,
                 login: "rob".into(),
             },
             created_at: "2026-11-05T09:00:00Z".parse().unwrap(),
@@ -115,8 +115,8 @@ fn queue_merge_refusal() {
                 && r.value["signature"]["class"] == "kernel_counter_headroom")
     );
     assert_eq!(
-        business_bytes(&mut c),
-        before,
+        String::from_utf8(business_bytes(&mut c)).unwrap(),
+        String::from_utf8(before).unwrap(),
         "queue translation must not retain its receipt or an intern when a fan-out step refuses"
     );
 }
@@ -125,8 +125,11 @@ fn classified_refusal() {
     let mut db = Database::start();
     let (_repo, mut c, repository) = fixture(&mut db, "atomic_classified");
     intake(&mut c, &repository, 42);
-    c.observe("pause-comment", comment(&repository, 42, "pause"))
-        .unwrap();
+    c.observe(
+        "pause-comment",
+        comment(&repository, 42, c.bootstrap.rob, "pause"),
+    )
+    .unwrap();
     assert!(c.drive_once().unwrap());
     let snapshot = c.snapshot().unwrap();
     assert!(c.schedule_comment(&snapshot).unwrap());
@@ -161,8 +164,8 @@ fn classified_refusal() {
                 && r.value["signature"]["class"] == "kernel_counter_headroom")
     );
     assert_eq!(
-        business_bytes(&mut c),
-        before,
+        String::from_utf8(business_bytes(&mut c)).unwrap(),
+        String::from_utf8(before).unwrap(),
         "classifier refusal must retain its job, watch, unclassified input and deduplication state"
     );
 }
@@ -182,7 +185,7 @@ fn queued_intake_edit() {
         installation: repository.installation,
         number: 2772,
         title: "old title".into(),
-        actor: 42,
+        actor: c.bootstrap.rob,
         label: "tl3".into(),
         labels: vec!["P2".into()],
     })
