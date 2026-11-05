@@ -34,6 +34,7 @@ pub fn generated() -> Vec<Generated> {
             path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
             text: render(&check_report_schema()),
         },
+        decision_context::generated().unwrap_or_else(|error| panic!("{error}")),
         Generated {
             path: format!("{SCHEMA_DIRECTORY}/planner-reply.json"),
             text: roles::planner_reply::schema_text(),
@@ -84,6 +85,10 @@ fn render(schema: &Value) -> String {
     text.push('\n');
     text
 }
+
+pub mod render;
+
+pub mod decision_context;
 
 pub mod roles {
     pub mod planner_reply;
