@@ -2,6 +2,8 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Output {
     Approval,
@@ -9,6 +11,8 @@ pub enum Output {
     Message,
     Other,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Steering {
     Correction,
@@ -16,6 +20,8 @@ pub enum Steering {
     ConsoleNote,
     Other,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReconcileRoute {
     Approval,
@@ -57,6 +63,8 @@ pub fn reconcile_route(output: Output, steering: Steering) -> ReconcileRoute {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicationRead {
     Reconciled,
@@ -64,6 +72,8 @@ pub enum PublicationRead {
     OtherPermanent,
     Failed,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReconcileAction {
     Preserve,
@@ -91,6 +101,7 @@ pub fn publication_reconciliation(read: PublicationRead) -> ReconcileAction {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
 pub struct OpenPrEvidence {
     pub open_or_merged: bool,
@@ -109,6 +120,8 @@ pub fn accept_open_pr(e: OpenPrEvidence) -> bool {
     e.open_or_merged && e.valid_body && e.valid_obligations && e.no_gaps && e.evidence_idempotent
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApprovalPreflight {
     Observed,
@@ -128,11 +141,14 @@ pub fn approval_preflight(converged: bool) -> ApprovalPreflight {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
 pub struct ApprovalFailure {
     pub sent: bool,
     pub permanent: bool,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApprovalFailureAction {
     Refused,
@@ -158,6 +174,8 @@ pub fn failed_approval(failure: ApprovalFailure) -> ApprovalFailureAction {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApprovalObservation {
     Observed,
@@ -177,6 +195,8 @@ pub fn observed_approval(approved: bool) -> ApprovalObservation {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Comment {
     Clarify,
@@ -192,6 +212,7 @@ pub fn message_delivery(notice: bool, comment: Comment) -> bool {
     notice || matches!(comment, Comment::Clarify | Comment::ReplacementDropped)
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
 pub struct OperationsTarget {
     pub owner: bool,
@@ -216,6 +237,8 @@ pub fn incident_admitted(incident: bool, target: Option<OperationsTarget>) -> bo
         }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitleSource {
     Context,
@@ -234,6 +257,8 @@ pub fn title_source(incident: bool, restart_dropped: bool) -> TitleSource {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageRejection {
     Fallback,
@@ -252,12 +277,16 @@ pub fn rejected_message(comment: Comment) -> MessageRejection {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IssueRead {
     Closed,
     Open,
     Failed,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseAction {
     Complete,

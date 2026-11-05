@@ -594,7 +594,7 @@ fn comment(id: u64, body: &str) -> Comment {
     serde_json::from_value(json!({"id":id,"body":body,"user":{"id":9,"login":"factory[bot]"},"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-01T00:00:00Z","issue_url":"https://api.github.com/repos/owner/sandbox/issues/12"})).unwrap()
 }
 fn pull(number: u64, w: u16) -> PullRequest {
-    serde_json::from_value(json!({"number":number,"user":{"id":9,"login":"factory[bot]"},"state":if w&1!=0 {"closed"}else{"open"},"draft":w&8!=0,"merged_at":if w&2!=0 {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":w&4==0,"body":if w&16!=0 {""}else{"Change type: fix"},"head":{"sha":"a".repeat(40),"ref":if w&32!=0 {"foreign"}else{"topic"},"repo":{"owner":{"login":"owner"},"name":"sandbox","full_name":"owner/sandbox"}},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
+    serde_json::from_value(json!({"number":number,"user":{"id":9,"login":"factory[bot]"},"state":if w&1!=0 {"closed"}else{"open"},"draft":w&8!=0,"merged_at":if w&2!=0 {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":w&4==0,"body":if w&16!=0 {""}else{"Change type: fix"},"head":{"sha":"a".repeat(40),"ref":if w&32!=0 {"foreign"}else{"topic"},"repo":{"id":1,"owner":{"id":1,"login":"owner"},"name":"sandbox","full_name":"owner/sandbox"}},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
 }
 #[derive(Clone)]
 pub(super) struct GitHub(Arc<GitHubInner>);
