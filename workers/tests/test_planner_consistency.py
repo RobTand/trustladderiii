@@ -258,7 +258,7 @@ def test_request162_correction_cannot_drop_mutant_coverage(planner_request, requ
     events = []
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    assert 'Every maker and checking goal must have a check.' in events[-1]['reply']['violations']
+    assert any('Required goals have no check coverage: goal 1:' in v for v in events[-1]['reply']['violations'])
 
 
 @pytest.mark.parametrize('resolution', ['base_node', 'cant_meet', 'still_invented', 'drop_tier_goal'])
@@ -287,7 +287,7 @@ def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request,
         runtime.run(planner_request, events.append)
         result = events[-1]['reply']
         if resolution == 'drop_tier_goal':
-            assert 'Every maker and checking goal must have a check.' in result['violations']
+            assert any('Required goals have no check coverage: goal 5:' in v for v in result['violations'])
         else:
             assert result['kind'] == fixed['kind']
             if resolution == 'base_node':
@@ -448,7 +448,7 @@ def test_pb2710_names_only_uncovered_required_goal(planner_request, coverage_cas
     fixture, draft, _ = coverage_case
     planner_request['inputs']['repair_plan_consistency'] = False
     check_reply(planner_request['inputs'], draft)
-    assert draft['violations'] == [fixture['violation']]
+    assert draft['violations'] == [fixture['violation'], 'Planner coverage correction attempts: 0.']
     assert 'goal 6:' not in draft['violations'][0]
 
 
@@ -476,20 +476,19 @@ def test_pb2710_one_tool_free_coverage_correction(planner_request, coverage_case
 
 def test_pb2710_format_and_coverage_share_one_repair(planner_request, coverage_case, monkeypatch):
     from tl3_workers import runtime
-    from tl3_workers.turns import InvalidReply
 
     _, draft, fixed = coverage_case
     model = planner_model(monkeypatch, {'kind': 'invalid'}, draft, fixed)
-    with pytest.raises(InvalidReply) as caught:
-        runtime.run(planner_request, lambda _: None)
+    events = []
+    runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    assert 'goal 3:' in str(caught.value.errors[1])
+    assert 'goal 3:' in '\n'.join(events[-1]['reply']['violations'])
+    assert 'Planner coverage correction attempts: 1.' in events[-1]['reply']['violations']
 
 
 @pytest.mark.parametrize('second_goal', [3, 2])
 def test_pb2710_exhaustion_keeps_both_named_goals(planner_request, coverage_case, monkeypatch, second_goal):
     from tl3_workers import runtime
-    from tl3_workers.turns import InvalidReply
 
     fixture, draft, fixed = coverage_case
     if second_goal != 3:
@@ -498,15 +497,14 @@ def test_pb2710_exhaustion_keeps_both_named_goals(planner_request, coverage_case
         fixed = copy.deepcopy(draft)
     model = planner_model(monkeypatch, draft, fixed, LEAF)
     events = []
-    with pytest.raises(InvalidReply) as caught:
-        runtime.run(planner_request, events.append)
+    runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    assert len(caught.value.errors) - 1 == 1, 'one correction was attempted'
-    first, second = caught.value.errors
-    assert first.violations == [fixture['violation']]
-    assert f'goal {second_goal}:' in second.violations[0]
-    assert planner_request['inputs']['ingest']['goals'][second_goal]['description'] in second.violations[0]
-    assert not any(event['event'] == 'reply' for event in events)
+    violations = events[-1]['reply']['violations']
+    assert 'Planner coverage correction attempts: 1.' in violations
+    assert fixture['violation'] in violations
+    assert f'goal {second_goal}:' in '\n'.join(violations)
+    assert planner_request['inputs']['ingest']['goals'][second_goal]['description'] in '\n'.join(violations)
+    assert sum(event['event'] == 'reply' for event in events) == 1
 
 
 @pytest.mark.parametrize('change', ['scope', 'selector', 'kind', 'subjects', 'observers', 'message',
@@ -572,7 +570,12 @@ def test_pb2710_substantive_and_proof_refusals_stay_terminal(planner_request, co
     elif obstacle == 'budget':
         draft['estimated_tool_turns'] = 1000
     elif obstacle == 'proof':
+        from tl3_workers.roles.planner import check_reply
         draft['checks'][0]['proof']['red_message'] = ''
+        check_reply(planner_request['inputs'], draft)
+        assert fixture['violation'] in draft['violations']
+        assert any('proof' in violation.lower() for violation in draft['violations'])
+        return
     else:
         planner_request['inputs']['repair_plan_consistency'] = False
     model = planner_model(monkeypatch, draft, fixed)
@@ -582,15 +585,21 @@ def test_pb2710_substantive_and_proof_refusals_stay_terminal(planner_request, co
     assert fixture['violation'] in events[-1]['reply']['violations']
 
 
-@pytest.mark.parametrize('omission', ['proof', 'selector', 'edit'])
+@pytest.mark.parametrize('omission', ['proof', 'subject', 'selector', 'edit'])
 def test_pb2710_coverage_composes_with_existing_defects(planner_request, coverage_case, monkeypatch, omission):
     from tl3_workers import runtime
 
     _, draft, fixed = coverage_case
     if omission == 'proof':
         draft['checks'][0]['proof'].pop('red_message')
+    elif omission == 'subject':
+        planner_request['inputs']['ingest']['goals'][0]['proof_obligation'] = {
+            'kind': 'assertion', 'observer': 'new',
+            'subjects': ['tests/test_checkout_recovery_1465.py::_git'],
+            'source': 'issue.body', 'quote': 'Keep assertion proof on the real _git helper.'}
+        draft['checks'][0]['proof']['subjects'] = []
     elif omission == 'selector':
-        draft['checks'][1]['node_ids'] = ['tests/test_checkout_recovery_1465.py']
+        draft['checks'][1]['node_ids'] = ['tests/test_existing.py']
     else:
         node = draft['checks'][1]['node_ids'][0]
         # It is an uncovered edit rather than a frozen regression selection.
@@ -603,7 +612,7 @@ def test_pb2710_coverage_composes_with_existing_defects(planner_request, coverag
     model = planner_model(monkeypatch, draft, fixed)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2
+    assert len(model.calls) == 2, events[-1]['reply']['violations']
     assert events[-1]['reply']['violations'] == []
 
 
@@ -638,3 +647,41 @@ def test_pb2710_message_clips_descriptions_never_ids(planner_request, coverage_c
         assert ' [...]' in message
         # Equal byte caps per description, rounded down to complete UTF-8 characters.
         assert abs(message.count('é') * 2 - message.count('界') * 3) <= 2
+
+
+def test_pb2710_clipped_prompt_keeps_full_stop_evidence(planner_request, coverage_case, monkeypatch):
+    from tl3_workers import runtime
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, REPAIR
+
+    _, draft, _ = coverage_case
+    description = 'é' * 3000
+    planner_request['inputs']['ingest']['goals'][3]['description'] = description
+    model = planner_model(monkeypatch, draft, draft)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    prompt = model.calls[1][0][-1].text
+    assert len(prompt.encode()) <= REPAIR_MESSAGE_BYTES + len(REPAIR.format('').encode())
+    assert 'goal 3:' in prompt and description not in prompt
+    violations = events[-1]['reply']['violations']
+    assert description in '\n'.join(violations)
+    assert 'Planner coverage correction attempts: 1.' in violations
+
+
+def test_pb2710_no_allowance_records_zero_coverage_attempts(planner_request, coverage_case, monkeypatch):
+    from tl3_workers import runtime
+    from tl3_workers.turns import RepairUnavailable, TurnControl
+
+    fixture, draft, fixed = coverage_case
+    model = planner_model(monkeypatch, draft, fixed)
+
+    def no_room(self, history, error):
+        raise RepairUnavailable()
+
+    monkeypatch.setattr(TurnControl, 'repair', no_room)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 1
+    assert fixture['violation'] in events[-1]['reply']['violations']
+    assert 'Planner coverage correction attempts: 0.' in events[-1]['reply']['violations']
+    assert any('input allowance has no room' in v for v in events[-1]['reply']['violations'])

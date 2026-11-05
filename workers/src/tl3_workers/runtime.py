@@ -25,13 +25,13 @@ from jsonschema import ValidationError
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
-from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
+from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, coverage_stop, planner_schema_reply
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
 from tl3_workers.exploration import ExplorationMiddleware
-from tl3_workers.turns import TurnControl, repaired
+from tl3_workers.turns import InvalidReply, TurnControl, repaired
 from tl3_workers.session import is_unaccepted_session
 
 
@@ -340,8 +340,13 @@ def _run(request, emit):
                     'kind': 'cant_meet', 'files': [], 'evidence_contract': [],
                     'report': rejected['message']}, worktree=worktree)
 
-            reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
-                             checked)
+            try:
+                reply = repaired(control, history, lambda: _run_agent(agent, history, emit),
+                                 checked)
+            except (PlanConsistencyError, InvalidReply) as error:
+                reply = coverage_stop(error) if role.name == 'planner' else None
+                if reply is None:
+                    raise
         else:
             reply = role.run(model, request, worktree, emit)
             if not role.validates_reply:
