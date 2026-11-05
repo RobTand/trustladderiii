@@ -291,14 +291,31 @@ def pytest_configure(config):
     'def pytest_sessionfinish():\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
     'def pytest_sessionfinish():\n    if CONTROLLER:\n        raise RuntimeError("can\'t start new thread")\n',
     'def pytest_unconfigure():\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
+    'def pytest_sessionfinish():\n    if CONTROLLER:\n        raise SystemExit(1)\n',
     # Before the finish record.
     '@pytest.hookimpl(tryfirst=True)\ndef pytest_sessionfinish():\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
     'def pytest_runtest_logreport(report):\n    if CONTROLLER:\n        raise ValueError("checkout hook")\n',
-], ids=["after-finish", "after-finish-thread-message", "unconfigure", "before-finish", "controller-logreport"])
-def test_contention_run_with_failing_checkout_hook_stays_incomplete(fixture, hook):
+], ids=["after-finish", "after-finish-thread-message", "unconfigure", "after-finish-exit", "before-finish",
+        "controller-logreport"])
+@pytest.mark.parametrize("parallel", [0, 2])
+def test_run_with_failing_checkout_hook_stays_incomplete(fixture, hook, parallel):
     (fixture / "conftest.py").write_text(CONTROLLER_HOOK + "\n\n" + hook)
-    result = test_tool.run(fixture, CONTAINER, ("test_value.py",), repeat=2, parallel=2)
+    result = test_tool.run(fixture, CONTAINER, ("test_value.py",), repeat=2, parallel=parallel)
     assert_incomplete_contention(result)
+
+
+@pytest.mark.parametrize("hook", [
+    'def pytest_sessionfinish():\n    raise ValueError("checkout hook")\n',
+    'def pytest_sessionfinish():\n    raise SystemExit(1)\n',
+    'def pytest_unconfigure():\n    raise ValueError("checkout hook")\n',
+], ids=["after-finish", "after-finish-exit", "unconfigure"])
+def test_checking_run_with_failing_checkout_hook_has_no_report(fixture, monkeypatch, hook):
+    from tl3_harness.model import Outcome
+    monkeypatch.setattr(execution, "container_command", test_tool.container_command)
+    (fixture / "conftest.py").write_text(hook)
+    tests = ("test_value.py::test_fail",)
+    outcomes = execution.run_tree(fixture, CONTAINER, tests, fixture / "report.jsonl", execution.Progress())
+    assert outcomes == {tests[0]: Outcome.NO_REPORT}
 
 
 def test_parallel_without_xdist_is_named_not_available(fixture, monkeypatch):
