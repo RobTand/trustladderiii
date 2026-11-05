@@ -130,6 +130,8 @@ capacity reconciliation's `settle_world`. Failed checks raise
 The input stays queued. One existing counter incident halts further kernel
 inputs across wakes and restarts until authorized clearance. Clearance does not
 restore numeric headroom; an operator repair or release must do that first.
+Q51 also clears this TL3-side halt once on a new release; a repeated failure
+raises a new incident, while a same-release restart leaves it open.
 Trusted internal acknowledgements and deferred intake use private durable inputs
 and share arrival order with the inbox. Rob's clearance can pass the retained
 queue through the existing operations-comment path. This new halt rule awaits
