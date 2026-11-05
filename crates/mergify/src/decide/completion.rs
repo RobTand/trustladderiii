@@ -51,7 +51,7 @@ pub enum Resolution<F> {
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures match result {
             Complete::Confirmed { progress, conflict } => matches!(out, Resolution::Found { ack: Ack::Confirmed, conflict: c, progress: p } if c == conflict && p == (progress && observed)),
             Complete::Retryable => matches!(out, Resolution::Found { ack: Ack::Retryable, conflict: false, progress: false }),
-            Complete::Permanent(f) => matches!(out, Resolution::Found { ack: Ack::Permanent(g), conflict: false, progress: false } if g === f),
+            Complete::Permanent(f) => matches!(out, Resolution::Found { ack: Ack::Permanent(g), conflict: false, progress: false } if vstd::prelude::equal(g, f)),
             Complete::Pending => matches!(out, Resolution::Pending),
             Complete::Absent => matches!(out, Resolution::Absent),
         },))]
