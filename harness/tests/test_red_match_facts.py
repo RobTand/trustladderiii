@@ -79,7 +79,7 @@ def decode(value):
 
 def extra_cases():
     yield 'explicit-boundary-absent', 'assert False, "message"', 'first\n  second', 'first\n  second'
-    yield 'multiple-boundaries', 'assert False, "first\\nassert embedded\\nassert again"', 'first', None
+    yield 'multiple-boundaries', 'assert False, "message"', 'first', 'first\nassert embedded\nassert again'
     yield 'manual-boundary', 'raise AssertionError("first\\n  second\\nassert manual")', 'first', None
     yield 'empty-explicit-message', 'assert False, ""', '', None
     yield 'embedded-indentation', 'assert False, "first\\n one\\n  second\\n   three\\n    third"', 'first\n one\nsecond\n three\n  third', None
