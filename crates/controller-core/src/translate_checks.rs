@@ -77,7 +77,7 @@ pub fn checks_reply(
     passed: bool,
 ) -> ChecksDecision {
     ChecksDecision {
-        record: false,
-        pass: false,
+        record: job == Some(observed) && current == observed && exact_head,
+        pass: passed && exact_head,
     }
 }

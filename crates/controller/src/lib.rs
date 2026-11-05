@@ -3238,7 +3238,14 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
-                if n.job == Some(generation) && n.generation == generation && exact_head {
+                let decision = tl3_controller_core::translate_checks::checks_reply(
+                    n.job,
+                    n.generation,
+                    generation,
+                    exact_head,
+                    pass,
+                );
+                if decision.record {
                     let prefix = format!("{}:", node.0);
                     let earlier: Vec<_> = snapshot
                         .rows
@@ -3299,7 +3306,7 @@ impl Controller {
                     generation,
                     reply: Reply::ChecksDone {
                         report,
-                        pass: pass && exact_head,
+                        pass: decision.pass,
                         in_footprint,
                     },
                 }
