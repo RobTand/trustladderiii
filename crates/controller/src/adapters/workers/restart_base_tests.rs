@@ -108,13 +108,17 @@ impl Restart {
     }
 
     fn supervisor_for(config: &tl3_config::Config, repo: &Repo) -> Supervisor {
-        Supervisor::new(config, &repo.root.path().join("records"))
-            .unwrap()
-            .with_materials(crate::production::Materials::repository_fixture(
-                config.worktrees_root.clone(),
-                repo.path.clone(),
-                &config.github.repos,
-            ))
+        Supervisor::new(
+            config,
+            &repo.root.path().join("records"),
+            &mut crate::store_support::ownership(),
+        )
+        .unwrap()
+        .with_materials(crate::production::Materials::repository_fixture(
+            config.worktrees_root.clone(),
+            repo.path.clone(),
+            &config.github.repos,
+        ))
     }
 
     fn materials(&mut self) -> Value {

@@ -1,3 +1,5 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 use serde_json::json;
 use tl3_controller::executor::Output as Out;
 #[path = "support/scenario_shard.rs"]
@@ -400,7 +402,12 @@ fn main() {
             continue;
         }
         shard.run(*name, || {
-            test(&database.create(name));
+            let settings = if name == &"status_is_read_only" {
+                database.create_uninitialized(name)
+            } else {
+                database.create(name)
+            };
+            test(&settings);
             println!("test {name} ... ok");
         });
     }
@@ -410,7 +417,7 @@ fn main() {
         return;
     }
     shard.run("status_requires_initialized_database", || {
-        status_requires_initialized_database(&database.create("status_fresh"));
+        status_requires_initialized_database(&database.create_uninitialized("status_fresh"));
         println!("test status_requires_initialized_database ... ok");
     });
     shard.run("status_page_and_command", || {
@@ -1230,7 +1237,7 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
     let expected_text = concat!(
         "Request\tPhase\tWaiting on\tCredit\tLast progress\tOpen incidents\n",
         "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing\t",
-        "Making the change\tpreparing the change files\t4\tnone recorded\tnone recorded\nPostmortems: 0 running, 0 owed\n"
+        "Making the change\tpreparing the change files\t4\tnone recorded\tnone recorded\nHindsight memory. Feed: no consumer. Pending: 0. Parked: 0. HTTP parked: 0.\nPostmortems: 0 running, 0 owed\n"
     );
     assert_eq!(status::render_text(&model), expected_text);
     let expected_html = status::render_html(&model);
@@ -1826,6 +1833,10 @@ fn reconciled_failure(settings: &tl3_config::Store) {
             raw(settings)
                 .batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
                 .unwrap();
+            let mut ownership =
+                tl3_controller::Ownership::claim(Store::connect(settings).unwrap()).unwrap();
+            ownership.migrate().unwrap();
+            ownership.release().unwrap();
         }
         let (mut controller, fault) = faulty(settings, root.path(), Fault::Found(ack));
         controller.intake(labelled()).unwrap();
@@ -2182,6 +2193,10 @@ fn status_is_read_only(settings: &tl3_config::Store) {
         0,
         "status must not migrate an empty database"
     );
+    let mut ownership =
+        tl3_controller::Ownership::claim(Store::connect(settings).unwrap()).unwrap();
+    ownership.migrate().unwrap();
+    ownership.release().unwrap();
     let mut writer = Store::open(settings).unwrap();
     assert!(
         status::load(&mut Reader::open(settings).unwrap())

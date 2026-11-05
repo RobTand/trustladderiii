@@ -50,7 +50,9 @@ fn run() -> Result<()> {
                 .status()?;
             std::process::exit(status.code().unwrap_or(1));
         }
-        "database" => database(&tl3_config::Config::load_status(path)?)?,
+        "database" => {
+            database(&tl3_config::Config::load_status(path)?)?;
+        }
         "console-role" => console_role(&tl3_config::Config::load_status(path)?)?,
         "store-check" => {
             let config = tl3_config::Config::load_status(path)?;
@@ -96,8 +98,10 @@ fn database(config: &tl3_config::Config) -> Result<()> {
             .batch_execute("CREATE DATABASE tl3 OWNER tl3")
             .map_err(|_| "database creation failed; reconcile before retrying")?;
     }
-    tl3_store::Store::open(settings)?;
-    println!("Postgres: database exists, fsync on, migrations applied");
+    tl3_store::Store::connect(settings)?;
+    println!(
+        "Postgres: database exists, fsync on; tl3d applies migrations after claiming ownership"
+    );
     // This runs on every tl3-postgres start, which tl3d and the status page
     // require. A console fault must never stop the database.
     if let Err(error) = console_role(config) {
@@ -591,6 +595,210 @@ mod database_support;
 mod database_tests {
     use super::*;
 
+    fn deployment_config(postgres: &mut database_support::Database) -> tl3_config::Config {
+        let admin = postgres.create_uninitialized("deploy_admin");
+        connection(&admin)
+            .batch_execute(
+                "CREATE ROLE tl3 LOGIN SUPERUSER PASSWORD 'tl3-disposable-test-password'",
+            )
+            .unwrap();
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../crates/config/example.toml")).unwrap();
+        config.store = tl3_config::Store {
+            database: "tl3".into(),
+            user: "tl3".into(),
+            ..admin
+        };
+        config.console = None;
+        config
+    }
+
+    fn connection(settings: &tl3_config::Store) -> postgres::Client {
+        postgres::Config::new()
+            .host(&settings.host)
+            .port(settings.port)
+            .user(&settings.user)
+            .dbname(&settings.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap()
+    }
+
+    fn tables(client: &mut postgres::Client) -> Vec<String> {
+        client
+            .query(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
+                &[],
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| row.get(0))
+            .collect()
+    }
+
+    /// #800 / #785: Postgres ExecStartPost must succeed while tl3d owns the store.
+    #[test]
+    fn database_preserves_running_owner_and_schema() {
+        let mut postgres = database_support::Database::start();
+        let config = deployment_config(&mut postgres);
+        let mut admin = connection(&tl3_config::Store {
+            database: "postgres".into(),
+            ..config.store.clone()
+        });
+        admin
+            .batch_execute("CREATE DATABASE tl3 OWNER tl3")
+            .unwrap();
+        let mut owner =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).unwrap();
+        owner.migrate().unwrap();
+        let mut client = connection(&config.store);
+        let before = tables(&mut client);
+        let versions: Vec<(i32, String)> = client
+            .query(
+                "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect();
+        database(&config)
+            .unwrap_or_else(|error| panic!("database must coexist with tl3d: {error}"));
+        owner.ensure_held().unwrap();
+        assert!(
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).is_err()
+        );
+        assert_eq!(tables(&mut client), before);
+        let after: Vec<(i32, String)> = client
+            .query(
+                "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect();
+        assert_eq!(after, versions);
+        assert_eq!(
+            client
+                .query_one("SHOW fsync", &[])
+                .unwrap()
+                .get::<_, String>(0),
+            "on"
+        );
+        owner.release().unwrap();
+        postgres.stop();
+    }
+
+    /// #800: grants precede tl3d's first claimed migration on a fresh install.
+    #[test]
+    fn database_creates_without_migrating_and_console_reads_later_tables() {
+        let mut postgres = database_support::Database::start();
+        let mut config = deployment_config(&mut postgres);
+        let scratch = tempfile::tempdir().unwrap();
+        let password = scratch.path().join("console-password");
+        fs::write(&password, "tl3-disposable-test-password\n").unwrap();
+        config.console =
+            tl3_config::Config::parse(include_str!("../../crates/config/example.toml"))
+                .unwrap()
+                .console;
+        let console = config.console.as_mut().unwrap();
+        console.user = Some("tl3_console".into());
+        console.password_file = Some(password.clone());
+        database(&config).unwrap();
+        let mut client = connection(&config.store);
+        assert!(
+            tables(&mut client).is_empty(),
+            "database must leave migrations to tl3d"
+        );
+        assert!(
+            tl3_store::Reader::open(&config.store).is_err(),
+            "store-check must reject an unmigrated store"
+        );
+        let mut owner =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).unwrap();
+        owner.migrate().unwrap();
+        assert!(
+            client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM tl3_schema_migrations WHERE version = 21)",
+                    &[]
+                )
+                .unwrap()
+                .get::<_, bool>(0),
+            "tl3d's claimed migration must include 0021"
+        );
+        let login = tl3_config::Store {
+            user: "tl3_console".into(),
+            password_file: Some(password),
+            ..config.store.clone()
+        };
+        tl3_store::Reader::open(&login).unwrap().load().unwrap();
+        let mut reader = connection(&login);
+        let migrated = tables(&mut client);
+        assert!(!migrated.is_empty());
+        for table in migrated {
+            reader
+                .query(&format!("SELECT * FROM \"{table}\" LIMIT 0"), &[])
+                .unwrap_or_else(|error| panic!("console cannot read {table}: {error}"));
+        }
+        // Default privileges must also cover a future migration's tables.
+        client
+            .batch_execute("CREATE TABLE tl3_future_migration (id bigint)")
+            .unwrap();
+        reader
+            .query("SELECT * FROM tl3_future_migration", &[])
+            .unwrap();
+        owner.ensure_held().unwrap();
+        owner.release().unwrap();
+        postgres.stop();
+    }
+
+    /// #800 / #785: database preparation leaves ownership for tl3d startup.
+    #[test]
+    fn database_preparation_allows_controller_start() {
+        let mut postgres = database_support::Database::start();
+        let admin = postgres.create("deploy_handoff");
+        let mut client = postgres::Config::new()
+            .host(&admin.host)
+            .port(admin.port)
+            .user(&admin.user)
+            .dbname(&admin.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap();
+        client
+            .batch_execute(
+                "CREATE ROLE tl3 LOGIN SUPERUSER PASSWORD 'tl3-disposable-test-password'",
+            )
+            .unwrap();
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../crates/config/example.toml")).unwrap();
+        config.store = tl3_config::Store {
+            database: "tl3".into(),
+            user: "tl3".into(),
+            ..admin
+        };
+        config.console = None;
+        database(&config).unwrap();
+        let mut deploy_session = tl3_store::Store::connect(&config.store).unwrap();
+        let mut ownership =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).unwrap();
+        ownership.migrate().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let mut controller = tl3_controller::Controller::open(
+            ownership.into_store(),
+            tl3_controller::adapters::simulation(scratch.path()).unwrap(),
+            tl3_controller::Bootstrap::from_config(&config).unwrap(),
+        )
+        .unwrap();
+        // An unclaimed auxiliary connection remains usable throughout admission.
+        deploy_session.load().unwrap();
+        controller.world().unwrap();
+        drop((controller, deploy_session, client));
+        postgres.stop();
+    }
+
     /// tl3d and the status page require tl3-postgres, whose start runs
     /// `database`. A console login problem must never stop it.
     #[test]
@@ -630,6 +838,10 @@ mod database_tests {
                 "the explicit grant still fails for {password:?}"
             );
         }
+        assert!(tables(&mut connection(&config.store)).is_empty());
+        let mut ownership =
+            tl3_store::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap()).unwrap();
+        ownership.migrate().unwrap();
         tl3_store::Reader::open(&config.store).unwrap();
         postgres.stop();
     }

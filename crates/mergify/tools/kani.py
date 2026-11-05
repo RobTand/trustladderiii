@@ -5,6 +5,7 @@ status table, in tl3-github (`src/status.rs`).
 
     kani.py manifest [NAME...]   print a PrismaBuild campaign manifest
     kani.py prove [NAME...]      prove the named harnesses, or all of them
+    kani.py verify [NAME...]     reject mutants, then prove the unmodified source
     kani.py mutants [NAME...]    for each harness, seed each of its mutants and require
                                  that the harness FAILS; the source is restored
 
@@ -28,11 +29,13 @@ STATUS = "crates/github/src/status.rs"
 PROOF_FILES = [
     (DECIDE + "proofs.rs", "tl3-mergify", "decide::proofs"),
     (STATUS, "tl3-github", "status::proofs"),
+    (DECIDE + "enqueue_proofs.rs", "tl3-mergify", "decide::enqueue_proofs"),
 ]
 # Seeded mutants: (harness, file, exact text, replacement). Each breaks the
 # property its harness states, so the harness must fail. Every harness has at
 # least one.
 MUTANTS = [
+    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "let Some(recovery) = issue.requeue_recovery else", "let Some(recovery) = issue.recovery else"),
     ("observe_select", DECIDE + "observe.rs",
      "check.id >= checks[best].id",
      "check.id > checks[best].id"),
@@ -85,6 +88,17 @@ MUTANTS = [
     ("facts_outcome", DECIDE + "facts.rs",
      "head_infra.unwrap_or(true)",
      "head_infra.unwrap_or(false)"),
+    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "before.requeue.is_none() && read.check_changed", "read.check_changed"),
+    ("enqueue_stale_head", DECIDE + "enqueue.rs", "read.head != Head::Current\n                || !read.open", "!read.open"),
+    ("enqueue_refused_sticky", DECIDE + "enqueue.rs", "if refused_intent {", "if false && refused_intent {"),
+    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some()", "out.push(if intent.requeue.is_some()"),
+    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });", "out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });\n                out.push(Effect::SaveIntent);"),
+    ("enqueue_stale_head", DECIDE + "enqueue.rs", "} else if head != Head::Current {\n                Effect::Complete(Complete::Retryable)", "} else if false && head != Head::Current {\n                Effect::Complete(Complete::Retryable)"),
+    ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                    now_ms.saturating_sub(since) >= GRACE_MS", "                    now_ms.saturating_sub(since) >= GRACE_MS / 2"),
+    ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                || read.paused\n", "                || read.paused\n                || read.waiting && !recovery.eligible_since_ms.is_some_and(|since| read.now_ms.saturating_sub(since) >= GRACE_MS)\n"),
+    ("enqueue_dequeue_fresh", DECIDE + "enqueue.rs", "event.id > queued", "event.id >= queued"),
+    ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
+    ("enqueue_ack_sound", DECIDE + "enqueue.rs", "state.confirmed = true;", "// mutant: omit acknowledgement state"),
 ]
 
 
@@ -96,6 +110,8 @@ def harnesses():
         names = re.findall(r"^proof!\(\s*(\w+),", source, re.M)
         names += re.findall(r"#\[kani::proof\]\s*#\[kani::unwind\(\d+\)\]\s*fn (\w+)\(", source)
         for name in names:
+            if name in found:
+                sys.exit(f"duplicate harness: {name}")
             found[name] = (package, f"{module}::{name}")
     return found
 
@@ -193,6 +209,8 @@ def main():
         return prove(names, known)
     if mode == "mutants":
         return mutants(names, known)
+    if mode == "verify":
+        return mutants(names, known) or prove(names, known)
     sys.exit(__doc__)
 
 

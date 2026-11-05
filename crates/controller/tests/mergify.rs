@@ -20,6 +20,8 @@ mod held;
 mod merge_closure;
 #[path = "mergify/missing_checks.rs"]
 mod missing_checks;
+#[path = "mergify/ordering.rs"]
+mod ordering;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -527,6 +529,16 @@ fn queued_for_clock(
     config: Bootstrap,
     clock: Option<head_checks::Clock>,
 ) -> Controller {
+    // A restarted fixture waits for the old backend's claim to end, without polling.
+    let mut barrier = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .dbname(&settings.database)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    support::controller_restart::wait_for_owner_release(&mut barrier);
     let repository = config.repos[0].clone();
     let mut registry = adapters::simulation(root).unwrap();
     let mut adapter = api
@@ -2692,6 +2704,29 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    match std::env::args().nth(1).as_deref() {
+        Some("--ordering-crash-child") => {
+            ordering::crash_child(Path::new(&std::env::args().nth(2).unwrap()));
+            return;
+        }
+        Some("--ordering-intent") => {
+            ordering::stale_head_crash_preserves_intent();
+            println!("1 Mergify scenarios passed; no skips");
+            return;
+        }
+        Some("--ordering-time") => {
+            waiting_requeue::grace_samples_before_history();
+            println!("1 Mergify scenarios passed; no skips");
+            return;
+        }
+        Some("--ordering-reference") => {
+            ordering::stale_head_crash_preserves_intent();
+            waiting_requeue::grace_samples_before_history();
+            println!("2 Mergify scenarios passed; no skips");
+            return;
+        }
+        _ => {}
+    }
     if std::env::args().nth(1).as_deref() == Some("--review-requeue") {
         waiting_requeue::review(None);
         let mut database = support::Database::start();
@@ -2933,7 +2968,7 @@ fn main() {
         3, 3, 4, 3, 3, 2, 10, 10, 2, 2, 3, 3, 16, 3, 3, 42, 3, 11, 3, 4, 53, 6, 41, 6, 4, 5, 26, 5,
         5, 28, 3, 8, 2, 6, 5, 9, 15, 47, 6, 5, 14, 4, 11, 4, 7, 6, 7, 28, 7, 35, 15, 21, 3, 18, 7,
         3, 55, 5, 23, 5, 7, 7, 2, 4, 46, 8, 85, 4, 15, 83, 21, 7, 5, 5, 4, 3, 8, 68, 1, 14, 5, 23,
-        10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29,
+        10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20,
     ];
     let groups: Vec<_> = seconds
         .iter()
@@ -3290,6 +3325,8 @@ fn main() {
     scenario_count += 6;
     waiting_requeue::review(Some((&mut shard, scenario_count)));
     scenario_count += 3;
+    scenario!(ordering::stale_head_crash_preserves_intent());
+    scenario!(waiting_requeue::grace_samples_before_history());
     assert_eq!(scenario_count, groups.len());
     shard.finish("Mergify");
 }

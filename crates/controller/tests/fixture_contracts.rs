@@ -56,6 +56,20 @@ impl Executor for Spy {
         let _: Result<()> = self.hit("app_login", installation.to_string());
         Some(self.name.into())
     }
+    fn reconcile_message(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        self.hit(
+            "reconcile_message",
+            format!(
+                "{}/{}#{issue}:{}",
+                repository.owner, repository.name, comment.id
+            ),
+        )
+    }
     fn prerequisite(
         &mut self,
         repository: &tl3_controller::Repository,
@@ -86,11 +100,18 @@ impl Executor for Spy {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile", delivery.key.clone())
     }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        let _: Result<()> = self.hit("repair_approval", delivery.key.clone());
+        Ok((Reconciliation::Pending, Some(7)))
+    }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile_cancellation", delivery.key.clone())
     }
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         self.hit("look", delivery.key.clone())
+    }
+    fn probe_memory(&mut self) -> Result<()> {
+        self.hit("probe_memory", String::new())
     }
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         self.hit("probe", delivery.key.clone())
@@ -222,6 +243,17 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.issue(&question.repository, 17).is_err());
+        let comment: tl3_github::Comment = serde_json::from_value(serde_json::json!({
+            "id": 766, "body": "message", "user": {"id": 99, "login": "app[bot]"},
+            "created_at": "2026-11-04T00:00:00Z", "updated_at": "2026-11-04T00:00:00Z",
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/17"
+        }))
+        .unwrap();
+        assert!(
+            router
+                .reconcile_message(&question.repository, 17, &comment)
+                .is_err()
+        );
         assert!(
             router
                 .prerequisite(
@@ -231,6 +263,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 )
                 .is_err()
         );
+        assert!(router.probe_memory().is_err());
         assert!(router.retire(&mut store).is_err());
         assert_eq!(
             *calls.lock().unwrap(),
@@ -251,12 +284,21 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 ),
                 (
                     primary,
+                    "reconcile_message",
+                    format!(
+                        "{}/{}#17:766",
+                        question.repository.owner, question.repository.name
+                    ),
+                ),
+                (
+                    primary,
                     "prerequisite",
                     format!(
                         "{}/{}#17:Issue",
                         question.repository.owner, question.repository.name
                     )
                 ),
+                (primary, "probe_memory", String::new()),
                 (primary, "retire", String::new()),
             ]
         );
@@ -275,6 +317,13 @@ fn assert_delivery_methods(
     assert!(router.execute(d).is_err());
     assert!(router.observations(d).is_err());
     assert!(router.reconcile(d).is_err());
+    let (repaired, copies) = router.repair_approval(d).unwrap();
+    assert!(matches!(repaired, Reconciliation::Pending));
+    assert_eq!(
+        copies,
+        Some(7),
+        "the router must retain copy-count evidence"
+    );
     assert!(router.reconcile_cancellation(d).is_err());
     assert!(router.look(d).is_err());
     assert!(router.probe(d).is_err());
@@ -289,6 +338,7 @@ fn assert_delivery_methods(
             "execute",
             "observations",
             "reconcile",
+            "repair_approval",
             "reconcile_cancellation",
             "look",
             "probe",
@@ -341,10 +391,16 @@ fn scenario_shards_separate_the_measured_worker_hotspots() {
         // The seven other 11-marker shards averaged 7 s per marker.
         _ => 7 * group.markers(),
     };
+    // #742: Shard::new reads measured weights; feed these estimates to the
+    // same partition directly.
+    let groups: Vec<_> = WORKER_GROUPS
+        .iter()
+        .map(|group| (*group, group.markers(), seconds(*group)))
+        .collect();
     let mut loads = [0; 8];
     let mut owners = Vec::new();
     for (index, load) in loads.iter_mut().enumerate() {
-        let mut shard = Shard::new(index, 8);
+        let mut shard = Shard::with_groups(index, 8, &groups);
         for group in WORKER_GROUPS.iter().copied() {
             shard.run(group, || {
                 *load += seconds(group);
@@ -429,8 +485,7 @@ fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe(
             .connect(postgres::NoTls)
             .unwrap()
     };
-    let mut old_owner = Store::open(&settings).unwrap();
-    old_owner.claim_controller().unwrap();
+    let old_owner = tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
     let mut observer = connect();
     let mut waiter = connect();
     let waiter_pid: i32 = waiter
@@ -459,9 +514,9 @@ fn controller_restart_waits_for_the_old_postgres_session_and_releases_its_probe(
         assert!(started.elapsed() < Duration::from_secs(180));
         thread::sleep(Duration::from_millis(10));
     };
-    drop(old_owner);
+    old_owner.release().unwrap();
     let waiter = waiting.join().unwrap();
-    let claim = Store::open(&settings).and_then(|mut store| store.claim_controller());
+    let claim = Store::open(&settings).and_then(tl3_store::Ownership::claim);
     drop(waiter);
     drop(observer);
     database.stop();
@@ -496,4 +551,38 @@ fn scenario_shards_cover_nonworker_groups_including_markerless_setup_once() {
     seen.sort_unstable();
     assert_eq!(seen, ["after_setup", "fast", "setup", "slow"]);
     assert!(loads.iter().all(|load| *load <= 300), "{loads:?}");
+}
+
+#[test]
+fn worker_groups_are_weighted_by_their_measured_seconds() {
+    use support::scenario_shard::{WORKER_GROUPS, measured, weights_ms};
+    let groups = measured("tl3-controller/workers");
+    let names: Vec<_> = WORKER_GROUPS.iter().map(|group| group.name()).collect();
+    assert!(
+        !groups.is_empty(),
+        "libtest-shards.json has measured worker groups"
+    );
+    for name in groups.keys() {
+        assert!(
+            names.contains(&name.as_str()),
+            "{name} is measured but is not a worker group; regenerate the weights"
+        );
+    }
+    for (name, weight) in names.iter().zip(weights_ms(&groups, &names)) {
+        if let Some(seconds) = groups.get(*name) {
+            assert_eq!(
+                weight,
+                (seconds.as_f64().unwrap() * 1000.0).round() as usize,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_unmeasured_group_counts_as_the_median_measured_group() {
+    use support::scenario_shard::weights_ms;
+    let measured = serde_json::json!({"a": 1.0, "b": 2.5, "slow": 90.0});
+    let weights = weights_ms(measured.as_object().unwrap(), &["slow", "a", "new"]);
+    assert_eq!(weights, [90_000, 1_000, 2_500]);
 }

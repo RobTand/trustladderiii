@@ -3,6 +3,8 @@ mod drain_deadline;
 mod prismabuild_fixture;
 #[path = "publishing/adoption.rs"]
 mod publishing_adoption;
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 mod support;
 mod worktree_fixture;
 
@@ -588,7 +590,12 @@ impl Server {
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {
     let (client, mut settings) = prismabuild_fixture::settings(root, "done", "http://127.0.0.1:9/");
     settings.records = root.join("pb-records");
-    adapters::prismabuild::Adapter::new(client, settings).unwrap()
+    adapters::prismabuild::Adapter::new(
+        client,
+        settings,
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap()
 }
 
 fn document(store: &mut Store, table: &str, value: Value) {
@@ -805,7 +812,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .execute(&preparation)
             .expect("configured master base must prepare without a main branch");
     }
-    let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let mut source = supervisor.source();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
     registry.register(
@@ -1741,7 +1753,7 @@ fn publication_recovery() {
     let mut adapter = server.adapter(&records, 1);
     assert!(matches!(
         adapter.reconcile(&approval).unwrap(),
-        Reconciliation::Absent
+        Reconciliation::Pending
     ));
     server.api.state.lock().unwrap().lose_response = Some("/check-runs");
     assert!(adapter.execute(&approval).is_err());
@@ -1757,12 +1769,12 @@ fn publication_recovery() {
     wrong.head_sha = Some("b".repeat(40));
     assert!(matches!(
         adapter.reconcile(&wrong).unwrap(),
-        Reconciliation::Absent
+        Reconciliation::Pending
     ));
     server.api.state.lock().unwrap().checks[0]["app"]["id"] = json!(456);
     assert!(matches!(
         adapter.reconcile(&approval).unwrap(),
-        Reconciliation::Absent
+        Reconciliation::Pending
     ));
     server.api.state.lock().unwrap().checks[0]["app"]["id"] = json!(123);
     let mut open = d.clone();
@@ -1928,13 +1940,10 @@ fn publication_refusal_retention(settings: &tl3_config::Store, reconciliation: b
     );
     assert_eq!(diagnostic["status"], if reconciliation { 403 } else { 404 });
     assert_eq!(diagnostic["effect_kind"], json!(EffectKind::PostApproval));
+    // Both refusals occur during GET, before the approval POST boundary.
     assert_eq!(
         diagnostic["endpoint"],
-        if reconciliation {
-            "GET /repos/{owner}/{repo}/commits/{head}/check-runs"
-        } else {
-            "POST /repos/{owner}/{repo}/check-runs"
-        }
+        "GET /repos/{owner}/{repo}/commits/{head}/check-runs"
     );
     assert!(
         !serde_json::to_string(diagnostic)

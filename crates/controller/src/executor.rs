@@ -378,6 +378,15 @@ pub trait Executor {
     fn app_login(&self, _installation: u64) -> Option<String> {
         None
     }
+    /// Reconcile a marked message on upstream news, including after confirmation.
+    fn reconcile_message(
+        &mut self,
+        _repository: &crate::Repository,
+        _issue: u64,
+        _comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        Ok(())
+    }
     /// The issue as GitHub has it now, read fresh (Q39).
     fn issue(
         &mut self,
@@ -418,6 +427,13 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
+    /// Q27: canonical matching copies observed by this repair, if the adapter can prove it.
+    fn repair_approval(&mut self, _delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        Err(crate::Error::Invalid(
+            "executor does not support approval repair",
+        ))
+    }
+
     /// End a cancelled attempt. Confirmed leaves undoing any write to teardown.
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.reconcile(delivery)
@@ -432,6 +448,10 @@ pub trait Executor {
     /// A separate health probe, when an incident's failed operation has ended.
     fn probe(&mut self, _delivery: &Delivery) -> Result<bool> {
         Ok(false)
+    }
+    /// #773: the existing controller look schedules a Hindsight delivery probe.
+    fn probe_memory(&mut self) -> Result<()> {
+        Ok(())
     }
     /// Resume an owner-confirmed quota ending under the same operation key.
     fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {

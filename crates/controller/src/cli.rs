@@ -113,14 +113,14 @@ pub fn status() -> Result<()> {
     }
 }
 
-/// `tl3 memory {list | confirm ID | invalidate ID | revert ID} [--reason TEXT] --config FILE`:
+/// `tl3 memory {list | retry | confirm ID | invalidate ID | revert ID} [--reason TEXT] --config FILE`:
 /// the audit trail of TL3's memory curations, and Rob's own decisions (#422).
 pub fn memory() -> Result<()> {
-    const USAGE: &str = "usage: tl3 memory {list | confirm ID | invalidate ID | revert ID} [--reason TEXT] --config FILE";
+    const USAGE: &str = "usage: tl3 memory {list | retry | confirm ID | invalidate ID | revert ID} [--reason TEXT] --config FILE";
     let mut args = std::env::args().skip(2);
     let action = args.next().ok_or(Error::Invalid(USAGE))?;
     let state = match action.as_str() {
-        "list" => None,
+        "list" | "retry" => None,
         "confirm" => Some(crate::memory::RobCuration::Confirm),
         "invalidate" => Some(crate::memory::RobCuration::Invalidate),
         "revert" => Some(crate::memory::RobCuration::Revert),
@@ -140,6 +140,11 @@ pub fn memory() -> Result<()> {
     }
     let config = tl3_config::Config::load(path.ok_or(Error::Invalid(USAGE))?)?;
     let mut store = Store::open(&config.store)?;
+    if action == "retry" {
+        store.retry_memory_delivery()?;
+        println!("Memory delivery retry requested. tl3d waits for Hindsight's acknowledgement.");
+        return Ok(());
+    }
     let (Some(state), Some(id)) = (state, id) else {
         for curation in store.memory_curations()? {
             println!("{curation}");
@@ -192,9 +197,12 @@ pub fn daemon() -> Result<()> {
         ));
     }
     let bootstrap = Bootstrap::from_config(&config)?;
+    let mut ownership = crate::Ownership::claim(Store::connect(&config.store)?)?;
+    ownership.migrate()?;
     let mut sources = crate::ingress::Sources::default();
     let mut adapters = if workers {
-        let (adapters, source) = adapters::simulation_with_workers(&simulation, &config)?;
+        let (adapters, source) =
+            adapters::simulation_with_workers(&simulation, &config, &mut ownership)?;
         sources.register(source);
         adapters
     } else {
@@ -274,7 +282,7 @@ pub fn daemon() -> Result<()> {
         eprintln!("GitHub webhooks listening on {}", webhooks.address());
         sources.register(webhooks);
     }
-    let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;
+    let mut controller = Controller::open_owned(ownership, adapters, bootstrap)?;
     if let Some(adoption) = adoption {
         controller.register_github_translator("adoption", adoption);
     }
@@ -303,8 +311,8 @@ pub fn daemon() -> Result<()> {
 
 fn production(config: tl3_config::Config) -> Result<()> {
     let registration = crate::production::register(&config)?;
-    let mut controller = Controller::open(
-        Store::open(&config.store)?,
+    let mut controller = Controller::open_owned(
+        registration.ownership,
         registration.adapters,
         Bootstrap::from_config(&config)?,
     )?;

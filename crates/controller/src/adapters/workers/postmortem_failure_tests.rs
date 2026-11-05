@@ -91,7 +91,14 @@ print("claimed", flush=True)
         .unwrap();
         config.workers.launcher =
             vec!["/usr/bin/python3".into(), launcher.to_str().unwrap().into()];
-        Some(Supervisor::new(&config, &root.path().join("records")).unwrap())
+        Some(
+            Supervisor::new(
+                &config,
+                &root.path().join("records"),
+                &mut crate::store_support::ownership(),
+            )
+            .unwrap(),
+        )
     } else {
         None
     };
@@ -291,7 +298,12 @@ print("claimed", flush=True)
     )
     .unwrap();
     config.workers.launcher = vec!["/usr/bin/python3".into(), launcher.to_str().unwrap().into()];
-    let supervisor = Supervisor::new(&config, &root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
     let mut registry = crate::adapters::simulation(root.path()).unwrap();
     registry.register(
         crate::executor::Upstream::Workers,

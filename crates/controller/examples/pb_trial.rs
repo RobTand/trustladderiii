@@ -115,8 +115,8 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
     assert_eq!(
         args.len(),
-        4,
-        "usage: pb_trial submit|observe ABSOLUTE_DIRECTORY IMAGE_DIGEST"
+        5,
+        "usage: pb_trial submit|observe ABSOLUTE_DIRECTORY IMAGE_DIGEST DISPOSABLE_CONFIG"
     );
     let root = PathBuf::from(&args[2]);
     assert!(root.is_absolute());
@@ -129,6 +129,11 @@ fn main() {
         fs::write(path, serde_json::to_vec(&delivery).unwrap()).unwrap();
         delivery
     };
+    let config = tl3_config::Config::load(&args[4]).unwrap();
+    let mut ownership =
+        tl3_controller::Ownership::claim(tl3_store::Store::connect(&config.store).unwrap())
+            .unwrap();
+    ownership.migrate().unwrap();
     let client = PrismaBuild::new(Options {
         queue_root: "/mnt/shared/prismabuild-fleet/pb-queue".into(),
         tool: Tool::published(),
@@ -163,6 +168,7 @@ fn main() {
                 args: vec!["/mnt/shared/prismabuild-fleet/repo/tools/pbwait.py".into()],
             },
         },
+        &mut ownership,
     )
     .unwrap();
     match args[1].as_str() {

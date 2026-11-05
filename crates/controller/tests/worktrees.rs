@@ -1,3 +1,8 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
+#[allow(dead_code)]
+#[path = "../../store/tests/support/mod.rs"]
+mod support;
 mod worktree_fixture;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{

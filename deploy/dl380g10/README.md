@@ -121,8 +121,11 @@ SHA-256, under `~/.local/share/tl3/postgresql-17.4.0`. Data lives under
 `~/.local/share/tl3/postgres/data`. TCP is disabled. The owner-only socket
 directory uses port 5543 and SCRAM authentication. `initdb` stages a complete
 cluster before publication. Existing data and passwords survive reruns.
-Startup creates the dedicated `tl3` database and applies TL3's migrations.
-`fsync` and synchronous commits stay on. There is no automatic major upgrade.
+Each Postgres start runs `tl3-deploy database`, which only creates the dedicated
+`tl3` database and grants the console login. Since #785, tl3d applies migrations
+after claiming ownership at startup. Any tool that migrates must run with tl3d
+stopped, because migration requires the ownership claim. `fsync` and synchronous
+commits stay on. There is no automatic major upgrade.
 
 The installer copies `workers` and `harness` into an immutable release,
 `~/.local/share/tl3/releases/<id>/`, named by a digest of their contents, and
@@ -239,6 +242,12 @@ systemd-analyze --user --man=no verify ~/.config/systemd/user/tl3*.service
 python3 deploy/dl380g10/deploy.py check
 ```
 
+Run `deploy.py check` after tl3d has started and applied migrations. Its
+`tl3-deploy store-check` only validates schema compatibility and never migrates.
+`deploy.py start` uses a `Type=exec` unit, so its return does not mean migration
+has finished. A check invoked before migration finishes reports the schema as
+missing or incompatible.
+
 The check prints service states, schema compatibility, CLI and LAN status,
 loopback webhook availability, and missing setup. It returns 1 while anything
 is missing. It reads no secret values. `tl3 status` and the store read their
@@ -269,7 +278,11 @@ when Postgres is running (`tl3-deploy console-role`), and fails if it can't.
 Each start of `tl3-postgres.service` does the same as a best effort
 (`tl3-deploy database`): it reads the file in place, and a missing file or a
 failed grant is logged as "console login not granted", never a failed start,
-because tl3d and the status page require Postgres. Both are safe to repeat.
+because tl3d and the status page require Postgres. Since #785, tl3d migrates
+after claiming ownership. `tl3-deploy database` only creates the database and
+grants the console login. Default privileges let the console read tables added
+by tl3d's later migrations. Any tool that migrates must run with tl3d stopped
+to acquire the ownership claim. Both grant commands are safe to repeat.
 
 The installer still adds a `[console]` section to an existing `tl3.toml`, with
 `listen` on the status address at port 8034 and the login's `user` and

@@ -285,9 +285,13 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             ),
         ],
     );
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
-        .unwrap()
-        .with_materials(provider);
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap()
+    .with_materials(provider);
     let snapshot = store.load().unwrap();
     let mut commit = tl3_store::Commit::new("contract-postmortem", json!(null), &snapshot);
     commit.postmortems.push(

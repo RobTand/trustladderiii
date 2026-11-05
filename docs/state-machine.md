@@ -957,3 +957,13 @@ requests are rejected with a plain note, and every ending is announced to
 waiters. These root merge prerequisites move from slice two into slice one.
 Planner reuse links, dependencies between leaves, splits, Children, Deciding
 and Escalated remain outside this change.
+
+## Q27: approval retries and duplicate check runs (#766)
+
+Rob, 2026-11-04: "make duplicates harmless I guess."
+
+Clearing an approval dispatch-ambiguity incident explicitly authorizes another
+POST after a fresh read. The earlier POST may still land. Approval delivery is
+at least once after that human-authorized retry. Reconciliation updates every
+visible own-app copy for the same head and external id to the identical correct
+conclusion and output, including copies that arrive after confirmation.

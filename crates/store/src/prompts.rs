@@ -77,6 +77,24 @@ impl Store {
     /// where the previous built-in version was active, so a deploy never
     /// replaces a version Rob chose. Safe to repeat.
     pub fn seed_prompts(&mut self, builtins: &[(&str, &str)]) -> Result<()> {
+        self.seed_prompts_checked(builtins, || Ok(()))
+    }
+
+    /// #785: check admission before each startup prompt write and commit.
+    pub fn seed_prompts_owned(
+        &mut self,
+        builtins: &[(&str, &str)],
+        ownership: &mut crate::Ownership,
+    ) -> Result<()> {
+        self.seed_prompts_checked(builtins, || ownership.ensure_held())
+    }
+
+    fn seed_prompts_checked(
+        &mut self,
+        builtins: &[(&str, &str)],
+        mut before_write: impl FnMut() -> Result<()>,
+    ) -> Result<()> {
+        before_write()?;
         let mut tx = self.client.transaction()?;
         tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&SEED_LOCK])?;
         for &(role, body) in builtins {
@@ -95,12 +113,14 @@ impl Store {
             } else {
                 "The built-in prompt TL3 shipped with."
             };
+            before_write()?;
             let id: i64 = tx
                 .query_one(
                     "INSERT INTO tl3_prompt_versions (role, body, builtin, author, note) VALUES ($1, $2, true, $3, $4) RETURNING id",
                     &[&role, &body, &BUILTIN_AUTHOR, &note],
                 )?
                 .get(0);
+            before_write()?;
             match latest {
                 None => tx.execute(
                     "INSERT INTO tl3_prompt_active (role, version, builtin_seen, activated_by) VALUES ($1, $2, $2, $3) ON CONFLICT (role) DO NOTHING",
@@ -112,6 +132,7 @@ impl Store {
                 )?,
             };
         }
+        before_write()?;
         tx.commit()?;
         Ok(())
     }
@@ -328,6 +349,16 @@ fn prompt_tables(tx: &mut Transaction<'_>) -> Result<()> {
         )?
         .get(0);
     if present {
+        let actual: Option<i32> = tx
+            .query_one("SELECT MAX(version) FROM tl3_schema_migrations", &[])?
+            .get(0);
+        let expected = crate::MIGRATIONS.last().expect("store migration").0;
+        if actual.unwrap_or(0) < expected {
+            return Err(Error::SchemaVersion {
+                actual: actual.unwrap_or(0),
+                expected,
+            });
+        }
         Ok(())
     } else {
         Err(Error::NotInitialized)

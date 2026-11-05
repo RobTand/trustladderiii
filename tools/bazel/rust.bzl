@@ -50,14 +50,16 @@ _SCENARIO_SHARDS = {
     "tl3-controller/mergify": 50,
     "tl3-controller/publishing": 38,
     "tl3-controller/simulation": 16,
-    "tl3-controller/workers": 8,
+    "tl3-controller/workers": 32,
 }
 
 # rust_runner.py splits these libtest binaries by the measured test times in
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
+    "tl3-controller/approval_race": 27,
     "tl3-controller/tl3_controller": 8,
+    "tl3-controller/redaction_generated": 8,
 }
 
 # Inputs read by controller tests, rather than by the controller library.
@@ -72,6 +74,9 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_redaction_adapter",
+    "test_test_redaction_generated",
+    "test_test_redaction_parity",
     "lib_test_tl3_controller",
     "test_test_github-flow",
     "test_test_publishing",
@@ -82,14 +87,20 @@ _CONTROLLER_BINARIES = {
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
     "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
+    "test_test_redaction_policy": [":tl3"],
     "test_test_github-flow": [":tl3d"],
     # Both groups compile github.rs, including its env!("CARGO_BIN_EXE_tl3d").
     "test_test_github-notices": [":tl3d"],
     "test_test_simulation": [":tl3", ":tl3d"],
+    "test_test_replay_store": [":tl3"],
 }
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_redaction_policy": ["//workers/src:redaction_contract"],
+    "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
+    "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
+    "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
         "//harness:project_files",
         "//workers/tests:worker_process",
@@ -114,23 +125,28 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
-    "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs"],
+    "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
+    "tests/production.rs": ["tests/prismabuild_fixture/**"],
+    "tests/redaction_parity.rs": ["tests/redaction_support/**"],
+    "tests/redaction_generated.rs": ["tests/redaction_support/**"],
+    "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs", "tests/support/ownership.rs"],
     "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs"],
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
     "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
-    "tests/core_defects.rs": ["tests/worktree_fixture/**"],
+    "tests/core_defects.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/crash_safety.rs": ["tests/crash/**"],
     "tests/github.rs": ["tests/support/**", "tests/fixtures/decisions/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
-    "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**"],
+    "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
     "tests/publishing_drain.rs": ["tests/publishing/drain_deadline.rs"],
     "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
-    "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**"],
+    "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/scenario_watchdog.rs": ["tests/support/scenario.rs"],
     "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
-    "tests/simulation.rs": ["tests/worktree_fixture/**", "tests/support/scenario_shard.rs"],
+    "tests/simulation.rs": ["tests/worktree_fixture/**", "tests/support/scenario_shard.rs", "tests/support/ownership.rs"],
+    "tests/upgrade_replay.rs": ["tests/support/ownership.rs"],
     "tests/workers.rs": [
         "tests/support/**",
         "tests/fixtures/pb.py",
@@ -143,7 +159,7 @@ _CONTROLLER_TEST_SOURCES = {
         "tests/worker_replies.py",
         "tests/worker_transport.py",
     ],
-    "tests/worktrees.rs": ["tests/worktree_fixture/**"],
+    "tests/worktrees.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/writer_references.rs": ["tests/writer_reference_model.py"],
 }
 
@@ -151,6 +167,9 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
     binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
+    # Every controller test can reach the adapter, including through shared fixtures.
+    if controller and ":tl3" not in binaries:
+        binaries = binaries + [":tl3"]
     if controller and ":tl3-worker-supervisor" not in binaries:
         binaries = binaries + [":tl3-worker-supervisor"]
     workers = controller and name in _CONTROLLER_WORKERS
@@ -188,10 +207,12 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
             "$(rootpath //tools/bazel:worker_python)" if workers else "-",
         ] + gate_args,
         data = depset(
-            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] + binaries +
+            [":" + name + "_binary", "//tools/ci:rust-test-budget.json", "//tools/bazel:libtest-shards.json"] +
+            (["//tools/ci:controller_test_runner.sh"] if controller else []) + binaries +
             kwargs.get("compile_data", []) + kwargs.get("srcs", []) + runtime + runtime_data,
         ).to_list() + postgres,
         deps = ["//tools/ci:rust_gate"],
+        env = {"TL3_BINARY": WORKSPACE + "/$(rootpath :tl3)"} if controller else {},
         tags = ["rust"] + tags,
         exec_properties = exec_properties,
         size = "large",

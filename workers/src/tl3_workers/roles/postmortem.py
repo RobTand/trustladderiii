@@ -22,12 +22,12 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from tl3_workers import judges, tracing
 from tl3_workers.contracts import read_json, read_reply
 from tl3_workers.roles.base import Role
+from tl3_workers.reply_check import ReplyViolation, check_reply as rust_check_reply
 from tl3_workers.turns import TurnControl, repaired
 
 
 # The newest runs are judged, and their tokens counted; the reply says how many.
 MAX_TRACES = 24
-MAX_RECOMMENDATIONS = 3
 ASSESSMENT_SETTLE_SECS = 0.1
 # Trace attributes that hold structure rather than content.
 STRUCTURAL = {"mlflow.spanType", "mlflow.traceRequestId", "mlflow.chat.tokenUsage",
@@ -273,15 +273,7 @@ def usage(traces):
 
 
 def check_reply(inputs, reply):
-    recommendations = reply["postmortem"]["recommendations"]
-    if len(recommendations) > MAX_RECOMMENDATIONS:
-        raise ValueError("at most three recommendations")
-    for item in recommendations:
-        before, after = item["before"], item["after"]
-        if (item["operation"] == "add" and (before or not after)) or (
-                item["operation"] == "remove" and (after or not before)) or (
-                item["operation"] == "replace" and not (before and after)):
-            raise ValueError("a recommendation's before and after must fit its operation")
+    return rust_check_reply("postmortem", inputs, reply)
 
 
 def _load(path):
@@ -344,6 +336,8 @@ def _checked(inputs, reply):
         if "recommendations" in error.absolute_schema_path:
             raise tracing.WorkerStageError(
                 "postmortem recommendation contract failure", error) from None
+        raise
+    except ReplyViolation:
         raise
     except ValueError:
         raise tracing.WorkerStageError("postmortem recommendation contract failure") from None

@@ -52,13 +52,17 @@ pub struct MemoryStatus {
     pub parked: i64,
     pub http_parked: i64,
     pub rejected_status: Option<i32>,
+    pub feed: tl3_store::MemoryFeedState,
 }
 
 impl MemoryStatus {
     fn summary(&self) -> String {
         let mut text = format!(
-            "Hindsight memory. Pending: {}. Parked: {}. HTTP parked: {}.",
-            self.pending, self.parked, self.http_parked
+            "Hindsight memory. Feed: {}. Pending: {}. Parked: {}. HTTP parked: {}.",
+            self.feed.as_str(),
+            self.pending,
+            self.parked,
+            self.http_parked
         );
         if let Some(status) = self.rejected_status {
             write!(
@@ -146,6 +150,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         parked: counts.get(1),
         http_parked: counts.get(2),
         rejected_status: health.map(|row| row.get(0)),
+        feed: tl3_store::read_memory_feed_state(&mut tx)?,
     };
     // Q53: models out of quota until their announced reset, or unavailable
     // until their probe (#745). The record doesn't say which (#759).
@@ -242,6 +247,7 @@ pub fn render_text(status: &Status) -> String {
     for request in &status.requests {
         writeln!(output, "{}", request.cells().join("\t")).expect("write to string");
     }
+    writeln!(output, "{}", status.memory.summary()).expect("write to string");
     if !status.unassigned_incidents.is_empty() {
         output.push_str("Open incidents without a request:\n");
         for incident in &status.unassigned_incidents {

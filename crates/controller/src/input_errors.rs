@@ -36,6 +36,34 @@ pub(crate) struct InputFailure {
     post_failure: Option<String>,
     #[serde(default)]
     retry_after_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) memory_version: Option<i64>,
+}
+
+impl InputFailure {
+    pub(crate) fn memory(title: &str, lineage: &str, version: i64) -> Self {
+        Self {
+            scope: lineage.into(),
+            target: None,
+            title: title.into(),
+            posted: false,
+            attempted_epoch: None,
+            post_failure: None,
+            retry_after_ms: None,
+            memory_version: Some(version),
+        }
+    }
+
+    pub(crate) fn memory_lineage(&self, lineage: &str) -> bool {
+        self.scope == lineage
+    }
+
+    pub(crate) fn with_memory_lineage(&self, lineage: &str, version: i64) -> Self {
+        let mut failure = self.clone();
+        failure.scope = lineage.into();
+        failure.memory_version = Some(version);
+        failure
+    }
 }
 
 pub(crate) fn recoverable(error: &Error) -> bool {
@@ -140,6 +168,7 @@ impl Controller {
                 attempted_epoch: None,
                 post_failure: None,
                 retry_after_ms: None,
+                memory_version: None,
             }),
         };
         commit.rows.push(put("incidents", id, json!(incident)));

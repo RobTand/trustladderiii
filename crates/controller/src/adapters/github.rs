@@ -30,6 +30,10 @@ pub fn set_fake_issue(root: &Path, issue: &tl3_github::Issue) {
 }
 
 impl Executor for Fake {
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        // Simulation has local completion records, not visible upstream copy counts.
+        Ok((self.reconcile(delivery)?, None))
+    }
     fn prerequisite(
         &mut self,
         repository: &crate::Repository,
@@ -105,6 +109,7 @@ pub struct Adapter {
     policy: Policy,
     runtime: &'static tokio::runtime::Runtime,
     records: Records,
+    legacy_approval_scan: Option<std::fs::ReadDir>,
     operations: Option<tl3_config::OperationsIssue>,
     /// Each served repository's PR-body policy (#447).
     body_lines: Vec<(crate::Repository, Vec<tl3_config::BodyLine>, Vec<String>)>,
@@ -173,6 +178,11 @@ impl Adapter {
             policy,
             runtime: crate::executor::runtime()?,
             records: Records::new(simulation),
+            legacy_approval_scan: if simulation.join("approval-attempts.migrated").exists() {
+                None
+            } else {
+                Some(std::fs::read_dir(simulation)?)
+            },
             operations,
             body_lines: Vec::new(),
         })
@@ -316,6 +326,35 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn app_login(&self, installation: u64) -> Option<String> {
+        self.clients
+            .get(&installation)
+            .map(|client| format!("{}[bot]", client.app_slug()))
+    }
+
+    fn reconcile_message(
+        &mut self,
+        repository: &crate::Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+    ) -> Result<()> {
+        if self.app_login(repository.installation).as_deref() != Some(comment.user.login.as_str()) {
+            return Ok(());
+        }
+        let Some(key) = GitHub::comment_effect_key(&comment.body) else {
+            return Ok(());
+        };
+        self.records.fence(self.epoch)?;
+        let client = self
+            .clients
+            .get(&repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", repository.owner, repository.name);
+        self.runtime
+            .block_on(client.reconcile_comments(&repo, issue, &key))?;
+        Ok(())
+    }
+
     fn prerequisite(
         &mut self,
         repository: &crate::Repository,
@@ -422,6 +461,12 @@ impl Executor for Adapter {
         self.runtime.block_on(client.post_comment(&repo, question.number, &question.key(), "Which issue should this pull request complete? Please add its closing keyword to the description and apply the tl3 label again."))?;
         Ok(())
     }
+    fn repair_approval(&mut self, delivery: &Delivery) -> Result<(Reconciliation, Option<usize>)> {
+        // The current owner authorizes repair of evidence from an older delivery.
+        self.records.fence(self.epoch)?;
+        self.repair_approval_copies(delivery)
+    }
+
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -510,9 +555,88 @@ impl Executor for Adapter {
         })
     }
 
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if crate::approval_delivery::is_approval(delivery) {
+            self.records.fence(self.epoch)?;
+            // Stop retires the local operation, never sends another approval.
+            // An outstanding remote POST may still land; webhook repair remains keyed.
+            return Ok(Reconciliation::Absent);
+        }
+        self.reconcile(delivery)
+    }
+
+    fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
+        self.records.fence(self.epoch)?;
+        let Some(scan) = &mut self.legacy_approval_scan else {
+            return Ok(());
+        };
+        // #766: one-time legacy sidecar migration, at most 64 directory entries
+        // per drive. Recovery thereafter uses retirement/repair rows exclusively.
+        for _ in 0..64 {
+            let Some(entry) = scan.next() else {
+                let marker = self
+                    .records
+                    .path("unused")
+                    .parent()
+                    .ok_or(Error::Invalid("approval directory missing"))?
+                    .join("approval-attempts.migrated");
+                self.records.write(&marker, b"1")?;
+                self.legacy_approval_scan = None;
+                return Ok(());
+            };
+            let path = entry?.path();
+            if !path.extension().is_some_and(|ext| ext == "approval") {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            let bytes = (0..stem.len())
+                .step_by(2)
+                .map(|i| {
+                    stem.get(i..i + 2)
+                        .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            let decoded = String::from_utf8(bytes)
+                .map_err(|_| Error::Invalid("invalid approval record name"))?;
+            let (key, _) = decoded
+                .rsplit_once(':')
+                .ok_or(Error::Invalid("invalid approval record name"))?;
+            if store
+                .effect(key)?
+                .is_none_or(|effect| !effect.state.is_pending())
+            {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => std::fs::File::open(
+                        path.parent()
+                            .ok_or(Error::Invalid("approval directory missing"))?,
+                    )?
+                    .sync_all()?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
+        if crate::approval_delivery::is_approval(delivery) {
+            self.retire_approval(delivery)?;
+        }
+        Ok(())
+    }
+
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
         self.records.fence(self.epoch)?;
+        if crate::approval_delivery::is_approval(delivery) {
+            // A failed read proves neither absence nor an outstanding POST.
+            return self.reconcile_publication(delivery);
+        }
         if publishing::handles(delivery) {
             return match self.reconcile_publication(delivery) {
                 Err(Error::Permanent {

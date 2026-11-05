@@ -1,0 +1,2644 @@
+[
+  {
+    "name": "approve",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "blocking_findings": [],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "approve_with_note",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "blocking_findings": [],
+      "findings": [
+        {
+          "problem": "Naming",
+          "evidence": "helper.py"
+        }
+      ]
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "wrong_head",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "blocking_findings": [],
+      "findings": []
+    },
+    "violations": [
+      "approval names a head other than the reviewed head"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "out_of_room",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "out_of_room"
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "citation_goal_g1",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "citation_standing_rule_r1",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "r1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "citation_goal_unknown",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "unknown"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "blocking finding cites an unknown goal or standing rule"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "citation_standing_rule_unknown",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "unknown"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "blocking finding cites an unknown goal or standing rule"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "citation_goal_r1",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "r1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "blocking finding cites an unknown goal or standing rule"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "citation_standing_rule_g1",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "blocking finding cites an unknown goal or standing rule"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "multiple",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "r1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "scope_+def unrelated(): return 42",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+def unrelated(): return 42"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "scope_file.py has extra work",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "file.py has extra work"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "scope_+invented()",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+invented()"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "scope_  +def unrelated(): return 42  ",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "  +def unrelated(): return 42  "
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "meaningful_+}",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+}"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "meaningful_+       x",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+       x"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "meaningful_+abcdefg",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "meaningful_+abcdefgh",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "meaningful_+unrelated_action() suffix",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+unrelated_action() suffix"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "meaningful_The unrelated helper:\n+unrelated_action()",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "The unrelated helper:\n+unrelated_action()"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "scope_fix_round",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+requested_fix()\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ],
+      "scope_diff": "+def unrelated(): return 42\n"
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+def unrelated(): return 42"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "scope_diff_precedence",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ],
+      "scope_diff": "+requested_fix()\n"
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+def unrelated(): return 42"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "unknown_before_scope",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": []
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "blocking finding cites an unknown goal or standing rule"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "first_finding_order",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "unknown"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\r'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\r+abcdefgh\r",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\rcontext"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\r\\n'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\r\n+abcdefgh\r\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\r\ncontext"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\x0b'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\u000b+abcdefgh\u000b",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\u000bcontext"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\x0c'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\f+abcdefgh\f",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\fcontext"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\x1c'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\u001c+abcdefgh\u001c",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\u001ccontext"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\x1d'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\u001d+abcdefgh\u001d",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\u001dcontext"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\x1e'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\u001e+abcdefgh\u001e",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\u001econtext"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\x85'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\u0085+abcdefgh\u0085",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\u0085context"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\u2028'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\u2028+abcdefgh\u2028",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\u2028context"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "line_separator_'\\u2029'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "context\u2029+abcdefgh\u2029",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh\u2029context"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\x1c'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u001cdefg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u001cdefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\x1d'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u001ddefg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u001ddefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\x1e'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u001edefg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u001edefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\x1f'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u001fdefg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u001fdefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\x85'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u0085defg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u0085defg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\xa0'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u00a0defg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u00a0defg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\u2007'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u2007defg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u2007defg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "whitespace_'\\u202f'",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u202fdefg\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u202fdefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "empty_diff_checks_rules",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "",
+      "checks": [],
+      "standing_rules": []
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "blocking_findings": [],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "blocker_limit",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  },
+  {
+    "name": "schema_invalid_0",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_1",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_2",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "main",
+      "blocking_findings": [],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_3",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "blocking_findings": [],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_4",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "problem": "No citation",
+          "evidence": "line"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_5",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": ""
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_6",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "blocking_findings": [],
+      "findings": [
+        {
+          "problem": "No evidence"
+        }
+      ]
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_7",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "approve",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "blocking_findings": [],
+      "findings": [],
+      "extra": true
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "schema_invalid_8",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+def unrelated(): return 42\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        },
+        {
+          "citation": {
+            "kind": "goal",
+            "id": "g1"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "greeting.py:2 returns goodbye."
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": true
+  },
+  {
+    "name": "rust_whole_changed_line_unicode_separator",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+let s = \"context\u2028+abcdefgh\u2028tail\";\n",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abcdefgh"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [
+      "scope blocker must quote a changed hunk"
+    ],
+    "schema_invalid": false
+  },
+  {
+    "name": "rust_unit_separator_counts_as_content",
+    "inputs": {
+      "goals": [
+        {
+          "id": "g1",
+          "description": "Return hello.",
+          "verification": "test"
+        }
+      ],
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "diff": "+abc\u001fdefg",
+      "checks": [],
+      "standing_rules": [
+        {
+          "id": "r1",
+          "description": "Keep existing tests passing."
+        },
+        {
+          "id": "request-scope",
+          "description": "Request goals only."
+        }
+      ]
+    },
+    "reply": {
+      "verdict": "changes",
+      "blocking_findings": [
+        {
+          "citation": {
+            "kind": "standing_rule",
+            "id": "request-scope"
+          },
+          "problem": "The greeting is wrong.",
+          "evidence": "+abc\u001fdefg"
+        }
+      ],
+      "findings": []
+    },
+    "violations": [],
+    "schema_invalid": false
+  }
+]

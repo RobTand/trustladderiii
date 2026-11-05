@@ -1,16 +1,19 @@
 use std::{fs, path::Path, time::Duration};
-use tl3_controller::adapters::prismabuild::{Adapter, Settings};
+use tl3_controller::{
+    Ownership,
+    adapters::prismabuild::{Adapter, Settings},
+};
 use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 
 pub fn key() -> String {
     "a".repeat(64)
 }
 
-pub fn adapter(root: &Path) -> Adapter {
-    adapter_with_bell(root, "http://127.0.0.1:9/")
+pub fn adapter(root: &Path, ownership: &mut Ownership) -> Adapter {
+    adapter_with_bell(root, "http://127.0.0.1:9/", ownership)
 }
 
-pub fn adapter_with_bell(root: &Path, bell_url: &str) -> Adapter {
+pub fn adapter_with_bell(root: &Path, bell_url: &str, ownership: &mut Ownership) -> Adapter {
     let queue = root.join("queue");
     for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
         fs::create_dir_all(queue.join(state)).unwrap();
@@ -41,6 +44,7 @@ pub fn adapter_with_bell(root: &Path, bell_url: &str) -> Adapter {
             priority: -10,
             result_tool: tool,
         },
+        ownership,
     )
     .unwrap()
 }

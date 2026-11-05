@@ -176,7 +176,7 @@ fn registry(
     fail: bool,
 ) -> (Registry, WorkerOutputSource, adapters::prismabuild::Source) {
     let mut registry = adapters::simulation(root).unwrap();
-    let real = Supervisor::new(config, root).unwrap();
+    let real = Supervisor::new(config, root, &mut crate::startup_ownership::ownership()).unwrap();
     let source = real.source();
     registry.register(
         Upstream::Workers,
@@ -195,7 +195,12 @@ fn registry(
         if fail { "check_fail" } else { "done" },
         "http://127.0.0.1:9/",
     );
-    let checks = adapters::prismabuild::Adapter::new(client, settings).unwrap();
+    let checks = adapters::prismabuild::Adapter::new(
+        client,
+        settings,
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let checks_source = checks.source();
     registry.register(Upstream::PrismaBuild, checks);
     (registry, source, checks_source)
@@ -469,7 +474,12 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             value: json!(delivery),
         });
         store.commit(&commit).unwrap();
-        let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+        let mut supervisor = Supervisor::new(
+            &config,
+            &root.path().join("fakes"),
+            &mut crate::startup_ownership::ownership(),
+        )
+        .unwrap();
         supervisor.retire(&mut store).unwrap();
         assert!(
             leftover.exists(),
@@ -735,7 +745,12 @@ fn process_contract(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(!root_for(&config, &delivery.key).join("worktree").exists());
@@ -745,7 +760,12 @@ fn process_contract(settings: &tl3_config::Store) {
     let head = git(&worktree, &["rev-parse", "HEAD"]);
     assert_ne!(head, base);
     drop(supervisor);
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     assert!(matches!(
         supervisor.reconcile(&delivery).unwrap(),
         Reconciliation::Found(_)
@@ -758,12 +778,22 @@ fn process_contract(settings: &tl3_config::Store) {
     );
     assert_eq!(attempts(&root_for(&config, &delivery.key)), 1);
     config.workers.command[1] = "bad-schema".into();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     delivery.key = "maker-invalid".into();
     supervisor.execute(&delivery).unwrap();
     assert!(failed(&terminal(&mut supervisor, &delivery)));
     config.workers.command[1] = "blocked".into();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     delivery.key = "maker-stop".into();
     supervisor.execute(&delivery).unwrap();
     let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
@@ -786,7 +816,12 @@ fn restart_after_replan(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(
@@ -806,7 +841,12 @@ fn restart_after_replan(settings: &tl3_config::Store) {
     delivery.generation += 1;
     delivery.replanned = true;
     config.workers.command[1] = "replanned".into();
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(!failed(&completion));
@@ -852,7 +892,12 @@ pub(super) fn adopted_fix_without_session(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
     assert!(
@@ -882,7 +927,12 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
         head: None,
     };
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     supervisor.execute(&delivery).unwrap();
     assert!(
         !failed(&terminal(&mut supervisor, &delivery)),
@@ -903,7 +953,12 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
     drop(supervisor);
     delivery.key = "legacy-session-revisit".into();
     delivery.generation += 1;
-    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
     let result = supervisor.execute(&delivery);
     assert!(
         matches!(
@@ -942,7 +997,12 @@ pub(super) fn repository_images(database: &mut Database) {
             head: None,
         };
         delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
-        let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+        let mut supervisor = Supervisor::new(
+            &config,
+            &root.path().join("fakes"),
+            &mut crate::startup_ownership::ownership(),
+        )
+        .unwrap();
         supervisor.execute(&delivery).unwrap();
         let _ = terminal(&mut supervisor, &delivery);
         let request: Value = serde_json::from_slice(
@@ -960,47 +1020,54 @@ pub(super) fn repository_images(database: &mut Database) {
     println!("test maker_repository_image_override_and_global_fallback ... ok");
 }
 
-pub(super) fn run(database: &mut Database, shard: &mut super::scenario_shard::Shard) {
+pub(super) fn run(fixture: &mut super::Fixture, shard: &mut super::scenario_shard::Shard) {
     use super::scenario_shard::WorkerGroup;
 
     shard.run(WorkerGroup::MakerRepositoryImages, || {
-        repository_images(database)
+        repository_images(fixture.database())
     });
     shard.run(WorkerGroup::MakerAdoptedFix, || {
-        adopted_fix_without_session(&database.create("adopted_first_fix"));
+        adopted_fix_without_session(&fixture.database().create("adopted_first_fix"));
         println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
     });
     shard.run(WorkerGroup::MakerReproducingFix, || {
-        real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
-        real::reproducing_fix(&database.create("maker_reproducing_rebase"), true);
-        println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
+        real::reproducing_fix(&fixture.database().create("maker_reproducing_fix"), false);
+        println!(
+            "test review_fix_maps_findings_to_checks_and_carries_reasons_to_review_fix ... ok"
+        );
+    });
+    shard.run(WorkerGroup::MakerReproducingRebase, || {
+        real::reproducing_fix(&fixture.database().create("maker_reproducing_rebase"), true);
+        println!(
+            "test review_fix_maps_findings_to_checks_and_carries_reasons_to_review_rebase ... ok"
+        );
     });
     shard.run(WorkerGroup::MakerDeclaredWait, || {
-        declared_wait(&database.create("maker_declared_wait"));
+        declared_wait(&fixture.database().create("maker_declared_wait"));
         println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
     });
     shard.run(WorkerGroup::MakerReviewFeedback, || {
-        real::review_feedback(&database.create("maker_review_feedback"));
+        real::review_feedback(&fixture.database().create("maker_review_feedback"));
         println!("test reviewer_blockers_reach_real_maker ... ok");
     });
     shard.run(WorkerGroup::MakerLegacySession, || {
-        legacy_session(&database.create("maker_legacy_session"));
+        legacy_session(&fixture.database().create("maker_legacy_session"));
         println!("test maker_legacy_session_fails_closed ... ok");
     });
     shard.run(WorkerGroup::MakerOutsidePaths, || {
-        real::outside_paths_bounded(&database.create("maker_outside_bounds"));
+        real::outside_paths_bounded(&fixture.database().create("maker_outside_bounds"));
         println!("test maker_outside_paths_bounded ... ok");
     });
     shard.run(WorkerGroup::MakerRecordedFailure, || {
-        real::recorded_failure_feedback(&database.create("maker_recorded_failure"));
+        real::recorded_failure_feedback(&fixture.database().create("maker_recorded_failure"));
         println!("test maker_recorded_pytest_message_reaches_fix_round ... ok");
     });
     shard.run(WorkerGroup::MakerAcceptance, || {
-        real::acceptance(&database.create("maker_real_worktrees"));
+        real::acceptance(&fixture.database().create("maker_real_worktrees"));
         println!("test maker_real_worktrees_and_recorded_harness ... ok");
     });
     shard.run(WorkerGroup::MakerControllerRestart, || {
-        real::survives_controller_restart(&database.create("maker_controller_restart"));
+        real::survives_controller_restart(&fixture.database().create("maker_controller_restart"));
         println!("test maker_run_survives_controller_restart ... ok");
     });
     for (new_edits, group) in [
@@ -1009,18 +1076,20 @@ pub(super) fn run(database: &mut Database, shard: &mut super::scenario_shard::Sh
     ] {
         shard.run(group, || {
             real::rebase_revisit(
-                &database.create(&format!("maker_rebase_{new_edits}")),
+                &fixture
+                    .database()
+                    .create(&format!("maker_rebase_{new_edits}")),
                 new_edits,
             );
             println!("test maker_rebase_revisit_new_edits_{new_edits} ... ok");
         });
     }
     shard.run(WorkerGroup::MakerReplanRestart, || {
-        restart_after_replan(&database.create("maker_replan_restart"));
+        restart_after_replan(&fixture.database().create("maker_replan_restart"));
         println!("test maker_restart_at_attempt_one_after_replan_starts_fresh ... ok");
     });
     shard.run(WorkerGroup::MakerProcess, || {
-        process_contract(&database.create("maker_process"));
+        process_contract(&fixture.database().create("maker_process"));
         println!("test maker_recovery_invalid_output_and_stop ... ok");
     });
     for (mode, fail, group) in [
@@ -1055,7 +1124,9 @@ pub(super) fn run(database: &mut Database, shard: &mut super::scenario_shard::Sh
             let name = format!("maker_{}_{}", mode.replace('-', "_"), fail);
             // A daemon source lives until process exit; isolate it with its database.
             let mut child = Command::new(env::current_exe().unwrap());
-            child.args(["--maker-failure", mode]);
+            child
+                .args(["--maker-failure", mode])
+                .env(super::PREPARED, "1");
             if fail {
                 child.arg("--checks-fail");
             }
@@ -1077,7 +1148,10 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
     let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
     let open = || {
         let (mut registry, source, _) = registry(&config, &root.path().join("fakes"), false);
-        registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+        registry.register(
+            Upstream::PrismaBuild,
+            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+        );
         let mut controller = Controller::open_with_clock(
             Store::open(settings).unwrap(),
             registry,

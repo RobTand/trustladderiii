@@ -9,6 +9,11 @@ use postgres::{Client, IsolationLevel, NoTls, Row};
 pub use postgres::{Error as DatabaseError, Transaction};
 use std::{fs, time::Duration};
 
+/// #766: production query exposed for executable EXPLAIN regression evidence.
+pub const DISPATCH_EVIDENCE_QUERY: &str = "SELECT
+    EXISTS (SELECT 1 FROM tl3_dispatch_evidence WHERE operation = $1 AND effect_key <> $2)
+    OR EXISTS (SELECT 1 FROM tl3_dispatch_evidence WHERE effect_key = $1->>'key' AND effect_key <> $2)";
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +44,8 @@ pub enum Error {
     ActiveDeliveries,
     #[error("database migration differs from this binary or is newer")]
     MigrationMismatch,
+    #[error("controller ownership session was lost; abort startup")]
+    OwnershipLost,
     #[error("database not initialized")]
     NotInitialized,
     #[error("schema version {actual}, expected {expected}")]
@@ -50,8 +57,138 @@ pub enum Error {
 /// One synchronous connection. The controller owns its writer; readers can open others.
 pub struct Store {
     client: Client,
+    controller_claim: bool,
     settings: tl3_config::Store,
     boundary_hook: Option<BoundaryHook>,
+}
+
+const CONTROLLER_CLAIM: i64 = 0x544c33434f4e5452;
+const CONTROLLER_CLAIM_HELD: &str = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND granted)";
+
+/// Exclusive controller ownership, held by the same Postgres session throughout startup.
+/// #785: only this capability can migrate or admit destructive initialization.
+/// A successful check cannot atomically fence a later filesystem operation: the
+/// session can end between the check and the syscall, including within a rename
+/// or journal-write sequence. Initializers using auxiliary database sessions
+/// likewise have check-then-act protection, not an atomic fence on that session.
+/// Startup aborts when loss is detected; these checks
+/// do not prove that no filesystem mutation can occur after session termination.
+pub struct Ownership {
+    store: Store,
+}
+
+impl Ownership {
+    pub fn claim(mut store: Store) -> Result<Self> {
+        // A transferred controller session already holds one claim. Do not
+        // reenter Postgres's counted advisory lock when wrapping it again.
+        if store.controller_claim {
+            let mut ownership = Self { store };
+            ownership.ensure_held()?;
+            return Ok(ownership);
+        }
+        if !store
+            .client
+            .query_one("SELECT pg_try_advisory_lock($1)", &[&CONTROLLER_CLAIM])?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid(
+                "controller ownership is still held by a Postgres session; exit and let the service manager restart after that session ends",
+            ));
+        }
+        store.controller_claim = true;
+        Ok(Self { store })
+    }
+
+    /// Probe this session's existing lock, without reacquiring or reconnecting it.
+    pub fn ensure_held(&mut self) -> Result<()> {
+        let held = self
+            .store
+            .client
+            .query_one(CONTROLLER_CLAIM_HELD, &[])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0);
+        if !held {
+            return Err(Error::OwnershipLost);
+        }
+        Ok(())
+    }
+
+    pub fn store(&mut self) -> &mut Store {
+        &mut self.store
+    }
+
+    /// Transfer the claimed session without closing it or releasing its lock.
+    pub fn into_store(self) -> Store {
+        self.store
+    }
+
+    /// #785: acknowledge the unlock before a successor can claim, without
+    /// waiting for backend exit. Return the same session for auxiliary use.
+    pub fn release(mut self) -> Result<Store> {
+        self.store.release_controller_claim()?;
+        Ok(self.into_store())
+    }
+
+    pub fn migrate(&mut self) -> Result<()> {
+        self.ensure_held()?;
+        let mut tx = self.store.client.transaction()?;
+        tx.query_one(
+            "SELECT pg_advisory_xact_lock($1)",
+            &[&0x544c3353544f5245_i64],
+        )?;
+        tx.batch_execute("CREATE TABLE IF NOT EXISTS tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)")?;
+        let applied = tx.query(
+            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+            &[],
+        )?;
+        for row in &applied {
+            let version: i32 = row.get(0);
+            let sql: String = row.get(1);
+            if !MIGRATIONS
+                .iter()
+                .any(|&(v, text)| v == version && text == sql)
+            {
+                return Err(Error::MigrationMismatch);
+            }
+        }
+        for &(version, sql) in MIGRATIONS {
+            if !applied.iter().any(|row| row.get::<_, i32>(0) == version) {
+                tx.batch_execute(sql)?;
+                tx.execute(
+                    "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                    &[&version, &sql],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+impl Store {
+    fn release_controller_claim(&mut self) -> Result<()> {
+        let released = self
+            .client
+            .query_one("SELECT pg_advisory_unlock($1)", &[&CONTROLLER_CLAIM])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0);
+        if !released {
+            return Err(Error::OwnershipLost);
+        }
+        self.controller_claim = false;
+        Ok(())
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        // #785: cleanup also follows ownership transferred into a controller,
+        // including unwinding. Normal handoffs use Ownership::release so an
+        // unlock failure is reported; destructor cleanup is best effort.
+        if self.controller_claim {
+            let _ = self.release_controller_claim();
+        }
+    }
 }
 
 const _: fn() = || {
@@ -114,6 +251,16 @@ const MIGRATIONS: &[(i32, &str)] = &[
         include_str!("../migrations/0015_postmortem_results.sql"),
     ),
     (17, include_str!("../migrations/0017_worker_facts.sql")),
+    (18, include_str!("../migrations/0018_memory_feed.sql")),
+    (
+        19,
+        include_str!("../migrations/0019_memory_feed_version.sql"),
+    ),
+    (
+        20,
+        include_str!("../migrations/0020_memory_feed_lineage.sql"),
+    ),
+    (21, include_str!("../migrations/0021_dispatch_evidence.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,7 +287,165 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// #773: delivery lifecycle, including a lost consumer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemoryFeedState {
+    Ready,
+    Delivering,
+    Held,
+    Failed,
+    #[default]
+    NoConsumer,
+}
+
+/// #773 / Q7: lifecycle evidence and its identity are one persisted observation.
+#[derive(Debug, Default)]
+pub struct MemoryFeedOutcome {
+    pub state: MemoryFeedState,
+    pub version: i64,
+    pub lineage: String,
+}
+
+impl MemoryFeedState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Delivering => "delivering",
+            Self::Held => "held",
+            Self::Failed => "failed (no consumer; restart tl3d)",
+            Self::NoConsumer => "no consumer",
+        }
+    }
+}
+
+// A session lock proves the consumer's ownership, not an expiring heartbeat.
+// The two-key namespace is separate from the controller's single-key lock.
+const MEMORY_CONSUMER: &str = "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 773 AND objid = 1 AND objsubid = 2 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
+
+pub fn read_memory_feed_state(tx: &mut Transaction<'_>) -> Result<MemoryFeedState> {
+    Ok(read_memory_feed_outcome(tx)?.state)
+}
+
+fn read_memory_feed_outcome(tx: &mut Transaction<'_>) -> Result<MemoryFeedOutcome> {
+    let row = tx.query_opt(
+        &format!("SELECT state, EXISTS ({MEMORY_CONSUMER}), version, lineage FROM tl3_memory_feed WHERE singleton"),
+        &[],
+    )?;
+    let Some(row) = row else {
+        return Ok(MemoryFeedOutcome::default());
+    };
+    let state = if !row.get::<_, bool>(1) {
+        MemoryFeedState::Failed
+    } else {
+        match row.get::<_, &str>(0) {
+            "ready" => MemoryFeedState::Ready,
+            "delivering" => MemoryFeedState::Delivering,
+            "held" => MemoryFeedState::Held,
+            _ => return Err(Error::Invalid("invalid memory feed state")),
+        }
+    };
+    Ok(MemoryFeedOutcome {
+        state,
+        version: row.get(2),
+        lineage: row.get(3),
+    })
+}
+
 impl Store {
+    pub fn memory_feed_state(&mut self) -> Result<MemoryFeedState> {
+        read_memory_feed_state(&mut self.client.transaction()?)
+    }
+
+    /// #773: the consumer owns this session until its thread has joined.
+    pub fn claim_memory_feed(&mut self) -> Result<()> {
+        self.client
+            .query_one("SELECT pg_advisory_lock_shared(773, 1)", &[])?;
+        self.client.batch_execute("SET application_name = 'tl3-memory-feed'; INSERT INTO tl3_memory_feed (singleton, state) VALUES (true, 'ready') ON CONFLICT (singleton) DO NOTHING")?;
+        Ok(())
+    }
+
+    pub fn pending_memory_count(&mut self) -> Result<i64> {
+        Ok(self
+            .client
+            .query_one(
+                "SELECT count(*) FROM tl3_memory_outbox WHERE parked_reason IS NULL",
+                &[],
+            )?
+            .get(0))
+    }
+
+    pub fn memory_retry_generation(&mut self) -> Result<i64> {
+        Ok(self
+            .client
+            .query_opt("SELECT retry FROM tl3_memory_feed WHERE singleton", &[])?
+            .map_or(0, |row| row.get(0)))
+    }
+
+    /// #773: identify the persisted attempt outcome, so clearance is not a failure.
+    pub fn memory_feed_version(&mut self) -> Result<i64> {
+        Ok(self.memory_feed_outcome()?.version)
+    }
+
+    /// #773 / Q7: sample the outcome's version and attempted lineage together.
+    pub fn memory_feed_outcome(&mut self) -> Result<MemoryFeedOutcome> {
+        read_memory_feed_outcome(&mut self.client.transaction()?)
+    }
+
+    /// #773: only the owning feed records delivery identity; operator flushes
+    /// signal acknowledged recovery through memory_delivery_ack instead.
+    pub fn set_memory_feed_attempt(&mut self, lineage: &str, held: bool) -> Result<()> {
+        let state = if held { "held" } else { "delivering" };
+        let mut tx = self.client.transaction()?;
+        if tx.execute(
+            &format!("UPDATE tl3_memory_feed SET state = $1, lineage = $2, version = version + 1 WHERE singleton AND (state <> $1 OR lineage <> $2) AND EXISTS ({MEMORY_CONSUMER} AND pid = pg_backend_pid())"),
+            &[&state, &lineage],
+        )? > 0 {
+            tx.batch_execute("NOTIFY tl3_ingress")?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// #773: durable retry evidence wakes the controller's existing ingress source.
+    pub fn retry_memory_delivery(&mut self) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        if !tx
+            .query_one(&format!("SELECT EXISTS ({MEMORY_CONSUMER})"), &[])?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid("memory retry: no consumer; restart tl3d"));
+        }
+        tx.batch_execute(
+            "UPDATE tl3_memory_feed SET retry = retry + 1 WHERE singleton; NOTIFY tl3_ingress",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A separate successful curation/retain is upstream evidence. The feed's
+    /// own acknowledgement must not release a later failure in the same batch.
+    pub fn memory_delivery_ack(&mut self) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        if tx.execute(&format!("UPDATE tl3_memory_feed SET retry = retry + 1 WHERE singleton AND EXISTS ({MEMORY_CONSUMER} AND pid <> pg_backend_pid())"), &[])? > 0 {
+            tx.batch_execute("NOTIFY tl3_ingress")?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn set_memory_feed_state(&mut self, state: MemoryFeedState) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        let changed = tx.execute(
+            "UPDATE tl3_memory_feed SET state = $1, version = version + 1 WHERE singleton AND state <> $1",
+            &[&state.as_str()],
+        )?;
+        if changed > 0 {
+            tx.batch_execute("NOTIFY tl3_ingress")?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Open an independent read-only session without transferring this writer's ownership.
     pub fn reader(&self) -> Result<Reader> {
         Reader::open(&self.settings)
@@ -533,8 +838,18 @@ impl Store {
     /// Uses only the supplied settings. No environment or implicit credential file is read.
     /// Transport is local TCP or a Unix socket, without TLS.
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        let mut store = Self::connect(settings)?;
+        let mut tx = read_transaction(&mut store.client)?;
+        check_schema(&mut tx)?;
+        tx.commit()?;
+        Ok(store)
+    }
+
+    /// Connect without inspecting or changing the schema, for an ownership claim.
+    pub fn connect(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self {
             client: connect(settings, false)?,
+            controller_claim: false,
             boundary_hook: None,
             settings: settings.clone(),
         };
@@ -542,7 +857,6 @@ impl Store {
             return Err(Error::Invalid("store requires Postgres fsync = on"));
         }
         store.client.batch_execute("SET synchronous_commit = on")?;
-        store.migrate()?;
         Ok(store)
     }
 
@@ -553,58 +867,6 @@ impl Store {
         hook: impl FnMut(SavePoint, &str, &serde_json::Value) + Send + 'static,
     ) {
         self.boundary_hook = Some(Box::new(hook));
-    }
-
-    /// Hold a session advisory lock for the sole controller writer. Status readers
-    /// use ordinary connections. Dropping this connection releases ownership.
-    pub fn claim_controller(&mut self) -> Result<()> {
-        if !self
-            .client
-            .query_one(
-                "SELECT pg_try_advisory_lock($1)",
-                &[&0x544c33434f4e5452_i64],
-            )?
-            .get::<_, bool>(0)
-        {
-            return Err(Error::Invalid(
-                "controller ownership is still held by a Postgres session; exit and let the service manager restart after that session ends",
-            ));
-        }
-        Ok(())
-    }
-
-    fn migrate(&mut self) -> Result<()> {
-        let mut tx = self.client.transaction()?;
-        tx.query_one(
-            "SELECT pg_advisory_xact_lock($1)",
-            &[&0x544c3353544f5245_i64],
-        )?;
-        tx.batch_execute("CREATE TABLE IF NOT EXISTS tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)")?;
-        let applied = tx.query(
-            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
-            &[],
-        )?;
-        for row in &applied {
-            let version: i32 = row.get(0);
-            let sql: String = row.get(1);
-            if !MIGRATIONS
-                .iter()
-                .any(|&(v, text)| v == version && text == sql)
-            {
-                return Err(Error::MigrationMismatch);
-            }
-        }
-        for &(version, sql) in MIGRATIONS {
-            if !applied.iter().any(|row| row.get::<_, i32>(0) == version) {
-                tx.batch_execute(sql)?;
-                tx.execute(
-                    "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
-                    &[&version, &sql],
-                )?;
-            }
-        }
-        tx.commit()?;
-        Ok(())
     }
 
     /// Read a consistent world, pending outbox, ledger and intern dictionary, without replay.
@@ -792,6 +1054,92 @@ impl Store {
     /// Includes terminal deliveries so callers can audit coverage, not just pending work.
     pub fn effects(&mut self) -> Result<Vec<Effect>> {
         load_effects(&mut self.client)
+    }
+
+    /// #766/Q27: migrate at most 256 audit rows per drive, using the revision index.
+    /// The cursor commits with the evidence, so a crash neither skips nor double-counts.
+    pub fn migrate_dispatch_evidence(&mut self) -> Result<bool> {
+        let mut tx = self.client.transaction()?;
+        metadata(&mut tx, true)?;
+        let row = tx.query_one(
+            "SELECT cursor, through_revision FROM tl3_dispatch_migration FOR UPDATE",
+            &[],
+        )?;
+        let (cursor, through): (i64, i64) = (row.get(0), row.get(1));
+        if cursor >= through {
+            return Ok(false);
+        }
+        // #785: the backfill uses the controller's claimed session, never an
+        // auxiliary open. Probe its existing lock without acquiring a new one.
+        if !tx
+            .query_one(CONTROLLER_CLAIM_HELD, &[])
+            .map_err(|_| Error::OwnershipLost)?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::OwnershipLost);
+        }
+        let rows = tx.query("SELECT revision, payload FROM tl3_events WHERE revision > $1 AND revision <= $2 ORDER BY revision LIMIT 256", &[&cursor, &through])?;
+        let mut next = through;
+        for row in &rows {
+            next = row.get(0);
+            let event: serde_json::Value = row.get(1);
+            if event["to"] == "Sent"
+                && let Some(key) = event["effect"].as_str()
+            {
+                tx.execute("INSERT INTO tl3_dispatch_evidence(effect_key, operation, legacy_sends)
+                    SELECT effect_key, tl3_approval_operation(payload), 1 FROM tl3_effects
+                    WHERE effect_key = $1 AND payload->'output'->'Effect'->>'kind' = 'PostApproval'
+                    ON CONFLICT (effect_key) DO UPDATE SET legacy_sends = tl3_dispatch_evidence.legacy_sends + 1", &[&key])?;
+                // Seed closed-head coverage in this same bounded, transactional pass.
+                // A cancelled send may still land. A single confirmed/failed attempt
+                // is retired, unless it changed after the migration watermark; repeated
+                // legacy sends cannot prove all earlier requests have ended either.
+                // No adapter or ownership assumption belongs in this store migration.
+                tx.execute("INSERT INTO tl3_world(table_name, row_id, value, version)
+                    SELECT 'approval_dispatch_recovery', e.effect_key, e.payload, $2
+                    FROM tl3_effects e JOIN tl3_dispatch_evidence d USING(effect_key)
+                    WHERE e.effect_key = $1 AND
+                        (e.state NOT IN ('Confirmed','Failed') OR e.updated_revision > $3 OR d.legacy_sends > 1)
+                    ON CONFLICT (table_name, row_id) DO NOTHING", &[&key, &next, &through])?;
+            }
+        }
+        tx.execute("UPDATE tl3_dispatch_migration SET cursor = $1", &[&next])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Conservative dispatch count, including legacy Sent intent before wire evidence existed.
+    pub fn approval_dispatch_count(&mut self, key: &str) -> Result<i64> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT sends + legacy_sends FROM tl3_dispatch_evidence WHERE effect_key = $1",
+                &[&key],
+            )?
+            .map_or(0, |r| r.get(0)))
+    }
+
+    /// #766: a replacement delivery inherits dispatch evidence for its operation.
+    /// Both positive and negative searches use per-operation/key indexes, never audit scans.
+    pub fn dispatched_effect_matching(
+        &mut self,
+        identity: &serde_json::Value,
+        excluding: &str,
+    ) -> Result<bool> {
+        if self
+            .client
+            .query_one(
+                "SELECT cursor < through_revision FROM tl3_dispatch_migration",
+                &[],
+            )?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid("dispatch evidence migration is incomplete"));
+        }
+        Ok(self
+            .client
+            .query_one(DISPATCH_EVIDENCE_QUERY, &[identity, &excluding])?
+            .get(0))
     }
 
     /// Retirement commits retain comment IDs without loading their old payloads.
@@ -1520,6 +1868,7 @@ impl Listener {
 
     fn listen(settings: &tl3_config::Store, statement: &str) -> Result<Self> {
         let mut client = listen_config(settings)?.connect(NoTls)?;
+        check_schema(&mut read_transaction(&mut client)?)?;
         client.batch_execute(statement)?;
         Ok(Self { client })
     }
@@ -1551,9 +1900,11 @@ pub struct ConsoleCommands {
 
 impl ConsoleCommands {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
-        Ok(Self {
-            client: connect(settings, false)?,
-        })
+        let mut client = connect(settings, false)?;
+        let mut tx = read_transaction(&mut client)?;
+        check_schema(&mut tx)?;
+        tx.commit()?;
+        Ok(Self { client })
     }
 
     /// File a command for tl3d. False when this id was already filed.
@@ -1574,6 +1925,22 @@ impl ConsoleCommands {
 fn load_effects(client: &mut impl postgres::GenericClient) -> Result<Vec<Effect>> {
     client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
             .into_iter().map(decode_effect).collect()
+}
+
+/// #783: bounded event pages inside the replay reader's existing READ ONLY transaction.
+pub fn events_in(
+    tx: &mut Transaction<'_>,
+    revision: Revision,
+    limit: u32,
+) -> Result<Vec<EventRecord>> {
+    load_events(tx, revision, limit)
+}
+
+/// Resolve an inclusive replay start by immutable event key, or by revision.
+pub fn find_event_revision(tx: &mut Transaction<'_>, event: &str) -> Result<Option<Revision>> {
+    let revision = event.parse::<i64>().ok().filter(|revision| *revision > 0);
+    tx.query_opt("SELECT revision FROM tl3_events WHERE event_key = $1 OR revision = $2 ORDER BY (event_key = $1) DESC LIMIT 1", &[&event, &revision])?
+        .map(|row| Revision::try_from(row.get::<_, i64>(0))).transpose()
 }
 
 fn load_events(

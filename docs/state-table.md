@@ -739,7 +739,7 @@ TL3 promises deduplication, not exactly-once delivery. Each effect has a deliver
 |---|---|---|---|
 | Submit a PrismaBuild job | Once | The action key | |
 | Withdraw a PrismaBuild job | Converges | The job's state | The job is finished or unknown |
-| Approval check | Once per head | The check run's external id | |
+| Approval check | At least once after a human-authorized retry; duplicates converge to identical conclusion and output | Head and external id; reconciliation updates every visible copy | |
 | Push a branch | Converges | The branch's head on GitHub | |
 | Open or reopen a PR | Converges | Any PR for the branch, open or closed | |
 | Enqueue, dequeue | Converges | The PR's queue state | Dequeue: the PR isn't queued |

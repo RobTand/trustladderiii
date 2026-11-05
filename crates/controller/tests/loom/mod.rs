@@ -99,6 +99,10 @@ pub(crate) fn model(
             .unwrap();
         db.batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
             .unwrap();
+        let mut ownership =
+            crate::Ownership::claim(tl3_store::Store::connect(&settings).unwrap()).unwrap();
+        ownership.migrate().unwrap();
+        ownership.release().unwrap();
         check(&settings);
     });
 }

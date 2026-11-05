@@ -68,7 +68,12 @@ fn planner_protected_paths_follow_the_request_repository() {
             }),
         )],
     );
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
     for (name, own, foreign) in [
         ("TL3-SANDBOX", "CHANGELOG.md", "other-only/**"),
         ("OTHER-REPO", "other-only/**", "CHANGELOG.md"),
@@ -153,7 +158,12 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
     config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());
     config.workers.runs = f.root.path().join("runs");
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
     let mut store = Store::open(&config.store).unwrap();
     store
         .put_worker_materials(
@@ -232,7 +242,12 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     ] {
         let mut config = config.clone();
         config.github.repos[0].test_demand = demand;
-        let supervisor = Supervisor::new(&config, &f.root.path().join("demand-records")).unwrap();
+        let supervisor = Supervisor::new(
+            &config,
+            &f.root.path().join("demand-records"),
+            &mut crate::store_support::ownership(),
+        )
+        .unwrap();
         let request = supervisor
             .request(&delivery, "maker", &mut store, &snapshot)
             .unwrap();
@@ -365,11 +380,15 @@ fn hostile_maker_head() {
             config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
             config.workers.runs = f.root.path().join("runs");
             config.worktrees_root = f.root.path().join("worktrees");
-            let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
-                .unwrap()
-                .with_materials(crate::production::Materials::fixture(
-                    config.worktrees_root.clone(),
-                ));
+            let supervisor = Supervisor::new(
+                &config,
+                &f.root.path().join("records"),
+                &mut crate::store_support::ownership(),
+            )
+            .unwrap()
+            .with_materials(crate::production::Materials::fixture(
+                config.worktrees_root.clone(),
+            ));
             let mut delivery = f.delivery();
             delivery.checks = None;
             let checkout =
@@ -488,13 +507,17 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
     config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
     config.workers.runs = f.root.path().join("runs");
     config.worktrees_root = f.root.path().join("worktrees");
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
-        .unwrap()
-        .with_materials(crate::production::Materials::repository_fixture(
-            config.worktrees_root.clone(),
-            f.path.clone(),
-            &config.github.repos,
-        ));
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap()
+    .with_materials(crate::production::Materials::repository_fixture(
+        config.worktrees_root.clone(),
+        f.path.clone(),
+        &config.github.repos,
+    ));
     let mut value = serde_json::to_value(f.delivery()).unwrap();
     value["output"]["Effect"]["node"] = json!(1);
     value["checks"] = json!(null);
@@ -654,7 +677,12 @@ fn claimed_postmortem(
 fn a_postmortem_request_carries_a_valid_case_file() {
     let (f, _db, config, mut store, delivery) = claimed_postmortem("postmortem_case", |_| {});
     let snapshot = store.load().unwrap();
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
     let request = supervisor
         .request(&delivery, "postmortem", &mut store, &snapshot)
         .unwrap();
@@ -697,7 +725,12 @@ fn a_postmortem_request_falls_back_past_models_that_are_out() {
         });
     let [writer, grader] = [0, 1].map(|index| config.models.postmortem[index].name.clone());
     assert_ne!(writer, grader);
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
     let mut models = |out: &[(&str, u64)]| {
         let snapshot = store.load().unwrap();
         let mut commit = tl3_store::Commit::new(
@@ -777,7 +810,8 @@ fn ingest_preflight_refuses_a_declared_protected_edit_without_launching_a_worker
         "repo":{"readme":"Gate repository", "file_list":["tools/ci/bazel_gate.py"]}
     })).unwrap();
     let records = f.root.path().join("records");
-    let mut supervisor = Supervisor::new(&config, &records).unwrap();
+    let mut supervisor =
+        Supervisor::new(&config, &records, &mut crate::store_support::ownership()).unwrap();
     let mut delivery = f.delivery();
     delivery.epoch = store.load().unwrap().epoch.get();
     delivery.output = Out::Effect {
@@ -799,7 +833,8 @@ fn ingest_preflight_refuses_a_declared_protected_edit_without_launching_a_worker
         "preflight creates no worker run"
     );
     drop(supervisor);
-    let mut restarted = Supervisor::new(&config, &records).unwrap();
+    let mut restarted =
+        Supervisor::new(&config, &records, &mut crate::store_support::ownership()).unwrap();
     assert!(
         matches!(
             restarted.reconcile(&delivery).unwrap(),
@@ -841,7 +876,12 @@ fn t604_ingest_and_audit_get_authoritative_per_repository_request_branch() {
     ));
     store.commit(&commit).unwrap();
     let snapshot = store.load().unwrap();
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
     for (name, branch) in [
         ("tl3-sandbox", "prismabuild-2646-tl3-200"),
         ("other-repo", "request-200-issue-2646"),
@@ -975,7 +1015,12 @@ fn t653_rejected_inputs_send_only_the_safe_diagnostic_to_tracing() {
     fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
     config.workers.python = python;
     config.workers.launcher.clear();
-    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &f.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
     let mut store = Store::open(&config.store).unwrap();
     store.put_worker_materials("0", &json!({"ingest":{"issue":{"number":42, "title":123,
         "body":"private-input-value", "author":"owner", "comments":[]}, "repo":{"readme":"", "file_list":[]}}})).unwrap();

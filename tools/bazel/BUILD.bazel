@@ -86,6 +86,7 @@ py_binary(
 py_binary(
     name = "rust_runner",
     srcs = ["rust_runner.py"],
+    data = ["//tools/ci:controller_test_runner.sh"],
     visibility = ["//visibility:public"],
     deps = [
         ":libtest_shards",

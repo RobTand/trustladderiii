@@ -1,3 +1,5 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 // Single-event fixture receives expose no intermediate progress.
 // #673 measured the full looks binary at 61.957 s; 125 s > 2x.
 const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(125);
@@ -1954,6 +1956,19 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
 }
 
 fn main() {
+    // #766: run the unchanged allowance regressions without the unrelated long suite.
+    if std::env::args().any(|arg| arg == "--approval-regressions") {
+        let mut db = support::Database::start();
+        alive_look_inside_allowance_breaks_streak(&db.create("alive_streak"));
+        println!("test alive_look_inside_allowance_breaks_streak ... ok");
+        read_outages_keep_looking(&db.create("approval_outage"), false);
+        println!("test read_outages_keep_looking ... ok");
+        read_outages_keep_looking(&db.create("approval_probe_error"), true);
+        println!("test read_outages_keep_looking_after_probe_error ... ok");
+        db.stop();
+        println!("3 allowance scenarios passed; no skips");
+        return;
+    }
     if std::env::args().any(|arg| arg == "--subscription-errors") {
         let mut db = support::Database::start();
         subscription_error_is_isolated(&db.create("subscription_errors"));
@@ -2254,7 +2269,10 @@ fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
                 checkout: root.path().join("worktree"),
             },
         );
-        registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+        registry.register(
+            Upstream::PrismaBuild,
+            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+        );
         let mut c = Controller::open_with_clock(
             Store::open(settings).unwrap(),
             registry,
@@ -2387,7 +2405,11 @@ fn r3(settings: &tl3_config::Store, case: &str) {
         },
     );
     let bell = bell::Bell::new();
-    let pb = waits::adapter_with_bell(root.path(), &bell.url);
+    let pb = waits::adapter_with_bell(
+        root.path(),
+        &bell.url,
+        &mut crate::startup_ownership::ownership(),
+    );
     let source = pb.source();
     registry.register(Upstream::PrismaBuild, pb);
     registry.register(
@@ -2610,7 +2632,10 @@ fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
             resumed: resumed.clone(),
         },
     );
-    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    registry.register(
+        Upstream::PrismaBuild,
+        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+    );
     waits::record(root.path(), "claimed");
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
@@ -2696,7 +2721,10 @@ fn moving_maker_wait_keeps_registration(settings: &tl3_config::Store) {
             checkout: root.path().join("worktree"),
         },
     );
-    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    registry.register(
+        Upstream::PrismaBuild,
+        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+    );
     waits::record(root.path(), "claimed");
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
@@ -2827,7 +2855,10 @@ fn successful_wait_read_breaks_failure_streak(settings: &tl3_config::Store) {
             checkout: root.path().join("worktree"),
         },
     );
-    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    registry.register(
+        Upstream::PrismaBuild,
+        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+    );
     waits::record(root.path(), "claimed");
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
@@ -3044,7 +3075,10 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
     );
     registry.register(
         Upstream::PrismaBuild,
-        SubscriptionFailure(waits::adapter(root.path())),
+        SubscriptionFailure(waits::adapter(
+            root.path(),
+            &mut crate::startup_ownership::ownership(),
+        )),
     );
     waits::record(root.path(), "claimed");
     let clock = FakeClock::new();

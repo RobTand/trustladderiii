@@ -163,19 +163,37 @@ pub struct Supervisor {
 }
 
 impl Supervisor {
-    pub fn new(config: &tl3_config::Config, records_root: &Path) -> Result<Self> {
+    pub fn new(
+        config: &tl3_config::Config,
+        records_root: &Path,
+        ownership: &mut crate::Ownership,
+    ) -> Result<Self> {
+        ownership.ensure_held()?;
         protocol::initialize_schemas()?;
         fs::create_dir_all(config.workers.runs.join(".ready"))?;
         fs::create_dir_all(records_root)?;
         let active = ActiveRuns::default();
         let mut store = Store::open(&config.store)?;
-        crate::prompts::seed(&mut store)?;
+        ownership.ensure_held()?;
+        store.seed_prompts_owned(crate::prompts::BUILTIN, ownership)?;
         for delivery in watched_deliveries(&mut store)? {
             let root = run_root(&config.workers.runs, &delivery.key);
-            match latest(&root).and_then(|attempt| match attempt {
-                Some((_, path)) => inspect_recorded(&path, &delivery, &mut store),
+            ownership.ensure_held()?;
+            let inspected = latest(&root).and_then(|attempt| match attempt {
+                Some((_, path)) => {
+                    let result = inspect_guarded(&path, &delivery, || {
+                        ownership.ensure_held().map_err(Into::into)
+                    })?;
+                    if !matches!(result, Reconciliation::Pending) {
+                        ownership.ensure_held()?;
+                        facts::record(&mut store, &delivery.key, &path)?;
+                    }
+                    Ok(result)
+                }
                 None => Ok(Reconciliation::Absent),
-            }) {
+            });
+            ownership.ensure_held()?;
+            match inspected {
                 Ok(Reconciliation::Pending) => {
                     active.add(&delivery, latest(&root)?.expect("pending attempt").0)
                 }
@@ -208,7 +226,7 @@ impl Supervisor {
                 config.hindsight.clone(),
                 recall_breaker.clone(),
                 announcer.clone(),
-            ),
+            )?,
             recall_breaker,
             announcer,
         })
@@ -217,13 +235,20 @@ impl Supervisor {
     /// Post memory hides and retirements on the operations issue (#439).
     pub(crate) fn with_operations(self, issue: crate::memory::OperationsIssue) -> Self {
         *self.announcer.lock().unwrap() = Some(Box::new(issue));
-        self.memory.wake();
+        if let Err(error) = self.memory.wake() {
+            eprintln!("{error}");
+        }
         self
     }
 
     pub(crate) fn with_materials(mut self, provider: crate::production::Materials) -> Self {
         self.materials_provider = Some(provider);
         self
+    }
+
+    /// #773: wait until preceding memory events have been processed.
+    pub fn memory_barrier(&self) -> Result<()> {
+        self.memory.barrier()
     }
 
     pub fn source(&self) -> WorkerOutputSource {
@@ -233,6 +258,7 @@ impl Supervisor {
             self.active.clone(),
         )
         .with_flusher(self.settings.launcher.clone(), self.settings.python.clone())
+        .with_memory(self.memory.exits())
     }
 
     fn fence(&self, delivery: &Delivery) -> Result<(Store, Snapshot)> {
@@ -1167,6 +1193,10 @@ impl Supervisor {
 }
 
 impl Executor for Supervisor {
+    fn probe_memory(&mut self) -> Result<()> {
+        self.memory.retry()
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.launch(delivery, false)
     }
@@ -1300,8 +1330,11 @@ impl Executor for Supervisor {
                 }
             }
         }
-        self.memory.wake();
-        self.retire_sessions(store)?;
+        // Independent cleanup must run even when the feed has failed.
+        let memory = self.memory.refresh(store);
+        let sessions = self.retire_sessions(store);
+        memory?;
+        sessions?;
         match failure {
             Some(error) => Err(error),
             None => Ok(()),
@@ -1451,13 +1484,23 @@ fn inspect_recorded(
 
 /// Inspect one attempt directory, rather than the run root or historical attempts.
 pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliation> {
+    inspect_guarded(attempt, delivery, || Ok(()))
+}
+
+fn inspect_guarded(
+    attempt: &Path,
+    delivery: &Delivery,
+    mut before_write: impl FnMut() -> Result<()>,
+) -> Result<Reconciliation> {
     // Claim cancellation closes the spawn-before-record crash window atomically.
     // A delayed launcher must lose this claim before it can start any worker.
+    before_write()?;
     cancel(&attempt.join("claim.json"))?;
     if alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))? {
         return Ok(Reconciliation::Pending);
     }
     // Fence a not-yet-scheduled worker wrapper before declaring it absent.
+    before_write()?;
     cancel(&attempt.join("process.json"))?;
     if alive(&attempt.join("process.json"))? {
         return Ok(Reconciliation::Pending);

@@ -20,8 +20,19 @@ fn main() {
     let mut database = Database::start();
     let cases = [
         (
+            "ownership_release",
+            ownership_release as fn(&tl3_config::Store),
+        ),
+        ("ownership_drop", ownership_drop),
+        ("ownership_release_after_loss", ownership_release_after_loss),
+        (
             "mvp_schema_6_upgrades_to_hindsight",
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
+        ),
+        ("dispatch_evidence_index_plan", dispatch_evidence_index_plan),
+        (
+            "dispatch_legacy_migration_is_bounded",
+            dispatch_legacy_migration_is_bounded,
         ),
         ("worker_completion_facts", worker_completion_facts),
         ("review_fixes_worker_document", review_fixes_worker_document),
@@ -87,7 +98,21 @@ fn main() {
         .filter(|(name, _)| !args.get(1).is_some_and(|s| s == "--r3") || name.starts_with("wait_"))
         .collect();
     for (name, test) in &selected {
-        let settings = database.create(name);
+        let settings = if matches!(
+            *name,
+            "ownership_release"
+                | "mvp_schema_6_upgrades_to_hindsight"
+                | "phase_backfill_from_schema_9"
+                | "postmortem_migration_on_schema_12"
+                | "read_only_reader"
+                | "reader_schema_versions"
+                | "console_login_granted_before_migration"
+                | "prompts_open_on_a_store_ahead"
+        ) {
+            database.create_uninitialized(name)
+        } else {
+            database.create(name)
+        };
         test(&settings);
         println!("test {name} ... ok");
     }
@@ -106,6 +131,13 @@ fn main() {
     );
 }
 
+fn migrate(settings: &tl3_config::Store) -> tl3_store::Result<Store> {
+    let mut ownership = Ownership::claim(Store::connect(settings)?)?;
+    ownership.migrate()?;
+    ownership.release()?;
+    Store::open(settings)
+}
+
 fn raw(settings: &tl3_config::Store) -> Client {
     postgres::Config::new()
         .host(&settings.host)
@@ -115,6 +147,78 @@ fn raw(settings: &tl3_config::Store) -> Client {
         .password("tl3-disposable-test-password")
         .connect(NoTls)
         .unwrap()
+}
+
+/// #785 / batch 10: a successor must not wait for the old backend to exit.
+fn ownership_release(settings: &tl3_config::Store) {
+    let mut owner = Ownership::claim(Store::connect(settings).unwrap()).unwrap();
+    owner.migrate().unwrap();
+    let mut observer = raw(settings);
+    let pid = owner_pid(&mut observer);
+    let owner = Ownership::claim(owner.into_store()).unwrap();
+    assert!(
+        Ownership::claim(Store::open(settings).unwrap()).is_err(),
+        "live owners still refuse contenders"
+    );
+    // Keep the exact old session alive after release. This makes a missing
+    // unlock deterministic, independently of when Postgres processes Terminate.
+    let mut released = owner.release().unwrap();
+    released.load().unwrap();
+    assert_eq!(
+        observer
+            .query_one(
+                "SELECT count(*) FROM pg_stat_activity WHERE pid = $1",
+                &[&pid]
+            )
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    assert_eq!(observer.query_one("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = $1 AND classid::bigint = 1414280003 AND objid::bigint = 1330533458 AND objsubid = 1 AND granted", &[&pid]).unwrap().get::<_, i64>(0), 0, "release must acknowledge the unlock while the old backend is still alive");
+    let mut successor = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    successor.ensure_held().unwrap();
+    released.load().unwrap();
+    successor.release().unwrap();
+}
+
+fn owner_pid(observer: &mut Client) -> i32 {
+    observer.query_one("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid::bigint = 1414280003 AND objid::bigint = 1330533458 AND objsubid = 1 AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND granted", &[]).unwrap().get(0)
+}
+
+/// #785: a failed release reports session loss rather than claiming success.
+fn ownership_release_after_loss(settings: &tl3_config::Store) {
+    let owner = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    let mut observer = raw(settings);
+    let pid = owner_pid(&mut observer);
+    assert!(
+        observer
+            .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    assert!(matches!(owner.release(), Err(Error::OwnershipLost)));
+}
+
+/// #785: transfer keeps ownership; normal drop and unwinding release it.
+fn ownership_drop(settings: &tl3_config::Store) {
+    for panic in [false, true] {
+        let owner = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+        let mut observer = raw(settings);
+        let pid = owner_pid(&mut observer);
+        let transferred = owner.into_store();
+        assert!(
+            Ownership::claim(Store::open(settings).unwrap()).is_err(),
+            "transferring the session must not unlock it"
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = transferred;
+            assert_eq!(owner_pid(&mut observer), pid);
+            assert!(!panic, "exercise ownership cleanup during unwinding");
+        }));
+        assert_eq!(result.is_err(), panic);
+        let successor = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+        successor.release().unwrap();
+    }
 }
 
 fn review_fixes_worker_document(settings: &tl3_config::Store) {
@@ -628,7 +732,7 @@ fn mvp_schema_6_upgrades_to_hindsight(settings: &tl3_config::Store) {
             .get::<_, i32>(0),
         6
     );
-    let upgraded = Store::open(settings);
+    let upgraded = migrate(settings);
     assert!(
         upgraded.is_ok(),
         "schema 6 must upgrade to Hindsight: {:?}",
@@ -698,7 +802,9 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17]
+        [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21
+        ]
     );
     for table in [
         "tl3_events",
@@ -731,7 +837,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
         .unwrap();
     assert!(matches!(
         Store::open(settings),
-        Err(Error::MigrationMismatch)
+        Err(Error::SchemaVersion { actual: 999, .. })
     ));
     client
         .execute("DELETE FROM tl3_schema_migrations WHERE version = 999", &[])
@@ -766,7 +872,7 @@ fn durability_settings(settings: &tl3_config::Store) {
         .unwrap();
     drop(durable);
     let mut unsafe_database = Database::start_with_fsync(false);
-    let unsafe_settings = unsafe_database.create("unsafe_durability");
+    let unsafe_settings = unsafe_database.create_uninitialized("unsafe_durability");
     assert!(matches!(
         Store::open(&unsafe_settings),
         Err(Error::Invalid("store requires Postgres fsync = on"))
@@ -891,7 +997,7 @@ fn read_only_reader(settings: &tl3_config::Store) {
             .unwrap()
             .get::<_, bool>(0)
     );
-    let mut writer = Store::open(settings).unwrap();
+    let mut writer = migrate(settings).unwrap();
     let change = seed(&mut writer);
     writer.commit(&change).unwrap();
     let before = writer.load().unwrap();
@@ -953,7 +1059,7 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             .unwrap()
             .get::<_, bool>(0)
     );
-    Store::open(settings).unwrap();
+    migrate(settings).unwrap();
     let migrations = client
         .query(
             "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
@@ -1311,7 +1417,7 @@ fn phase_backfill_from_schema_9(settings: &tl3_config::Store) {
              UPDATE tl3_meta SET revision = 2;",
         )
         .unwrap();
-    drop(Store::open(settings).unwrap());
+    drop(migrate(settings).unwrap());
     let rows: Vec<(String, serde_json::Value, String)> = client
         .query(
             "SELECT node_id, phase, to_char(since AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM tl3_node_phases ORDER BY node_id",
@@ -1901,7 +2007,7 @@ fn prompts_open_on_a_store_ahead(settings: &tl3_config::Store) {
         Prompts::open(settings).is_err(),
         "a store without the prompt tables"
     );
-    let mut store = Store::open(settings).unwrap();
+    let mut store = migrate(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
     raw(settings)
         .execute(
@@ -2078,7 +2184,7 @@ fn console_login_writes_only_prompts(settings: &tl3_config::Store) {
 /// Deploy may grant the console's login before tl3d migrates the store.
 fn console_login_granted_before_migration(settings: &tl3_config::Store) {
     let (login, _) = console_login(settings, "tl3_console_early");
-    let mut store = Store::open(settings).unwrap();
+    let mut store = migrate(settings).unwrap();
     store.seed_prompts(BUILTIN).unwrap();
     assert_eq!(
         raw(&login)
@@ -2264,7 +2370,7 @@ fn postmortem_migration_on_schema_12(settings: &tl3_config::Store) {
     };
     let before = phases(&mut client, "tl3_node_phases");
     assert_eq!(before.len(), 2);
-    let mut store = Store::open(settings).unwrap();
+    let mut store = migrate(settings).unwrap();
     assert_eq!(
         phases(&mut client, "tl3_node_phases"),
         before,
@@ -2847,4 +2953,182 @@ fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
         .unwrap()
         .get(0);
     assert!(failed_at, "done clears failed_at");
+}
+
+/// #766, Q27: negative dispatch lookups use indexes, independent of lifetime audit size.
+fn dispatch_evidence_index_plan(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut client = raw(settings);
+    let identity = json!({"repository":{"owner":"owner","name":"sandbox","installation":3},
+        "issue":1000001,"generation":0,"head_sha":"head", "output":{"Effect":{"node":0,"kind":"PostApproval"}}});
+    for size in [10_000_i64, 100_000] {
+        let first = if size == 10_000 { 1_i64 } else { 10_001 };
+        client.execute("INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
+            SELECT 'history-'||n,n,0,jsonb_build_object('effect','effect-'||n,'to','Sent'),'null'::jsonb
+            FROM generate_series($1::bigint,$2::bigint) n", &[&first,&size]).unwrap();
+        client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+            SELECT 'effect-'||n,0,'github',jsonb_build_object('key','effect-'||n,
+            'repository',jsonb_build_object('owner','owner','name','sandbox','installation',3),
+            'issue',n,'generation',0,'head_sha','head','output',jsonb_build_object('Effect',jsonb_build_object('node',0,'kind','PostApproval'))),
+            'Sent',n,n FROM generate_series($1::bigint,$2::bigint) n", &[&first,&size]).unwrap();
+        client
+            .batch_execute("ANALYZE tl3_effects; ANALYZE tl3_events; ANALYZE tl3_dispatch_evidence")
+            .unwrap();
+        let explain = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {DISPATCH_EVIDENCE_QUERY}");
+        let plan: serde_json::Value = client
+            .query_one(&explain, &[&identity, &""])
+            .unwrap()
+            .get(0);
+        println!("DISPATCH_PLAN events={size} {plan}");
+        let key_identity = json!({"key":"effect-10000"});
+        let key_plan: serde_json::Value = client
+            .query_one(&explain, &[&key_identity, &""])
+            .unwrap()
+            .get(0);
+        println!("DISPATCH_KEY_PLAN events={size} {key_plan}");
+        assert!(!key_plan.to_string().contains("Seq Scan"));
+        assert!(store.dispatched_effect_matching(&key_identity, "").unwrap());
+        let mut prior = identity.clone();
+        prior["issue"] = json!(10000);
+        assert!(
+            store
+                .dispatched_effect_matching(&prior, "replacement")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .dispatched_effect_matching(&prior, "effect-10000")
+                .unwrap()
+        );
+        let started = Instant::now();
+        for _ in 0..10 {
+            assert!(!store.dispatched_effect_matching(&identity, "").unwrap());
+        }
+        println!(
+            "DISPATCH_TIMING events={size} negative_lookups=10 elapsed_us={}",
+            started.elapsed().as_micros()
+        );
+        let text = plan.to_string();
+        assert!(
+            !text.contains("Seq Scan"),
+            "dispatch lookup must be indexed: {text}"
+        );
+        assert!(
+            text.contains("Index"),
+            "EXPLAIN must show actual index access: {text}"
+        );
+    }
+}
+
+/// #766/Q27: one-time legacy backfill is bounded, restartable and gates negative admission.
+fn dispatch_legacy_migration_is_bounded(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut client = raw(settings);
+    client.batch_execute("ALTER TABLE tl3_effects DISABLE TRIGGER tl3_record_dispatch;
+        INSERT INTO tl3_events(event_key,revision,epoch,payload,result)
+        SELECT 'old-'||n,n,0,CASE WHEN n IN (255,256,257) THEN
+            jsonb_build_object('effect',CASE n WHEN 255 THEN 'pending' WHEN 256 THEN 'cancelled' ELSE 'confirmed' END,'to','Sent')
+            WHEN n=600 THEN '{\"effect\":\"legacy-a\",\"to\":\"Sent\"}'::jsonb ELSE 'null'::jsonb END,'null'::jsonb FROM generate_series(1,600) n;
+        UPDATE tl3_meta SET revision=600;
+        UPDATE tl3_dispatch_migration SET through_revision=600").unwrap();
+    let identity = json!({"repository":{"owner":"owner","name":"sandbox","installation":3},"issue":12,
+        "generation":0,"head_sha":"head","output":{"Effect":{"node":0,"kind":"PostApproval"}}});
+    let mut payload = identity.clone();
+    payload["key"] = json!("legacy-a");
+    client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+        VALUES ('legacy-a',0,'github',$1,'Confirmed',600,600)", &[&payload]).unwrap();
+    for (key, state, revision) in [
+        ("pending", "Uncertain", 255_i64),
+        ("cancelled", "Cancelled", 256),
+        ("confirmed", "Confirmed", 257),
+    ] {
+        let mut delivery = payload.clone();
+        delivery["key"] = json!(key);
+        client.execute("INSERT INTO tl3_effects(effect_key,epoch,kind,payload,state,created_revision,updated_revision)
+            VALUES ($1,0,'github',$2,$3::text::tl3_effect_state,$4,$4)", &[&key,&delivery,&state,&revision]).unwrap();
+    }
+    client
+        .batch_execute("ALTER TABLE tl3_effects ENABLE TRIGGER tl3_record_dispatch")
+        .unwrap();
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .is_err(),
+        "incomplete migration cannot authorize a negative lookup"
+    );
+    assert!(
+        matches!(store.migrate_dispatch_evidence(), Err(Error::OwnershipLost)),
+        "an auxiliary session cannot drive the legacy backfill"
+    );
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "a refused auxiliary backfill cannot move its cursor"
+    );
+    let mut ownership = Ownership::claim(store).unwrap();
+    let store = ownership.store();
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        256
+    );
+    let recovery: Vec<_> = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "approval_dispatch_recovery")
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(
+        recovery.len(),
+        2,
+        "the same 256-row batch also recovers unresolved legacy dispatches"
+    );
+    assert!(recovery.contains(&"pending".into()) && recovery.contains(&"cancelled".into()));
+    ownership.release().unwrap();
+    let mut ownership = Ownership::claim(Store::open(settings).unwrap()).unwrap();
+    let store = ownership.store();
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .is_err()
+    );
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(
+        client
+            .query_one("SELECT cursor FROM tl3_dispatch_migration", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        512
+    );
+    assert!(store.migrate_dispatch_evidence().unwrap());
+    assert!(!store.migrate_dispatch_evidence().unwrap());
+    assert!(
+        store
+            .dispatched_effect_matching(&identity, "legacy-b")
+            .unwrap()
+    );
+    let recovery: Vec<_> = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "approval_dispatch_recovery")
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(
+        recovery.len(),
+        2,
+        "proven terminal single attempts must stay retired; restart must not duplicate recovery"
+    );
+    assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
+    assert!(!store.migrate_dispatch_evidence().unwrap());
+    assert_eq!(store.approval_dispatch_count("legacy-a").unwrap(), 1);
 }

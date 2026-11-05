@@ -7,6 +7,7 @@ compile_error!("the loom feature is only supported for library unit tests");
 extern crate self as tl3_controller;
 
 pub mod adoption;
+mod approval_delivery;
 pub mod findings;
 
 pub mod adapters;
@@ -21,6 +22,7 @@ pub mod contracts;
 mod decisions;
 pub mod evidence;
 pub mod executor;
+mod github_messages;
 mod goals;
 mod http;
 pub mod ingress;
@@ -33,7 +35,11 @@ pub mod memory;
 pub mod merge_dependencies;
 mod narrowing;
 mod notices;
+pub mod postmortem_reply;
 mod postmortems;
+#[cfg(all(test, loom))]
+#[path = "../tests/support/ownership.rs"]
+mod startup_ownership;
 pub use postmortems::PostmortemPace;
 pub mod pr_body;
 pub mod priority;
@@ -42,14 +48,17 @@ pub mod prompts;
 mod protected_requests;
 pub mod publication_failure;
 mod question_findings;
-mod redaction;
+pub mod redaction;
 pub mod release;
+pub mod replay;
 mod review_stops;
+pub mod reviewer;
 mod scope;
 mod snapshot;
 pub mod status;
 pub mod status_web;
 pub mod steering;
+pub mod store_stats;
 mod sync;
 pub mod worker_inputs;
 
@@ -68,6 +77,8 @@ use tl3_store::{
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("replay-check: {0}")]
+    Replay(String),
     #[error("{0}")]
     Store(#[from] tl3_store::Error),
     #[error("{0}")]
@@ -112,6 +123,8 @@ pub enum Error {
     /// evidence of a legitimate wait, not a failure (Q52).
     #[error("required head checks are still pending")]
     ChecksPending,
+    #[error("approval check dispatch outcome unknown")]
+    ApprovalAmbiguous,
 }
 
 fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
@@ -303,6 +316,8 @@ pub enum Boundary {
     AfterReconcile,
 }
 
+pub use tl3_store::Ownership;
+
 pub struct Controller {
     store: Store,
     adapters: Registry,
@@ -327,12 +342,29 @@ impl Controller {
     }
 
     pub fn open_with_clock(
-        mut store: Store,
+        store: Store,
         adapters: Registry,
         bootstrap: Bootstrap,
         clock: impl clock::Clock + 'static,
     ) -> Result<Self> {
-        store.claim_controller()?;
+        Self::open_owned_with_clock(Ownership::claim(store)?, adapters, bootstrap, clock)
+    }
+
+    pub fn open_owned(
+        ownership: Ownership,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+    ) -> Result<Self> {
+        Self::open_owned_with_clock(ownership, adapters, bootstrap, clock::SystemClock)
+    }
+
+    fn open_owned_with_clock(
+        ownership: Ownership,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+        clock: impl clock::Clock + 'static,
+    ) -> Result<Self> {
+        let mut store = ownership.into_store();
         let snapshot = store.load()?;
         if snapshot.rows.is_empty() {
             let world = World::new(
@@ -854,6 +886,9 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if self.queue_message_reconciliation(&snapshot, key, &observation)? {
+            return Ok(());
+        }
         if let Observation::TraceLogsCapped { evicted } = observation {
             // #430: an operations note (#81), once while it stays open.
             let mut commit = Commit::new(
@@ -1020,8 +1055,17 @@ impl Controller {
 
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
+        if self.store.migrate_dispatch_evidence()? {
+            return Ok(true);
+        }
         let snapshot = self.store.load()?;
-        if self.post_input_incident(&snapshot)? {
+        if self.reconcile_approvals(&snapshot)? {
+            return Ok(true);
+        }
+        if self.reconcile_messages(&snapshot)? {
+            return Ok(true);
+        }
+        if self.reconcile_memory(&snapshot)? || self.post_input_incident(&snapshot)? {
             return Ok(true);
         }
         for row in snapshot
@@ -1053,17 +1097,28 @@ impl Controller {
                 Err(error) => eprintln!("adoption clarification pending for {}: {error}", row.id),
             }
         }
+        let mut retired_approval = false;
         for row in snapshot
             .rows
             .iter()
             .filter(|r| r.table == "retiring_effects")
         {
-            match self.retire_effect(&snapshot, row) {
+            let delivery: Delivery = decode_stored(row.value.clone())?;
+            let current = self.store.load()?;
+            match self.retire_effect(&current, row) {
+                Ok(()) if approval_delivery::is_approval(&delivery) => {
+                    retired_approval = true;
+                }
                 Ok(()) => return Ok(true),
                 Err(error) if !input_errors::recoverable(&error) => return Err(error),
                 Err(error) => eprintln!("adapter retirement failed for {}: {error}", row.id),
             }
         }
+        let snapshot = if retired_approval {
+            self.store.load()?
+        } else {
+            snapshot
+        };
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = decode_stored(row.value.clone())?;
             let mut waiting_for_queue = false;
@@ -1191,6 +1246,29 @@ impl Controller {
             }
             match effect.state {
                 EffectState::Intended => {
+                    let (prior_dispatch, predecessor) = if approval_delivery::is_approval(&delivery)
+                        && !snapshot.rows.iter().any(|r| {
+                            r.table == approval_delivery::AUTHORIZATIONS && r.id == effect.key
+                        }) {
+                        self.approval_prior_dispatch(effect, &snapshot)?
+                    } else {
+                        (false, false)
+                    };
+                    if prior_dispatch {
+                        match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                            Ok(Reconciliation::Absent) if !predecessor => {}
+                            Ok(Reconciliation::Found(completion)) if !predecessor => {
+                                self.transition(effect, EffectState::Sent)?;
+                                self.complete(&effect.key, *completion)?;
+                                return Ok(true);
+                            }
+                            _ => {
+                                self.transition(effect, EffectState::Sent)?;
+                                self.approval_ambiguous(&delivery)?;
+                                return Ok(true);
+                            }
+                        }
+                    }
                     self.transition(effect, EffectState::Sent)?;
                     hook(Boundary::BeforeDispatch, &effect.key);
                     let current = self.store.load()?;
@@ -1203,6 +1281,10 @@ impl Controller {
                     match result {
                         Ok(completion) => {
                             self.complete(&effect.key, completion)?;
+                            return Ok(true);
+                        }
+                        Err(Error::ApprovalAmbiguous) => {
+                            self.approval_ambiguous(&delivery)?;
                             return Ok(true);
                         }
                         Err(Error::WorkerInputs(ref failure)) => {
@@ -1327,7 +1409,14 @@ impl Controller {
                                 progressed = true;
                             }
                         }
-                        Reconciliation::Pending => {}
+                        Reconciliation::Pending => {
+                            if approval_delivery::is_approval(&delivery)
+                                && !cancelling
+                                && !self.is_held(&delivery)
+                            {
+                                progressed |= self.approval_ambiguous(&delivery)?;
+                            }
+                        }
                     }
                 }
                 EffectState::Confirmed | EffectState::Failed | EffectState::Cancelled => {
@@ -1464,7 +1553,9 @@ impl Controller {
 
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
         let delivery: Delivery = decode_stored(row.value.clone())?;
-        if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+            || approval_delivery::is_approval(&delivery)
+        {
             self.adapters
                 .adapter(&delivery)?
                 .retire_delivery(&delivery)?;
@@ -1511,6 +1602,12 @@ impl Controller {
             from: effect.state,
             to,
         });
+        if to == EffectState::Sent && approval_delivery::is_approval(&delivery) {
+            commit.rows.push(RowChange::Delete {
+                table: approval_delivery::AUTHORIZATIONS.into(),
+                id: effect.key.clone(),
+            });
+        }
         // A pending-checks hold waits on check webhooks; it arms no silence timer.
         if to == EffectState::Uncertain
             && let Some(class) = self
@@ -1549,6 +1646,10 @@ impl Controller {
                 &mut commit,
             )?;
         }
+        if approval_delivery::is_approval(delivery) {
+            queue_retirement(&mut commit, delivery);
+        }
+        looks::resolve_effect_incidents(&snapshot, &mut commit, |_, key| Ok(key == delivery.key))?;
         self.store.commit(&commit)?;
         self.remove_hold(delivery);
         Ok(())
@@ -1704,6 +1805,23 @@ impl Controller {
                 table: "watches".into(),
                 id: key.into(),
             });
+            if approval_delivery::is_approval(&delivery) {
+                for replacement in &commit.effects {
+                    let next: Delivery = decode_stored(replacement.payload.clone())?;
+                    if approval_delivery::is_approval(&next) {
+                        commit.rows.push(put(
+                            approval_delivery::AUTHORIZATIONS,
+                            next.key.clone(),
+                            json!(true),
+                        ));
+                        commit.rows.push(put(
+                            approval_delivery::LINEAGE_SAFE,
+                            next.key,
+                            json!(true),
+                        ));
+                    }
+                }
+            }
             queue_retirement(&mut commit, &delivery);
             commit.transitions.push(EffectTransition {
                 key: key.into(),
@@ -1742,6 +1860,14 @@ impl Controller {
                 continue;
             }
             self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
+        }
+        if approval_delivery::is_approval(&delivery)
+            && matches!(
+                state,
+                EffectState::Confirmed | EffectState::Failed | EffectState::Cancelled
+            )
+        {
+            queue_retirement(&mut commit, &delivery);
         }
         evidence::retire_delivered(&snapshot, &mut commit, &delivery, completion.ack);
         self.store.commit(&commit)?;
@@ -2547,9 +2673,18 @@ impl Controller {
                 })),
             ));
         } else {
+            // Q7: clearance covers the current persisted memory outcome, even
+            // if the feed finished another held attempt before this comment.
+            if let Some(failure) = incident.input_failure.as_mut()
+                && failure.memory_version.is_some()
+            {
+                failure.memory_version = Some(self.store.memory_feed_version()?);
+            }
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);
             }
+            self.authorize_approval_retry(snapshot, &incident, commit);
+            self.resume_memory_incident(&incident, commit);
             incident.open = false;
             if !self.retry_notice(snapshot, &incident, commit)? {
                 self.resume_incident_look(snapshot, &incident, commit)?;
@@ -3840,7 +3975,21 @@ fn observation_upstream(
 }
 
 fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
-    if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+    if approval_delivery::is_approval(delivery) {
+        for table in [
+            approval_delivery::AUTHORIZATIONS,
+            approval_delivery::LINEAGE_SAFE,
+            "notice_incidents",
+        ] {
+            commit.rows.push(RowChange::Delete {
+                table: table.into(),
+                id: delivery.key.clone(),
+            });
+        }
+    }
+    if executor::upstream(delivery.output) == executor::Upstream::Mergify
+        || approval_delivery::is_approval(delivery)
+    {
         commit.rows.push(put(
             "retiring_effects",
             delivery.key.clone(),
