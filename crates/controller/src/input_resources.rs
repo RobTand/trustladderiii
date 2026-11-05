@@ -18,7 +18,8 @@ pub enum Resource {
 }
 
 impl Resource {
-    pub(crate) fn prerequisite(repo: &Repository, kind: PrerequisiteKind, number: u64) -> Self {
+    #[doc(hidden)]
+    pub fn prerequisite(repo: &Repository, kind: PrerequisiteKind, number: u64) -> Self {
         let repository = format!("{}/{}", repo.owner, repo.name);
         match kind {
             PrerequisiteKind::Issue => Self::GithubIssue { repository, number },
@@ -82,7 +83,8 @@ pub(crate) struct LookupError {
 }
 
 /// Capture metadata supplied by the API caller, never by parsing error prose.
-pub(crate) fn github(error: tl3_github::Error, resource: Resource, installation: u64) -> Error {
+#[doc(hidden)]
+pub fn github(error: tl3_github::Error, resource: Resource, installation: u64) -> Error {
     if error.failure_class().as_str() != "not_found" {
         return error.into();
     }

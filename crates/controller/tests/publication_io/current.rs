@@ -121,12 +121,34 @@ impl Adapter {
     fn restart(&mut self, delivery: &Delivery) -> Result<Completion> {
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        let mut issue = self
+            .runtime
+            .block_on(client.issue(&repo, delivery.issue))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::prerequisite(
+                        &delivery.repository,
+                        tl3_kernel::PrerequisiteKind::Issue,
+                        delivery.issue,
+                    ),
+                    delivery.repository.installation,
+                )
+            })?;
         if issue.state == "closed" {
             let app = format!("{}[bot]", client.app_slug());
             let events = self
                 .runtime
-                .block_on(client.issue_events(&repo, delivery.issue))?;
+                .block_on(client.issue_events(&repo, delivery.issue))
+                .map_err(|error| {
+                    crate::input_resources::github(
+                        error,
+                        crate::input_resources::Resource::GithubEndpoint {
+                            path: format!("repos/{repo}/issues/{}/events", delivery.issue),
+                        },
+                        delivery.repository.installation,
+                    )
+                })?;
             if events
                 .iter()
                 .rev()
@@ -226,7 +248,20 @@ impl Adapter {
                         .ok_or(Error::Invalid("incident request link missing"))?,
                 )?
             } else {
-                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                let issue = self
+                    .runtime
+                    .block_on(client.issue(&repo, delivery.issue))
+                    .map_err(|error| {
+                        crate::input_resources::github(
+                            error,
+                            crate::input_resources::Resource::prerequisite(
+                                &delivery.repository,
+                                tl3_kernel::PrerequisiteKind::Issue,
+                                delivery.issue,
+                            ),
+                            delivery.repository.installation,
+                        )
+                    })?;
                 policy.request_title = Some(issue.title.clone());
                 policy.request_body = issue.body.clone().unwrap_or_default();
                 writer_input(
