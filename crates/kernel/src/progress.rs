@@ -23,6 +23,21 @@ pub closed spec fn progress_measure(w: World) -> nat {
     node_total(w.nodes@) + edge_total(w.nodes@, w.dependencies@, w.dependencies@.len())
 }
 
+/// #806: expose the existing natural sum and one dependency scan step.
+pub(super) proof fn measure_definition(w: World, end: nat)
+    requires end <= w.dependencies@.len(),
+    ensures progress_measure(w) == node_total(w.nodes@)
+            + edge_total(w.nodes@, w.dependencies@, w.dependencies@.len()),
+        edge_total(w.nodes@, w.dependencies@, 0) == 0,
+        end > 0 ==> edge_total(w.nodes@, w.dependencies@, end)
+            == edge_total(w.nodes@, w.dependencies@, (end - 1) as nat)
+                + if w.dependencies@[end as int - 1].status != DependencyStatus::Delivered
+                    && !(w.nodes@[w.dependencies@[end as int - 1].node.0 as int].phase is Closed)
+                    { 1nat } else { 0nat },
+{
+    reveal(progress_measure); reveal(edge_total); reveal(edge_weight);
+}
+
 /// #805: delivery only reconciles wait flags, which do not enter node distance.
 proof fn wait_flags_distance(before: Node, after: Node)
     requires after == (Node {
@@ -160,5 +175,15 @@ pub(super) proof fn settle_measure(before: World, after: World)
     assert forall|j: int| 0 <= j < before.dependencies@.len() implies
         edge_weight(after.nodes@, before.dependencies@[j]) <= edge_weight(before.nodes@, before.dependencies@[j]) by {}
     edge_total_compare(before.nodes@, after.nodes@, before.dependencies@, before.dependencies@.len());
+}
+}
+
+verus! {
+/// #805 / #806: empty prerequisite storage leaves only the mathematical node sum.
+pub(super) proof fn empty_edges(w: World)
+    requires w.dependencies@.len() == 0,
+    ensures progress_measure(w) == node_total(w.nodes@),
+{
+    reveal(progress_measure); reveal(edge_total);
 }
 }
