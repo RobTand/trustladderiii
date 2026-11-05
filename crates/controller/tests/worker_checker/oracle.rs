@@ -39,6 +39,14 @@ pub fn generate(mut vectors: Vec<Vector>) -> Result<Vec<Vector>> {
             ["check-reply", role] => {
                 let inputs = &vector.document["inputs"];
                 let reply = &vector.document["reply"];
+                if matches!(*role, "ingest" | "audit") {
+                    vector.response = Some(serde_json::value::to_raw_value(
+                        &tl3_controller::adapters::workers::check_ingest_reply(
+                            role, inputs, reply,
+                        )?,
+                    )?);
+                    continue;
+                }
                 let verdict = match *role {
                     "classifier" => classifier::validate(inputs, reply),
                     "reviewer" => reviewer::validate(inputs, reply),

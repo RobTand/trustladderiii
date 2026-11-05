@@ -3,6 +3,14 @@ use crate::render::{Layout, TypeOrder, TypeUse};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// #840 internal checker transport. This is outside the model's reply schema.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreservedIngestReply {
+    pub reply: serde_json::Value,
+    pub violations: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 #[schemars(transform = reply_constant_schema)]

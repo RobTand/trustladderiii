@@ -7,6 +7,7 @@ pub use writer::{FakeWriter, Writer};
 #[cfg(test)]
 mod contract_vector_tests;
 mod evidence;
+pub use evidence::check_ingest_reply;
 mod facts;
 mod fake;
 #[cfg(test)]

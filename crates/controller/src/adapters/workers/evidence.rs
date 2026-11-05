@@ -3,6 +3,9 @@ use crate::{Error, Result};
 use serde_json::{Value, json};
 
 pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
+    if matches!(role, "ingest" | "audit") {
+        preserve_ingest(role, inputs, reply)?;
+    }
     let goals = if role == "audit" {
         &inputs["ingest"]["goals"]
     } else {
@@ -322,5 +325,195 @@ mod proof_obligation_tests {
                 .unwrap()
                 .contains("removed proof encoding helper_target_observer")
         );
+    }
+}
+
+use regex::Regex;
+
+const LIMIT: usize = 80_000;
+const REPAIR: &str =
+    "Shorten the brief summary to leave room for the issue's verbatim code and test identifiers";
+const OBJECTION: &str = "The ingest brief drops verbatim source code or supplied test identifiers. Preserve the issue's code exactly, including its test path, class and method, before planning.";
+
+use tl3_contracts::roles::ingest_retention::{Action, decide};
+
+/// Keep complete fences, their source paragraph, and a test-name index. The index is
+/// discovery context, never a proof obligation. Code remains authoritative verbatim.
+pub fn source_blocks(source: &str) -> Vec<String> {
+    let path = Regex::new(r"`([^`\n ]+\.py)`").unwrap();
+    let class = Regex::new(r"^class\s+([A-Za-z_][A-Za-z_0-9]*)\b").unwrap();
+    let test = Regex::new(r"^(?:async\s+)?def\s+(test_[A-Za-z_0-9]+)\s*\(").unwrap();
+    let mut blocks = Vec::new();
+    let mut offset = 0;
+    let mut opened: Option<(char, usize, usize, usize)> = None;
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim_start_matches(' ');
+        let indent = line.len() - trimmed.len();
+        if indent <= 3 {
+            let marker = trimmed.chars().next().unwrap_or(' ');
+            let width = trimmed.chars().take_while(|c| *c == marker).count();
+            if let Some((fence, minimum, start, content)) = opened {
+                if marker == fence && width >= minimum && trimmed[width..].trim().is_empty() {
+                    let context_start = source[..start]
+                        .trim_end()
+                        .rfind("\n\n")
+                        .map_or(0, |i| i + 2);
+                    let context = &source[context_start..start];
+                    let mut block = source[context_start..offset + line.len()].to_owned();
+                    if let Some(file) = path.captures_iter(context).last() {
+                        let mut owner: Option<(usize, String)> = None;
+                        let mut nodes = Vec::new();
+                        for code in source[content..offset].lines() {
+                            let text = code.trim_start();
+                            let indentation = code.len() - text.len();
+                            if !text.is_empty()
+                                && !text.starts_with('#')
+                                && owner
+                                    .as_ref()
+                                    .is_some_and(|(level, _)| indentation <= *level)
+                            {
+                                owner = None;
+                            }
+                            if let Some(name) = class.captures(text) {
+                                owner = Some((indentation, name[1].to_owned()));
+                            } else if let Some(name) = test.captures(text) {
+                                let scope = owner
+                                    .as_ref()
+                                    .map_or(String::new(), |(_, name)| format!("{name}::"));
+                                nodes.push(format!("{}::{scope}{}", &file[1], &name[1]));
+                            }
+                        }
+                        if !nodes.is_empty() {
+                            block.push_str("\nSource test identifiers:\n");
+                            block.push_str(&nodes.join("\n"));
+                        }
+                    }
+                    blocks.push(block);
+                    opened = None;
+                }
+            } else if matches!(marker, '`' | '~') && width >= 3 {
+                opened = Some((marker, width, offset, offset + line.len()));
+            }
+        }
+        offset += line.len();
+    }
+    blocks
+}
+
+pub(super) fn preserve_ingest(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
+    let ingest = if role == "audit" {
+        &inputs["ingest"]
+    } else {
+        &*reply
+    };
+    if ingest["kind"] != "brief" {
+        return Ok(());
+    }
+    let source = inputs["issue"]["body"].as_str().unwrap_or_default();
+    let blocks = source_blocks(source);
+    if blocks.is_empty() {
+        return Ok(());
+    }
+    let brief = ingest["brief"]
+        .as_str()
+        .ok_or(Error::Invalid("invalid ingest brief"))?;
+    let missing: Vec<_> = blocks
+        .into_iter()
+        .filter(|block| !brief.contains(block))
+        .collect();
+    let appendix = format!("\n\nVerbatim issue material:\n{}", missing.join("\n\n"));
+    let fits = brief.chars().count() + appendix.chars().count() <= LIMIT;
+    match decide(role == "audit", missing.is_empty(), fits) {
+        Action::Keep => return Ok(()),
+        Action::Repair => return Err(Error::Invalid(REPAIR)),
+        Action::Object => {
+            reply["verdict"] = json!("disagree");
+            let objections = reply["objections"]
+                .as_array_mut()
+                .ok_or(Error::Invalid("audit objections missing"))?;
+            if !objections.contains(&json!(OBJECTION)) {
+                objections.push(json!(OBJECTION));
+            }
+            return Ok(());
+        }
+        Action::Append => (),
+    }
+    reply["brief"] = json!(format!("{brief}{appendix}"));
+    Ok(())
+}
+
+pub fn check_ingest_reply(
+    role: &str,
+    inputs: &Value,
+    reply: &Value,
+) -> Result<tl3_contracts::roles::ingest_reply::PreservedIngestReply> {
+    let mut reply = reply.clone();
+    let violations = match preserve_ingest(role, inputs, &mut reply) {
+        Ok(()) => Vec::new(),
+        Err(Error::Invalid(message)) => vec![message.to_owned()],
+        Err(error) => return Err(error),
+    };
+    Ok(tl3_contracts::roles::ingest_reply::PreservedIngestReply { reply, violations })
+}
+
+#[cfg(test)]
+mod ingest_tests {
+    use super::*;
+    use proptest::{prelude::*, test_runner::TestRunner};
+
+    #[test]
+    fn fenced_source_survives_json_and_repeated_handoffs() {
+        TestRunner::new(ProptestConfig::with_cases(64))
+            .run(&("[^`~\\r\\n]{0,80}", 3usize..7, any::<bool>()), |(text, width, tilde)| {
+                let fence = if tilde { "~" } else { "`" }.repeat(width);
+                let code = format!("class SuppliedTest:\n    def test_example(self):\n        assert {text:?}\n");
+                let source = format!("Add `tests/test_supplied.py` with exactly this test.\n\n{fence}python\n{code}{fence}\n");
+                let request = json!({"issue":{"body":source}});
+                let bytes = serde_json::to_vec(&request).unwrap();
+                let decoded: Value = serde_json::from_slice(&bytes).unwrap();
+                let mut reply = json!({"kind":"brief","brief":"Implement it."});
+                preserve_ingest("ingest", &decoded, &mut reply).unwrap();
+                let brief = reply["brief"].as_str().unwrap();
+                prop_assert!(brief.contains(&code));
+                prop_assert!(brief.contains("tests/test_supplied.py::SuppliedTest::test_example"));
+                let once = reply.clone();
+                preserve_ingest("ingest", &decoded, &mut reply).unwrap();
+                prop_assert_eq!(&once, &reply);
+                let mut audit = json!({"verdict":"agree","objections":[]});
+                preserve_ingest("audit", &json!({"issue":decoded["issue"],"ingest":reply}), &mut audit).unwrap();
+                prop_assert_eq!(audit["verdict"].as_str(), Some("agree"));
+                Ok(())
+            }).unwrap();
+    }
+
+    #[test]
+    fn retention_is_atomic_at_unicode_wire_limit_and_audit_keeps_objections() {
+        let inputs = json!({"issue":{"body":"Add `tests/test_a.py`.\n\n```python\ndef test_a(): pass\n```\n"}});
+        let mut brief = json!({"kind":"brief","brief":"é".repeat(LIMIT)});
+        let original = brief.clone();
+        assert_eq!(
+            preserve_ingest("ingest", &inputs, &mut brief)
+                .unwrap_err()
+                .to_string(),
+            REPAIR
+        );
+        assert_eq!(brief, original);
+        let mut audit = json!({"verdict":"disagree","objections":["Existing finding"]});
+        let inputs = json!({"issue":inputs["issue"],"ingest":brief});
+        preserve_ingest("audit", &inputs, &mut audit).unwrap();
+        preserve_ingest("audit", &inputs, &mut audit).unwrap();
+        assert_eq!(audit["objections"], json!(["Existing finding", OBJECTION]));
+        let mut early = json!({"kind":"early_end","outcome":"duplicate"});
+        let original = early.clone();
+        preserve_ingest("ingest", &inputs, &mut early).unwrap();
+        assert_eq!(early, original);
+    }
+
+    #[test]
+    fn fence_width_and_multiple_source_blocks_are_preserved() {
+        let source = "```python\none\n````\n\n~~~text\ntwo\n~~~\n";
+        assert_eq!(source_blocks(source).len(), 2);
+        assert!(source_blocks("```python\nunterminated").is_empty());
+        assert!(source_blocks("    ```python\nindented\n    ```\n").is_empty());
     }
 }
