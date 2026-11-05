@@ -362,15 +362,6 @@ fn every_kernel_function_has_exactly_one_selector_or_a_reason() {
     let mut fs = Vec::new();
     collect(&root.join("src"), "kernel", &mut fs);
     collect(&root.join("verus"), "kernel", &mut fs);
-    // #817 imports the production controller core through explicit #[path]
-    // modules. Inventory those bodies under the same verified module names.
-    for name in ["decision", "model"] {
-        let source = root.join(format!("../controller/src/dispatch_liveness/{name}.rs"));
-        fs.extend(functions(
-            &std::fs::read_to_string(source).unwrap(),
-            &format!("kernel::controller_dispatch::{name}"),
-        ));
-    }
     let groups: Vec<_> = selectors(super::VERUS_GROUPS)
         .into_iter()
         .filter(|(_, selector)| selector == "kernel" || selector.starts_with("kernel::"))

@@ -1,12 +1,6 @@
 //! #817: actual Wait, EffectKind, classifier and repair decisions.
-#[path = "../../controller/src/dispatch_liveness/decision.rs"]
-mod decision;
-#[path = "../../controller/src/dispatch_liveness/model.rs"]
-mod model;
-
 mod dispatch_theorems {
-    use super::{decision, model};
-    use crate::Wait;
+    use crate::{Wait, decision, model};
     use decision::*;
     use vstd::prelude::*;
     verus! {
