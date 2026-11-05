@@ -560,7 +560,7 @@ impl World {
             final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] proof [hide(delivered); hide(prerequisites_delivered); hide(edges_indexable);] {
+    ] {
         let Some((existing, dependency)) = self.prepare_dependency(i, target, status) else {
             return;
         };
