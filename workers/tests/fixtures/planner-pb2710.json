@@ -1,0 +1,103 @@
+{
+  "goals": [
+    {
+      "description": "Add one new deterministic regression test in tests/test_checkout_recovery_1465.py. It calls the real `_git` helper and reads the effective Git config with `config --list`. It uses an observer that exits 0 when the keys are unset. It asserts that the output has `maintenance.auto=false` and `gc.auto=0`. The assertion message is exactly: `_git must run every Git call with maintenance.auto=false and gc.auto=0`. On base it fails by assertion, not by CalledProcessError. It uses no sleeps, no elapsed-time checks and no probabilistic loops.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Change the `_git` helper in tests/test_checkout_recovery_1465.py. Every Git call must disable automatic maintenance and gc, for example with `-c maintenance.auto=false -c gc.auto=0`. Keep GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM isolation. The `wrong-head` commit must stay compatible with its own `-c user.name` and `-c user.email` arguments.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Keep the exact archive, provenance and original-tree-preservation security assertions. Keep all 23 fault parameters of the existing test. Add no skips, xfail, retries or widened deadlines. Do not change `tarfile` handling. Do not relax snapshot or provenance comparisons.",
+      "stage": "maker",
+      "verification": "review"
+    },
+    {
+      "description": "Edit only tests/test_checkout_recovery_1465.py. Do not edit production materializer code, routing, budgets, quarantine or any other test. Do not hand-edit generated BUILD files. If regeneration is needed, use the configured generator.",
+      "stage": "maker",
+      "verification": "review"
+    },
+    {
+      "description": "Produce independent run_tests evidence for tests/test_checkout_recovery_1465.py. Run it at base and at head. The new regression test must fail by assertion at base, with the old `_git` helper unchanged, and pass at head. Record each run's own verdict, log, skips and missing tools. Print only allowlisted status, returncode, hashes, sizes and timestamps.",
+      "stage": "checking",
+      "verification": "test"
+    },
+    {
+      "description": "Produce contention evidence. Run run_tests on tests/test_checkout_recovery_1465.py with repeat=10 and parallel=4, twice at base and twice at head, through normal PrismaBuild admission. This evidence is supporting only. It is not the RED proof. A zero-symptom base run is not RED. Report the observed results honestly.",
+      "stage": "checking",
+      "verification": "test"
+    },
+    {
+      "description": "Open a non-draft PR from the TL3 branch for issue #2710. The body has `Refs #2710`, exactly one `Change type: test` line, and the run_tests base/head evidence. Do not queue, merge, label, restart requests, publish a runtime, or change host configuration. An independent Sol review is required before the migration lead queues it. Do not rename an open PR branch.",
+      "stage": "publishing",
+      "verification": "review"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "demonstrating",
+      "node_ids": [
+        "tests/test_checkout_recovery_1465.py::test_git_helper_disables_automatic_maintenance_and_gc"
+      ],
+      "goal_ids": [
+        0,
+        1,
+        4
+      ],
+      "proof": {
+        "subjects": [
+          "tests/test_checkout_recovery_1465.py::_git"
+        ],
+        "observer_support": [],
+        "red_message": "_git must run every Git call with maintenance.auto=false and gc.auto=0"
+      }
+    },
+    {
+      "kind": "regression",
+      "node_ids": [
+        "tests/test_checkout_recovery_1465.py::test_missing_or_conflicting_action_snapshot_and_ending_proof_keeps_original"
+      ],
+      "goal_ids": [
+        1,
+        2,
+        5
+      ]
+    }
+  ],
+  "files": [
+    "BUILD.bazel",
+    "src/prismabuild/BUILD.bazel",
+    "tests/BUILD.bazel",
+    "tests/test_checkout_recovery_1465.py",
+    "tools/BUILD.bazel"
+  ],
+  "required_goal_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "covered_goal_ids": [
+    0,
+    1,
+    2,
+    4,
+    5
+  ],
+  "uncovered_goals": [
+    {
+      "id": 3,
+      "description": "Edit only tests/test_checkout_recovery_1465.py. Do not edit production materializer code, routing, budgets, quarantine or any other test. Do not hand-edit generated BUILD files. If regeneration is needed, use the configured generator.",
+      "stage": "maker",
+      "verification": "review"
+    }
+  ],
+  "source": "PB #2710, tr-5fa0073161b2f734ea4561c4a219cf3c; sanitized projection",
+  "violation": "Required goals have no check coverage: goal 3: Edit only tests/test_checkout_recovery_1465.py. Do not edit production materializer code, routing, budgets, quarantine or any other test. Do not hand-edit generated BUILD files. If regeneration is needed, use the configured generator.",
+  "repair_instruction": "Only add the named uncovered goal ids to goal_ids of existing checks. Preserve every existing citation and every other declaration. Use already-read facts; return cant_meet if no existing check honestly supports the goals."
+}
