@@ -11,6 +11,7 @@ struct DirectState {
     reads: usize,
     reject_as_merged: bool,
     root: std::path::PathBuf,
+    intent_roots: Vec<std::path::PathBuf>,
 }
 #[derive(Clone)]
 struct DirectApi { base: Api, direct: Arc<Mutex<DirectState>> }
@@ -33,12 +34,16 @@ impl Respond for DirectApi {
         if method == "PUT" && path == "/repos/owner/sandbox/pulls/100/merge" {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
             let mut direct = self.direct.lock().unwrap();
-            assert!(direct.root.join("epoch.fence").exists(), "fence must precede PUT");
-            let intents: Vec<_> = std::fs::read_dir(&direct.root).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|ext| ext == "intent")).collect();
-            assert_eq!(intents.len(), 1, "durable intent must precede PUT");
-            let intent: Value = serde_json::from_slice(&std::fs::read(&intents[0]).unwrap()).unwrap();
-            assert_eq!(intent["head"], body["sha"]);
-            assert_eq!(intent["action"], "Merge");
+            let roots = if direct.intent_roots.is_empty() { vec![direct.root.clone()] } else {direct.intent_roots.clone()};
+            for root in roots {
+                assert!(root.join("epoch.fence").exists(), "fence must precede PUT");
+                let intents: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path())
+                    .filter(|p| p.extension().is_some_and(|e| e == "intent")).collect();
+                assert_eq!(intents.len(), 1, "durable intent must precede PUT");
+                let intent: Value = serde_json::from_slice(&std::fs::read(&intents[0]).unwrap()).unwrap();
+                assert_eq!(intent["head"], body["sha"]);
+                assert_eq!(intent["action"], "Merge");
+            }
             assert_eq!(body["merge_method"], "squash");
             direct.puts.push(body.clone());
             let mut state = self.base.0.lock().unwrap();
@@ -351,13 +356,7 @@ fn racing_pinned_puts_have_one_success_and_both_converge() {
             });
         issuers.push(adapter);
     }
-    // The mock validates each issuer's fence/intent directory at its request.
-    // Use an existing durable intent copy for the common server assertion.
-    let mut warmup = direct_merge::Adapter::new(fixture.api.clients(), 0,
-        &fixture.root.path().join("direct"), settings.clone()).unwrap().with_write_boundary(|boundary| {
-            if boundary == (direct_merge::WriteBoundary { write: direct_merge::Write::Merge, after: false }) { panic!("before PUT"); }
-        });
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| warmup.execute(&delivery)));
+    fixture.direct.lock().unwrap().intent_roots = (0..2).map(|index| fixture.root.path().join(format!("issuer-{index}"))).collect();
     let handles: Vec<_> = issuers.into_iter().map(|mut adapter| {
         let delivery = delivery.clone();
         std::thread::spawn(move || adapter.execute(&delivery))
