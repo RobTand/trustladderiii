@@ -551,16 +551,31 @@ fn rejudged(report: &Report, job: &Job) -> bool {
         {
             return false;
         }
-        if result.declared_symptom.is_some() || check.is_none() {
+        if result.declared_symptom.is_some() {
+            continue;
+        }
+        // Shell overrides preserve the judge's kind/base flag and never add forcing.
+        if result.tests.iter().any(|test| {
+            (test.head_forced.is_some() && result.forcing.is_none())
+                || core_judge::judge(core_judge::Input {
+                    kind: judge_kind(result.kind),
+                    base: judge_outcome(test.base),
+                    head: judge_outcome(test.head),
+                    forced: test.head_forced.map(judge_outcome),
+                    reason: core_judge::Reason::Undeclared,
+                })
+                .pre_existing
+                    != test.pre_existing
+        }) {
+            return false;
+        }
+        if check.is_none() {
             // Always/selected results include stale-entry, retry and group overrides.
             continue;
         }
         let mut infrastructure = false;
         let mut changed_test_refusal = false;
         for test in result.tests.iter() {
-            if test.head_forced.is_some() && result.forcing.is_none() {
-                return false;
-            }
             if let Some(phases) = &test.phases {
                 for (run, outcome) in [
                     (phases.base(), Some(test.base)),
@@ -600,9 +615,6 @@ fn rejudged(report: &Report, job: &Job) -> bool {
             };
             let decision = core_judge::judge(input);
             infrastructure |= decision.infrastructure;
-            if decision.pre_existing != test.pre_existing {
-                return false;
-            }
             if result.forcing.is_some() && test.head_forced.is_none() {
                 if test.passed {
                     return false;
