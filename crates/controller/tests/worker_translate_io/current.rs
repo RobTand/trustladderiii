@@ -1,3 +1,12 @@
+// The reference retains its frozen producer. Current translation compiles the
+// production producer, including the harness node-ID parser adopted by #818.
+mod adapters {
+    pub use crate::adapters::*;
+    pub mod workers {
+        pub use crate::adapters::workers::*;
+        pub use crate::adapters::workers::production_reproducing as reproducing;
+    }
+}
 use super::*;
 struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> { type Target=Controller; fn deref(&self)->&Controller { self.0 } }

@@ -51,7 +51,11 @@ fn production_and_reference_sources_are_pinned() {
         .unwrap();
         for part in pin["parts"].as_array().unwrap() {
             let part = part.as_str().unwrap();
-            assert!(production.contains(part), "production leaf drift: {name}");
+            if name != "reproducing" {
+                assert!(production.contains(part), "production leaf drift: {name}");
+            }
+            // The reference producer stays hash-pinned; current translation
+            // includes production directly instead of its obsolete grammar.
             let normalized = compiled.replace("pub(super) fn", "fn");
             assert!(
                 compiled.contains(part) || normalized.contains(part),
