@@ -286,11 +286,10 @@ pub(super) fn stop(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop-planner",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     wait(|| {

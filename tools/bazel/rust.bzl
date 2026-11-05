@@ -140,7 +140,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],
     "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs", "tests/support/ownership.rs"],
-    "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs"],
+    "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs", "tests/support/command.rs"],
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
@@ -155,7 +155,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/scenario_watchdog.rs": ["tests/support/scenario.rs"],
     "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
-    "tests/simulation.rs": ["tests/worktree_fixture/**", "tests/support/scenario_shard.rs", "tests/support/ownership.rs"],
+    "tests/simulation.rs": ["tests/worktree_fixture/**", "tests/support/scenario_shard.rs", "tests/support/ownership.rs", "tests/support/command.rs"],
     "tests/upgrade_replay.rs": ["tests/support/ownership.rs"],
     "tests/workers.rs": [
         "tests/support/**",
@@ -249,12 +249,13 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             allow_empty = True,
         ),
     )
-    if directory == "crates/controller":
+    if directory in ["crates/controller", "crates/kernel", "crates/store"]:
         native.filegroup(
             name = "library_sources",
-            srcs = native.glob(["src/**/*", "tools/**/*"]),
+            # Proof drivers and crate tooling are not linked into a Rust library.
+            srcs = native.glob(["src/**/*", "migrations/**"], exclude = ["src/proofs.rs"], allow_empty = True),
         )
-    library_sources = [":library_sources"] if directory == "crates/controller" else [":sources"]
+    library_sources = [":library_sources"] if directory in ["crates/controller", "crates/kernel", "crates/store"] else [":sources"]
     compile_data = _COMPILE_DATA.get(directory, [])
     script = []
     if build_script:
@@ -279,15 +280,16 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         deps = deps + script,
     )
     for name in bins:
+        standalone_verifier = name == "verus-runner" and directory == "crates/mergify"
         rust_binary(
             name = name,
             crate_name = name.replace("-", "_"),
             crate_root = "src/bin/%s.rs" % name,
-            srcs = library_sources,
+            srcs = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources,
             edition = "2024",
             crate_features = features,
             aliases = aliases(),
-            deps = deps + [":" + crate],
+            deps = ["@crates//:serde_json"] if standalone_verifier else deps + [":" + crate],
         )
     test_deps = all_crate_deps(normal = True, normal_dev = True) + local_deps + [":" + crate] + script
     for name, source in examples.items():
@@ -309,7 +311,10 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     )
     _crate_test("lib", package, crate, "src/lib.rs", True, options)
     for name in bins:
-        _crate_test("bin", package, name, "src/bin/%s.rs" % name, True, options)
+        binary_options = dict(options)
+        if name == "verus-runner" and directory == "crates/mergify":
+            binary_options["deps"] = ["@crates//:serde_json"]
+        _crate_test("bin", package, name, "src/bin/%s.rs" % name, True, binary_options)
     for name, source in examples.items():
         _crate_test("example", package, name, source, True, options)
     declared = [spec["path"] for spec in declared_tests.values()]
@@ -330,7 +335,17 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
 def _crate_test(kind, package, name, source, harness, options):
     binary = "%s/%s" % (package, name)
     sources = [":sources", source]
+    if native.package_name() in ["crates/kernel", "crates/store"]:
+        sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
+        if source == "tests/proof_map.rs":
+            sources = sources + ["src/proofs.rs"]
+        if native.package_name() == "crates/store":
+            sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
+    if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
+        sources = [source]
     compile_data = options["compile_data"]
+    if native.package_name() == "crates/store":
+        compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":
         sources = [":library_sources", source] + native.glob(
             (["tests/loom/**", "tests/fixtures/decisions/**", "tests/fixtures/narrowing/**", "tests/fixtures/worker-replies-d8e4f2a8.jsonl"] if kind == "lib" else

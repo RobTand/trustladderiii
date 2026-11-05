@@ -1043,11 +1043,10 @@ fn stop_retires_ambiguous_approval_and_allows_upgrade() {
     controller
         .observe(
             "stop",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node,
-                id: 77,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);
@@ -1815,11 +1814,10 @@ fn gap_catchup_repairs_late_approval_after_closure() {
     controller
         .observe(
             "stop-before-late-a",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node: case.delivery().node(),
-                id: 171,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);
@@ -2079,11 +2077,12 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
             .any(|r| r.table.starts_with("approval_"))
     );
     drop(store);
-    // #785: auxiliary opens refuse an old schema. Only the claimed session may
-    // install 0021; its migration must not replay history or create recovery rows.
+    // #785: auxiliary opens refuse the missing 0021 migration even when later
+    // migrations are installed. Only the claimed session may repair that gap;
+    // its migration must not replay history or create recovery rows.
     assert!(matches!(
         Store::open(&case.settings),
-        Err(tl3_store::Error::SchemaVersion { .. })
+        Err(tl3_store::Error::MigrationMismatch)
     ));
     controller_restart::wait_for_owner_release(&mut sql);
     let mut owner = tl3_store::Ownership::claim(Store::connect(&case.settings).unwrap()).unwrap();
@@ -2111,11 +2110,10 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
     controller
         .observe(
             "stop-at-deploy",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node: delivery.node(),
-                id: 172,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);

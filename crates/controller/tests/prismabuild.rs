@@ -27,7 +27,7 @@ use tl3_controller::{
     executor::Output as Out,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };
-use tl3_kernel::{Command as Control, EffectKind, Event, NodeId, Phase};
+use tl3_kernel::{Command as Control, EffectKind, NodeId, Phase};
 use tl3_prismabuild::PrismaBuild;
 mod prismabuild_fixture;
 
@@ -2197,11 +2197,10 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
         controller
             .observe(
                 "stop",
-                Observation::Kernel(Event::Command {
+                Observation::Steering {
                     node: NodeId(0),
-                    id: 1,
                     command: Control::Stop,
-                }),
+                },
             )
             .unwrap();
         controller
@@ -2294,11 +2293,10 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
             controller
                 .observe(
                     "cancel-sealed",
-                    Observation::Kernel(Event::Command {
+                    Observation::Steering {
                         node: NodeId(0),
-                        id: 1,
                         command: Control::Stop,
-                    }),
+                    },
                 )
                 .unwrap();
             for _ in 0..100 {

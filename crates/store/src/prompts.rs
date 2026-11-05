@@ -2,8 +2,8 @@
 //! records which version each worker run uses; the console adds versions and
 //! moves each role's active pointer. None of this is world state.
 
-use crate::{Error, Result, Store, connect, read_transaction};
-use postgres::{Client, GenericClient, IsolationLevel, Row, Transaction};
+use crate::{Error, Result, Sql, Store, connect, read_transaction};
+use postgres::{Client, IsolationLevel, Row, Transaction};
 
 /// Who added a built-in version, in the version history.
 pub const BUILTIN_AUTHOR: &str = "TL3 deploy";
@@ -95,7 +95,7 @@ impl Store {
         mut before_write: impl FnMut() -> Result<()>,
     ) -> Result<()> {
         before_write()?;
-        let mut tx = self.client.transaction()?;
+        let mut tx = crate::input_transaction::operation(&mut self.client, self.input_active)?;
         tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&SEED_LOCK])?;
         for &(role, body) in builtins {
             let latest = tx.query_opt(
@@ -141,7 +141,7 @@ impl Store {
     /// call for a run takes the active version; later attempts of the same run
     /// keep it. None for a role with no versions.
     pub fn run_prompt(&mut self, run_key: &str, role: &str) -> Result<Option<PromptVersion>> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = crate::input_transaction::operation(&mut self.client, self.input_active)?;
         tx.execute(
             "INSERT INTO tl3_prompt_runs (run_key, role, version) SELECT $1, role, version FROM tl3_prompt_active WHERE role = $2 ON CONFLICT (run_key, role) DO NOTHING",
             &[&run_key, &role],
@@ -396,7 +396,7 @@ fn version(row: Row) -> PromptVersion {
     }
 }
 
-fn full(client: &mut impl GenericClient, role: &str, id: i64) -> Result<Option<PromptVersion>> {
+fn full(client: &mut impl crate::Sql, role: &str, id: i64) -> Result<Option<PromptVersion>> {
     Ok(client
         .query_opt(
             &format!("{VERSION} WHERE v.role = $1 AND v.id = $2"),
@@ -405,7 +405,7 @@ fn full(client: &mut impl GenericClient, role: &str, id: i64) -> Result<Option<P
         .map(version))
 }
 
-fn load(client: &mut impl GenericClient, role: &str) -> Result<Option<RolePrompts>> {
+fn load(client: &mut impl crate::Sql, role: &str) -> Result<Option<RolePrompts>> {
     let Some(pointer) = client.query_opt(
         "SELECT version, builtin_seen, activated_by, (extract(epoch FROM activated_at) * 1000)::bigint FROM tl3_prompt_active WHERE role = $1",
         &[&role],

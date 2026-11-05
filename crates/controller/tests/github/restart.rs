@@ -206,11 +206,10 @@ pub(super) fn stopped_request(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop-before-restart",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: KernelCommand::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);
@@ -417,11 +416,10 @@ fn stop(controller: &mut Controller) {
     controller
         .observe(
             "stop-before-restart",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: KernelCommand::Stop,
-            }),
+            },
         )
         .unwrap();
 }

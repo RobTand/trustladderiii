@@ -117,11 +117,10 @@ fn seed_with_look(
     if count == 4 {
         c.observe(
             "stop-legacy-look-owner",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(3),
-                id: 1,
                 command: Control::Stop,
-            }),
+            },
         )
         .unwrap();
         drain(&mut c);
@@ -527,11 +526,10 @@ pub(super) fn q48_ticket_order(settings: &tl3_config::Store) {
     assert_eq!(c.snapshot().unwrap(), after);
     c.observe(
         "q48-release-blocker",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node: NodeId(0),
-            id: 1,
             command: Control::Stop,
-        }),
+        },
     )
     .unwrap();
     drain(&mut c);

@@ -378,11 +378,10 @@ fn held(settings: &tl3_config::Store, mode: u8) {
         1 => {
             c.observe(
                 "stop",
-                Observation::Kernel(Event::Command {
+                Observation::Steering {
                     node: NodeId(0),
-                    id: 1,
                     command: Command::Stop,
-                }),
+                },
             )
             .unwrap();
             drain(&mut c);
@@ -1204,11 +1203,10 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
     std::fs::write(checkout.join("unfinished.txt"), "Keep this work.\n").unwrap();
     c.observe(
         "stop-dirty-worktree",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node: NodeId(0),
-            id: 100,
             command: Command::Stop,
-        }),
+        },
     )
     .unwrap();
     drain(&mut c);
@@ -1357,11 +1355,10 @@ fn cancelling_github_respects_quota(settings: &tl3_config::Store) {
     assert_eq!(reconciles.get(), 0);
     c.observe(
         "stop-during-github-quota",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node: NodeId(0),
-            id: 1,
             command: Command::Stop,
-        }),
+        },
     )
     .unwrap();
     drain(&mut c);
@@ -1474,11 +1471,10 @@ impl Executor for FailedPublish {
 fn stop_request(c: &mut Controller) {
     c.observe(
         "stop-closed-looks",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node: NodeId(0),
-            id: 1,
             command: Command::Stop,
-        }),
+        },
     )
     .unwrap();
     drain(c);
@@ -1518,11 +1514,10 @@ fn closed_publish_looks(settings: &tl3_config::Store, case: &str) {
     if case == "stopping" {
         c.observe(
             "stop-before-cleanup",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: Command::Stop,
-            }),
+            },
         )
         .unwrap();
         drain(&mut c);
@@ -1752,11 +1747,10 @@ fn pending_cancellation_keeps_look(settings: &tl3_config::Store) {
     );
     c.observe(
         "stop-uncertain-publish",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node: NodeId(0),
-            id: 1,
             command: Command::Stop,
-        }),
+        },
     )
     .unwrap();
     drain(&mut c);

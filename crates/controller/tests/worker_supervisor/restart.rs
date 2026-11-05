@@ -13,7 +13,7 @@ use tl3_controller::{
     adapters::{self, workers::Supervisor},
     executor::{Delivery, Executor, Observation, Reconciliation, Upstream},
 };
-use tl3_kernel::{Command as KernelCommand, Event, NodeId};
+use tl3_kernel::{Command as KernelCommand, NodeId};
 use tl3_store::Store;
 
 #[derive(Clone)]
@@ -223,11 +223,10 @@ fn restarted_controller_cancels_legacy_worker_and_rejects_its_late_outcome() {
     controller
         .observe(
             "cleanup-current-run",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: KernelCommand::Stop,
-            }),
+            },
         )
         .unwrap();
     drive(&mut controller);

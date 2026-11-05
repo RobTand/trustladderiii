@@ -1729,3 +1729,13 @@ validation boundary stubbed. They never depend on the real `tl3` binary.
 `tl3 store-stats --config FILE [--json]` prints table counts and event/world revisions, including the earliest decodable replay baseline. Both it and `tl3 replay-check --config FILE [--from EVENT]` use the runtime store credentials in a SQL-enforced READ ONLY, REPEATABLE READ transaction, without ownership or advisory locks.
 
 This branch does not record baselines or change the apply path. Existing legacy history without recorded snapshots fails explicitly; replay cannot verify it retroactively. For instrumented history, start with `--from` the first instrumented event inclusive and retain the matching binary. The baseline statistic means decodable stored data, not a verification pass.
+
+The state-table row **Counter headroom** requires refusal to preserve the complete
+input. `consume_kernel_input` opens the store transaction before translation;
+all helper writes use savepoints on that connection. Refusal rolls them back
+before recording the counter incident separately. Only successful input commit
+consumes the queued row. Direct intake, edits, completions and cancellations use
+the same queue. Filesystem wait-subscription removal follows committed
+`retiring_waits` intents, so translation cannot delete a subscription on refusal.
+
+Serialization failures (`40001`) and deadlocks (`40P01`) retain the head input, so later edits and direct inputs wait their turn. Replay uses fresh evidence without timers; continued contention may starve the head (Q39). The diagnostic is logged at most once per input; persisted inputs are treated as already reported at startup. A head queue fact still reconciles its own missing enqueue acknowledgment first, as required by the existing queue ordering.

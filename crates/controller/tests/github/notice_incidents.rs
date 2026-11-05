@@ -450,11 +450,10 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     if name == "stale_ask" {
         c.observe(
             "stop-before-clear",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 77,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
         drain(&mut c);
@@ -678,14 +677,13 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         assert_eq!(question.kind, tl3_kernel::QKind::CleanupFailed);
         c.observe(
             "retry-cleanup-step",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: world.nodes[0].last_cmd + 1,
                 command: tl3_kernel::Command::Answer {
                     question: question.id,
                     answer: tl3_kernel::Answer::Retry,
                 },
-            }),
+            },
         )
         .unwrap();
         drain(&mut c);

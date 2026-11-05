@@ -127,11 +127,28 @@ fn cut_key(key: &str, event: &Value) -> String {
     }
 }
 
+/// State-table "Counter headroom": all members of an input share its actual
+/// commit cut. The parent still sends one SIGKILL per new durable cut.
 fn hooked_store(settings: &tl3_config::Store, selected: &str) -> Store {
     let mut store = Store::open(settings).unwrap();
     let selected = selected.to_owned();
     store.set_boundary_hook(move |point, key, event| {
         let point = format!("{point:?}");
+        if point == "InputAfterCommit" {
+            let keys: Vec<_> = event["boundaries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|member| member["point"] == selected)
+                .map(|member| cut_key(member["key"].as_str().unwrap(), &member["event"]))
+                .collect();
+            if !keys.is_empty() {
+                probe(
+                    &selected,
+                    &format!("atomic-input:{}", serde_json::to_string(&keys).unwrap()),
+                );
+            }
+        }
         if point == selected {
             probe(&point, &cut_key(key, event));
         }
@@ -236,11 +253,10 @@ fn child(args: &[String]) {
             controller
                 .observe(
                     "stop",
-                    Observation::Kernel(Event::Command {
+                    Observation::Steering {
                         node: NodeId(0),
-                        id: 1,
                         command: Control::Stop,
-                    }),
+                    },
                 )
                 .unwrap();
         }
@@ -482,6 +498,16 @@ fn verify_cuts(
     selected: &str,
     killed: &BTreeSet<String>,
 ) {
+    let expanded: BTreeSet<String> = killed
+        .iter()
+        .flat_map(|key| {
+            key.strip_prefix("atomic-input:").map_or_else(
+                || vec![key.clone()],
+                |members| serde_json::from_str::<Vec<String>>(members).unwrap(),
+            )
+        })
+        .collect();
+    let killed = &expanded;
     assert!(
         !killed.is_empty(),
         "save point {selected} was never reached"
@@ -689,11 +715,11 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
     }
     outputs.sort_by_key(Value::to_string);
     for (index, node) in world.nodes.iter().enumerate() {
-        let ledger_balance: i64 = snapshot
+        let ledger_balance: i128 = snapshot
             .credit
             .iter()
             .filter(|record| record.entry.node == index.to_string())
-            .map(|record| record.entry.amount)
+            .map(|record| i128::from(record.entry.amount))
             .sum();
         assert_eq!(
             ledger_balance,

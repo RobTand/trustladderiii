@@ -981,7 +981,9 @@ pub(crate) fn close_grades(
             "credit",
             None,
             json!({"start": credit.start, "earned": credit.earned, "added": credit.added,
-                "spent": credit.spent, "balance": credit.balance()}),
+                "spent": credit.spent, "balance": serde_json::Number::from_i128(credit.balance())
+                    .map(Value::Number)
+                    .unwrap_or_else(|| Value::String(credit.balance().to_string()))}),
         ),
         ("questions", None, json!({"kinds": history.questions})),
         (

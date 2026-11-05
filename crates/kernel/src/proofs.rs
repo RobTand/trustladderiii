@@ -27,7 +27,7 @@ use super::*;
 /// Counters stay far below overflow. Reaching this would take 2^40 events.
 const LIMIT: u64 = 1 << 40;
 /// Credit stays far below overflow too.
-const CREDIT_LIMIT: u32 = 1 << 30;
+const CREDIT_LIMIT: u64 = 1 << 30;
 
 fn small_head(head: Option<HeadId>) -> bool {
     head.is_none_or(|head| head.0 < 8)
@@ -312,7 +312,7 @@ fn check_apply(event: Event) -> World {
                     assert!(n.generation > b.generation);
                     assert_eq!(
                         n.credit.spent,
-                        b.credit.spent + u32::from(n.rechecks > FREE_RECHECKS)
+                        b.credit.spent + u64::from(n.rechecks > FREE_RECHECKS)
                     );
                 } else {
                     assert_eq!(n.phase, Phase::AwaitingRob);
@@ -347,8 +347,9 @@ fn check_apply(event: Event) -> World {
         let n = &after.nodes[0];
         if rebase_progress_applies(b, generation) {
             // Each completed catch-up consumes finite free allowance or credit, or asks Rob.
-            let fuel =
-                |n: &Node| n.credit.balance() + i64::from(FREE_RECHECKS.saturating_sub(n.rechecks));
+            let fuel = |n: &Node| {
+                n.credit.balance() + i128::from(FREE_RECHECKS.saturating_sub(n.rechecks))
+            };
             assert!(n.phase == Phase::AwaitingRob || fuel(n) < fuel(b));
         }
     }

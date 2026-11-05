@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod input_transaction;
 mod prompts;
+pub use input_transaction::Sql;
+use input_transaction::operation;
 mod types;
 pub use prompts::*;
 pub use types::*;
@@ -60,6 +63,8 @@ pub struct Store {
     controller_claim: bool,
     settings: tl3_config::Store,
     boundary_hook: Option<BoundaryHook>,
+    input_active: bool,
+    input_boundaries: Vec<(SavePoint, String, serde_json::Value)>,
 }
 
 const CONTROLLER_CLAIM: i64 = 0x544c33434f4e5452;
@@ -131,7 +136,7 @@ impl Ownership {
 
     pub fn migrate(&mut self) -> Result<()> {
         self.ensure_held()?;
-        let mut tx = self.store.client.transaction()?;
+        let mut tx = operation(&mut self.store.client, self.store.input_active)?;
         tx.query_one(
             "SELECT pg_advisory_xact_lock($1)",
             &[&0x544c3353544f5245_i64],
@@ -185,6 +190,9 @@ impl Drop for Store {
         // #785: cleanup also follows ownership transferred into a controller,
         // including unwinding. Normal handoffs use Ownership::release so an
         // unlock failure is reported; destructor cleanup is best effort.
+        if self.input_active {
+            let _ = self.finish_input(false);
+        }
         if self.controller_claim {
             let _ = self.release_controller_claim();
         }
@@ -207,6 +215,9 @@ pub enum SavePoint {
     CreditWritten,
     BeforeCommit,
     AfterCommit,
+    /// State-table "Counter headroom": one durable input publishes all helper
+    /// writes together. Its payload lists their point/key/event receipts.
+    InputAfterCommit,
     InternBeforeCommit,
     InternAfterCommit,
     ReceiveIngressBeforeCommit,
@@ -228,6 +239,23 @@ fn boundary(
 ) {
     if let Some(hook) = hook {
         hook(point, key, event);
+    }
+}
+
+fn input_boundary(
+    active: bool,
+    pending: &mut Vec<(SavePoint, String, serde_json::Value)>,
+    hook: &mut Option<BoundaryHook>,
+    point: SavePoint,
+    key: &str,
+    event: &serde_json::Value,
+) {
+    if active && matches!(point, SavePoint::AfterCommit | SavePoint::InternAfterCommit) {
+        if hook.is_some() {
+            pending.push((point, key.into(), event.clone()));
+        }
+    } else {
+        boundary(hook, point, key, event);
     }
 }
 
@@ -261,6 +289,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
         include_str!("../migrations/0020_memory_feed_lineage.sql"),
     ),
     (21, include_str!("../migrations/0021_dispatch_evidence.sql")),
+    (22, include_str!("../migrations/0022_input_allocations.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -282,7 +311,7 @@ fn ingress_row(row: Row) -> Ingress {
     }
 }
 
-fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
+fn retire_ingress(tx: &mut impl Sql) -> Result<()> {
     tx.execute("DELETE FROM tl3_ingress WHERE consumed AND sequence <= (SELECT MIN(sequence) FROM tl3_ingress_consumers)", &[])?;
     Ok(())
 }
@@ -322,11 +351,11 @@ impl MemoryFeedState {
 // The two-key namespace is separate from the controller's single-key lock.
 const MEMORY_CONSUMER: &str = "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 773 AND objid = 1 AND objsubid = 2 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
 
-pub fn read_memory_feed_state(tx: &mut Transaction<'_>) -> Result<MemoryFeedState> {
+pub fn read_memory_feed_state(tx: &mut impl Sql) -> Result<MemoryFeedState> {
     Ok(read_memory_feed_outcome(tx)?.state)
 }
 
-fn read_memory_feed_outcome(tx: &mut Transaction<'_>) -> Result<MemoryFeedOutcome> {
+fn read_memory_feed_outcome(tx: &mut impl Sql) -> Result<MemoryFeedOutcome> {
     let row = tx.query_opt(
         &format!("SELECT state, EXISTS ({MEMORY_CONSUMER}), version, lineage FROM tl3_memory_feed WHERE singleton"),
         &[],
@@ -353,7 +382,7 @@ fn read_memory_feed_outcome(tx: &mut Transaction<'_>) -> Result<MemoryFeedOutcom
 
 impl Store {
     pub fn memory_feed_state(&mut self) -> Result<MemoryFeedState> {
-        read_memory_feed_state(&mut self.client.transaction()?)
+        read_memory_feed_state(&mut operation(&mut self.client, self.input_active)?)
     }
 
     /// #773: the consumer owns this session until its thread has joined.
@@ -388,14 +417,14 @@ impl Store {
 
     /// #773 / Q7: sample the outcome's version and attempted lineage together.
     pub fn memory_feed_outcome(&mut self) -> Result<MemoryFeedOutcome> {
-        read_memory_feed_outcome(&mut self.client.transaction()?)
+        read_memory_feed_outcome(&mut operation(&mut self.client, self.input_active)?)
     }
 
     /// #773: only the owning feed records delivery identity; operator flushes
     /// signal acknowledged recovery through memory_delivery_ack instead.
     pub fn set_memory_feed_attempt(&mut self, lineage: &str, held: bool) -> Result<()> {
         let state = if held { "held" } else { "delivering" };
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         if tx.execute(
             &format!("UPDATE tl3_memory_feed SET state = $1, lineage = $2, version = version + 1 WHERE singleton AND (state <> $1 OR lineage <> $2) AND EXISTS ({MEMORY_CONSUMER} AND pid = pg_backend_pid())"),
             &[&state, &lineage],
@@ -408,7 +437,7 @@ impl Store {
 
     /// #773: durable retry evidence wakes the controller's existing ingress source.
     pub fn retry_memory_delivery(&mut self) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         if !tx
             .query_one(&format!("SELECT EXISTS ({MEMORY_CONSUMER})"), &[])?
             .get::<_, bool>(0)
@@ -425,7 +454,7 @@ impl Store {
     /// A separate successful curation/retain is upstream evidence. The feed's
     /// own acknowledgement must not release a later failure in the same batch.
     pub fn memory_delivery_ack(&mut self) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         if tx.execute(&format!("UPDATE tl3_memory_feed SET retry = retry + 1 WHERE singleton AND EXISTS ({MEMORY_CONSUMER} AND pid <> pg_backend_pid())"), &[])? > 0 {
             tx.batch_execute("NOTIFY tl3_ingress")?;
         }
@@ -434,7 +463,7 @@ impl Store {
     }
 
     pub fn set_memory_feed_state(&mut self, state: MemoryFeedState) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         let changed = tx.execute(
             "UPDATE tl3_memory_feed SET state = $1, version = version + 1 WHERE singleton AND state <> $1",
             &[&state.as_str()],
@@ -453,7 +482,7 @@ impl Store {
 
     /// Independent of kernel revisions. The immutable operation ID survives lost acknowledgements.
     pub fn queue_memory(&mut self, operation_id: &str, item: &serde_json::Value) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         queue_memory_in(&mut tx, operation_id, item)?;
         tx.commit()?;
         Ok(())
@@ -504,7 +533,7 @@ impl Store {
 
     /// Hindsight acknowledged the curation, or refused it for good with `status`.
     pub fn settle_memory_curation(&mut self, sequence: i64, status: Option<u16>) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         match status {
             None => {
                 tx.execute(
@@ -607,7 +636,7 @@ impl Store {
     }
 
     pub fn reject_memory_key(&mut self, status: u16) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         let raised = tx.execute("INSERT INTO tl3_memory_health (singleton, rejected_status) VALUES (true, $1) ON CONFLICT (singleton) DO NOTHING", &[&(status as i32)])?;
         if raised == 0 {
             tx.execute(
@@ -623,7 +652,7 @@ impl Store {
     }
 
     pub fn forget_memory(&mut self, operation_id: &str) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         tx.execute(
             "DELETE FROM tl3_memory_outbox WHERE operation_id = $1",
             &[&operation_id],
@@ -640,7 +669,7 @@ impl Store {
 
     /// Only a successful flush releases capacity. Share the enqueue lock so the cap holds.
     pub fn replay_capacity_memories(&mut self) -> Result<u64> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
         let replayed = tx.execute("UPDATE tl3_memory_outbox SET parked_reason = NULL, parked_at = NULL WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason = 'capacity' ORDER BY sequence LIMIT (SELECT GREATEST(0, 10000 - count(*)) FROM tl3_memory_outbox WHERE parked_reason IS NULL))", &[])?;
         tx.commit()?;
@@ -664,7 +693,7 @@ impl Store {
     /// Register the current translator set before consuming a batch. New names start at
     /// intake's durable position; catch-up supplies recent state, not retained history.
     pub fn register_ingress_translators(&mut self, names: &[&str]) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         tx.execute(
             "DELETE FROM tl3_ingress_consumers WHERE name <> 'intake' AND NOT (name = ANY($1))",
             &[&names],
@@ -688,7 +717,7 @@ impl Store {
     }
 
     pub fn advance_translator(&mut self, name: &str, sequence: i64) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         tx.execute(
             "UPDATE tl3_ingress_consumers SET sequence = GREATEST(sequence, $2) WHERE name = $1",
             &[&name, &sequence],
@@ -706,20 +735,24 @@ impl Store {
         event_name: &str,
         payload: &[u8],
     ) -> Result<bool> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         let inserted = tx.execute(
             "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ($1, $2, $3, $4) ON CONFLICT (source, delivery_key) DO NOTHING",
             &[&source, &key, &event_name, &payload],
         )? == 1;
         let key = format!("ingress:{source}:{key}");
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::ReceiveIngressBeforeCommit,
             &key,
             &serde_json::Value::Null,
         );
         tx.commit()?;
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::ReceiveIngressAfterCommit,
             &key,
@@ -737,7 +770,7 @@ impl Store {
 
     /// Call only after every input in the delivery has reached the controller store.
     pub fn consume_ingress(&mut self, sequence: i64) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         let row = if self.boundary_hook.is_some() {
             tx.query_opt(
                 "SELECT source, delivery_key FROM tl3_ingress WHERE sequence = $1",
@@ -760,7 +793,9 @@ impl Store {
         tx.execute("UPDATE tl3_ingress_consumers SET sequence = GREATEST(sequence, $1) WHERE name = 'intake'", &[&sequence])?;
         retire_ingress(&mut tx)?;
         if let Some(key) = &key {
-            boundary(
+            input_boundary(
+                self.input_active,
+                &mut self.input_boundaries,
                 &mut self.boundary_hook,
                 SavePoint::ConsumeIngressBeforeCommit,
                 key,
@@ -769,7 +804,9 @@ impl Store {
         }
         tx.commit()?;
         if let Some(key) = &key {
-            boundary(
+            input_boundary(
+                self.input_active,
+                &mut self.input_boundaries,
                 &mut self.boundary_hook,
                 SavePoint::ConsumeIngressAfterCommit,
                 key,
@@ -785,7 +822,9 @@ impl Store {
             "ingress-applied:{}:{}",
             ingress.source, ingress.delivery_key
         );
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::IngressApplied,
             &key,
@@ -810,7 +849,7 @@ impl Store {
         deliveries: &[(String, Vec<u8>)],
         cursor: &serde_json::Value,
     ) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         for (key, payload) in deliveries {
             tx.execute(
                 "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ($1, $2, 'catch-up', $3) ON CONFLICT (source, delivery_key) DO NOTHING",
@@ -819,14 +858,18 @@ impl Store {
         }
         tx.execute("INSERT INTO tl3_ingress_cursors (source, cursor) VALUES ($1, $2) ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor", &[&source, cursor])?;
         let key = format!("catch-up:{source}");
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::ReceiveCatchUpBeforeCommit,
             &key,
             cursor,
         );
         tx.commit()?;
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::ReceiveCatchUpAfterCommit,
             &key,
@@ -839,7 +882,7 @@ impl Store {
     /// Transport is local TCP or a Unix socket, without TLS.
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self::connect(settings)?;
-        let mut tx = read_transaction(&mut store.client)?;
+        let mut tx = store.read_operation()?;
         check_schema(&mut tx)?;
         tx.commit()?;
         Ok(store)
@@ -851,6 +894,8 @@ impl Store {
             client: connect(settings, false)?,
             controller_claim: false,
             boundary_hook: None,
+            input_active: false,
+            input_boundaries: Vec::new(),
             settings: settings.clone(),
         };
         if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
@@ -869,9 +914,66 @@ impl Store {
         self.boundary_hook = Some(Box::new(hook));
     }
 
+    /// State-table "Counter headroom": begin before translation or any helper write.
+    /// Nested store operations release savepoints, never this input transaction.
+    pub fn begin_input(&mut self) -> Result<()> {
+        if self.input_active {
+            return Err(Error::Invalid("nested controller input"));
+        }
+        self.client
+            .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ")?;
+        self.input_active = true;
+        Ok(())
+    }
+
+    /// Publish all input writes together, or discard them before reporting refusal.
+    pub fn finish_input(&mut self, accepted: bool) -> Result<()> {
+        if !self.input_active {
+            return Err(Error::Invalid("no controller input transaction"));
+        }
+        self.client
+            .batch_execute(if accepted { "COMMIT" } else { "ROLLBACK" })?;
+        self.input_active = false;
+        let pending = std::mem::take(&mut self.input_boundaries);
+        if accepted {
+            if !pending.is_empty() {
+                let members: Vec<_> = pending
+                    .iter()
+                    .map(|(point, key, event)| {
+                        serde_json::json!({"point": format!("{point:?}"), "key": key, "event": event})
+                    })
+                    .collect();
+                boundary(
+                    &mut self.boundary_hook,
+                    SavePoint::InputAfterCommit,
+                    "controller-input",
+                    &serde_json::json!({"boundaries": members}),
+                );
+            }
+            for (point, key, event) in pending {
+                boundary(&mut self.boundary_hook, point, &key, &event);
+            }
+        }
+        Ok(())
+    }
+
+    fn read_operation(&mut self) -> Result<input_transaction::Operation<'_>> {
+        if self.input_active {
+            operation(&mut self.client, true)
+        } else {
+            Ok(input_transaction::Operation::Standalone(Some(
+                read_transaction(&mut self.client)?,
+            )))
+        }
+    }
+
     /// Read a consistent world, pending outbox, ledger and intern dictionary, without replay.
     pub fn load(&mut self) -> Result<Snapshot> {
-        let mut tx = read_transaction(&mut self.client)?;
+        let mut tx = if self.input_active {
+            operation(&mut self.client, true)?
+        } else {
+            input_transaction::Operation::Standalone(Some(read_transaction(&mut self.client)?))
+        };
         let snapshot = load_snapshot(&mut tx)?;
         tx.commit()?;
         Ok(snapshot)
@@ -880,7 +982,7 @@ impl Store {
     /// Identical events return the original receipt, even if this caller's revision is stale.
     /// On any error the transaction rolls back, including the event and all earlier changes.
     pub fn commit(&mut self, change: &Commit) -> Result<CommitReceipt> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         let (revision, epoch) = metadata(&mut tx, true)?;
         if let Some(row) = tx.query_opt(
             // Only a differing replay reads the stored payload and digests.
@@ -927,7 +1029,9 @@ impl Store {
         }
         let committed = receipt(tx.query_one("INSERT INTO tl3_events (event_key, revision, epoch, payload, result) VALUES ($1, $2, $3, $4, $5) RETURNING revision, epoch, result",
             &[&change.event_key, &revision.get(), &next_epoch.get(), &change.event, &change.result])?)?;
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::EventWritten,
             &change.event_key,
@@ -936,7 +1040,9 @@ impl Store {
         for row in &change.rows {
             match row {
                 RowChange::Put { table, id, value } => {
-                    tx.execute("INSERT INTO tl3_world (table_name, row_id, value, version) VALUES ($1, $2, $3, $4) ON CONFLICT (table_name, row_id) DO UPDATE SET value = EXCLUDED.value, version = EXCLUDED.version",
+                    // The metadata lock serializes arrival allocation. Unlike nextval,
+                    // this allocation disappears when the input rolls back.
+                    tx.execute("INSERT INTO tl3_world (table_name, row_id, value, version, arrival) SELECT $1, $2, $3, $4, COALESCE((SELECT arrival FROM tl3_world WHERE table_name = $1 AND row_id = $2), tl3_transactional_id('tl3_world', 'arrival', 'tl3_world_arrival_seq')) ON CONFLICT (table_name, row_id) DO UPDATE SET value = EXCLUDED.value, version = EXCLUDED.version",
                         &[table, id, value, &revision.get()])?;
                     if table == "nodes" && value["phase"].get("Closed").is_some() {
                         tx.execute("DELETE FROM tl3_worker_summary WHERE node_id = $1", &[id])?;
@@ -953,7 +1059,9 @@ impl Store {
                 }
             }
         }
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::RowsWritten,
             &change.event_key,
@@ -963,7 +1071,9 @@ impl Store {
             tx.execute("INSERT INTO tl3_effects (effect_key, epoch, kind, payload, created_revision, updated_revision) VALUES ($1, $2, $3, $4, $5, $5)",
                 &[&effect.key, &next_epoch.get(), &effect.kind, &effect.payload, &revision.get()])?;
         }
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::EffectsWritten,
             &change.event_key,
@@ -981,7 +1091,9 @@ impl Store {
                 return Err(Error::EffectConflict);
             }
         }
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::TransitionsWritten,
             &change.event_key,
@@ -1001,7 +1113,7 @@ impl Store {
             }
         }
         for owed in &change.postmortems {
-            tx.execute("INSERT INTO tl3_postmortems (node_id, trigger, reason, sample_share, repo, issue, title, revision, owed_at) SELECT $1, $2, $3, $4, $5, $6, $7, revision, committed_at FROM tl3_events WHERE revision = $8 ON CONFLICT (node_id, trigger) DO NOTHING",
+            tx.execute("INSERT INTO tl3_postmortems (id, node_id, trigger, reason, sample_share, repo, issue, title, revision, owed_at) OVERRIDING SYSTEM VALUE SELECT tl3_transactional_id('tl3_postmortems', 'id', 'tl3_postmortems_id_seq'), $1, $2, $3, $4, $5, $6, $7, revision, committed_at FROM tl3_events WHERE revision = $8 ON CONFLICT (node_id, trigger) DO NOTHING",
                 &[&owed.node, &owed.trigger, &owed.reason, &owed.sample_share, &owed.repo, &owed.issue, &owed.title, &revision.get()])?;
         }
         for grade in &change.grades {
@@ -1010,7 +1122,9 @@ impl Store {
         for update in &change.postmortem_updates {
             apply_postmortem(&mut tx, update, revision.get())?;
         }
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::CreditWritten,
             &change.event_key,
@@ -1030,14 +1144,18 @@ impl Store {
             "UPDATE tl3_meta SET revision = $1, epoch = $2",
             &[&revision.get(), &next_epoch.get()],
         )?;
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::BeforeCommit,
             &change.event_key,
             &change.event,
         );
         tx.commit()?;
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::AfterCommit,
             &change.event_key,
@@ -1059,7 +1177,7 @@ impl Store {
     /// #766/Q27: migrate at most 256 audit rows per drive, using the revision index.
     /// The cursor commits with the evidence, so a crash neither skips nor double-counts.
     pub fn migrate_dispatch_evidence(&mut self) -> Result<bool> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         metadata(&mut tx, true)?;
         let row = tx.query_one(
             "SELECT cursor, through_revision FROM tl3_dispatch_migration FOR UPDATE",
@@ -1095,8 +1213,9 @@ impl Store {
                 // is retired, unless it changed after the migration watermark; repeated
                 // legacy sends cannot prove all earlier requests have ended either.
                 // No adapter or ownership assumption belongs in this store migration.
-                tx.execute("INSERT INTO tl3_world(table_name, row_id, value, version)
-                    SELECT 'approval_dispatch_recovery', e.effect_key, e.payload, $2
+                tx.execute("INSERT INTO tl3_world(table_name, row_id, value, version, arrival)
+                    SELECT 'approval_dispatch_recovery', e.effect_key, e.payload, $2,
+                        tl3_transactional_id('tl3_world', 'arrival', 'tl3_world_arrival_seq')
                     FROM tl3_effects e JOIN tl3_dispatch_evidence d USING(effect_key)
                     WHERE e.effect_key = $1 AND
                         (e.state NOT IN ('Confirmed','Failed') OR e.updated_revision > $3 OR d.legacy_sends > 1)
@@ -1502,7 +1621,7 @@ impl Store {
     /// Call only after durable removal of the run directory.
     /// Fold progress into one summary for an open node in the same transaction.
     pub fn forget_worker(&mut self, key: &str) -> Result<()> {
-        let mut tx = self.client.transaction()?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
         // Serialize with world commits so closure cannot race summary insertion.
         tx.query_one("SELECT revision FROM tl3_meta FOR UPDATE", &[])?;
         if let Some(row) = tx.query_opt("DELETE FROM tl3_worker_progress p USING tl3_retired_workers e WHERE p.run_key = $1 AND e.effect_key = p.run_key RETURNING p.node_id, p.unit, p.last_progress_ms", &[&key])? {
@@ -1575,20 +1694,24 @@ impl Store {
             return Ok(row.get(0));
         }
         let key = format!("intern:{}:{scope}:{value}", kind.as_str());
-        let mut tx = self.client.transaction()?;
-        let inserted = tx.query_opt("INSERT INTO tl3_intern (kind, scope, value) VALUES ($1::text::tl3_intern_kind, $2, $3) ON CONFLICT (kind, scope, value) DO NOTHING RETURNING id", params)?;
+        let mut tx = operation(&mut self.client, self.input_active)?;
+        let inserted = tx.query_opt("INSERT INTO tl3_intern (id, kind, scope, value) OVERRIDING SYSTEM VALUE SELECT tl3_transactional_id('tl3_intern', 'id', 'tl3_intern_id_seq'), $1::text::tl3_intern_kind, $2, $3 ON CONFLICT (kind, scope, value) DO NOTHING RETURNING id", params)?;
         let id = match inserted {
             Some(row) => row.get(0),
             None => tx.query_one(select, params)?.get(0),
         };
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::InternBeforeCommit,
             &key,
             &serde_json::Value::Null,
         );
         tx.commit()?;
-        boundary(
+        input_boundary(
+            self.input_active,
+            &mut self.input_boundaries,
             &mut self.boundary_hook,
             SavePoint::InternAfterCommit,
             &key,
@@ -1676,19 +1799,15 @@ fn postmortem_record(row: &Row) -> PostmortemRecord {
     }
 }
 
-fn insert_grade(tx: &mut Transaction<'_>, grade: &CodeGrade, revision: i64) -> Result<()> {
-    tx.execute("INSERT INTO tl3_code_grades (node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) SELECT $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
+fn insert_grade(tx: &mut impl Sql, grade: &CodeGrade, revision: i64) -> Result<()> {
+    tx.execute("INSERT INTO tl3_code_grades (id, node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) OVERRIDING SYSTEM VALUE SELECT tl3_transactional_id('tl3_code_grades', 'id', 'tl3_code_grades_id_seq'), $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
         &[&grade.node, &grade.trigger, &grade.rubric_version, &grade.dimension, &grade.grade, &grade.fact, &revision])?;
     Ok(())
 }
 
 /// #403: a runner's claim, result, failure or release. Only a claim on an
 /// owed row and a finish under the claim's own run key change anything.
-fn apply_postmortem(
-    tx: &mut Transaction<'_>,
-    update: &PostmortemUpdate,
-    revision: i64,
-) -> Result<()> {
+fn apply_postmortem(tx: &mut impl Sql, update: &PostmortemUpdate, revision: i64) -> Result<()> {
     const AT: &str = "(SELECT committed_at FROM tl3_events WHERE revision = $3)";
     match update {
         PostmortemUpdate::Claim {
@@ -1723,7 +1842,7 @@ fn apply_postmortem(
             }
             claim_ended(tx, run_key, "done", None)?;
             for item in &result.recommendations {
-                tx.execute("INSERT INTO tl3_postmortem_recommendations (postmortem_id, fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                tx.execute("INSERT INTO tl3_postmortem_recommendations (id, postmortem_id, fingerprint, rank, phase, kind, target, operation, before, after, evidence, effect) OVERRIDING SYSTEM VALUE VALUES (tl3_transactional_id('tl3_postmortem_recommendations', 'id', 'tl3_postmortem_recommendations_id_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                     &[id, &item.fingerprint, &item.rank, &item.phase, &item.kind, &item.target, &item.operation, &item.before, &item.after, &item.evidence, &item.effect])?;
             }
             for grade in &result.code_grades {
@@ -1768,7 +1887,7 @@ fn apply_postmortem(
 const RETRIED_FAILURES: [&str; 2] = ["worker_failed", "deadline"];
 
 fn claim_ended(
-    tx: &mut Transaction<'_>,
+    tx: &mut impl Sql,
     run_key: &str,
     outcome: &str,
     failure: Option<&str>,
@@ -1781,13 +1900,9 @@ fn claim_ended(
 }
 
 /// Queue one Hindsight memory in `tx`, parking the oldest past the outbox's capacity.
-fn queue_memory_in(
-    tx: &mut Transaction<'_>,
-    operation_id: &str,
-    item: &serde_json::Value,
-) -> Result<()> {
+fn queue_memory_in(tx: &mut impl Sql, operation_id: &str, item: &serde_json::Value) -> Result<()> {
     tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
-    tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
+    tx.execute("INSERT INTO tl3_memory_outbox (sequence, operation_id, item) OVERRIDING SYSTEM VALUE VALUES (tl3_transactional_id('tl3_memory_outbox', 'sequence', 'tl3_memory_outbox_sequence_seq'), $1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
     tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
     Ok(())
 }
@@ -1922,32 +2037,24 @@ impl ConsoleCommands {
     }
 }
 
-fn load_effects(client: &mut impl postgres::GenericClient) -> Result<Vec<Effect>> {
+fn load_effects(client: &mut impl Sql) -> Result<Vec<Effect>> {
     client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
             .into_iter().map(decode_effect).collect()
 }
 
 /// #783: bounded event pages inside the replay reader's existing READ ONLY transaction.
-pub fn events_in(
-    tx: &mut Transaction<'_>,
-    revision: Revision,
-    limit: u32,
-) -> Result<Vec<EventRecord>> {
+pub fn events_in(tx: &mut impl Sql, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
     load_events(tx, revision, limit)
 }
 
 /// Resolve an inclusive replay start by immutable event key, or by revision.
-pub fn find_event_revision(tx: &mut Transaction<'_>, event: &str) -> Result<Option<Revision>> {
+pub fn find_event_revision(tx: &mut impl Sql, event: &str) -> Result<Option<Revision>> {
     let revision = event.parse::<i64>().ok().filter(|revision| *revision > 0);
     tx.query_opt("SELECT revision FROM tl3_events WHERE event_key = $1 OR revision = $2 ORDER BY (event_key = $1) DESC LIMIT 1", &[&event, &revision])?
         .map(|row| Revision::try_from(row.get::<_, i64>(0))).transpose()
 }
 
-fn load_events(
-    client: &mut impl postgres::GenericClient,
-    revision: Revision,
-    limit: u32,
-) -> Result<Vec<EventRecord>> {
+fn load_events(client: &mut impl Sql, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
     client.query("SELECT event_key, payload, revision, epoch, result FROM tl3_events WHERE revision > $1 ORDER BY revision LIMIT $2", &[&revision.get(), &i64::from(limit)])?
             .into_iter().map(|row| Ok(EventRecord {
                 key: row.get(0), payload: row.get(1),
@@ -1955,7 +2062,7 @@ fn load_events(
             })).collect()
 }
 
-fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
+fn check_schema(tx: &mut impl Sql) -> Result<()> {
     if tx
         .query_one("SELECT to_regclass('tl3_schema_migrations') IS NULL", &[])?
         .get::<_, bool>(0)
@@ -2054,7 +2161,7 @@ fn read_transaction(client: &mut Client) -> Result<Transaction<'_>> {
 }
 
 /// Load the controller snapshot inside the caller's existing read transaction.
-pub fn load_snapshot(tx: &mut Transaction<'_>) -> Result<Snapshot> {
+pub fn load_snapshot(tx: &mut impl Sql) -> Result<Snapshot> {
     let (revision, epoch) = metadata(tx, false)?;
     let rows = tx
         .query(
@@ -2104,7 +2211,7 @@ pub fn load_snapshot(tx: &mut Transaction<'_>) -> Result<Snapshot> {
     })
 }
 
-fn metadata(tx: &mut Transaction<'_>, lock: bool) -> Result<(Revision, Epoch)> {
+fn metadata(tx: &mut impl Sql, lock: bool) -> Result<(Revision, Epoch)> {
     let sql = if lock {
         "SELECT revision, epoch FROM tl3_meta WHERE singleton FOR UPDATE"
     } else {

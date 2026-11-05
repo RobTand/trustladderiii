@@ -1,3 +1,5 @@
+#[path = "support/command.rs"]
+mod command;
 #[path = "support/ownership.rs"]
 mod startup_ownership;
 use serde_json::json;
@@ -1662,15 +1664,14 @@ fn inbox_arrival_order(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let mut controller = open(settings, root.path());
     controller.intake(labelled()).unwrap();
-    for (key, id, command) in [("2", 1, Control::Pause), ("12", 2, Control::Resume)] {
+    for (key, command) in [("2", Control::Pause), ("12", Control::Resume)] {
         controller
             .observe(
                 key,
-                Observation::Kernel(Event::Command {
+                Observation::Steering {
                     node: NodeId(0),
-                    id,
                     command,
-                }),
+                },
             )
             .unwrap();
     }
@@ -1949,11 +1950,10 @@ fn cancelled_absence(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: Control::Stop,
-            }),
+            },
         )
         .unwrap();
     controller.drive_once().unwrap();
@@ -2006,11 +2006,10 @@ fn cancelled_absence(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop-intended",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(1),
-                id: 1,
                 command: Control::Stop,
-            }),
+            },
         )
         .unwrap();
     controller.drive_once().unwrap();
@@ -2396,7 +2395,7 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
         }
     };
     controller
-        .observe("close-with-rebase-context", Observation::Kernel(event))
+        .observe("close-with-rebase-context", command::observation(event))
         .unwrap();
     if !stopped {
         for _ in 0..100 {

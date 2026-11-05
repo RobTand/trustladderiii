@@ -56,7 +56,7 @@ impl Run {
         self.node().phase
     }
 
-    fn credit(&self) -> i64 {
+    fn credit(&self) -> i128 {
         self.node().credit.balance()
     }
 

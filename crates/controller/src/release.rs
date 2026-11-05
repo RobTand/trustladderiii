@@ -64,7 +64,10 @@ impl Controller {
             let incident: looks::Incident = crate::decode_stored(row.value.clone())?;
             // Older releases recorded this TL3-side pause as an upstream input incident.
             let postmortem_pause = incident.signature.class == crate::postmortems::PAUSED;
+            // #771: counter exhaustion holds kernel inputs outside a kernel wait.
+            let counter_halt = incident.signature.class == crate::input_errors::COUNTER_HEADROOM;
             if !postmortem_pause
+                && !counter_halt
                 && (incident.cause() != looks::Cause::Tl3
                     || !(incident.blocking || incident.effect.is_some()))
             {

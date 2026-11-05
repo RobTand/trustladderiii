@@ -1261,11 +1261,10 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
         controller
             .observe(
                 "resume",
-                tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+                tl3_controller::executor::Observation::Steering {
                     node: NodeId(0),
-                    id: 1,
                     command: tl3_kernel::Command::Resume,
-                }),
+                },
             )
             .unwrap();
         drain(&mut controller);
@@ -1433,11 +1432,10 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
     controller
         .observe(
             "stop",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     drain(&mut controller);
@@ -1998,11 +1996,10 @@ fn retirement_does_not_block(settings: &tl3_config::Store, missing_upstream: boo
         controller
             .observe(
                 "stop-with-retire-error",
-                tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+                tl3_controller::executor::Observation::Steering {
                     node: NodeId(0),
-                    id: 1,
                     command: tl3_kernel::Command::Stop,
-                }),
+                },
             )
             .unwrap();
         drain(&mut controller);

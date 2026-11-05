@@ -1229,11 +1229,10 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop-wait-fixture",
-            Observation::Kernel(Event::Command {
+            Observation::Steering {
                 node: NodeId(0),
-                id: 1,
                 command: tl3_kernel::Command::Stop,
-            }),
+            },
         )
         .unwrap();
     while controller.drive_once().unwrap() {}

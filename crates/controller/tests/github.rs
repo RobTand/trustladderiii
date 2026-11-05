@@ -1,3 +1,5 @@
+#[path = "support/command.rs"]
+mod command;
 #[path = "support/ownership.rs"]
 mod startup_ownership;
 // Single-event fixture receives expose no intermediate progress.
@@ -2207,11 +2209,10 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     // This ingress fixture uses a real maker and fake checks. Publishing tests own real review.
     let stop = Input::Observation {
         key: "stop-after-maker".into(),
-        observation: Observation::Kernel(tl3_kernel::Event::Command {
+        observation: Observation::Steering {
             node: NodeId(0),
-            id: 1,
             command: tl3_kernel::Command::Stop,
-        }),
+        },
     };
     let stdin = daemon.0.stdin.as_mut().unwrap();
     serde_json::to_writer(&mut *stdin, &stop).unwrap();

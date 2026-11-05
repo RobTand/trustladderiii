@@ -69,7 +69,9 @@ and adds credit entries. Row versions are the global revision of their last
 change. SQL table names and row ids are values, never SQL identifiers.
 Each row also has an immutable monotonic `arrival` sequence assigned on insert.
 `load` returns rows by table and arrival, so inbox consumption follows insertion
-order across commits and within one commit. Sequence gaps from rollbacks are harmless.
+order across commits and within one commit. Migration 22 allocates controller
+IDs transactionally, using the old sequence values as floors. Refused inputs
+leave neither allocated rows nor sequence gaps.
 Migration 2 backfills old rows by revision, table and key. Old versions did not
 record order within one transaction, so drain their inbox before migrating.
 An effect key cannot be reused, even after it becomes final. The SQL trigger
@@ -108,9 +110,12 @@ The get-or-create methods return typed 64-bit ids. Repos ignore ASCII case;
 commit SHAs ignore hexadecimal case and are scoped by node. Paths preserve
 their exact Git spelling and are scoped by repo. Issue and PR numbers are
 separate namespaces scoped by repo. Concurrent inserts return the same id.
-Ids can have gaps. Interning commits independently because unused dictionary
-entries have no world semantics. Recovery includes the dictionary; repo
-records expose `repo_id()` so callers can resume scoped interning.
+Outside input processing, interning commits independently. Between
+`begin_input` and `finish_input`, every store helper participates in the input's
+transaction through savepoints, including interning. Refusal rolls all those
+writes back before the controller records its incident separately. Recovery
+includes the dictionary; repo records expose `repo_id()` so callers can resume
+scoped interning.
 
 ## Verification
 

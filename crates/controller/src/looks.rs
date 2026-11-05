@@ -336,30 +336,93 @@ impl Controller {
         delivery: &Delivery,
         commit: &mut Commit,
     ) -> Result<bool> {
-        match self
-            .adapters
-            .get(Upstream::PrismaBuild)?
-            .watch_wait(delivery, None)
-        {
-            Ok(()) => Ok(true),
-            Err(error) => {
-                let request = crate::request(snapshot, delivery.node())?;
-                self.input_failed(
-                    snapshot,
-                    &format!("retire-wait:{}", delivery.key),
-                    Some(crate::input_errors::IssueTarget {
-                        repository: request.repo,
-                        issue: request.issue,
-                    }),
-                    &request.title,
-                    Some(delivery.node()),
-                    Upstream::PrismaBuild,
-                    error,
-                    commit,
-                )?;
-                Ok(false)
+        // State-table "Counter headroom": filesystem subscriptions cannot
+        // participate in the input transaction. Their durable intent does.
+        commit.rows.push(put(
+            "retiring_waits",
+            delivery.key.clone(),
+            json!({"delivery": delivery}),
+        ));
+        let _ = snapshot;
+        Ok(true)
+    }
+
+    /// Only committed intents can remove an external wait subscription. A failed
+    /// removal waits for its incident's clearance, without a retry polling loop.
+    pub(crate) fn retire_committed_waits(&mut self, snapshot: &Snapshot) -> Result<bool> {
+        for row in snapshot.rows.iter().filter(|r| r.table == "retiring_waits") {
+            if let Some(id) = row.value["incident"].as_str()
+                && snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "incidents" && r.id == id && r.value["open"] == true)
+            {
+                continue;
             }
+            let delivery: Delivery = crate::decode_stored(row.value["delivery"].clone())?;
+            let mut commit = Commit::new(
+                format!("retire-wait:{}:{}", row.id, snapshot.revision.get()),
+                json!({"retire_wait": row.id}),
+                snapshot,
+            );
+            match self
+                .adapters
+                .get(Upstream::PrismaBuild)?
+                .watch_wait(&delivery, None)
+            {
+                Ok(()) => commit.rows.push(RowChange::Delete {
+                    table: row.table.clone(),
+                    id: row.id.clone(),
+                }),
+                Err(error) => {
+                    let request = crate::request(snapshot, delivery.node())?;
+                    let scope = format!("retire-wait:{}", delivery.key);
+                    let existing = snapshot
+                        .rows
+                        .iter()
+                        .find(|r| {
+                            r.table == "incidents"
+                                && r.value["open"] == true
+                                && r.value["signature"]["upstream"] == json!(Upstream::PrismaBuild)
+                                && r.value["signature"]["class"] == failure_class(&error)
+                                && r.value["input_failure"]["scope"] == scope
+                        })
+                        .map(|r| r.id.clone());
+                    self.input_failed(
+                        snapshot,
+                        &scope,
+                        Some(crate::input_errors::IssueTarget {
+                            repository: request.repo,
+                            issue: request.issue,
+                        }),
+                        &request.title,
+                        Some(delivery.node()),
+                        Upstream::PrismaBuild,
+                        error,
+                        &mut commit,
+                    )?;
+                    let id = commit
+                        .rows
+                        .iter()
+                        .find_map(|r| match r {
+                            RowChange::Put { table, id, .. } if table == "incidents" => {
+                                Some(id.clone())
+                            }
+                            _ => None,
+                        })
+                        .or(existing)
+                        .ok_or(crate::Error::Invalid("wait retirement incident missing"))?;
+                    let mut value = row.value.clone();
+                    value["incident"] = json!(id);
+                    commit
+                        .rows
+                        .push(put("retiring_waits", row.id.clone(), value));
+                }
+            }
+            self.store.commit(&commit)?;
+            return Ok(true);
         }
+        Ok(false)
     }
 
     pub(crate) fn link_allowance_incident(
@@ -1409,9 +1472,7 @@ impl Controller {
             let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             if state.progress.as_ref() != Some(&checkpoint) {
                 if state.external_wait.take().is_some() {
-                    self.adapters
-                        .get(Upstream::PrismaBuild)?
-                        .watch_wait(&state.delivery, None)?;
+                    self.retire_wait(snapshot, &state.delivery, commit)?;
                 }
                 state.wait_ended = false;
                 state.progress = Some(checkpoint);
@@ -1799,6 +1860,7 @@ pub(crate) const CHECKS_PENDING: &str = "checks_pending";
 
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
+        crate::Error::CounterExhausted(_) => crate::input_errors::COUNTER_HEADROOM,
         crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
         crate::Error::PrerequisiteNumber => "prerequisite_number",
         crate::Error::ChecksPending => CHECKS_PENDING,

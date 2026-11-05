@@ -1,0 +1,4 @@
+# State-table Counter headroom. Replay this persisted proptest seed in addition
+# to the deterministic per-input seeds. Fixed merge/classification/intake-edit
+# regressions above preserve the three review counterexamples independently.
+cc 0000000000000000000000000000000000000000000000000000000000007714

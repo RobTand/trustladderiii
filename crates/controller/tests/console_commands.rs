@@ -2,6 +2,9 @@
 //! effect of Rob's equivalent comment, refusals say why, and a crash between
 //! filing and applying loses nothing and applies once.
 
+#[path = "support/command.rs"]
+mod command;
+
 #[allow(dead_code)]
 #[path = "support/scenario.rs"]
 mod scenario;
@@ -934,7 +937,7 @@ impl World {
                 reply,
             };
             self.controller
-                .observe(&key, Observation::Kernel(event))
+                .observe(&key, command::observation(event))
                 .unwrap();
         }
         panic!("the kernel never asked {kind:?}");

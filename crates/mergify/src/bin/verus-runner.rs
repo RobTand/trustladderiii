@@ -4,13 +4,20 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
-fn check_summary(output: &str, expected: u64) -> Result<u64, String> {
+fn check_summary(output: &str, expected: u64, partial: bool) -> Result<u64, String> {
     let summaries: Vec<_> = output
         .lines()
         .filter_map(|line| line.strip_prefix("verification results:: "))
         .collect();
     let [summary] = summaries.as_slice() else {
         return Err("Verus must emit exactly one verifier summary".into());
+    };
+    let summary = if partial {
+        summary
+            .strip_suffix(" (partial verification with `--verify-*`)")
+            .ok_or("missing partial-verification marker")?
+    } else {
+        summary
     };
     let count = summary
         .strip_suffix(" verified, 0 errors")
@@ -24,17 +31,22 @@ fn check_summary(output: &str, expected: u64) -> Result<u64, String> {
     Ok(count)
 }
 
-fn check_result(status: Option<i32>, output: &str, expected: u64) -> Result<u64, String> {
+fn check_result(
+    status: Option<i32>,
+    output: &str,
+    expected: u64,
+    partial: bool,
+) -> Result<u64, String> {
     if status != Some(0) {
         return Err(format!("Verus failed or timed out: exit {status:?}"));
     }
-    check_summary(output, expected)
+    check_summary(output, expected, partial)
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let [verifier, z3, rustc, source, expected, label] = args.as_slice() else {
-        return Err("usage: verus-runner VERUS Z3 RUSTC SOURCE EXPECTED LABEL".into());
+    let [verifier, z3, rustc, source, expected, label, module] = args.as_slice() else {
+        return Err("usage: verus-runner VERUS Z3 RUSTC SOURCE EXPECTED LABEL MODULE".into());
     };
     let expected = expected.parse::<u64>()?;
     if expected == 0 {
@@ -48,12 +60,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(Path::parent)
         .ok_or("missing private sysroot")?;
     let started = Instant::now();
-    let result = Command::new("/usr/bin/timeout")
+    let mut process = Command::new("/usr/bin/timeout");
+    process
         .args(["--kill-after=5s", "45s"])
         .arg(verifier)
-        .args(["--num-threads", "1", "--rlimit", "30", "--sysroot"])
+        .args([
+            "--num-threads",
+            "1",
+            "--rlimit",
+            "30",
+            "--multiple-errors",
+            "0",
+            "-V",
+            "spinoff-all",
+            "--sysroot",
+        ])
         .arg(sysroot)
         .arg(source)
+        .args(["--edition", "2024"]);
+    if module == "root" {
+        process.arg("--verify-root");
+    } else if !module.is_empty() {
+        process.args(["--verify-only-module", module]);
+    }
+    let result = process
         .env_clear()
         .env("PATH", format!("{}/bin:/usr/bin:/bin", sysroot.display()))
         .env("LD_LIBRARY_PATH", sysroot.join("lib"))
@@ -68,9 +98,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         String::from_utf8_lossy(&result.stderr)
     );
     print!("{output}");
-    let verified = check_result(result.status.code(), &output, expected)?;
+    let verified = check_result(result.status.code(), &output, expected, !module.is_empty())?;
     let receipt = serde_json::json!({"proofs": {label: {
         "kind": "verus", "expected_obligations": expected, "verified": verified,
+        "module": module, "threads": 1,
         "seconds": started.elapsed().as_secs_f64(),
     }}});
     if let Some(directory) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
@@ -97,7 +128,7 @@ mod tests {
     #[test]
     fn accepts_exact_positive_obligation_count() {
         assert_eq!(
-            check_summary("verification results:: 2 verified, 0 errors\n", 2),
+            check_summary("verification results:: 2 verified, 0 errors\n", 2, false),
             Ok(2)
         );
     }
@@ -115,8 +146,17 @@ mod tests {
                 2,
             ),
         ] {
-            assert!(check_summary(output, expected).is_err(), "{output}");
+            assert!(check_summary(output, expected, false).is_err(), "{output}");
         }
+    }
+
+    #[test]
+    fn partial_verification_requires_its_marker_and_exact_count() {
+        let partial = "verification results:: 2 verified, 0 errors (partial verification with `--verify-*`)\n";
+        assert_eq!(check_summary(partial, 2, true), Ok(2));
+        assert!(check_summary(partial, 2, false).is_err());
+        assert!(check_summary(partial, 1, true).is_err());
+        assert!(check_summary("verification results:: 2 verified, 0 errors\n", 2, true).is_err());
     }
 }
 
@@ -128,7 +168,13 @@ mod process_tests {
     fn rejects_timeout_nonzero_and_signal_even_with_a_success_summary() {
         for status in [Some(124), Some(1), None] {
             assert!(
-                check_result(status, "verification results:: 2 verified, 0 errors\n", 2).is_err()
+                check_result(
+                    status,
+                    "verification results:: 2 verified, 0 errors\n",
+                    2,
+                    false
+                )
+                .is_err()
             );
         }
     }

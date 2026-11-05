@@ -240,32 +240,39 @@ fn retain_fact(
     Ok(fact)
 }
 
-fn apply_fact(
-    world: &mut World,
-    node: NodeId,
-    fact: Fact,
-    outputs: &mut Vec<Out>,
-    commit: &mut Commit,
-) {
-    let event = Event::Fact { node, fact };
-    let (next, emitted) = tl3_kernel::step(world.clone(), event);
-    *world = next;
-    outputs.extend(emitted);
-    if !commit.result.is_object() {
-        commit.result = json!({});
-    }
-    commit
-        .result
-        .as_object_mut()
-        .unwrap()
-        .entry("dependency_events")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .unwrap()
-        .push(json!(event));
-}
-
 impl Controller {
+    fn apply_fact(
+        &self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        event: Event,
+        outputs: &mut Vec<Out>,
+        commit: &mut Commit,
+    ) -> Result<bool> {
+        if !self.kernel_headroom(snapshot, world, commit)? {
+            return Ok(false);
+        }
+        if !self.input_checkpoint(snapshot, commit)? {
+            return Ok(false);
+        }
+        let (next, emitted) = tl3_kernel::step(world.clone(), event);
+        *world = next;
+        outputs.extend(emitted);
+        if !commit.result.is_object() {
+            commit.result = json!({});
+        }
+        commit
+            .result
+            .as_object_mut()
+            .unwrap()
+            .entry("dependency_events")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .unwrap()
+            .push(json!(event));
+        Ok(true)
+    }
+
     pub(crate) fn prepare_merge_dependencies(
         &mut self,
         snapshot: &Snapshot,
@@ -378,6 +385,7 @@ impl Controller {
 
     pub(crate) fn declare_merge_dependencies(
         &self,
+        snapshot: &Snapshot,
         world: &mut World,
         event: Event,
         outputs: &mut Vec<Out>,
@@ -413,29 +421,35 @@ impl Controller {
                             && d.target.number == dependency.target.number
                     })
                 {
-                    apply_fact(
+                    self.apply_fact(
+                        snapshot,
                         world,
-                        node,
-                        Fact::DependencyRemove {
-                            kind: dependency.target.kind,
-                            number: dependency.target.number,
+                        Event::Fact {
+                            node,
+                            fact: Fact::DependencyRemove {
+                                kind: dependency.target.kind,
+                                number: dependency.target.number,
+                            },
                         },
                         outputs,
                         commit,
-                    );
+                    )?;
                 }
             }
             for declaration in declarations {
-                apply_fact(
+                self.apply_fact(
+                    snapshot,
                     world,
-                    node,
-                    Fact::Dependency {
-                        target: declaration.target,
-                        status: declaration.status,
+                    Event::Fact {
+                        node,
+                        fact: Fact::Dependency {
+                            target: declaration.target,
+                            status: declaration.status,
+                        },
                     },
                     outputs,
                     commit,
-                );
+                )?;
             }
         }
         Ok(())
@@ -549,26 +563,29 @@ impl Controller {
                         || status != DependencyStatus::Pending))
                     || unannounced
                 {
-                    apply_fact(
+                    let applied = self.apply_fact(
+                        snapshot,
                         world,
-                        dependency.node,
-                        Fact::Dependency {
-                            target: DependencyTarget {
-                                request: Some(bound),
-                                ..dependency.target
+                        Event::Fact {
+                            node: dependency.node,
+                            fact: Fact::Dependency {
+                                target: DependencyTarget {
+                                    request: Some(bound),
+                                    ..dependency.target
+                                },
+                                status,
                             },
-                            status,
                         },
                         outputs,
                         commit,
-                    );
-                }
-                if unannounced {
-                    commit.rows.push(put(
-                        "dependency_endings",
-                        ending.unwrap(),
-                        json!({"status":status}),
-                    ));
+                    )?;
+                    if applied && unannounced {
+                        commit.rows.push(put(
+                            "dependency_endings",
+                            ending.unwrap(),
+                            json!({"status":status}),
+                        ));
+                    }
                 }
             }
         }
@@ -590,6 +607,7 @@ impl Controller {
         if fact.number == 0 {
             return Err(Error::PrerequisiteNumber);
         }
+        let before = world.clone();
         let fact = retain_fact(snapshot, commit, fact)?;
         let mut outputs = Vec::new();
         for dependency in world.dependencies().to_vec() {
@@ -600,19 +618,26 @@ impl Controller {
                     .transpose()?
                     .is_some_and(|r| same_repository(&r.repo, &fact.repository))
             {
-                apply_fact(
+                self.apply_fact(
+                    snapshot,
                     world,
-                    dependency.node,
-                    Fact::Dependency {
-                        target: dependency.target,
-                        status: fact.status,
+                    Event::Fact {
+                        node: dependency.node,
+                        fact: Fact::Dependency {
+                            target: dependency.target,
+                            status: fact.status,
+                        },
                     },
                     &mut outputs,
                     commit,
-                );
+                )?;
             }
         }
         self.announce_dependency_endings(snapshot, world, Vec::new(), &mut outputs, commit)?;
+        if crate::input_errors::deferred(commit) {
+            *world = before;
+            return Ok(());
+        }
         self.record_kernel_result(snapshot, world.clone(), outputs, commit)
     }
 }
@@ -628,6 +653,14 @@ mod tests {
     use tl3_kernel::{Ack, Command, EarlyEnd};
 
     fn fixture(db: &mut Database, name: &str) -> (Repo, Controller, Repository) {
+        let (repo, controller, repository, _) = fixture_with_settings(db, name);
+        (repo, controller, repository)
+    }
+
+    fn fixture_with_settings(
+        db: &mut Database,
+        name: &str,
+    ) -> (Repo, Controller, Repository, tl3_config::Store) {
         let repo = Repo::new();
         let mut config =
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -645,7 +678,7 @@ mod tests {
             bootstrap,
         )
         .unwrap();
-        (repo, controller, repository)
+        (repo, controller, repository, config.store)
     }
 
     fn intake(c: &mut Controller, repo: &Repository, number: u64) -> NodeId {
@@ -665,6 +698,218 @@ mod tests {
         let node = NodeId(c.world().unwrap().nodes.len() as u64 - 1);
         confirm(c, node);
         node
+    }
+
+    /// State-table "Counter headroom": dependency steps use the same guard.
+    #[test]
+    fn dependency_steps_stop_at_counter_exhaustion() {
+        let mut db = Database::start();
+        let (_repo, mut c, repository) = fixture(&mut db, "dependency_headroom");
+        let node = intake(&mut c, &repository, 42);
+        let snapshot = c.snapshot().unwrap();
+        let mut world = crate::snapshot::decode(&snapshot).unwrap();
+        world.nodes[node.0 as usize].next_seq = u64::MAX;
+        let before = world.clone();
+        let mut outputs = Vec::new();
+        let mut commit = Commit::new("exhausted-dependency", json!({}), &snapshot);
+        c.apply_fact(
+            &snapshot,
+            &mut world,
+            Event::Fact {
+                node,
+                fact: Fact::Dependency {
+                    target: DependencyTarget {
+                        kind: PrerequisiteKind::Issue,
+                        number: 2761,
+                        request: None,
+                    },
+                    status: DependencyStatus::Pending,
+                },
+            },
+            &mut outputs,
+            &mut commit,
+        )
+        .unwrap();
+        assert_eq!(world, before);
+        assert!(outputs.is_empty());
+        assert!(commit.rows.iter().any(|row| matches!(
+            row,
+            RowChange::Put { table, value, .. }
+                if table == "incidents"
+                    && value["summary"] == "kernel counter headroom exhausted: next_seq"
+        )));
+    }
+
+    /// State-table "Counter headroom" / Fact row: a merge and all of its
+    /// waiter deliveries commit atomically, then retry exactly once after repair.
+    #[test]
+    fn exhausted_merge_fanout_retries_both_waiters_exactly_once() {
+        let mut db = Database::start();
+        let (_repo, mut c, repository) = fixture(&mut db, "dependency_fanout_headroom");
+        // Global ticket incidents clear on the configured operations issue.
+        c.bootstrap.operations = Some(tl3_config::OperationsIssue {
+            owner: repository.owner.clone(),
+            name: repository.name.clone(),
+            installation_id: repository.installation,
+            number: 2761,
+        });
+        let root = intake(&mut c, &repository, 2761);
+        let first = intake(&mut c, &repository, 42);
+        let second = intake(&mut c, &repository, 2772);
+        ingest(&mut c, first, &[2761]);
+        ingest(&mut c, second, &[2761]);
+        event(
+            &mut c,
+            Event::Command {
+                node: root,
+                id: 1,
+                command: Command::Stop,
+            },
+        );
+        confirm(&mut c, root);
+        let snapshot = c.snapshot().unwrap();
+        let mut world = c.world().unwrap();
+        world.nodes[0].had_pr = true;
+        world.nodes[0].credit.ready = true;
+        world.nodes[0].credit.start = 4;
+        let next_ticket = world.next_ticket;
+        world.next_ticket = u64::MAX - world.ticket_step_budget().unwrap();
+        assert!(world.headroom_ok());
+        assert!(world.valid());
+        let mut seed = Commit::new("seed-fanout", json!(null), &snapshot);
+        for ((table, id), value) in crate::snapshot::encode(&world).unwrap() {
+            seed.rows.push(put(&table, id, value));
+        }
+        c.store.commit(&seed).unwrap();
+        let before = c.world().unwrap();
+        let endings = |snapshot: &Snapshot| {
+            snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == "dependency_endings")
+                .map(|r| (r.id.clone(), r.value.clone()))
+                .collect::<BTreeMap<_, _>>()
+        };
+        // Stop already announced its Pending endings. The aborted merge must
+        // neither add nor update one of those durable announcements.
+        let before_endings = endings(&c.snapshot().unwrap());
+        let revision = c.snapshot().unwrap().revision;
+        c.observe(
+            "merge-with-two-waiters",
+            Observation::Kernel(Event::Fact {
+                node: root,
+                fact: Fact::PrMerged {
+                    head: tl3_kernel::HeadId(1),
+                    checks_passed: true,
+                },
+            }),
+        )
+        .unwrap();
+        assert!(c.drive_once().unwrap());
+        let snapshot = c.snapshot().unwrap();
+        let incident = snapshot
+            .rows
+            .iter()
+            .find(|r| {
+                r.table == "incidents" && r.value["signature"]["class"] == "kernel_counter_headroom"
+            })
+            .expect("the first waiter consumes the reserve before the second");
+        let incident = incident.id.clone();
+        assert_eq!(
+            c.world().unwrap(),
+            before,
+            "fan-out must not commit a merge or partial deliveries at exhaustion"
+        );
+        assert_eq!(
+            endings(&snapshot),
+            before_endings,
+            "unapplied endings must not be announced"
+        );
+        assert!(
+            snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "inbox" && r.id == "external:merge-with-two-waiters")
+        );
+
+        let mut repaired = c.world().unwrap();
+        repaired.next_ticket = next_ticket;
+        let mut repair = Commit::new("repair-fanout", json!(null), &snapshot);
+        for ((table, id), value) in crate::snapshot::encode(&repaired).unwrap() {
+            repair.rows.push(put(&table, id, value));
+        }
+        c.store.commit(&repair).unwrap();
+        let rob = c.bootstrap.rob;
+        observation(
+            &mut c,
+            Observation::GitHubComment {
+                repository,
+                issue: 2761,
+                comment: tl3_github::Comment {
+                    id: 902,
+                    body: format!("clear incident {incident}"),
+                    user: tl3_github::Actor {
+                        id: rob,
+                        login: "rob".into(),
+                    },
+                    created_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                    updated_at: "2026-11-05T00:00:00Z".parse().unwrap(),
+                    issue_url: "https://api.github.com/repos/owner/sandbox/issues/2761".into(),
+                },
+            },
+        );
+        assert!(c.drive_once().unwrap());
+        let world = c.world().unwrap();
+        for waiter in [first, second] {
+            assert_eq!(
+                world
+                    .dependencies()
+                    .iter()
+                    .find(|d| d.node == waiter)
+                    .unwrap()
+                    .status,
+                DependencyStatus::Delivered,
+                "every waiter must be delivered after replay"
+            );
+        }
+        let deliveries = c
+            .store
+            .events_after(revision, 1000)
+            .unwrap()
+            .into_iter()
+            .flat_map(|record| {
+                record.receipt.result["dependency_events"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter_map(|value| serde_json::from_value::<Event>(value).ok())
+            .filter_map(|event| match event {
+                Event::Fact {
+                    node,
+                    fact:
+                        Fact::Dependency {
+                            status: DependencyStatus::Delivered,
+                            ..
+                        },
+                } => Some(node),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            deliveries,
+            [first, second],
+            "each waiter delivery is committed once"
+        );
+        assert_eq!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .filter(|r| r.table == "dependency_endings")
+                .count(),
+            2
+        );
     }
 
     fn event(c: &mut Controller, event: Event) {
@@ -1189,4 +1434,5 @@ mod tests {
             assert_eq!(issue_status(&issue), expected);
         }
     }
+    mod refusal_properties;
 }

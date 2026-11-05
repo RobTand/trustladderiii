@@ -16,6 +16,12 @@ import check
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_python_lint_requires_command_id_policy(self):
+        """State-table Command row: the required Gate checks caller IDs."""
+        with patch.object(check, 'run') as run:
+            check.python_lint([])
+        run.assert_any_call(sys.executable, 'crates/controller/tools/check_command_ids.py')
+
     def test_shared_checker_matches_the_coordinator_pin(self):
         expected = 'decd9ce671299ece1b245811af459349ed9932ee9b81b2c4c7a13cf96b94f609'
         pin = Path(__file__).with_name('check_no_secret_leak.sha256')

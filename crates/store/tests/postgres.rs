@@ -252,6 +252,8 @@ fn put(id: &str, value: serde_json::Value) -> RowChange {
     }
 }
 
+/// State-table "Counter headroom": rollback undoes allocations; committed
+/// arrival numbers remain monotone after their rows are consumed.
 fn arrival_within_transaction(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let snapshot = store.load().unwrap();
@@ -279,6 +281,31 @@ fn arrival_within_transaction(settings: &tl3_config::Store) {
             .windows(2)
             .all(|pair| pair[0].arrival < pair[1].arrival)
     );
+    let last_arrival = before.rows.last().unwrap().arrival;
+    let mut consume = Commit::new("consume-latest", json!(null), &before);
+    consume.rows.push(RowChange::Delete {
+        table: "inbox".into(),
+        id: "effect:1".into(),
+    });
+    store.commit(&consume).unwrap();
+    let before_new = store.load().unwrap();
+    let mut next = Commit::new("next-arrival", json!(null), &before_new);
+    next.rows.push(RowChange::Put {
+        table: "inbox".into(),
+        id: "effect:new".into(),
+        value: json!(null),
+    });
+    store.begin_input().unwrap();
+    store.commit(&next).unwrap();
+    store.finish_input(false).unwrap();
+    assert_eq!(store.load().unwrap(), before_new);
+    store.commit(&next).unwrap();
+    let after_new = store.load().unwrap();
+    assert!(
+        after_new.rows.last().unwrap().arrival > last_arrival,
+        "consuming the newest row must not let its arrival number be reused"
+    );
+    let before = after_new;
     let mut update = Commit::new("update-arrival", json!(null), &before);
     update.rows.push(RowChange::Put {
         table: "inbox".into(),
@@ -803,7 +830,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
         [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22
         ]
     );
     for table in [
@@ -2202,6 +2229,7 @@ fn console_login_granted_before_migration(settings: &tl3_config::Store) {
 }
 
 /// #403: owed postmortems and code grades commit with the fact that makes them.
+/// State-table "Counter headroom": SQL defaults share rollback-safe identifiers.
 fn postmortem_records(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let mut listener = Listener::open(settings).unwrap();
@@ -2311,6 +2339,48 @@ fn postmortem_records(settings: &tl3_config::Store) {
             )
             .is_err(),
         "the share stays between 0 and 1"
+    );
+    // State-table "Counter headroom": implicit SQL allocation and the Rust
+    // commit path share one rollback-safe high-water mark.
+    let insert = "INSERT INTO tl3_postmortems
+        (node_id, trigger, reason, repo, issue, title, revision, owed_at)
+        SELECT node_id, 'sql-default', reason, repo, issue, title, revision, owed_at
+        FROM tl3_postmortems WHERE trigger = 'close' RETURNING id";
+    let previous: i64 = client
+        .query_one("SELECT MAX(id) FROM tl3_postmortems", &[])
+        .unwrap()
+        .get(0);
+    let sequence_before = client
+        .query_one(
+            "SELECT last_value, is_called FROM tl3_postmortems_id_seq",
+            &[],
+        )
+        .unwrap();
+    let mut transaction = client.transaction().unwrap();
+    let refused: i64 = transaction.query_one(insert, &[]).unwrap().get(0);
+    transaction.rollback().unwrap();
+    let committed: i64 = client.query_one(insert, &[]).unwrap().get(0);
+    assert!(
+        committed > previous,
+        "SQL defaults cannot reuse a committed ID"
+    );
+    assert_eq!(
+        refused, committed,
+        "rollback restores the default allocation"
+    );
+    let sequence_after = client
+        .query_one(
+            "SELECT last_value, is_called FROM tl3_postmortems_id_seq",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        sequence_before.get::<_, i64>(0),
+        sequence_after.get::<_, i64>(0)
+    );
+    assert_eq!(
+        sequence_before.get::<_, bool>(1),
+        sequence_after.get::<_, bool>(1)
     );
 }
 

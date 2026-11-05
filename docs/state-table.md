@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592) and Q39 postmortem lane (#642), and on 2026-11-04 with the postmortem lane's ladder fallback (#759). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51, and on 2026-11-02 with Q54, and on 2026-11-03 with the Q27 declared-symptom RED approval (#592) and Q39 postmortem lane (#642), and on 2026-11-04 with the postmortem lane's ladder fallback (#759), and on 2026-11-05 with the Q27 counter-headroom pause (#771). Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -10,6 +10,7 @@ Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, an
 |---|---|
 | **Compiler** | Rust's exhaustive matching. No catch-all arms, so an unhandled pair of state and event doesn't compile. |
 | **Kani** | A bounded proof over the pure kernel, in the form under "How Kani proves the rules". |
+| **Verus** | A proof over the executable Rust transitions for arbitrary finite worlds within its stated preconditions. |
 | **Witness** | A test that drives the kernel from the start to a given phase. |
 | **Simulation** | Deterministic tests of the controller against fakes of GitHub, Mergify, PrismaBuild, the agents and the clock, with a crash injected at every save point. loom covers the controller's concurrent code. |
 | **Setting** | GitHub, Mergify and runner configuration, checked by a script against a copy Rob approved. |
@@ -92,6 +93,7 @@ Kani proves that applying the witness's event lowers the measure. That is how th
 |---|---|
 | Every phase handles every event. | Compiler |
 | `valid(world)` holds after every step. | Kani |
+| **Counter headroom** (Q27, Rob, 2026-11-05, [#771 approval](https://github.com/RobTand/trustladderiii/issues/771#issuecomment-6648842596)). If applying an event would exceed a counter's proven headroom, it stays in the inbox, unapplied. One deduplicated incident names the exhausted counter. Kernel application pauses until that incident is cleared, then the retained events retry in their original order. All kernel counters for generations, command ids, effect sequences, tickets, questions and credit are `u64`, with credit widened from `u32`. | Verus for one-step bounds; Simulation for retention, incident deduplication, pause and ordered replay |
 | Settle ends, and afterwards no forward transition is left untaken. | Kani |
 | No dead states: the progress witness always names an event that lowers the progress measure. | Kani |
 | From every phase, stop followed by teardown reaches Closed. A teardown step that fails permanently waits on Rob, keeping what it holds. | Kani |
