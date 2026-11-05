@@ -585,3 +585,170 @@ def test_t842_real_ops_proof_shapes(repository, case):
     assert results[0].verdict == Verdict.PASS, results
     assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
     assert results[0].proof['rule'] == 'subject-observer-v1'
+
+
+def assemble_t842_case(tmp_path, case):
+    from tl3_harness.proof import assemble_proof
+
+    base, head, staged = (tmp_path / name for name in ('base', 'head', 'staged'))
+    for root, files in ((base, case['before']), (head, {**case['before'], **case['after']})):
+        root.mkdir()
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+    check = Check(case['case'], Kind.DEMONSTRATING, tuple(case['tests']),
+                  proof=model.Proof.parse(case['proof']))
+    receipt = assemble_proof(base, head, staged, check, {'test-files': ['tests/*.py']})
+    return receipt, base, head, staged
+
+
+@pytest.fixture
+def t842_cases():
+    return json.loads((Path(__file__).parent / 'fixtures/subject_observer/ops_1105.json').read_text())
+
+
+@pytest.mark.parametrize('extra', [
+    'TOKEN = globals()',
+    'TOKEN = locals()',
+    'TOKEN = vars(sys)',
+    'TOKEN = getattr(sys, "modules")',
+    'setattr(sys, "modules", {})',
+    'delattr(sys, "modules")',
+    'TOKEN = eval("1")',
+    'exec("subject = 1")',
+    'TOKEN = compile("1", "support", "eval")',
+    'TOKEN = __import__("subject")',
+    'TOKEN = sys.modules',
+    'TOKEN = sys.__dict__',
+    'TOKEN = sys',
+    'from sys import modules',
+    'import sys as system',
+    'import subject as sys',
+    'from subject import namespace as sys',
+    'import importlib',
+    'from importlib import import_module',
+    'from support_fix import *',
+    'TOKEN = sys.executable = "fixed"',
+    '(TOKEN, sys.executable) = ("context", "fixed")',
+    'sys.argv[0] = "fixed"',
+    'sys.argv[0] += "fixed"',
+    'del sys.argv[0]',
+    'del sys.executable',
+    'PATCH = mock.patch.object(sys, "argv", [])',
+    'with mock.patch.object(sys, "modules", {}): pass',
+])
+def test_t842_new_loader_context_keeps_namespace_and_write_refusals(tmp_path, t842_cases, extra):
+    # Q27/#645: admitting the real loader must not admit arbitrary support writes.
+    case = t842_cases[1]
+    case['after']['tests/test_pb_duplicate_arms.py'] += '\n' + extra + '\n'
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('old,new', [
+    ('experiments/graph_attest_702/submit.py', '../head/experiments/graph_attest_702/submit.py'),
+    ('spec.loader.exec_module(module)', 'spec.loader.exec_module(sys)'),
+    ('module = importlib.util.module_from_spec(spec)', 'module = sys.modules["subject"]'),
+    ('    return module', '    module.parse_plan = lambda path: []\n    return module'),
+    ('    return module', '    del module.parse_plan\n    return module'),
+    ('spec_from_file_location("graph_attest_submit", path)',
+     'spec_from_file_location("graph_attest_submit", path, submodule_search_locations=[])'),
+    ('from pathlib import Path', 'from pathlib import Path\nPath = lambda _: None'),
+    ('from pathlib import Path', 'from .pathlib import Path'),
+])
+def test_t842_loader_must_execute_a_fresh_module_from_the_declared_subject(tmp_path, t842_cases, old, new):
+    # #842: no head-only path, existing module, replacement loader or subject mutation.
+    case = t842_cases[1]
+    path = 'tests/test_pb_duplicate_arms.py'
+    assert old in case['after'][path]
+    case['after'][path] = case['after'][path].replace(old, new, 1)
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('binding', [
+    '_X86_CONFIG = dict(x86_producer={})',
+    '_X86_CONFIG = globals()',
+    '_X86_CONFIG = pbtest_capabilities.classify_files = {}',
+    '_X86_CONFIG, pbtest_capabilities.classify_files = {}, None',
+    '_X86_CONFIG = {}; pbtest_capabilities.classify_files = lambda *args: ({}, ["fixed"])',
+    '_X86_CONFIG = {}; del pbtest_capabilities.classify_files',
+    '_X86_CONFIG = {}; from support_fix import *',
+])
+def test_t842_inferred_support_is_only_a_single_plain_literal_binding(tmp_path, t842_cases, binding):
+    case = t842_cases[0]
+    path = 'tests/test_pbtest_capability_cohorts.py'
+    source = case['after'][path]
+    start = source.index('_X86_CONFIG =')
+    end = source.index('@pytest.mark.parametrize', start)
+    case['after'][path] = source[:start] + binding + '\n\n' + source[end:]
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+def test_t842_inference_cannot_graft_a_declared_constant_subject(tmp_path, t842_cases):
+    case = t842_cases[0]
+    case['proof']['subjects'].append('tests/test_pbtest_capability_cohorts.py::_X86_CONFIG')
+    with pytest.raises(model.ProofRefusal, match='rebind a base or subject'):
+        assemble_t842_case(tmp_path, case)
+
+
+def test_t842_inference_preserves_an_existing_constant_subject(tmp_path, t842_cases):
+    case = t842_cases[0]
+    path = 'tests/test_pbtest_capability_cohorts.py'
+    case['before'][path] += '\n_X86_CONFIG = {"base": True}\n'
+    case['proof']['subjects'].append(path + '::_X86_CONFIG')
+    receipt, base, _, staged = assemble_t842_case(tmp_path, case)
+    from tl3_harness.proof import unit
+
+    assert unit(staged, path + '::_X86_CONFIG') == unit(base, path + '::_X86_CONFIG')
+    assert path + '::_X86_CONFIG' not in receipt['support_sha256']
+
+
+def test_t842_inferred_literal_support_is_bound_in_the_receipt(tmp_path, t842_cases):
+    import hashlib
+
+    case = t842_cases[0]
+    receipt, base, head, staged = assemble_t842_case(tmp_path, case)
+    from tl3_harness.proof import unit
+
+    support = 'tests/test_pbtest_capability_cohorts.py::_X86_CONFIG'
+    subject = case['proof']['subjects'][0]
+    assert receipt['support_sha256'][support] == hashlib.sha256(unit(head, support).encode()).hexdigest()
+    assert unit(staged, support) == unit(head, support)
+    assert unit(staged, subject) == unit(base, subject)
+    assert receipt['declaration'] == case['proof']
+
+
+def test_t842_literal_inference_cannot_shadow_a_base_wildcard(tmp_path, t842_cases):
+    case = t842_cases[0]
+    case['before']['tests/test_pbtest_capability_cohorts.py'] += (
+        '\nfrom old_support import *\n'
+        'def test_an_unreadable_assigned_file_is_refused_by_name(): pass\n')
+    with pytest.raises(model.ProofRefusal, match='wildcard'):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('extra', [
+    '__file__ = "/head/tests/test_pb_duplicate_arms.py"',
+    'del __file__',
+    'from somewhere import location as __file__',
+])
+def test_t842_loader_cannot_replace_its_repository_anchor(tmp_path, t842_cases, extra):
+    case = t842_cases[1]
+    case['after']['tests/test_pb_duplicate_arms.py'] += '\n' + extra + '\n'
+    with pytest.raises(model.ProofRefusal, match='dynamic namespace'):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('source', [
+    'import sys\nTOKEN = sys.executable\n',
+    'from sys import executable\n',
+    'import importlib.util\n',
+])
+def test_t842_loader_exceptions_do_not_apply_to_unrelated_support(source):
+    from tl3_harness.proof import validate_support
+
+    with pytest.raises(model.ProofRefusal, match='dynamic namespace'):
+        validate_support(source, 'support.py')

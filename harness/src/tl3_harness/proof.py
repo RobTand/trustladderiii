@@ -81,7 +81,61 @@ def written_bindings(source, namespace=()):
     return writes
 
 
-def validate_support(source, module):
+def observer_context_imports(tree, module, subjects):
+    """Recognize the isolated script loader and CLI setup from tessera #1638."""
+    allowed = set()
+    path_imports = [node for node in tree.body if 'Path' in bound_names(ast.unparse(node))]
+    plain_path = (len(path_imports) == 1 and isinstance(path_imports[0], ast.ImportFrom)
+                  and path_imports[0].module == 'pathlib' and path_imports[0].level == 0
+                  and any(alias.name == 'Path' and not alias.asname for alias in path_imports[0].names)
+                  and '__file__' not in bound_names(ast.unparse(tree))
+                  and not any(isinstance(node, ast.Name) and node.id in {'Path', '__file__'}
+                              and isinstance(node.ctx, (ast.Store, ast.Del)) for node in ast.walk(tree)))
+    for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
+        for subject in {item.split('::')[0] for item in subjects} if plain_path else ():
+            template = ast.parse(f'''def {function.name}():
+    import importlib.util
+    path = Path(__file__).resolve().parents[{len(Path(module).parts) - 1}] / {subject!r}
+    spec = importlib.util.spec_from_file_location("proof_subject", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+''').body[0]
+            # The name given to a fresh, unregistered module has no proof meaning.
+            if len(function.body) == 6 and isinstance(function.body[2], ast.Assign):
+                call = function.body[2].value
+                if isinstance(call, ast.Call) and call.args and isinstance(call.args[0], ast.Constant):
+                    template.body[2].value.args[0] = call.args[0]
+            if ast.dump(function) == ast.dump(template):
+                allowed.add(id(function.body[0]))
+    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    sys_bindings = [node for node in ast.walk(tree) if isinstance(node, ast.alias)
+                    and (node.asname or node.name.split('.')[0]) == 'sys']
+    plain_sys = (all(isinstance(parents[id(node)], ast.Import) and node.name == 'sys' and not node.asname
+                     for node in sys_bindings)
+                 and not any(isinstance(node, ast.arg) and node.arg == 'sys'
+                             or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == 'sys'
+                             for node in ast.walk(tree)))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name) or node.id != 'sys':
+            continue
+        parent = parents[id(node)]
+        if isinstance(parent, ast.Attribute) and parent.attr == 'executable' and isinstance(parent.ctx, ast.Load):
+            continue
+        # Only a scoped argv patch is CLI setup. sys cannot escape as an object.
+        if (isinstance(parent, ast.Call) and ast.unparse(parent.func) == 'mock.patch.object'
+                and len(parent.args) == 3 and parent.args[0] is node
+                and isinstance(parent.args[1], ast.Constant) and parent.args[1].value == 'argv'
+                and not parent.keywords and isinstance(parents.get(id(parent)), ast.withitem)):
+            continue
+        break
+    else:
+        allowed.update(id(node) for node in ast.walk(tree) if plain_sys and isinstance(node, ast.Import)
+                       and len(node.names) == 1 and node.names[0].name == 'sys' and not node.names[0].asname)
+    return allowed
+
+
+def validate_support(source, module, *, observer_context=False, subjects=()):
     """Support adds plain bindings, never writes to existing objects or namespaces."""
     names = {'globals', 'locals', 'vars', 'eval', 'exec', 'compile', '__import__',
              'getattr', 'setattr', 'delattr', '__builtins__'}
@@ -89,7 +143,9 @@ def validate_support(source, module):
                   '__setattr__', '__delattr__', 'f_globals', 'f_locals', 'gi_frame',
                   'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules'}
     modules = {'builtins', 'sys', 'inspect', 'importlib', '__main__'}
-    nodes = list(ast.walk(ast.parse(textwrap.dedent(source))))
+    tree = ast.parse(textwrap.dedent(source))
+    allowed = observer_context_imports(tree, module, subjects) if observer_context else set()
+    nodes = list(ast.walk(tree))
     for node in nodes:
         if isinstance(node, ast.ImportFrom) and any(alias.name == '*' for alias in node.names):
             raise ProofRefusal('wildcard import in support can rebind base bindings', module, node.module or '.')
@@ -98,7 +154,7 @@ def validate_support(source, module):
             symbol = node.id
         elif isinstance(node, ast.Attribute) and node.attr in attributes:
             symbol = node.attr
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        elif isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) not in allowed:
             imported = [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]
             symbol = next((name for name in imported if name.split('.')[0] in modules), None)
         if symbol:
@@ -155,7 +211,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         if any(overlaps(observer, other) for other in observers[index + 1:]):
             raise ProofRefusal('overlapping observer selections', observer.split('::')[0])
     paths = {item.split('::')[0] for item in (*observers, *support)}
-    identities = {}
+    identities, inferred_support = {}, set()
     for name in sorted(paths):
         if not is_test(name, config['test-files']) and any(item.split('::')[0] == name for item in observers):
             raise ProofRefusal('observer is outside configured tests', name)
@@ -164,6 +220,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             raise ProofRefusal('missing head observer module', name)
         old = old_path.read_bytes().decode() if old_path.is_file() else ''
         new = new_path.read_bytes().decode()
+        observer_context = not old_path.exists() and any(item.split('::')[0] == name for item in observers)
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
@@ -173,8 +230,9 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         for item in requested:
             if item in support:
                 text, _ = source_unit(new, item)
-                validate_support(text, name)
-                support_required.update(global_names(text, name))
+                validate_support(text, name, observer_context=observer_context and item == name, subjects=subjects)
+                if item != name:
+                    support_required.update(global_names(text, name))
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
                     and bound_names(ast.unparse(statement)) & support_required):
@@ -256,11 +314,36 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                 statement.names = aliases
                 imports.append(ast.unparse(statement))
                 bound.update(bound_names(imports[-1]))
+        # PB #2816: missing literal test data is new support, never a head subject.
+        for symbol in sorted(required - bound):
+            item = name + '::' + symbol
+            text, _ = source_unit(new, item, optional=True)
+            if text is None:
+                continue
+            statements = ast.parse(textwrap.dedent(text)).body
+            if len(statements) != 1:
+                continue
+            statement = statements[0]
+            if not (isinstance(statement, ast.Assign) and len(statement.targets) == 1
+                    and isinstance(statement.targets[0], ast.Name) and statement.targets[0].id == symbol):
+                continue
+            try:
+                ast.literal_eval(statement.value)
+            except (ValueError, TypeError, SyntaxError):
+                continue
+            validate_support(text, name)
+            guard(text, item)
+            if '*' in bound_names(old):
+                raise ProofRefusal('literal support cannot shadow a base wildcard binding', name, symbol)
+            imports.append(text)
+            bound.add(symbol)
+            inferred_support.add(item)
+            identities[item] = digest(text)
         missing = required - bound
         if missing:
             raise ProofRefusal('unresolved observer symbol; add a new observer_support definition or local import',
                                name, sorted(missing)[0])
-        # Imports follow a possible module docstring and __future__ statements.
+        # Imports and literal support follow a module docstring and __future__ statements.
         module = ast.parse(composed)
         insertion = 0
         for statement in module.body:
@@ -292,6 +375,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             'subjects': {name: {'base': identity(base, name), 'head': identity(head, name)}
                          for name in subjects or inferred if name.endswith('.py') or '::' in name},
             'observer_sha256': {test: identity(head, test.split('[', 1)[0]) for test in check.tests},
-            'support_sha256': {name: identities[name] for name in support},
+            'support_sha256': {name: identities[name] for name in sorted(set(support) | inferred_support)},
             'source_base_tree_sha256': tree_sha256(base),
             'base_tree_sha256': tree_sha256(destination), 'head_tree_sha256': tree_sha256(head)}
