@@ -215,7 +215,26 @@ def _recovery_verus_test_impl(ctx):
     ctx.actions.write(launcher, """#!/bin/bash
 set -euo pipefail
 cd "${RUNFILES_DIR:-$0.runfiles}/%s"
-exec python3 -c 'import resource, subprocess, sys; result = subprocess.run(sys.argv[1:]); print("VERUS_PEAK_RSS_KB", resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, flush=True); sys.exit(result.returncode)' "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
+exec python3 - "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s" <<'PY'
+import os, resource, subprocess, sys, time
+started = time.monotonic()
+arguments = sys.argv[1:]
+code = 0
+if arguments[-1] != 'recovery':
+    # Check the implementation contracts in every theorem target, so a mutant
+    # cannot pass by relying on the very contract its body violates.
+    core = arguments.copy()
+    core[-3], core[-1] = '8', 'recovery'
+    environment = dict(os.environ)
+    environment.pop('TEST_UNDECLARED_OUTPUTS_DIR', None)
+    code = subprocess.run(core, env=environment).returncode
+if code == 0:
+    code = subprocess.run(arguments).returncode
+seconds = time.monotonic() - started
+print('VERUS_GROUP_SECONDS', seconds, flush=True)
+print('VERUS_PEAK_RSS_KB', resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, flush=True)
+sys.exit(code or (1 if seconds > 30 else 0))
+PY
 """ % (
         ctx.workspace_name,
         ctx.executable._runner.short_path,
