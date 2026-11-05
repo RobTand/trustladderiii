@@ -1303,7 +1303,10 @@ impl Executor for Supervisor {
     }
 
     fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
-        Ok(self.quota_candidates(delivery)?.iter().any(|candidate| candidate.model == model))
+        Ok(self
+            .quota_candidates(delivery)?
+            .iter()
+            .any(|candidate| candidate.model == model))
     }
 
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {

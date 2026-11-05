@@ -1655,6 +1655,10 @@ impl Controller {
                 // from the worker's ending when quota_resume_ms next reads it.
                 state.quota_ms = Some(now);
                 state.quota_retry_ms = Some(now);
+                // Operator evidence ends this allowance's bounded-hint regime.
+                // Keep any live probe's shared lease until its actual ending.
+                state.quota_probe_at_ms = None;
+                state.quota_probe_model = None;
                 state.due_ms = Some(now);
                 commit
                     .rows
