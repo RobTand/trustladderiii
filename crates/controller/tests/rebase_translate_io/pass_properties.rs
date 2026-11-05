@@ -14,7 +14,10 @@ fn schedule(kind: u8) -> Schedule {
     }
 }
 fn arm<'a>(s: &'a str, name: &str) -> &'a str {
-    let s = s.find("        let event = match observation {").map(|i| &s[i..]).unwrap_or(s);
+    let s = s
+        .find("        let event = match observation {")
+        .map(|i| &s[i..])
+        .unwrap_or(s);
     let a = s
         .find(&format!(
             "            Observation::{name}{}",
@@ -28,7 +31,10 @@ fn arm<'a>(s: &'a str, name: &str) -> &'a str {
     &s[a..end]
 }
 fn scratch(s: &str) -> &str {
-    let s = s.find("        let event = match observation {").map(|i| &s[i..]).unwrap_or(s);
+    let s = s
+        .find("        let event = match observation {")
+        .map(|i| &s[i..])
+        .unwrap_or(s);
     let a = s.find("            Observation::ScratchSaved {").unwrap();
     let end = s[a..]
         .find("            Observation::Progress {")
@@ -78,6 +84,14 @@ fn pinned_nine_real_old_current_pass_through_arms_and_helpers() {
             pins["helpers"][name]
         );
     }
+    let kernel = include_str!("../../src/kernel_boundary.rs");
+    let function = |source: &str| {
+        let start = source.find("pub(crate) fn validate_raw_event(").unwrap();
+        let end = start + source[start..].find("\n}\n").unwrap() + 3;
+        source[start..end].to_owned()
+    };
+    assert_eq!(function(old), function(kernel));
+    assert_eq!(function(new), function(kernel));
 }
 #[test]
 fn mandatory_scratch_saved_shell() {

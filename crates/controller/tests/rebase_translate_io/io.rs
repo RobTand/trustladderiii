@@ -276,8 +276,8 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
                 world.nodes.push(node);
             }
             let snapshot = tl3_store::Snapshot {
-                revision: tl3_store::Revision(0),
-                epoch: tl3_store::Epoch(0),
+                revision: tl3_store::Revision::ZERO,
+                epoch: tl3_store::Epoch::ZERO,
                 rows: step
                     .request
                     .as_ref()
@@ -286,7 +286,7 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
                             table: "requests".into(),
                             id: step.node.to_string(),
                             value: v.clone(),
-                            version: tl3_store::Revision(0),
+                            version: tl3_store::Revision::ZERO,
                             arrival: 0,
                         }]
                     })
