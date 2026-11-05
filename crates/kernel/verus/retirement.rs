@@ -1,4 +1,7 @@
 //! #806: complete safety assertions retained when retiring bounded Kani proofs.
+pub(super) use super::retirement_apply::*;
+pub(super) use super::retirement_frames::*;
+pub(super) use super::retirement_node::*;
 use super::*;
 
 verus! {
@@ -211,73 +214,11 @@ pub(super) open spec fn fact_pre(n: Node, fact: Fact) -> bool {
     }
 }
 
-/// State-table consistency is insensitive to a world's Vec allocation identity.
-pub(super) proof fn node_frame(before: World, after: World, n: Node)
-    requires before.gates@ == after.gates@, before.file_sets@ == after.file_sets@,
-        before.next_ticket == after.next_ticket, before.next_question == after.next_question,
-    ensures node_rules(before, n) == node_rules(after, n),
-{
-    reveal(node_rules);
-    footprint::storage_frame(before, after, n.footprint, n.footprint);
-}
 
-/// State-table fact rows / #806: all per-node consistency and check_nodes rules.
-/// One event, no unwind: the real handler has no loop. Counters need only one increment.
-pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
-    requires node_rules(w, n), selected(fact), node_headroom(n),
-    ensures node_rules(w, fact_node(n, fact)),
-        fact_node(n, fact).proposed == n.proposed,
-        n.adopted ==> fact_node(n, fact).adopted,
-        fact_node(n, fact).next_seq >= n.next_seq,
-        (n.phase is Closed ==> fact_node(n, fact).phase == n.phase
-            || (fact_node(n, fact).phase == Phase::Closed(Outcome::Merged)
-                && matches!(n.phase, Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced)))),
-        fact_node(n, fact).credit.earned as int <= n.credit.earned as int + 1,
-        (fact_node(n, fact).credit.earned > n.credit.earned
-            ==> !n.credit.merge_credited && fact_node(n, fact).credit.merge_credited),
-        fact_node(n, fact).credit == n.credit || fact is PrMerged,
-        fact_node(n, fact).review_stop == n.review_stop,
-        fact_node(n, fact).credit.withheld == n.credit.withheld,
-        fact_node(n, fact).attempt == n.attempt, fact_node(n, fact).replanned == n.replanned,
-        (fact_node(n, fact).question.is_some() ==> fact_node(n, fact).question == n.question),
-        fact_node(n, fact).phase is Planning ==> n.phase is Planning,
-        !fact_node(n, fact).holds || n.holds,
-        !fact_node(n, fact).pool || n.pool,
-        fact_node(n, fact).ticket.is_none() || fact_node(n, fact).ticket == n.ticket,
-        fact_node(n, fact).repo == n.repo, fact_node(n, fact).footprint == n.footprint,
-{
-    reveal(node_rules); reveal(fact_node); reveal(stopped); reveal(incident);
-    match fact {
-        Fact::IncidentCleared { .. } => {},
-        Fact::PrDequeuedByPerson => {},
-        Fact::CiFailed { infra: true } => {},
-        Fact::PrMerged { .. } => {},
-        Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict | Fact::UpstreamStalled => {},
-        _ => {},
-    }
-}
 
-/// State-table global consistency / #806: node-local facts cannot acquire
-/// a slot, pool grant, conflicting footprint or duplicate ticket.
-pub(super) proof fn fact_preserves_world(before: World, after: World, fact: Fact)
-    requires domain(before), accepted(before), selected(fact), fact_pre(before.nodes@[0], fact),
-        node_headroom(before.nodes@[0]),
-        after.nodes@ == before.nodes@.update(0, fact_node(before.nodes@[0], fact)),
-        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
-        after.next_ticket == before.next_ticket, after.next_question == before.next_question,
-        after.pool_capacity == before.pool_capacity, after.dependencies@ == before.dependencies@,
-    ensures domain(after), accepted(after),
-{
-    reveal(accepted); reveal(fact_node);
-    fact_preserves_node(before, before.nodes@[0], fact);
-    node_frame(before, after, after.nodes@[0]);
-    node_frame(before, after, after.nodes@[1]);
-    assert forall|r: int| 0 <= r < 2 implies
-        holders(after, RepoId(r as u64), 2) <= after.gates@[r].w by {
-        assert(holders(after, RepoId(r as u64), 2) <= holders(before, RepoId(r as u64), 2));
-    }
-    footprint::storage_frame(before, after, before.nodes@[0].footprint, before.nodes@[1].footprint);
-}
+
+
+
 }
 
 verus! {
@@ -291,70 +232,6 @@ pub(super) open spec fn bounded(w: World) -> bool {
                 && n.credit.start < 1099511627776u64 && n.credit.earned < 1099511627776u64
                 && n.credit.added < 1099511627776u64 && n.credit.spent < 1099511627776u64
         }
-}
-}
-
-kernel_fn! {
-/// State-table selected safety fact rows / #806.
-/// Bound: one real apply on the original two-node construction, with no unwind.
-/// Settledness is unnecessary. Full consistency, all shared Kani node assertions,
-/// notice-only outputs, truthful merges and unapproved-merge notes are preserved.
-pub(super) fn verify_selected_apply(mut w: World, fact: Fact) -> (result: (World, Outbox)) [
-    requires domain(w), accepted(w), bounded(w), storage_ordered(w),
-        selected(fact), fact_pre(w.nodes@[0], fact),
-    ensures domain(result.0), accepted(result.0),
-        result.0.nodes@ == w.nodes@.update(0, fact_node(w.nodes@[0], fact)),
-        notices_only(result.1),
-        fact is Priority ==> result.1.len == 0,
-        match fact {
-            Fact::Conflict => {
-                let n = w.nodes@[0];
-                let after = result.0.nodes@[0];
-                if matches!(n.phase, Phase::Publishing | Phase::Queued) {
-                    after.phase == Phase::Rebasing && after.generation == n.generation + 1
-                        && after.credit == n.credit && after.holds == n.holds
-                } else { after == n }
-            },
-            Fact::PrMerged { head, checks_passed } => w.nodes@[0].had_pr
-                && w.nodes@[0].merged.is_none() && !(w.nodes@[0].phase is Closed)
-                ==> result.0.nodes@[0].merged == Some(head)
-                    && result.0.nodes@[0].phase == Phase::Stopping(Outcome::Merged)
-                    && (!(w.nodes@[0].approved == Some(head) && checks_passed)
-                        ==> unapproved_note(result.1, 0)),
-            Fact::CiFailed { infra: true } => result.0.nodes@[0].credit == w.nodes@[0].credit
-                && (result.0.nodes@[0].waiting_incident
-                    || result.0.nodes@[0].run_failures > w.nodes@[0].run_failures)
-                && match w.nodes@[0].effect {
-                    None => true,
-                    Some(e) => match result.0.nodes@[0].effect {
-                        Some(current) => current.seq == e.seq && current.cancelling, None => false,
-                    },
-                },
-            _ => true,
-        },
-] proof [
-    reveal(world_headroom); reveal_with_fuel(open_prefix, 3); reveal(storage_ordered);
-    reveal(empty_outbox); reveal(retirement_domain); reveal(retirement_accepted);
-    reveal(accepted); reveal(bounded); reveal(notices_only); reveal(fact_node); reveal(stopped); reveal(incident);
-] {
-    kernel_snapshot! { before = w }
-    kernel_proof! {
-        open_prefix_monotone(w.nodes@, 0, w.nodes@.len());
-        assert forall|j: int| 0 <= j < w.nodes@.len() implies node_headroom(w.nodes@[j]) by {}
-        assert(world_headroom(w));
-    }
-    kernel_proof! { dependencies::indexable_definition(w); }
-    let checked_before = w.check();
-    assert!(checked_before.is_ok());
-    kernel_proof! { world_checked_definition(w); }
-    let mut out = Outbox::new();
-    apply(&mut w, Event::Fact { node: NodeId(0), fact }, &mut out);
-    kernel_proof! {
-        fact_preserves_world(before@, w, fact);
-    }
-    let checked = w.check();
-    assert!(checked.is_ok());
-    (w, out)
 }
 }
 
@@ -390,29 +267,6 @@ pub(super) open spec fn fact_frame(before: World, after: World, i: usize,
 }
 
 verus! {
-/// State-table infrastructure row / #806: derive the common frame separately
-/// from the executable branch proof to bound each solver query.
-pub(super) proof fn infrastructure_frame(before: World, after: World, i: usize,
-    out_before: Outbox, out_after: Outbox)
-    requires i < before.nodes@.len(),
-        node_headroom(before.nodes@[i as int]),
-        after.nodes@[i as int] == fact_node(before.nodes@[i as int], Fact::CiFailed { infra: true }),
-        before.nodes@[i as int].phase == Phase::Queued ||
-            (before.nodes@[i as int].phase == Phase::Publishing
-                && current_item(before.nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue))),
-        after.nodes@.len() == before.nodes@.len(),
-        forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
-        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
-        after.dependencies@ == before.dependencies@, after.pool_capacity == before.pool_capacity,
-        after.fail_fast == before.fail_fast, after.next_ticket == before.next_ticket,
-        after.next_question == before.next_question, out_after.len <= out_before.len + 1,
-    ensures fact_frame(before, after, i, out_before, out_after),
-{
-    reveal(fact_node); reveal(fact_frame);
-}
-}
-
-verus! {
 /// State-table Q50: counter/first-retry result before any incident is raised.
 #[verifier::opaque]
 pub(super) open spec fn infrastructure_retry(n: Node) -> (Node, Option<bool>) {
@@ -424,17 +278,17 @@ pub(super) open spec fn infrastructure_retry(n: Node) -> (Node, Option<bool>) {
     }
 }
 
-/// State-table Q50 / #806: compose the actual counter helper and incident helper.
-pub(super) proof fn infrastructure_result(before: Node, after: Node, escalation: Option<bool>)
-    requires escalation == infrastructure_retry(before).1,
-        after == match escalation {
-            Some(needs_rob) => incident(infrastructure_retry(before).0, needs_rob),
-            None => infrastructure_retry(before).0,
-        },
-        before.phase == Phase::Queued || (before.phase == Phase::Publishing
-            && current_item(before) == Some(Item::Do(EffectKind::Enqueue))),
-    ensures after == fact_node(before, Fact::CiFailed { infra: true }),
+
+}
+
+verus! {
+/// #805 / stopping row: the original stop update decreases the real node metric.
+/// Isolate metric expansion from the executable handler's complete field frame.
+pub(super) proof fn stop_distance(n: Node, outcome: Outcome)
+    requires !n.paused, !n.waiting_incident, n.effect.is_none(),
+        !(n.phase is Closed || n.phase is Stopping),
+    ensures distance(stopped(n, outcome)) < distance(n),
 {
-    reveal(infrastructure_retry); reveal(incident); reveal(fact_node);
+    reveal(stopped); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
 }
 }

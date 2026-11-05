@@ -122,7 +122,13 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
-] proof [reveal(retirement::stopped); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+] proof [reveal(retirement::stopped);] {
+    kernel_proof! {
+        if !m.paused && !m.waiting_incident && m.effect.is_none()
+            && !(m.phase is Closed || m.phase is Stopping) {
+            retirement::stop_distance(*m, outcome);
+        }
+    }
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {

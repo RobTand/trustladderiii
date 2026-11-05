@@ -50,7 +50,8 @@ const ADDITIONAL_PROOFS: &[&str] = &[
 
 const LIB: &str = include_str!("../src/lib.rs");
 const PROOFS: &str = include_str!("../src/proofs.rs");
-const RETIREMENT: &str = include_str!("../verus/retirement.rs");
+const RETIREMENT_APPLY: &str = include_str!("../verus/retirement_apply.rs");
+const RETIREMENT_NODE: &str = include_str!("../verus/retirement_node.rs");
 const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
 
 // #806: these names retain their event/phase coverage after Kani retirement.
@@ -140,9 +141,9 @@ fn every_event_and_phase_has_a_proof() {
     let mut mapped = expand(mapped());
     mapped.extend(ADDITIONAL_PROOFS.iter().map(|name| name.to_string()));
     let mut proven: BTreeSet<String> = proven().into_iter().map(String::from).collect();
-    assert!(RETIREMENT.contains("fn verify_selected_apply("));
-    assert!(RETIREMENT.contains("fn fact_preserves_node("));
-    assert!(RETIREMENT.contains("fn fact_preserves_world("));
+    assert!(RETIREMENT_APPLY.contains("fn verify_selected_apply("));
+    assert!(RETIREMENT_NODE.contains("fn fact_preserves_node("));
+    assert!(RETIREMENT_APPLY.contains("fn fact_preserves_world("));
     for &(retired, group) in VERUS_RETIREMENTS {
         assert!(
             !proven.contains(retired),

@@ -42,6 +42,12 @@ mod events;
 #[path = "../verus/retirement.rs"]
 mod retirement;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_apply.rs"]
+mod retirement_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_frames.rs"]
+mod retirement_frames;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_gate.rs"]
 mod retirement_gate;
 #[cfg(verus_keep_ghost)]
@@ -53,6 +59,9 @@ mod retirement_merge_waiting_witness;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_merge_witness.rs"]
 mod retirement_merge_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_node.rs"]
+mod retirement_node;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_publishing.rs"]
 mod retirement_publishing;
