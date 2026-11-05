@@ -50,6 +50,7 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
         return
 
     cursor = tmp_path / "checker-cursor"
+    checker_stub.prepare_replay(request.node.nodeid, cursor)
     checker = tmp_path / "recorded-rust-checker"
     checker.write_text(
         f"#!{sys.executable}\n"

@@ -26,6 +26,9 @@ def test_interrupted_replay_keeps_a_complete_cursor(tmp_path, existing, publishe
     cursor = tmp_path / "cursor"
     if existing:
         cursor.write_text("0")
+    prepare = getattr(checker_stub, "prepare_replay", None)
+    if prepare is not None:
+        prepare(case, cursor)
     source = '''
 import os, sys
 from pathlib import Path
@@ -74,13 +77,21 @@ def test_prepared_replay_needs_no_corpus_in_the_child(tmp_path):
                                  input=json.dumps(row["document"]), capture_output=True, text=True)
         assert process.returncode == 0, process.stderr
         assert json.loads(process.stdout) == row["response"]
+    process = subprocess.run([sys.executable, str(stub), "--replay", case, str(cursor), *rows[-1]["command"]],
+                             input=json.dumps(rows[-1]["document"]), capture_output=True, text=True)
+    assert process.returncode != 0 and not process.stdout
+    assert "unrecorded Rust checker call" in process.stderr
 
 
+@pytest.mark.parametrize("prepared", [False, True])
 @pytest.mark.parametrize("wrong", ["command", "kind"])
-def test_out_of_order_calls_do_not_advance_cursor(tmp_path, wrong):
+def test_out_of_order_calls_do_not_advance_cursor(tmp_path, wrong, prepared):
     case, rows = recorded_case()
     row = rows[0]
     cursor = tmp_path / "cursor"
+    prepare = getattr(checker_stub, "prepare_replay", None)
+    if prepared and prepare is not None:
+        prepare(case, cursor)
     command = ["wrong-command"] if wrong == "command" else row["command"]
     document = {"kind": "wrong-kind"} if wrong == "kind" else row["document"]
     with pytest.raises(RuntimeError, match="out-of-order Rust checker call"):
@@ -90,6 +101,22 @@ def test_out_of_order_calls_do_not_advance_cursor(tmp_path, wrong):
     assert process.returncode != 0 and not process.stdout
     assert "out-of-order Rust checker call" in process.stderr
     assert not cursor.exists()
+
+
+def test_cursor_is_not_published_if_fsync_fails(tmp_path, monkeypatch):
+    case, rows = recorded_case()
+    cursor = tmp_path / "cursor"
+    cursor.write_text("0")
+
+    def failed_sync(descriptor):
+        raise OSError("injected cursor sync failure")
+
+    monkeypatch.setattr(os, "fsync", failed_sync)
+    row = rows[0]
+    with pytest.raises(OSError, match="injected cursor sync failure"):
+        checker_stub.replay(case, cursor, row["command"], row["document"])
+    assert cursor.read_text() == "0"
+    assert list(tmp_path.iterdir()) == [cursor]
 
 
 def test_replay_latency(tmp_path, capsys):
