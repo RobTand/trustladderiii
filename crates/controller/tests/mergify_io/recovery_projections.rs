@@ -314,12 +314,19 @@ fn mandatory_projection_parse_errors() {
     for table in ["requests", "queue_facts"] {
         let mut s = held_snapshot(true, None);
         *value(&mut s, table) = json!({});
-        assert!(
-            compare(Entry::Hold, Some(&s), &events(true))
-                .result
-                .is_err()
-        );
+        let fresh = if table == "requests" {
+            events(true)
+        } else {
+            vec![]
+        };
+        assert!(compare(Entry::Hold, Some(&s), &fresh).result.is_err());
     }
+    let mut s = held_snapshot(true, None);
+    *value(&mut s, "queue_facts") = json!({});
+    assert_eq!(
+        compare(Entry::Hold, Some(&s), &events(true)).result,
+        Ok(true)
+    );
 }
 
 /// #447: real repair gates short-circuit before approved-head/request/history projections.
