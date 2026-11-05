@@ -474,7 +474,7 @@ fn mandatory_a2_shell_new_attempt_ready() {
     over(&mut s, "file.read", ".intent", 1, 1);
     let r = compare(&s, Entry::Execute, A2Config::default(), false);
     assert_eq!(
-        file(&r, ".intent").expect(&format!("{r:#}"))["requeue"],
+        file(&r, ".intent").unwrap_or_else(|| panic!("{r:#}"))["requeue"],
         "Ready",
         "{r:#}"
     );
