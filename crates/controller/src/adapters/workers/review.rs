@@ -222,8 +222,10 @@ pub(super) fn inputs(
         inputs["generation_evidence"] = receipt.clone();
     }
     super::protocol::validate_inputs("reviewer", &inputs)?;
-    inputs.as_object_mut().unwrap().remove("standing_rules");
-    Ok(inputs)
+    // Keep schema diagnostics at their existing boundary before the typed wire.
+    let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
+        serde_json::from_value(inputs).expect("validated reviewer inputs match their wire type");
+    Ok(serde_json::to_value(&typed).expect("reviewer inputs serialize to JSON"))
 }
 
 pub(crate) fn criteria(
