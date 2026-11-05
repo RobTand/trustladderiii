@@ -1,6 +1,7 @@
 {
   "crate:tl3-controller-core": {
     "reason": "ctrl-core #730: new decision-only crate tl3-controller-core (no adapter dependencies) linked by tl3-controller",
-    "sources": 13
+    "sources": 13,
+    "max_fanout": 81
   }
 }
