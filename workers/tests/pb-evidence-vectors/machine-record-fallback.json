@@ -1,5 +1,840 @@
 {
   "version": 1,
   "kind": "machine-record-fallback",
-  "cases": []
+  "cases": [
+    {
+      "case": "supported-private-wins",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "private"
+            }
+          ],
+          "supported": true,
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "absent",
+      "input": {
+        "capability": "",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "wrong-schema",
+      "input": {
+        "capability": "{\"schema\":\"wrong\",\"machine_record_fd\":1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "bool",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": true}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "float",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1.0}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "zero",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 0}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "extra-field",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1, \"extra\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "no-newline",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "two-lines",
+      "input": {
+        "capability": "{}\n{}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "oversized",
+      "input": {
+        "capability": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "exit-2-fallback",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "private-empty",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_empty. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_empty",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-unterminated",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{}",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_unterminated. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_unterminated",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-not-object",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "[]\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_not_object. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_not_object",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-invalid-json",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_invalid_json. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_invalid_json",
+              "test_started": false
+            },
+            "cause": {
+              "type": "JSONDecodeError",
+              "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-multiple",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{}\n{}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_invalid_json. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_invalid_json",
+              "test_started": false
+            },
+            "cause": {
+              "type": "JSONDecodeError",
+              "message": "Extra data: line 2 column 1 (char 3)"
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-oversized",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "private_padding": 2097153
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_too_large. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_too_large",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "private-killed",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": -9
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_command_killed. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_command_killed",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "submission-refused",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 2,
+        "detach": true
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_submission: submission_refused_exit_2. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_submission",
+              "termination_reason": "submission_refused_exit_2",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "stdout-invalid-json",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_stdout: stdout_record_invalid_json. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_stdout",
+              "termination_reason": "stdout_record_invalid_json",
+              "test_started": false
+            },
+            "cause": {
+              "type": "JSONDecodeError",
+              "message": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+            }
+          },
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "stdout-not-object",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "[]",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_stdout: stdout_record_not_object. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_stdout",
+              "termination_reason": "stdout_record_not_object",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "stdout-no-newline-accepted",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{}",
+        "rc": 0
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {}
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "stdout-killed",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": -9
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_stdout: stdout_record_command_killed. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_stdout",
+              "termination_reason": "stdout_record_command_killed",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "stdout-refused",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "",
+        "rc": 2,
+        "detach": true
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_submission: submission_refused_exit_2. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_submission",
+              "termination_reason": "submission_refused_exit_2",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "stdout-oversized",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "stdout_padding": 2097153
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_stdout: stdout_record_too_large. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_stdout",
+              "termination_reason": "stdout_record_too_large",
+              "test_started": false
+            }
+          },
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "probe-io-fallback",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "probe_io_error": true
+      },
+      "output": {
+        "return": {
+          "value": [
+            0,
+            {
+              "source": "stdout"
+            }
+          ],
+          "supported": false,
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    },
+    {
+      "case": "private-io",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 0,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "action_io_error": true
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_channel: machine_record_io_failed. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_channel",
+              "termination_reason": "machine_record_io_failed",
+              "test_started": false
+            },
+            "cause": {
+              "type": "OSError",
+              "message": "fixture I/O unavailable"
+            }
+          },
+          "calls": [
+            "probe",
+            "private"
+          ],
+          "fallbacks": []
+        }
+      }
+    },
+    {
+      "case": "stdout-io",
+      "input": {
+        "capability": "{\"schema\": \"prismabuild.machine_record_capability.v1\", \"machine_record_fd\": 1}\n",
+        "capability_rc": 2,
+        "private": "{\"source\":\"private\"}\n",
+        "stdout": "{\"source\":\"stdout\"}\n",
+        "rc": 0,
+        "action_io_error": true
+      },
+      "output": {
+        "return": {
+          "error": {
+            "type": "ExecutionFailure",
+            "message": "Test execution transport_failure in prismabuild_stdout: stdout_record_io_failed. No test verdict is available; inspect this action, not fleet availability.",
+            "execution": {
+              "outcome": "transport_failure",
+              "phase": "prismabuild_stdout",
+              "termination_reason": "stdout_record_io_failed",
+              "test_started": false
+            },
+            "cause": {
+              "type": "OSError",
+              "message": "fixture I/O unavailable"
+            }
+          },
+          "calls": [
+            "probe",
+            "stdout"
+          ],
+          "fallbacks": [
+            "pbrun"
+          ]
+        }
+      }
+    }
+  ]
 }

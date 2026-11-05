@@ -58,7 +58,7 @@ def receipt():
             'receipt_sha256': 'd' * 64, 'log_sha256': 'e' * 64}
 
 
-def ending(raw, *, artifact=False):
+def ending(raw):
     return {'action_key': KEY, 'status': 'executed', 'exit_code': 0, 'succeeded': True,
             'attempt': 2, 'publication': {'generation': 'f' * 64},
             'result': {'verified': True, 'receipt_sha256': 'd' * 64,
@@ -518,14 +518,14 @@ def read_vectors(directory=DIRECTORY):
 
 def check_vectors(directory=DIRECTORY):
     vectors = read_vectors(directory)
-    check_coverage(vectors)
     for kind in KINDS:
         wanted = list(cases(kind))
         assert [case['case'] for case in vectors[kind]] == [name for name, _ in wanted], f'{kind}: case inventory drift'
         for case, (name, data) in zip(vectors[kind], wanted):
-            assert case['input'] == data, f'{kind}/{name}: input drift'
+            assert encoded(case['input']) == encoded(data), f'{kind}/{name}: input drift'
             actual = observe(kind, data)
-            assert case['output'] == actual, f'{kind}/{name}: Python drift\nexpected={case["output"]}\nactual={actual}'
+            assert encoded(case['output']) == encoded(actual), f'{kind}/{name}: Python drift\nexpected={str(case["output"])[:1000]}\nactual={str(actual)[:1000]}'
+    check_coverage(vectors)
     return vectors
 
 

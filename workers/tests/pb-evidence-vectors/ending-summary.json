@@ -1,5 +1,1737 @@
 {
   "version": 1,
   "kind": "ending-summary",
-  "cases": []
+  "cases": [
+    {
+      "case": "executed",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019",
+              "attempt": 2,
+              "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "cache-hit",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "cache_hit",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "cache_hit",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019",
+              "attempt": 2,
+              "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "key",
+      "input": {
+        "ending": {
+          "action_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_ending. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_ending",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild action did not succeed"
+          }
+        }
+      }
+    },
+    {
+      "case": "status",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "waiting",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_ending. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_ending",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild action did not succeed"
+          }
+        }
+      }
+    },
+    {
+      "case": "exit",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 1,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_ending. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_ending",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild action did not succeed"
+          }
+        }
+      }
+    },
+    {
+      "case": "succeeded",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": false,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_ending. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_ending",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild action did not succeed"
+          }
+        }
+      }
+    },
+    {
+      "case": "verified",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": false,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: unverified_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "unverified_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result lacks verified receipt evidence"
+          }
+        }
+      }
+    },
+    {
+      "case": "receipt-sha",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: unverified_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "unverified_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result lacks verified receipt evidence"
+          }
+        }
+      }
+    },
+    {
+      "case": "receipt-type",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": null,
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: unverified_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "unverified_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result lacks verified receipt evidence"
+          }
+        }
+      }
+    },
+    {
+      "case": "log-size-negative",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": -1,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_log_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_log_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result log exceeded its limit"
+          }
+        }
+      }
+    },
+    {
+      "case": "log-size-bool",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": true,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_log_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_log_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result log exceeded its limit"
+          }
+        }
+      }
+    },
+    {
+      "case": "log-size-limit",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 1048577,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_log_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_log_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result log exceeded its limit"
+          }
+        }
+      }
+    },
+    {
+      "case": "log-size-changed",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 1,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_log_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_log_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result log changed"
+          }
+        }
+      }
+    },
+    {
+      "case": "log-sha",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_log_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_log_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild result log changed"
+          }
+        }
+      }
+    },
+    {
+      "case": "attempt-bool-ignored",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": true,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019",
+              "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "generation-invalid-ignored",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "bad"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019",
+              "attempt": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "no-summary",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 6,
+              "sha256": "567b37fe7e3b26e1af3c8cb5dc30c8799296941a091d1123b2c8fd4d389b9087"
+            }
+          }
+        },
+        "log": "noise\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: missing_unique_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "missing_unique_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild returned no unique test summary"
+          }
+        }
+      }
+    },
+    {
+      "case": "two-summaries",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 410,
+              "sha256": "d2d48e36785f305d17ce58bc9dd905c89da41dc3a74323096773d36c5ed16042"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\nTL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: missing_unique_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "missing_unique_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "PrismaBuild returned no unique test summary"
+          }
+        }
+      }
+    },
+    {
+      "case": "json",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 19,
+              "sha256": "92ffa5c1b6d8346335a72ed6c67dd55b66d996d93a7ddf96bd1b6c0b658fceac"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "JSONDecodeError",
+            "message": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+          }
+        }
+      }
+    },
+    {
+      "case": "missing-log",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": null
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_log_receipt. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_log_receipt",
+            "test_started": false
+          },
+          "cause": {
+            "type": "FileNotFoundError",
+            "message": "[Errno 2] No such file or directory: '$ROOT/log'"
+          }
+        }
+      }
+    },
+    {
+      "case": "shape-status",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 202,
+              "sha256": "c5367fe2f559644bbc4d4eb9ad68a1bbe2283c2b0fd3691a0474f5c933aaf245"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"passed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "shape-tests",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 130,
+              "sha256": "ab9a54d340578c52c978d6cbee018033b37e1cc24705b8b074638f341317abc1"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": {}, \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "shape-note",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 207,
+              "sha256": "bd7a2f0efcc5a2a61f8dbd17d8f0302edf0c160404a2c38ba4bbc02610b9e00d"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": null}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "shape-totals",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 155,
+              "sha256": "16db66942e2aa82c38dae9fdab5749921b22afc5a77f6f663ee12d6167bd9d10"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": [], \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "totals-keys",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 166,
+              "sha256": "7e691afb6ee458897444bddc248d2bf1c7665881d775c034a68bbb2e6f1ec461"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "totals-negative",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 206,
+              "sha256": "ad3f2de1230f3885394f21099098684b36e65f22f4641cf0e9e5cc975c81e680"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": -1, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "totals-bool",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 208,
+              "sha256": "7833c5a7c6f005b0f4ab79b40f0830da59199d3ee75b1de3c47a2388ee2f301c"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": true, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "totals-float",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 207,
+              "sha256": "bb6b96fa35c196046dca33b9716ac79d51e827f6f8ad6f17f2b9926459dec849"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0.0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "test-shape",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 134,
+              "sha256": "2689a6cdc7be8b3f6ef6a5c608e920145a701f917530e41291cd49e0de979f97"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [null], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "test-name",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 177,
+              "sha256": "4f2c1911354bb2b8832498c623f6cfedc2ac2c710a7cc985c0d936c9714ca62d"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": 1, \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "test-outcome",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 206,
+              "sha256": "2c42f7c14220811c3ef4686d1b5619eb887d8dce6992dad717b6a1c861dcc717"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"unknown\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "Invalid summary structure"
+          }
+        }
+      }
+    },
+    {
+      "case": "totals-not-equal-node-count-accepted",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 206,
+              "sha256": "700a8f2118dd562c75a2af7052b8415d1fcf9b68a38697fd49b45cf04e2a9555"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 99, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 99,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "700a8f2118dd562c75a2af7052b8415d1fcf9b68a38697fd49b45cf04e2a9555",
+              "attempt": 2,
+              "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "exit-bool-accepted",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": false,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": false,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019",
+              "attempt": 2,
+              "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "succeeded-truthy-accepted",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": 1,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 205,
+              "sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\"}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "88e8eaca4c8af627fbe80bb75bad7fb2c10b20b3555675abddb37dc049a8c019",
+              "attempt": 2,
+              "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "symptom-valid",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 648,
+              "sha256": "ac85e4e5fd55be5c5191915356b453f0e1b752854ac606a8ce6d01ae4e7d6879"
+            }
+          }
+        },
+        "log": "TL3_SYMPTOM_RUN {\"run\": 1, \"records\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"symptom\"}], \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\"}\nTL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\", \"declared_symptom\": {\"node\": \"tests/test_old.py::test_old\", \"exception\": \"ValueError\", \"message\": \"broken\", \"phase\": \"call\", \"repeat\": 2, \"parallel\": 0}, \"symptom_runs\": [{\"run\": 1, \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\"}]}\n"
+      },
+      "output": {
+        "return": {
+          "status": "completed",
+          "tests": [
+            {
+              "test": "tests/test_old.py::test_old",
+              "outcome": "passed",
+              "message": ""
+            }
+          ],
+          "totals": {
+            "passed": 1,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "note": "",
+          "declared_symptom": {
+            "node": "tests/test_old.py::test_old",
+            "exception": "ValueError",
+            "message": "broken",
+            "phase": "call",
+            "repeat": 2,
+            "parallel": 0
+          },
+          "symptom_runs": [
+            {
+              "run": 1,
+              "sha256": "b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3"
+            }
+          ],
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "executed",
+              "exit_code": 0,
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "log_sha256": "ac85e4e5fd55be5c5191915356b453f0e1b752854ac606a8ce6d01ae4e7d6879",
+              "attempt": 2,
+              "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "symptom-missing",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 467,
+              "sha256": "219df7193885553e31c9cb214ec78b8c660a869a3a0b4221b459f96cc3e17850"
+            }
+          }
+        },
+        "log": "TL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\", \"declared_symptom\": {\"node\": \"tests/test_old.py::test_old\", \"exception\": \"ValueError\", \"message\": \"broken\", \"phase\": \"call\", \"repeat\": 2, \"parallel\": 0}, \"symptom_runs\": [{\"run\": 1, \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\"}]}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "missing symptom run receipt"
+          }
+        }
+      }
+    },
+    {
+      "case": "symptom-run-index",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 648,
+              "sha256": "95a48f2521296c235dfd8cc5070efcc5b3a68b761cc0671d7afec0bab9e3c2b5"
+            }
+          }
+        },
+        "log": "TL3_SYMPTOM_RUN {\"run\": 2, \"records\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"symptom\"}], \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\"}\nTL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\", \"declared_symptom\": {\"node\": \"tests/test_old.py::test_old\", \"exception\": \"ValueError\", \"message\": \"broken\", \"phase\": \"call\", \"repeat\": 2, \"parallel\": 0}, \"symptom_runs\": [{\"run\": 1, \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\"}]}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "symptom run receipt changed"
+          }
+        }
+      }
+    },
+    {
+      "case": "symptom-run-sha",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 648,
+              "sha256": "4c149f1aaedad4204e23f83bc612b9bfd174d7a4457826efd5f31b2896159f5d"
+            }
+          }
+        },
+        "log": "TL3_SYMPTOM_RUN {\"run\": 1, \"records\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"symptom\"}], \"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"}\nTL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\", \"declared_symptom\": {\"node\": \"tests/test_old.py::test_old\", \"exception\": \"ValueError\", \"message\": \"broken\", \"phase\": \"call\", \"repeat\": 2, \"parallel\": 0}, \"symptom_runs\": [{\"run\": 1, \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\"}]}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "symptom run receipt changed"
+          }
+        }
+      }
+    },
+    {
+      "case": "symptom-run-summary",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "executed",
+          "exit_code": 0,
+          "succeeded": true,
+          "attempt": 2,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "result": {
+            "verified": true,
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "stdout": {
+              "path": "$LOG",
+              "bytes": 663,
+              "sha256": "684f5a6771abd349422b28363486b747d1c4dbd348de2ee8aee956549195cab8"
+            }
+          }
+        },
+        "log": "TL3_SYMPTOM_RUN {\"run\": 1, \"records\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"symptom\"}], \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\", \"extra\": true}\nTL3_TEST_SUMMARY {\"status\": \"completed\", \"tests\": [{\"test\": \"tests/test_old.py::test_old\", \"outcome\": \"passed\", \"message\": \"\"}], \"totals\": {\"passed\": 1, \"failed\": 0, \"error\": 0, \"skipped\": 0}, \"note\": \"\", \"declared_symptom\": {\"node\": \"tests/test_old.py::test_old\", \"exception\": \"ValueError\", \"message\": \"broken\", \"phase\": \"call\", \"repeat\": 2, \"parallel\": 0}, \"symptom_runs\": [{\"run\": 1, \"sha256\": \"b21f369d3419abdb1e868ed24ca3e1cbe4cb83a96abfd6713792f4c534a75ae3\"}]}\n"
+      },
+      "output": {
+        "raise": {
+          "type": "ExecutionFailure",
+          "message": "Test execution transport_failure in summary: invalid_summary. No test verdict is available; inspect this action, not fleet availability.",
+          "execution": {
+            "outcome": "transport_failure",
+            "phase": "summary",
+            "termination_reason": "invalid_summary",
+            "test_started": false
+          },
+          "cause": {
+            "type": "ValueError",
+            "message": "symptom run receipt changed"
+          }
+        }
+      }
+    }
+  ]
 }
