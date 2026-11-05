@@ -41,7 +41,7 @@ fn python_finish_teardown_vectors_match_the_real_rust_mapping() {
                     Mode::Checking => tl3_harness_core::finish::checking_outcomes(
                         exit,
                         exit == 0,
-                        matches!(exit, 1 | 2 | 3),
+                        matches!(exit, 1..=3),
                     ),
                     Mode::Summary => tl3_harness_core::finish::summary_outcomes(
                         exit,
