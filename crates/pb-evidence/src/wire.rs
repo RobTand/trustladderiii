@@ -271,7 +271,9 @@ pub fn respond(operation: &str, raw: &str) -> Result<Box<RawValue>, serde_json::
     };
     document["operation"] = Value::String(operation.into());
     let output_order = layout(operation, &document, &input, summary);
-    let request: crate::Request = serde_json::from_value(document)?;
+    let request: crate::Request = // Deserialize the JSON representation: serde's internally tagged buffering
+    // rejects Value's native u128 visitor, while JSON retains arbitrary integers.
+    serde_json::from_str(&serde_json::to_string(&document).expect("JSON document serializes"))?;
     let decision = match (request, log) {
         (crate::Request::SummaryFinish { ending, key, .. }, Some(Ok(raw))) => {
             crate::ending::finish(&ending, &key, &raw, false)

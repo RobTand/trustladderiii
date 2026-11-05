@@ -226,7 +226,9 @@ pub fn evaluate(request: Request) -> Result<Value> {
 pub fn decide(operation: &str, mut document: Value) -> Value {
     python_json::normalize_floats(&mut document);
     document["operation"] = json!(operation);
-    let decision = serde_json::from_value(document)
+    let decision = // Deserialize the JSON representation: serde's internally tagged buffering
+    // rejects Value's native u128 visitor, while JSON retains arbitrary integers.
+    serde_json::from_str(&serde_json::to_string(&document).expect("JSON document serializes"))
         .map_err(|_| Refusal::value("invalid PB evidence request"))
         .and_then(evaluate);
     serde_json::to_value(match decision {
