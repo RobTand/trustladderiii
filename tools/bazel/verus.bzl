@@ -582,6 +582,7 @@ def verus_proofs():
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
+            "queries_wait_clone": ("kernel::queries#Wait::clone", 1),
             "kernel_credit_added_step_budget": ("kernel#CREDIT_ADDED_STEP_BUDGET", 1),
             "kernel_credit_earned_step_budget": ("kernel#CREDIT_EARNED_STEP_BUDGET", 1),
             "kernel_credit_spent_step_budget": ("kernel#CREDIT_SPENT_STEP_BUDGET", 1),
