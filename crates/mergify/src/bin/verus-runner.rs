@@ -13,7 +13,8 @@ fn check_summary(output: &str, expected: u64, partial: bool) -> Result<u64, Stri
         return Err("Verus must emit exactly one verifier summary".into());
     };
     let summary = if partial {
-        summary.strip_suffix(" (partial verification with `--verify-*`)")
+        summary
+            .strip_suffix(" (partial verification with `--verify-*`)")
             .ok_or("missing partial-verification marker")?
     } else {
         summary
@@ -30,7 +31,12 @@ fn check_summary(output: &str, expected: u64, partial: bool) -> Result<u64, Stri
     Ok(count)
 }
 
-fn check_result(status: Option<i32>, output: &str, expected: u64, partial: bool) -> Result<u64, String> {
+fn check_result(
+    status: Option<i32>,
+    output: &str,
+    expected: u64,
+    partial: bool,
+) -> Result<u64, String> {
     if status != Some(0) {
         return Err(format!("Verus failed or timed out: exit {status:?}"));
     }
@@ -39,8 +45,20 @@ fn check_result(status: Option<i32>, output: &str, expected: u64, partial: bool)
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let [verifier, z3, rustc, source, expected, label, module, threads] = args.as_slice() else {
-        return Err("usage: verus-runner VERUS Z3 RUSTC SOURCE EXPECTED LABEL MODULE THREADS".into());
+    let [
+        verifier,
+        z3,
+        rustc,
+        source,
+        expected,
+        label,
+        module,
+        threads,
+    ] = args.as_slice()
+    else {
+        return Err(
+            "usage: verus-runner VERUS Z3 RUSTC SOURCE EXPECTED LABEL MODULE THREADS".into(),
+        );
     };
     let expected = expected.parse::<u64>()?;
     if expected == 0 {
@@ -59,10 +77,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing private sysroot")?;
     let started = Instant::now();
     let mut process = Command::new("/usr/bin/timeout");
-    process.args(["--kill-after=5s", "45s"])
+    process
+        .args(["--kill-after=5s", "45s"])
         .arg(verifier)
-        .args(["--num-threads", &threads.to_string(), "--rlimit", "30",
-            "--multiple-errors", "0", "-V", "spinoff-all", "--sysroot"])
+        .args([
+            "--num-threads",
+            &threads.to_string(),
+            "--rlimit",
+            "30",
+            "--multiple-errors",
+            "0",
+            "-V",
+            "spinoff-all",
+            "--sysroot",
+        ])
         .arg(sysroot)
         .arg(source)
         .args(["--edition", "2024"]);
@@ -154,7 +182,13 @@ mod process_tests {
     fn rejects_timeout_nonzero_and_signal_even_with_a_success_summary() {
         for status in [Some(124), Some(1), None] {
             assert!(
-                check_result(status, "verification results:: 2 verified, 0 errors\n", 2, false).is_err()
+                check_result(
+                    status,
+                    "verification results:: 2 verified, 0 errors\n",
+                    2,
+                    false
+                )
+                .is_err()
             );
         }
     }

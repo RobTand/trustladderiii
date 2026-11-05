@@ -2867,18 +2867,21 @@ fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds); reveal(footprint::ordered_table);
-    reveal(footprint::valid_footprint);] {
+] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
+    kernel_snapshot! { before_files = *w }
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
+        kernel_snapshot! { after_union = *w }
         let m = &mut w.nodes[i];
         m.credit.spend(1);
         m.footprint = footprint;
         m.holds = false;
         set_phase(m, Phase::Ready(Resume::Making));
+        kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
     } else if fits && !files.is_empty() && w.fail_fast {
         // Q54 stops retries, not credit decisions: Rob funds the extension.
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
+        kernel_snapshot! { after_union = *w }
         w.nodes[i].footprint = footprint;
         ask_rob(
             w,
@@ -2888,8 +2891,10 @@ fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             1,
             out,
         );
+        kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
     } else {
         out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
+        kernel_proof! { footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint); }
     }
     }
 }

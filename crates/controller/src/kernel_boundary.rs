@@ -18,12 +18,12 @@ use vstd::prelude::*;
 )]
 pub(crate) fn validate_raw_event(event: Event) -> Result<Event, &'static str> {
     match event {
-        Event::Command { .. } => Err(
-            "commands must come from the steering constructors, which assign next_command_id",
-        ),
-        Event::Ack { .. } | Event::NewRequest { .. } | Event::NewAdoption { .. } => Err(
-            "acknowledgements require an effect key; requests require authorized intake",
-        ),
+        Event::Command { .. } => {
+            Err("commands must come from the steering constructors, which assign next_command_id")
+        }
+        Event::Ack { .. } | Event::NewRequest { .. } | Event::NewAdoption { .. } => {
+            Err("acknowledgements require an effect key; requests require authorized intake")
+        }
         _ => Ok(event),
     }
 }

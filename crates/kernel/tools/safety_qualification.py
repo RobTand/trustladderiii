@@ -29,10 +29,8 @@ CASES = {
                       'if id <= w.nodes[i].last_cmd {', 'if id == w.nodes[i].last_cmd {',
                       '//crates/kernel:verus_kernel'),
     'raw_command': ('crates/controller/src/kernel_boundary.rs',
-                    '''Event::Command { .. } => Err(
-            "commands must come from the steering constructors, which assign next_command_id",
-        ),''',
-                    'Event::Command { .. } => Ok(event),',
+                    'Err("commands must come from the steering constructors, which assign next_command_id")',
+                    'Ok(event)',
                     '//crates/kernel:verus_controller_boundary'),
     'steering_id': ('crates/controller/src/kernel_boundary.rs',
                     'request.next_command_id()', 'Some(request.last_cmd)',
