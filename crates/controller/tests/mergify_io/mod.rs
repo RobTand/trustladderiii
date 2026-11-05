@@ -772,7 +772,11 @@ mod properties {
             ),
             (
                 include_str!("base-adapter.rs.txt"),
-                "df2eb0d93fe7bf3833a5b9f509c4be466ce4ded5f21809913b715f16f52a966d",
+                "4c23cc4a17eb17793dfe1cfc4b911de49660267bbebb306269e8bc673eb255f9",
+            ),
+            (
+                include_str!("base-waiting-cdacce8f99.rs.txt"),
+                "db1cebbfd8bcf1b4c002b1064a7ba983c19ddbc820899912958d5d83910366e9",
             ),
             (
                 include_str!("base-client.rs.txt"),
