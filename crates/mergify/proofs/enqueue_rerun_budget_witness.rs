@@ -23,6 +23,18 @@ fn consumed_receipt(state: EnqueueState, saved: Rerun, head: Head, attempt: u64,
     (next, effects)
 }
 
+/// An inductive invariant over arbitrary non-result events, including all
+/// unrelated reconciliation/command families. No unbounded trace is enumerated:
+/// each such step preserves the consumed receipt and emits no rerun POST.
+fn retained_budget(state: EnqueueState, receipt: Rerun, event: QueueEvent)
+    requires state.rerun == Some(receipt), receipt.accepted || !receipt.waiting,
+        !matches!(event, QueueEvent::RerunDone(_)),
+{
+    let (next, effects) = decide(state, event);
+    assert(next.rerun == state.rerun);
+    assert(forall|i: int| 0 <= i < effects@.len() ==> #[trigger] effects@[i] != Effect::Write(Write::Rerun));
+}
+
 /// Compose actual dispatch, pending query and arbitrary repeated read. No result
 /// is delivered between them. A newer attempt also cannot cause another POST.
 fn dispatch_once(state: EnqueueState, attempt: u64, later: u64, head: Head,

@@ -219,7 +219,7 @@ def verus_proofs():
             ("required_check_types", "required_check", "enqueue#RequiredState::clone", 1),
             ("required_check_witness", "required_check", "witness", 1),
             ("rerun_budget", "rerun_budget", "enqueue#decide", 1),
-            ("rerun_budget_witness", "rerun_budget", "witness", 9),
+            ("rerun_budget_witness", "rerun_budget", "witness", 10),
         ]:
             verus_test(
                 name = "verus_enqueue_" + part,

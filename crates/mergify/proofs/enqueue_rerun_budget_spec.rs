@@ -71,8 +71,14 @@ pub open spec fn contract(old: EnqueueState, event: QueueEvent, next: EnqueueSta
             }
         },
         _ => true,
-    }) && forall|i: int| 0 <= i < effects@.len() && #[trigger] effects@[i] == Effect::Write(Write::Rerun) ==>
+    }) && (forall|i: int| 0 <= i < effects@.len() && #[trigger] effects@[i] == Effect::Write(Write::Rerun) ==>
         i > 0 && effects@[i - 1] == Effect::SaveRerun &&
-        match next.rerun { Some(r) => !r.accepted && !r.waiting, None => false }
+        match next.rerun { Some(r) => !r.accepted && !r.waiting, None => false }) &&
+    // Inductive budget invariant across EVERY event except a delivered result.
+    // Thus unrelated reconciliation/command events cannot reset the fence.
+    ((!matches!(event, QueueEvent::RerunDone(_)) && match old.rerun {
+        Some(r) => r.accepted || !r.waiting, None => false,
+    }) ==> next.rerun == old.rerun &&
+        forall|i: int| 0 <= i < effects@.len() ==> #[trigger] effects@[i] != Effect::Write(Write::Rerun))
 }
 }
