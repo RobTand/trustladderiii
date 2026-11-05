@@ -774,7 +774,7 @@ pub fn required_check(check: super::CheckView, runner_failure: bool) -> Required
         Some(Conclusion::Success | Conclusion::Neutral | Conclusion::Skipped)
     ) {
         RequiredState::Passed
-    } else if check.app != App::Missing
+    } else if check.app == App::Actions
         && (matches!(
             check.conclusion,
             Some(Conclusion::Cancelled | Conclusion::TimedOut | Conclusion::StartupFailure)
