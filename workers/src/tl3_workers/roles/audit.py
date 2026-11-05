@@ -8,6 +8,10 @@ from tl3_workers.exploration import ExplorationBudget
 
 def check_reply(inputs, reply):
     preflight(inputs, reply)
+    if ("tool_capabilities" in inputs and inputs["ingest"]["kind"] == "brief"
+            and reply["evidence_errors"]):
+        reply["verdict"] = "disagree"
+        reply["objections"] = list(dict.fromkeys([*reply["objections"], *reply["evidence_errors"]]))
     audit_generation_scope(inputs, reply)
 
 
