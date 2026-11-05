@@ -55,7 +55,7 @@ fn terminal_text(text: &str) -> String {
 fn safe(text: &str, cap: usize) -> String {
     findings::clipped(&crate::memory::redact_text(&terminal_text(text)), cap)
 }
-fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
+pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
     details.complete &=
         details.checks.len() <= 20 && details.failed_tests.len() <= findings::MAX_FAILED_TESTS;
     details.checks.truncate(20);
@@ -116,7 +116,7 @@ fn test_path(repo: &Repository, id: &str) -> Option<String> {
         && !path.contains('\\'))
     .then_some(path)
 }
-fn outside_change(
+pub(crate) fn outside_change(
     repo: &Repository,
     details: &QueueCiEvidence,
     plan: Option<&crate::adapters::prismabuild::CheckRun>,

@@ -75,7 +75,7 @@ impl Controller {
         )
     }
 }
-fn queue_blocked_incident_id(node: NodeId, head: &str, conditions: &[String]) -> String {
+pub(crate) fn queue_blocked_incident_id(node: NodeId, head: &str, conditions: &[String]) -> String {
     use sha2::{Digest, Sha256};
     let gap = serde_json::to_string(&(head, conditions)).expect("serializable conditions");
     format!(
@@ -84,7 +84,7 @@ fn queue_blocked_incident_id(node: NodeId, head: &str, conditions: &[String]) ->
         Sha256::digest(gap.as_bytes())
     )
 }
-fn missing_check_incident_id(
+pub(crate) fn missing_check_incident_id(
     node: NodeId,
     head: &str,
     required: &crate::adapters::mergify::RequiredCheck,
@@ -97,12 +97,12 @@ fn missing_check_incident_id(
         Sha256::digest(gap.as_bytes())
     )
 }
-fn check_setup_incident_id(node: NodeId, permission: &str) -> String {
+pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String {
     use sha2::{Digest, Sha256};
     let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
     format!("required-checks:{}:{gap}", node.0)
 }
-fn queue_blocked_summary(conditions: &[String], failed: &[String]) -> String {
+pub(crate) fn queue_blocked_summary(conditions: &[String], failed: &[String]) -> String {
     let quote = |text: &String| match text.split_once(": ") {
         Some((condition, note)) => format!("`{condition}` ({note})"),
         None => format!("`{text}`"),
