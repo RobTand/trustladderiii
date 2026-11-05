@@ -130,7 +130,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],
     "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs", "tests/support/ownership.rs"],
-    "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs"],
+    "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs", "tests/support/command.rs"],
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
@@ -145,7 +145,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/scenario_watchdog.rs": ["tests/support/scenario.rs"],
     "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
-    "tests/simulation.rs": ["tests/worktree_fixture/**", "tests/support/scenario_shard.rs", "tests/support/ownership.rs"],
+    "tests/simulation.rs": ["tests/worktree_fixture/**", "tests/support/scenario_shard.rs", "tests/support/ownership.rs", "tests/support/command.rs"],
     "tests/upgrade_replay.rs": ["tests/support/ownership.rs"],
     "tests/workers.rs": [
         "tests/support/**",
