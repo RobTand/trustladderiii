@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::{collections::BTreeMap, sync::OnceLock};
 use tl3_kernel::{EarlyEnd, Reply, Role};
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum MappedReply {
     Kernel(Reply),
     Made(String),
@@ -38,94 +39,180 @@ pub(crate) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
     }
 }
 
+/// JSON boundary retained for controller observations stored as protocol v1 Values.
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
-    let validator = validator(role, "reply")?;
-    if !validator.is_valid(reply) {
-        return Err(Error::Invalid("worker reply breaks role schema"));
-    }
-    if role == "maker" {
-        return Ok(match reply["kind"].as_str().unwrap() {
-            "done"
-                if reply["self_check"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|check| check["status"] == "not_met")
-                    || crate::budget::decision::reject_done(
-                        true,
-                        reply["budget_exhaustion"]["unfinished_obligations"]
-                            .as_array()
-                            .is_some_and(|items| !items.is_empty()),
-                    ) =>
-            {
-                MappedReply::Kernel(Reply::MakerCantMeet)
-            }
-            "done" => MappedReply::Made(reply["head"].as_str().unwrap().into()),
-            "needs_files" => {
-                let paths = reply["files"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|item| item["path"].as_str().unwrap().to_owned())
-                    .collect::<Vec<_>>();
-                if paths.iter().any(|path| !relative_file(path)) {
-                    return Err(Error::Invalid("maker requested an invalid path"));
-                }
-                MappedReply::NeedsFiles {
-                    paths,
-                    fits: reply["fits"].as_bool().unwrap_or(false),
-                }
-            }
-            "cant_meet" => MappedReply::Kernel(Reply::MakerCantMeet),
-            // Q50: an environment blocker is an infrastructure failure. The
-            // worker checked its evidence; the incident text cites it.
-            "blocked" => MappedReply::Kernel(Reply::RunFailed),
-            "out_of_room" => MappedReply::Kernel(Reply::MakerOutOfRoom),
-            _ => unreachable!(),
-        });
-    }
-    Ok(MappedReply::Kernel(match role {
-        "ingest" if reply["kind"] == "brief" => {
-            let forecast = forecast(reply)?;
-            let size = forecast
-                .0
-                .div_ceil(forecast.1)
-                .max(1)
-                .try_into()
-                .map_err(|_| Error::Invalid("request size exceeds kernel range"))?;
-            Reply::IngestDone { size }
-        }
-        "ingest" => Reply::IngestEarlyEnd(match reply["outcome"].as_str() {
-            Some("duplicate") => EarlyEnd::Duplicate,
-            Some("already_done") => EarlyEnd::AlreadyDone,
-            Some("not_actionable") => EarlyEnd::NotActionable,
-            _ => unreachable!("validated early outcome"),
-        }),
-        "audit" if reply["verdict"] == "agree" => Reply::AuditAgrees,
-        "audit" => Reply::AuditDisagrees,
-        "reviewer" if reply["verdict"] == "approve" => Reply::Approved {
-            head: tl3_kernel::HeadId(0),
+    map_typed_reply(&crate::contracts::replies::RoleReply::parse(role, reply)?)
+}
+
+/// The decision consumes only typed variants; parsing and schema errors occur above it.
+pub(crate) fn map_typed_reply(reply: &crate::contracts::replies::RoleReply) -> Result<MappedReply> {
+    use crate::contracts::replies::decision::{self, MappedReply as Mapping, RoleReply as Input};
+    use crate::contracts::replies::{
+        RoleReply,
+        audit::AuditReply,
+        ingest::{IngestReply, IngestReplyEarlyEndOutcome},
+        maker::{MakerReply, MakerReplyDoneSelfCheckItem},
+        reviewer::ReviewerReply,
+    };
+    let input = match reply {
+        RoleReply::Maker(MakerReply::Done(done)) => Input::MakerDone {
+            head: done.head.as_str(),
+            rejected: done
+                .self_check
+                .iter()
+                .any(|check| matches!(check, MakerReplyDoneSelfCheckItem::NotMet(_)))
+                || crate::budget::decision::reject_done(
+                    true,
+                    done.budget_exhaustion
+                        .as_ref()
+                        .is_some_and(|budget| !budget.0.unfinished_obligations.is_empty()),
+                ),
         },
-        "reviewer" if reply["verdict"] == "out_of_room" => Reply::ReviewerOutOfRoom,
-        "reviewer" => Reply::ChangesRequested,
-        "planner" => {
+        RoleReply::Maker(MakerReply::NeedsFiles(files)) => Input::MakerNeedsFiles(files),
+        RoleReply::Maker(MakerReply::CantMeet(_)) => Input::MakerCantMeet,
+        RoleReply::Maker(MakerReply::Blocked(_)) => Input::MakerBlocked,
+        RoleReply::Maker(MakerReply::OutOfRoom(_)) => Input::MakerOutOfRoom,
+        RoleReply::Ingest(IngestReply::Brief(brief)) => Input::IngestBrief(brief),
+        RoleReply::Ingest(IngestReply::EarlyEnd(early)) => match early.outcome {
+            IngestReplyEarlyEndOutcome::Duplicate => Input::IngestDuplicate,
+            IngestReplyEarlyEndOutcome::AlreadyDone => Input::IngestAlreadyDone,
+            IngestReplyEarlyEndOutcome::NotActionable => Input::IngestNotActionable,
+        },
+        RoleReply::Audit(AuditReply::Agree(_)) => Input::AuditAgree,
+        RoleReply::Audit(AuditReply::Disagree(_)) => Input::AuditDisagree,
+        RoleReply::Reviewer(ReviewerReply::Approve(_)) => Input::ReviewApprove,
+        RoleReply::Reviewer(ReviewerReply::Changes(_)) => Input::ReviewChanges,
+        RoleReply::Reviewer(ReviewerReply::OutOfRoom(_)) => Input::ReviewOutOfRoom,
+        RoleReply::Planner(reply) => {
             forecast(reply)?;
             let violations = reply["violations"]
                 .as_array()
                 .ok_or(Error::Invalid("planner violations missing"))?;
-            if !violations.is_empty() || reply["kind"] == "cant_meet" {
-                Reply::PlanCantMeet
-            } else if reply["kind"] == "split" {
-                Reply::PlanSplit
-            } else {
-                Reply::PlanLeaf {
-                    footprint: tl3_kernel::Footprint::default(),
-                    fits: reply["forecast"]["fits"] == true,
-                }
+            Input::Planner {
+                violations: !violations.is_empty(),
+                cant_meet: reply["kind"] == "cant_meet",
+                split: reply["kind"] == "split",
+                fits: reply["forecast"]["fits"] == true,
             }
         }
-        _ => return Err(Error::Invalid("unsupported worker role")),
-    }))
+        RoleReply::Classifier(_) => Input::Classifier,
+        RoleReply::Writer(_) => Input::Writer,
+        RoleReply::Postmortem(_) => Input::Postmortem,
+    };
+    Ok(match decision::map_reply(input) {
+        Mapping::Made(head) => MappedReply::Made(head.into()),
+        Mapping::NeedsFiles(request) => {
+            let paths = request
+                .files
+                .iter()
+                .map(|file| file.path.0.as_str().to_owned())
+                .collect::<Vec<_>>();
+            if paths.iter().any(|path| !relative_file(path)) {
+                return Err(Error::Invalid("maker requested an invalid path"));
+            }
+            MappedReply::NeedsFiles {
+                paths,
+                fits: request.fits.unwrap_or(false),
+            }
+        }
+        Mapping::Ingest(brief) => {
+            let (tokens, fit) = typed_forecast(brief)?;
+            let size = tokens
+                .div_ceil(fit)
+                .max(1)
+                .try_into()
+                .map_err(|_| Error::Invalid("request size exceeds kernel range"))?;
+            MappedReply::Kernel(Reply::IngestDone { size })
+        }
+        Mapping::MakerCantMeet => MappedReply::Kernel(Reply::MakerCantMeet),
+        Mapping::RunFailed => MappedReply::Kernel(Reply::RunFailed),
+        Mapping::MakerOutOfRoom => MappedReply::Kernel(Reply::MakerOutOfRoom),
+        Mapping::IngestDuplicate => MappedReply::Kernel(Reply::IngestEarlyEnd(EarlyEnd::Duplicate)),
+        Mapping::IngestAlreadyDone => {
+            MappedReply::Kernel(Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone))
+        }
+        Mapping::IngestNotActionable => {
+            MappedReply::Kernel(Reply::IngestEarlyEnd(EarlyEnd::NotActionable))
+        }
+        Mapping::AuditAgrees => MappedReply::Kernel(Reply::AuditAgrees),
+        Mapping::AuditDisagrees => MappedReply::Kernel(Reply::AuditDisagrees),
+        Mapping::Approved => MappedReply::Kernel(Reply::Approved {
+            head: tl3_kernel::HeadId(0),
+        }),
+        Mapping::ChangesRequested => MappedReply::Kernel(Reply::ChangesRequested),
+        Mapping::ReviewerOutOfRoom => MappedReply::Kernel(Reply::ReviewerOutOfRoom),
+        Mapping::PlanCantMeet => MappedReply::Kernel(Reply::PlanCantMeet),
+        Mapping::PlanSplit => MappedReply::Kernel(Reply::PlanSplit),
+        Mapping::PlanLeaf { fits } => MappedReply::Kernel(Reply::PlanLeaf {
+            footprint: tl3_kernel::Footprint::default(),
+            fits,
+        }),
+        Mapping::Unsupported => return Err(Error::Invalid("unsupported worker role")),
+    })
+}
+
+fn typed_forecast(
+    brief: &crate::contracts::replies::ingest::IngestReplyBrief,
+) -> Result<(u64, u64)> {
+    let f = &brief
+        .forecast
+        .as_ref()
+        .ok_or(Error::Invalid("forecast missing"))?
+        .0;
+    let tokens = f
+        .tokens
+        .as_u64()
+        .ok_or(Error::Invalid("forecast missing"))?;
+    let fit = f
+        .fit_tokens
+        .as_u64()
+        .filter(|n| *n > 0)
+        .ok_or(Error::Invalid("forecast limit missing"))?;
+    let context = f
+        .context_tokens
+        .as_u64()
+        .ok_or(Error::Invalid("forecast context missing"))?;
+    let files = f
+        .file_tokens
+        .iter()
+        .map(|(path, value)| {
+            Ok((
+                path.clone(),
+                value
+                    .as_u64()
+                    .ok_or(Error::Invalid("inconsistent forecast evidence"))?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let expected = crate::budget::decide(crate::budget::Request::Forecast {
+        brief_tokens: f
+            .brief_tokens
+            .as_u64()
+            .ok_or(Error::Invalid("inconsistent forecast evidence"))?,
+        file_tokens: files,
+        overhead_tokens: f
+            .overhead_tokens
+            .as_u64()
+            .ok_or(Error::Invalid("inconsistent forecast evidence"))?,
+        fit_tokens: fit,
+        context_tokens: context,
+        problems: 0,
+    })
+    .map_err(|_| Error::Invalid("inconsistent forecast evidence"))?;
+    if expected["tokens"] != tokens || fit >= context || expected["fits"] != f.fits {
+        return Err(Error::Invalid("inconsistent forecast evidence"));
+    }
+    let declared: std::collections::BTreeSet<_> = brief
+        .files
+        .iter()
+        .flat_map(|files| files.iter().map(|file| file.as_str()))
+        .collect();
+    let measured: std::collections::BTreeSet<_> =
+        f.file_tokens.keys().map(String::as_str).collect();
+    if declared != measured {
+        return Err(Error::Invalid("forecast files differ from declared files"));
+    }
+    Ok((tokens, fit))
 }
 
 pub(crate) fn relative_file(path: &str) -> bool {
@@ -170,12 +257,16 @@ fn validator(role: &str, direction: &str) -> Result<&'static jsonschema::Validat
 }
 
 /// A reply checked against its role's schema alone, for replies no kernel role maps.
-pub(crate) fn validate_reply(role: &str, reply: &Value) -> Result<()> {
+pub(crate) fn validate_reply_schema(role: &str, reply: &Value) -> Result<()> {
     if validator(role, "reply")?.is_valid(reply) {
         Ok(())
     } else {
         Err(Error::Invalid("worker reply breaks role schema"))
     }
+}
+
+pub(crate) fn validate_reply(role: &str, reply: &Value) -> Result<()> {
+    crate::contracts::replies::RoleReply::parse(role, reply).map(|_| ())
 }
 
 pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
@@ -523,3 +614,7 @@ mod decoding_defects {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "../../contracts/replies/reference_map.rs"]
+mod reference_map;

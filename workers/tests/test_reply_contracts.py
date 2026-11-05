@@ -89,3 +89,38 @@ def test_every_reference_resolves_inside_the_rendered_schema(schema):
 def test_the_rendered_schema_carries_no_unused_defs(schema):
     used = {ref.removeprefix("#/$defs/") for ref in references(schema) if ref.startswith("#/$defs/")}
     assert set(schema.get("$defs", {})) <= used, sorted(set(schema.get("$defs", {})) - used)
+
+
+@pytest.mark.parametrize("role", ["audit", "classifier", "ingest", "maker", "reviewer", "writer", "postmortem"])
+def test_generated_reply_schema_preserves_model_facing_bytes(role, monkeypatch):
+    """#648/#730: compare actual model_facing bytes, including insertion order and refs."""
+    from copy import deepcopy
+    from pathlib import Path
+    from tl3_workers import contracts
+
+    frozen = json.loads(Path(__file__).with_name("fixtures").joinpath("reply-schemas-before.json").read_text())
+    assert frozen["base"] == "cdacce8f99c28ca8dba8f5f76831b77b4dfcd836"
+    before = frozen["schemas"][role + "-reply"]
+    after = contracts.schema(role + "-reply")
+    code_only = runtime.ROLES[role].code_only_fields
+
+    def rendered(document):
+        return json.dumps(contracts.model_facing(document), ensure_ascii=False).encode()
+
+    def proposal(document):
+        document = deepcopy(document)
+        for variant in document.get("oneOf", [document]):
+            for field in code_only:
+                variant.get("properties", {}).pop(field, None)
+        for field in code_only:
+            document.get("$defs", {}).pop(field, None)
+        return document
+
+    actual_full, actual_proposal = rendered(after), rendered(proposal(after))
+    with monkeypatch.context() as reference:
+        reference.setattr(contracts, "schema", lambda name: frozen["schemas"][name])
+        assert rendered(before) == actual_full
+        assert rendered(proposal(before)) == actual_proposal
+    # prompt_cache_identity hashes the complete committed schema, sorted by key.
+    assert json.dumps(before, sort_keys=True, ensure_ascii=False).encode() == json.dumps(
+        after, sort_keys=True, ensure_ascii=False).encode()

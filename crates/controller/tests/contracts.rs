@@ -20,10 +20,40 @@ use tl3_controller::contracts::{self, Check, CheckReport, CheckResult};
 const FIX: &str = "bazel run --config=remote //crates/controller:tl3-contracts-schemas";
 
 // The committed generated files, compiled in so the check stays hermetic.
-const COMMITTED: &[(&str, &str)] = &[(
-    "workers/src/tl3_workers/schemas/check-report.json",
-    include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
-)];
+const COMMITTED: &[(&str, &str)] = &[
+    (
+        "workers/src/tl3_workers/schemas/check-report.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/check-report.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/audit-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/audit-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/classifier-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/classifier-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/ingest-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/ingest-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/maker-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/maker-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/reviewer-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/reviewer-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/writer-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/writer-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/postmortem-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/postmortem-reply.json"),
+    ),
+];
 
 #[test]
 fn generated_schemas_match_committed() {

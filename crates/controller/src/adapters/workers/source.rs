@@ -634,10 +634,15 @@ pub(super) fn parse_reply(
         }
         if delivery.is_classifier() {
             protocol::validate_classification(inputs, &value["reply"])?;
+            crate::contracts::replies::RoleReply::parse(role, &value["reply"])?;
         } else if delivery.is_postmortem() {
             crate::postmortems::check_reply(&value["reply"])?;
+            crate::contracts::replies::RoleReply::parse(role, &value["reply"])?;
         } else {
-            protocol::map_reply(role, &value["reply"])?;
+            protocol::map_typed_reply(&crate::contracts::replies::RoleReply::parse(
+                role,
+                &value["reply"],
+            )?)?;
             if role == "reviewer" {
                 super::review::validate_reply(&value["reply"], inputs)?;
             }
@@ -654,7 +659,9 @@ pub(super) fn parse_reply(
         let mut checked = value["reply"].clone();
         super::evidence::preflight(role, inputs, &mut checked)?;
         if !delivery.is_classifier() && !delivery.is_postmortem() {
-            protocol::map_reply(role, &checked)?;
+            protocol::map_typed_reply(&crate::contracts::replies::RoleReply::parse(
+                role, &checked,
+            )?)?;
         }
         reply = Some(checked);
     }
