@@ -16,4 +16,3 @@ def _check_inputs(inputs):
     covered = {goal for check in inputs["plan"]["checks"] for goal in check["goal_ids"]}
     if not required <= covered:
         raise ValueError("checks must cover every maker and checking goal")
-
