@@ -1716,3 +1716,6 @@ fn report_versions_are_written_by_the_action_and_checked_by_the_controller() {
 // P1a-0 is the renderer foundation; the ten-input inventory returns in P1a proper.
 #[path = "contracts/render.rs"]
 mod contracts_render;
+
+#[path = "contracts/patterns.rs"]
+mod contract_patterns;
