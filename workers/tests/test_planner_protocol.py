@@ -208,3 +208,94 @@ def test_generated_footprint_never_reserves_protected_output(planner_request, mo
     reply = copy.deepcopy(LEAF)
     check_reply(planner_request["inputs"], reply)
     assert "tests/BUILD.bazel" not in reply["files"]
+
+
+def _named_run(planner_request, monkeypatch, draft, candidate=None):
+    from planner_fixtures import planner_model
+    from tl3_workers import runtime
+
+    planner_request['inputs']['repair_plan_consistency'] = True
+    model = planner_model(monkeypatch, draft, candidate if candidate is not None else draft)
+    events = []
+    runtime.run(planner_request, events.append)
+    return model, events[-1]
+
+
+@pytest.mark.parametrize('change', ['unchanged', 'honest_stop', 'unrelated', 'fixed'])
+def test_t832_q63_proof_message_gets_one_named_repair(planner_request, monkeypatch, change):
+    # Live Q63 is audit-origin. This exercises its planner analogue with synthetic
+    # file facts and the exact assertion text retained in the source declaration.
+    draft = copy.deepcopy(LEAF)
+    assertion = '_git must run every Git call with maintenance.auto=false and gc.auto=0'
+    planner_request['inputs']['ingest']['goals'][0]['proof_obligation'] = {
+        'kind': 'assertion', 'observer': 'new', 'subjects': ['greeting.py::_git'],
+        'source': 'issue.body', 'quote': assertion}
+    draft['checks'] = [copy.deepcopy(draft['checks'][0])]
+    draft['checks'][0]['goal_ids'] = [0, 1]
+    draft['checks'][0]['proof'] = {'subjects': ['greeting.py::_git'], 'observer_support': [], 'red_message': ''}
+    fixed = copy.deepcopy(draft)
+    if change in {'fixed', 'unrelated'}:
+        fixed['checks'][0]['proof']['red_message'] = assertion
+    if change == 'unrelated':
+        fixed['checks'][0]['node_ids'] = ['tests/test_greeting.py::test_unrelated']
+    if change == 'honest_stop':
+        fixed = copy.deepcopy(CANT_MEET)
+    model, event = _named_run(planner_request, monkeypatch, draft, fixed)
+    assert len(model.calls) == 2
+    history, tools = model.calls[-1]
+    assert not tools
+    assert 'proof.red_missing' in history[-1].text
+    assert 'check-1' in history[-1].text and 'proof.red_message' in history[-1].text
+    if change == 'fixed':
+        assert event['reply']['violations'] == []
+        assert 'plan_check' not in event
+    else:
+        provenance = event['plan_check']
+        assert provenance['repair'] == {'status': 'attempted'}
+        assert provenance['objections']
+        assert all(item['items'] and item['rule'] for item in provenance['objections'])
+        if change == 'unrelated':
+            assert any(item['rule'].startswith('guard.') for item in provenance['objections'])
+
+
+@pytest.mark.parametrize('size,other', [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize('available', [True, False])
+def test_t832_every_objection_repairs_or_records_unavailability(planner_request, monkeypatch, size, other, available):
+    draft = copy.deepcopy(LEAF)
+    planner_request['inputs']['must_split'] = size
+    if other:
+        draft['lands_on_its_own'] = False
+    from planner_fixtures import planner_model
+    from tl3_workers import runtime
+    planner_request['inputs']['repair_plan_consistency'] = available
+    model = planner_model(monkeypatch, draft, draft)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == (2 if available else 1)
+    provenance = events[-1]['plan_check']
+    assert provenance['repair'] == ({'status': 'attempted'} if available else
+                                      {'status': 'unavailable', 'reason': 'disabled'})
+    classes = {item['class'] for item in provenance['objections']}
+    assert ('other' in classes) == other
+    assert ('size_execution_fit' in classes) == size
+    assert any(item['rule'] == ('leaf.not_independent' if other else 'leaf.must_split')
+               for item in provenance['objections'])
+
+
+def test_t832_format_consumes_the_semantic_repair_allowance(planner_request, monkeypatch):
+    from planner_fixtures import planner_model
+    from tl3_workers import runtime
+    planner_request['inputs']['must_split'] = True
+    planner_request['inputs']['repair_plan_consistency'] = True
+    model = planner_model(monkeypatch, {'kind': 'invalid'}, LEAF, CANT_MEET)
+    events = []
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert events[-1]['plan_check']['repair'] == {'status': 'unavailable', 'reason': 'format_allowance_consumed'}
+
+
+def test_t832_malformed_semantic_correction_retains_original_objections(planner_request, monkeypatch):
+    model, event = _named_run(planner_request, monkeypatch, {**LEAF, 'lands_on_its_own': False}, {'kind': 'invalid'})
+    assert len(model.calls) == 2
+    assert event['plan_check']['repair'] == {'status': 'attempted'}
+    assert any(item['rule'] == 'leaf.not_independent' for item in event['plan_check']['objections'])
