@@ -544,66 +544,74 @@ fn duplicate_success_and_reset_do_not_dispatch_twice() {
 
 /// Q53 / #828 B+C: operator reset and later success share the held delivery's key.
 #[test]
-fn operator_clear_and_success_converge_on_one_dispatch() {
-    for success_first in [false, true] {
-        let mut f = Fixture::new();
-        f.config.github.operations = Some(tl3_config::OperationsIssue {
-            owner: "RobTand".into(),
-            name: "ops".into(),
-            installation_id: 1,
-            number: 17,
-        });
-        let mut f = f.restart();
-        let key = f.held(true);
-        if success_first {
-            f.success();
-        }
-        f.controller
-            .observe(
-                "operator-reset",
-                Observation::GitHubComment {
-                    repository: tl3_controller::Repository {
-                        owner: "RobTand".into(),
-                        name: "ops".into(),
-                        installation: 1,
-                    },
-                    issue: 17,
-                    comment: tl3_github::Comment {
-                        id: 828,
-                        body: "clear quota alternate-model".into(),
-                        user: tl3_github::Actor {
-                            id: f.config.github.rob.id,
-                            login: "fixture".into(),
-                        },
-                        created_at: chrono::DateTime::UNIX_EPOCH,
-                        updated_at: chrono::DateTime::UNIX_EPOCH,
-                        issue_url: "https://api.github.com/repos/RobTand/ops/issues/17".into(),
-                    },
+fn operator_clear_before_success_converges_on_one_dispatch() {
+    operator_clear_and_success_converge_on_one_dispatch(false);
+}
+
+/// Q53 / #828 B+C: operator reset and success share the held delivery key.
+#[test]
+fn operator_clear_after_success_converges_on_one_dispatch() {
+    operator_clear_and_success_converge_on_one_dispatch(true);
+}
+
+fn operator_clear_and_success_converge_on_one_dispatch(success_first: bool) {
+    let mut f = Fixture::new();
+    f.config.github.operations = Some(tl3_config::OperationsIssue {
+        owner: "RobTand".into(),
+        name: "ops".into(),
+        installation_id: 1,
+        number: 17,
+    });
+    let mut f = f.restart();
+    let key = f.held(true);
+    if success_first {
+        f.success();
+    }
+    f.controller
+        .observe(
+            "operator-reset",
+            Observation::GitHubComment {
+                repository: tl3_controller::Repository {
+                    owner: "RobTand".into(),
+                    name: "ops".into(),
+                    installation: 1,
                 },
-            )
-            .unwrap();
-        f.drain();
-        if !success_first {
-            // The operator reset must dispatch through an existing probe regime
-            // before any success can accidentally rescue its wake.
-            fs::write(f.root.path().join("restored"), "yes").unwrap();
-            f.controller.look_due().unwrap();
-            assert_eq!(
-                f.attempt(&key),
-                1,
-                "operator reset must release the bounded quota wait immediately"
-            );
-            f.success();
-        }
-        f.controller.look_due().unwrap();
-        f.clock.0.set(RESET);
+                issue: 17,
+                comment: tl3_github::Comment {
+                    id: 828,
+                    body: "clear quota alternate-model".into(),
+                    user: tl3_github::Actor {
+                        id: f.config.github.rob.id,
+                        login: "fixture".into(),
+                    },
+                    created_at: chrono::DateTime::UNIX_EPOCH,
+                    updated_at: chrono::DateTime::UNIX_EPOCH,
+                    issue_url: "https://api.github.com/repos/RobTand/ops/issues/17".into(),
+                },
+            },
+        )
+        .unwrap();
+    f.drain();
+    if !success_first {
+        // The operator reset must dispatch through an existing probe regime
+        // before any success can accidentally rescue its wake.
+        fs::write(f.root.path().join("restored"), "yes").unwrap();
         f.controller.look_due().unwrap();
         assert_eq!(
             f.attempt(&key),
             1,
-            "operator clear, success and reset converge on one replacement"
+            "operator reset must release the bounded quota wait immediately"
         );
+        f.success();
     }
+    f.controller.look_due().unwrap();
+    f.clock.0.set(RESET);
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "operator clear, success and reset converge on one replacement"
+    );
 }
 
 #[test]
@@ -1283,107 +1291,115 @@ fn successful_probe_wakes_both_held_keys_exactly_once() {
 
 /// Q53 / #828 upgrade: unknown legacy order/family cannot be replaced by reply identity.
 #[test]
-fn upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success() {
-    for other_family in [false, true] {
-        let mut f = Fixture::new();
-        let key = f.held(false);
-        let ending = f.store.latest_worker_ending(&key).unwrap().unwrap();
-        if other_family {
-            for ladder in [
-                &mut f.config.models.ingest,
-                &mut f.config.models.audit,
-                &mut f.config.models.planner,
-                &mut f.config.models.maker,
-                &mut f.config.models.reviewer,
-                &mut f.config.models.rebaser,
-                &mut f.config.models.comment_classifier,
-                &mut f.config.models.writer,
-                &mut f.config.models.postmortem,
-            ] {
-                for model in ladder {
-                    if model.name == "alternate-model" {
-                        model.family = "replacement-family".into();
-                    }
+fn upgrade_keeps_unknown_legacy_quota_after_older_success() {
+    upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success(false);
+}
+
+/// Q53 / #828 upgrade: unknown shared family/order survives late success.
+#[test]
+fn upgrade_keeps_unknown_legacy_quota_after_other_family_success() {
+    upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success(true);
+}
+
+fn upgrade_keeps_unknown_legacy_quota_after_older_or_other_family_success(other_family: bool) {
+    let mut f = Fixture::new();
+    let key = f.held(false);
+    let ending = f.store.latest_worker_ending(&key).unwrap().unwrap();
+    if other_family {
+        for ladder in [
+            &mut f.config.models.ingest,
+            &mut f.config.models.audit,
+            &mut f.config.models.planner,
+            &mut f.config.models.maker,
+            &mut f.config.models.reviewer,
+            &mut f.config.models.rebaser,
+            &mut f.config.models.comment_classifier,
+            &mut f.config.models.writer,
+            &mut f.config.models.postmortem,
+        ] {
+            for model in ladder {
+                if model.name == "alternate-model" {
+                    model.family = "replacement-family".into();
                 }
             }
-        } else {
-            fs::write(
-                f.root.path().join("success-time"),
-                (ending.facts.finished_ms.unwrap() - 1).to_string(),
-            )
-            .unwrap();
         }
-        let snapshot = f.store.load().unwrap();
-        let mut commit = Commit::new("fixture:pre-B-legacy-hold", json!({}), &snapshot);
-        commit.rows.push(RowChange::Put {
-            table: "model_quotas".into(),
-            id: "alternate-model".into(),
-            value: json!({"reset_ms": RESET}),
-        });
-        let mut hold = f.hold().unwrap().1;
-        for field in ["last_quota_family", "last_quota_finished_ms"] {
-            hold.as_object_mut().unwrap().remove(field);
-        }
-        commit.rows.push(RowChange::Put {
-            table: "allowances".into(),
-            id: key.clone(),
-            value: hold,
-        });
-        f.store.commit(&commit).unwrap();
-        let mut f = f.restart();
-        // A restart can redeliver an already-known pre-upgrade quota ending.
-        // It cannot supply the identity of the unknown shared legacy record.
-        f.controller
-            .observe(
-                "legacy-quota-redelivery",
-                Observation::Quota {
-                    key: key.clone(),
-                    reset_ms: RESET,
-                    model: Some("alternate-model".into()),
-                },
-            )
-            .unwrap();
-        f.drain();
-        let global = f
-            .controller
-            .snapshot()
-            .unwrap()
-            .rows
-            .into_iter()
-            .find(|row| row.table == "model_quotas" && row.id == "alternate-model")
-            .unwrap();
-        assert!(
-            global.value["finished_ms"].is_null() && global.value["family"].is_null(),
-            "a redelivered ending cannot invent the legacy shared hold's identity/order"
-        );
-        let before_success: Vec<_> = f
-            .controller
-            .snapshot()
-            .unwrap()
-            .rows
-            .into_iter()
-            .filter(|row| row.table == "model_quotas")
-            .collect();
-        f.intake(2663);
-        fs::write(f.root.path().join("restored"), "yes").unwrap();
-        fs::write(f.root.path().join("success"), "yes").unwrap();
-        f.until(|f| f.controller.world().unwrap().nodes[1].phase != Phase::Auditing);
-        assert!(
-            f.controller
-                .snapshot()
-                .unwrap()
-                .rows
-                .iter()
-                .any(|row| row.table == "model_quotas" && row.id == "alternate-model"),
-            "an older or other-family success cannot erase unknown legacy quota: other_family={other_family}, before={before_success:?}, ending={:?}, success={:?}",
-            ending,
-            f.store
-                .latest_worker_success("1", "alternate-model")
-                .unwrap()
-        );
-        f.controller.look_due().unwrap();
-        assert_eq!(f.attempt(&key), 0);
+    } else {
+        fs::write(
+            f.root.path().join("success-time"),
+            (ending.facts.finished_ms.unwrap() - 1).to_string(),
+        )
+        .unwrap();
     }
+    let snapshot = f.store.load().unwrap();
+    let mut commit = Commit::new("fixture:pre-B-legacy-hold", json!({}), &snapshot);
+    commit.rows.push(RowChange::Put {
+        table: "model_quotas".into(),
+        id: "alternate-model".into(),
+        value: json!({"reset_ms": RESET}),
+    });
+    let mut hold = f.hold().unwrap().1;
+    for field in ["last_quota_family", "last_quota_finished_ms"] {
+        hold.as_object_mut().unwrap().remove(field);
+    }
+    commit.rows.push(RowChange::Put {
+        table: "allowances".into(),
+        id: key.clone(),
+        value: hold,
+    });
+    f.store.commit(&commit).unwrap();
+    let mut f = f.restart();
+    // A restart can redeliver an already-known pre-upgrade quota ending.
+    // It cannot supply the identity of the unknown shared legacy record.
+    f.controller
+        .observe(
+            "legacy-quota-redelivery",
+            Observation::Quota {
+                key: key.clone(),
+                reset_ms: RESET,
+                model: Some("alternate-model".into()),
+            },
+        )
+        .unwrap();
+    f.drain();
+    let global = f
+        .controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| row.table == "model_quotas" && row.id == "alternate-model")
+        .unwrap();
+    assert!(
+        global.value["finished_ms"].is_null() && global.value["family"].is_null(),
+        "a redelivered ending cannot invent the legacy shared hold's identity/order"
+    );
+    let before_success: Vec<_> = f
+        .controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| row.table == "model_quotas")
+        .collect();
+    f.intake(2663);
+    fs::write(f.root.path().join("restored"), "yes").unwrap();
+    fs::write(f.root.path().join("success"), "yes").unwrap();
+    f.until(|f| f.controller.world().unwrap().nodes[1].phase != Phase::Auditing);
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "model_quotas" && row.id == "alternate-model"),
+        "an older or other-family success cannot erase unknown legacy quota: other_family={other_family}, before={before_success:?}, ending={:?}, success={:?}",
+        ending,
+        f.store
+            .latest_worker_success("1", "alternate-model")
+            .unwrap()
+    );
+    f.controller.look_due().unwrap();
+    assert_eq!(f.attempt(&key), 0);
 }
 
 /// Q53 / #828: failure after durable identity but before claim leaves no ending to import.
