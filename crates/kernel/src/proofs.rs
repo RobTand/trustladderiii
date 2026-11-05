@@ -568,24 +568,6 @@ fn check_advance(phase: Phase, moves: bool) {
     }
 }
 
-/// No dead states: while any request is open, the witness names an outside
-/// event, and applying it lowers the progress measure. Settle can't raise it
-/// again, so the whole step lowers it.
-fn check_witness(phase: Phase) {
-    let world = any_settled_world(Some(phase));
-    kani::assume(!phase.is_closed() || !world.nodes[1].phase.is_closed());
-    let before = world.measure();
-    let event = world.witness();
-    kani::cover!(event.is_some(), "an open settled world exists here");
-    assert!(event.is_some());
-    if let Some(event) = event {
-        let mut after = world;
-        let mut out = Outbox::new();
-        apply(&mut after, event.clone(), &mut out);
-        assert!(after.measure() < before);
-    }
-}
-
 // The original Unplanned implication, proved by exhaustive cases. A direct
 // outside witness proves strict progress even before the other root settles.
 // Otherwise a delivered root or its gate occupant must still have an internal
@@ -1686,7 +1668,6 @@ proof!(gate_grant_w2, check_gate_grant(2));
 proof!(gate_grant_w3, check_gate_grant(3));
 proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
-
 
 proof!(apply_rebase_progress_gate, {
     let mut node = Node::new(RepoId(0));
