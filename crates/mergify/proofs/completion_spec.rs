@@ -11,7 +11,7 @@ fn stale_cycle(event: u64, saved: u64)
     assert(!actual_0);
 }
 
-/// #373/#608: concrete witnesses exercise confirmed-conflict and receipt paths.
+/// #608: concrete witnesses exercise confirmed-conflict and receipt paths.
 fn completion_witness() {
     let conflict = resolve::<u8>(Complete::Confirmed { progress: false, conflict: true }, true);
     assert(matches!(conflict, Resolution::Found { ack: Ack::Confirmed, conflict: true, progress: false }));

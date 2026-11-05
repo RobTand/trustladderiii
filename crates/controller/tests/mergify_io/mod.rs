@@ -117,9 +117,6 @@ impl QueueFact {
     fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
         Ok(snapshot.rows.iter().any(|row| row.table == "queue_facts"))
     }
-    fn unresolved_hold(&self, snapshot: &Snapshot) -> Result<bool> {
-        Ok(snapshot.held())
-    }
 }
 fn person_facts(
     repository: &Repository,
@@ -214,8 +211,8 @@ pub mod evidence {
     pub use tl3_controller::evidence::publication;
     pub fn validate_publication(d: &Delivery, _: &str, _: bool, _: &str) -> Result<()> {
         assert!(
-            d.evidence.is_none(),
-            "schedules have no publication obligations"
+            d.evidence.as_ref().is_none_or(|e| e.goals.is_empty()),
+            "schedules have no publication goal obligations"
         );
         Ok(())
     }
@@ -919,3 +916,88 @@ mod a1_schedules {
 }
 
 mod a2;
+// A1 r1: the changed hold decision is implemented separately in each shell.
+// Node resolution is an unchanged recorded boundary; identity uses real source.
+impl QueueFact {
+    fn node(&self, snapshot: &Snapshot) -> Result<Option<NodeId>> {
+        io::projection("node");
+        if let Some(row) = snapshot.rows.iter().find(|row| {
+            row.table == "pull_requests" && row.value["number"].as_u64() == Some(self.number)
+        }) {
+            return Ok(Some(NodeId(
+                row.id
+                    .parse()
+                    .map_err(|_| Error::Invalid("invalid PR binding"))?,
+            )));
+        }
+        Ok(None)
+    }
+    pub(crate) fn identity(&self) -> String {
+        let mut evidence = match &self.evidence {
+            Evidence::ChecksUnavailable { permissions } => {
+                let mut gaps = permissions.clone();
+                gaps.sort();
+                gaps.dedup();
+                format!(
+                    "required-checks-setup:{}",
+                    serde_json::to_string(&gaps).unwrap()
+                )
+            }
+            Evidence::CheckMissing { head, required } => {
+                format!(
+                    "missing-check:{head}:{}",
+                    serde_json::to_string(required).unwrap()
+                )
+            }
+            Evidence::CheckReported { head, required } => {
+                format!(
+                    "check-reported:{head}:{}",
+                    serde_json::to_string(required).unwrap()
+                )
+            }
+            Evidence::QueueBlocked {
+                head, conditions, ..
+            } => format!(
+                "queue-blocked:{head}:{}",
+                serde_json::to_string(conditions).unwrap()
+            ),
+            Evidence::Merged { head, .. } => format!("merged:{head}"),
+            Evidence::CiFailed {
+                check, head_check, ..
+            } => {
+                format!("{}:{check}", if *head_check { "head-ci" } else { "ci" })
+            }
+            Evidence::Conflict { check, .. } => format!("conflict:{check}"),
+            Evidence::DequeuedByCommand { check, .. } => format!("command-dequeued:{check}"),
+            Evidence::DequeuedByPerson { event } => format!("dequeued:{event}"),
+            Evidence::ClosedByPerson { event } => format!("closed:{event}"),
+            Evidence::PushByOther { head } => format!("push:{head}"),
+        };
+        // Mergify can reuse one check ID across successive queue attempts.
+        if let Evidence::CiFailed {
+            completed_at: Some(time),
+            ..
+        }
+        | Evidence::Conflict {
+            completed_at: Some(time),
+            ..
+        }
+        | Evidence::DequeuedByCommand {
+            completed_at: Some(time),
+            ..
+        } = &self.evidence
+        {
+            evidence.push(':');
+            evidence.push_str(time);
+        }
+        format!(
+            "{}/{}/{}/{}/{evidence}",
+            self.repository.owner.to_ascii_lowercase(),
+            self.repository.name.to_ascii_lowercase(),
+            self.repository.installation,
+            self.number
+        )
+    }
+}
+
+mod a1_r1;

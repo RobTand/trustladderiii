@@ -2,7 +2,7 @@ use super::*;
 use c::{Head, Time};
 use tl3_mergify::decide::completion as c;
 
-/// #608/#373: witnesses for each completion mapping, receipt and conflict branch.
+/// #608: witnesses for each completion mapping, receipt and conflict branch.
 #[test]
 fn mandatory_a1_completion_mapping() {
     for progress in [false, true] {
@@ -53,7 +53,7 @@ fn mandatory_a1_completion_mapping() {
     }
 }
 
-/// #608/#373: merged holds skip the projection, baselines skip repaired_head.
+/// #608: merged holds skip the projection, baselines skip repaired_head.
 #[test]
 fn mandatory_a1_person_hold_and_freshness() {
     for queue in [QueueState::Merged, QueueState::Waiting] {
