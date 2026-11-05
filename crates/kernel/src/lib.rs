@@ -1680,8 +1680,8 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 }
 // proof map end
 
-/// The kernel: apply one event, then settle.
 kernel_fn! {
+/// The kernel: apply one event, then settle.
 /// #771: the real step is overflow-safe under the production checker's
 /// invariant, normalized file storage, and the enforced one-step reserves.
 /// `step_budget` bounds every kernel-owned counter and preserves command order.
@@ -1702,9 +1702,9 @@ pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     (world, out)
 }
 
+kernel_fn! {
 /// `step`, also reporting how many passes settle needed. Tests use it to size
 /// the loop bound that Kani's unwinding check then proves.
-kernel_fn! {
 /// #771: verify the production event-to-settle composition. The scope here is
 /// the arithmetic and storage projection of consistency, plus headroom. The
 /// progress theorem separately requires command freshness for every node.

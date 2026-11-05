@@ -454,6 +454,22 @@ impl World {
             final(self).pool_capacity == old(self).pool_capacity,
             final(self).fail_fast == old(self).fail_fast,
             final(self).file_sets@ == old(self).file_sets@,
+            final(self).nodes@.len() == old(self).nodes@.len(),
+            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
+                ==> final(self).nodes@[j] == old(self).nodes@[j],
+            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
+            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
+            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
     ] {
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
             return;
@@ -526,6 +542,22 @@ impl World {
             final(self).fail_fast == old(self).fail_fast,
             final(self).file_sets@ == old(self).file_sets@,
             final(out).len <= old(out).len + 1,
+            final(self).nodes@.len() == old(self).nodes@.len(),
+            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
+                ==> final(self).nodes@[j] == old(self).nodes@[j],
+            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
+            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
+            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
     ] proof [reveal(edges_indexable);] {
         if target.number == 0 {
             return;
@@ -591,6 +623,22 @@ impl World {
             final(self).fail_fast == old(self).fail_fast,
             final(self).file_sets@ == old(self).file_sets@,
             final(out).len <= old(out).len + 1,
+            final(self).nodes@.len() == old(self).nodes@.len(),
+            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
+                ==> final(self).nodes@[j] == old(self).nodes@[j],
+            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
+            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
+            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
     ] {
         let node = NodeId(i as u64);
         match existing {
