@@ -15,6 +15,7 @@ mod blocked;
 pub mod board;
 mod branches;
 pub mod budget;
+pub mod check_harness;
 pub mod classifier;
 pub mod cli;
 pub mod clock;
