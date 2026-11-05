@@ -740,6 +740,13 @@ mod tests {
     fn exhausted_merge_fanout_retries_both_waiters_exactly_once() {
         let mut db = Database::start();
         let (_repo, mut c, repository) = fixture(&mut db, "dependency_fanout_headroom");
+        // Global ticket incidents clear on the configured operations issue.
+        c.bootstrap.operations = Some(tl3_config::OperationsIssue {
+            owner: repository.owner.clone(),
+            name: repository.name.clone(),
+            installation_id: repository.installation,
+            number: 2761,
+        });
         let root = intake(&mut c, &repository, 2761);
         let first = intake(&mut c, &repository, 42);
         let second = intake(&mut c, &repository, 2772);
@@ -769,6 +776,17 @@ mod tests {
         }
         c.store.commit(&seed).unwrap();
         let before = c.world().unwrap();
+        let endings = |snapshot: &Snapshot| {
+            snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == "dependency_endings")
+                .map(|r| (r.id.clone(), r.value.clone()))
+                .collect::<BTreeMap<_, _>>()
+        };
+        // Stop already announced its Pending endings. The aborted merge must
+        // neither add nor update one of those durable announcements.
+        let before_endings = endings(&c.snapshot().unwrap());
         let revision = c.snapshot().unwrap().revision;
         c.observe(
             "merge-with-two-waiters",
@@ -796,11 +814,9 @@ mod tests {
             before,
             "fan-out must not commit a merge or partial deliveries at exhaustion"
         );
-        assert!(
-            !snapshot
-                .rows
-                .iter()
-                .any(|r| r.table == "dependency_endings"),
+        assert_eq!(
+            endings(&snapshot),
+            before_endings,
             "unapplied endings must not be announced"
         );
         assert!(
