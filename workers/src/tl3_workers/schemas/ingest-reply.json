@@ -221,6 +221,7 @@
         "merge_prerequisites": {
           "type": "array",
           "uniqueItems": true,
+          "maxItems": 32,
           "items": {
             "type": "object",
             "properties": {

@@ -1790,6 +1790,8 @@ fn shared_reply_validator(role: &str, definition: Option<&str>) -> &'static json
             ("maker", Some("generation_receipt")),
             ("maker", Some("test_run")),
             ("reviewer", None),
+            ("ingest-input", None), ("audit-input", None), ("planner-input", None),
+            ("maker-input", None), ("writer-input", None), ("classifier-input", None),
             ("writer", Some("text")),
             ("writer", Some("options")),
         ]
@@ -1799,11 +1801,11 @@ fn shared_reply_validator(role: &str, definition: Option<&str>) -> &'static json
                 .map(|name| format!("#/$defs/{name}"))
                 .unwrap_or_default();
             let key = format!("{role}{suffix}");
-            let direction = if role == "reviewer" { "input" } else { "reply" };
+            let (root_role, direction) = if let Some(role) = role.strip_suffix("-input") { (role, "input") } else if role == "reviewer" { (role, "input") } else { (role, "reply") };
             let validator = jsonschema::options()
                 .with_registry(&registry)
                 .build(
-                    &json!({"$ref":format!("{}{role}-{direction}.json{suffix}",contracts::SCHEMA_BASE)}),
+                    &json!({"$ref":format!("{}{root_role}-{direction}.json{suffix}",contracts::SCHEMA_BASE)}),
                 )
                 .unwrap();
             (key, validator)
@@ -2115,3 +2117,6 @@ fn reply_number_equality_matches_schema_across_representations() {
 
 #[path = "contracts/reviewer.rs"]
 mod reviewer_contract;
+
+#[path = "contracts/inputs.rs"]
+mod remaining_input_contracts;

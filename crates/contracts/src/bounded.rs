@@ -1340,3 +1340,124 @@ pub fn reply_schema_value<T: JsonSchema>(
     );
     schema
 }
+
+// P1a-2b: shared input boundary constraints.
+/// A typed map whose minimum and maximum property counts share one implementation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct InputMap<K: Ord, V, const MIN: usize, const MAX: usize>(BTreeMap<K, V>);
+impl<'de, K: Ord + Deserialize<'de>, V: Deserialize<'de>, const MIN: usize, const MAX: usize>
+    Deserialize<'de> for InputMap<K, V, MIN, MAX>
+{
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let entries = BTreeMap::deserialize(deserializer)?;
+        if (MIN..=MAX).contains(&entries.len()) {
+            Ok(Self(entries))
+        } else {
+            Err(D::Error::custom("invalid property count"))
+        }
+    }
+}
+impl<K: Ord + JsonSchema, V: JsonSchema, const MIN: usize, const MAX: usize> JsonSchema
+    for InputMap<K, V, MIN, MAX>
+{
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!(
+            "InputMap_{}_{}_{MIN}_{MAX}",
+            K::schema_name(),
+            V::schema_name()
+        )
+        .into()
+    }
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema = json_schema!({"type":"object"});
+        if MIN > 0 {
+            schema.insert("minProperties".into(), MIN.into());
+        }
+        if MAX != UNBOUNDED {
+            schema.insert("maxProperties".into(), MAX.into());
+        }
+        schema.insert("propertyNames".into(), K::json_schema(generator).to_value());
+        schema.insert(
+            "additionalProperties".into(),
+            V::json_schema(generator).to_value(),
+        );
+        schema
+    }
+}
+
+pub trait Rule<T> {
+    fn validate(value: &T) -> Result<(), String>;
+}
+/// Construction and deserialization both enforce cross-field wire constraints.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Validated<T, R>(T, PhantomData<R>);
+impl<T, R: Rule<T>> Validated<T, R> {
+    pub fn new(value: T) -> Result<Self, String> {
+        R::validate(&value)?;
+        Ok(Self(value, PhantomData))
+    }
+}
+impl<T, R> std::ops::Deref for Validated<T, R> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+impl<T: Serialize, R> Serialize for Validated<T, R> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(s)
+    }
+}
+impl<'de, T: Deserialize<'de>, R: Rule<T>> Deserialize<'de> for Validated<T, R> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Self::new(T::deserialize(d)?).map_err(D::Error::custom)
+    }
+}
+impl<T: JsonSchema, R> JsonSchema for Validated<T, R> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        T::schema_name()
+    }
+    fn json_schema(g: &mut SchemaGenerator) -> Schema {
+        T::json_schema(g)
+    }
+}
+
+patterned_text!(
+    /// An admitted container image spelling. The controller's locked schema
+    /// translator defines `\w` as ASCII; retain that existing acceptance.
+    ImageDigest, r"^(?:[\w./:-]+@)?sha256:[0-9a-f]{64}$", |s: &str| {
+        let digest = if let Some((prefix, digest)) = s.split_once('@') {
+            if prefix.is_empty() || !prefix.bytes().all(|c| c.is_ascii_alphanumeric() || b"_./:-".contains(&c)) { return false; }
+            digest
+        } else { s };
+        digest.strip_prefix("sha256:").is_some_and(|hex| hex.len()==64 && lower_hex(hex))
+    }
+);
+pattern_schema!(ImageDigest, no_extra);
+patterned_text!(
+    /// Hindsight endpoint prefix, without URL normalization.
+    HttpPrefix, r"^https?://", |s: &str| s.starts_with("https://") || s.starts_with("http://")
+);
+pattern_schema!(HttpPrefix, no_extra);
+
+/// Schema-only null-first object choice used by classifier open_question.
+/// The field uses Option<Option<T>> to preserve absent and explicitly null values.
+pub struct NullFirst<T>(PhantomData<T>);
+impl<T: JsonSchema> JsonSchema for NullFirst<T> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("NullFirst_{}", T::schema_name()).into()
+    }
+    fn json_schema(g: &mut SchemaGenerator) -> Schema {
+        json_schema!({"oneOf":[{"type":"null"},T::json_schema(g)]})
+    }
+}

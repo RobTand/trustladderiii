@@ -97,7 +97,19 @@ impl GitHubTranslator for Translator {
             .clients
             .get(&repository.installation)
             .ok_or(Error::Invalid("adoption installation client missing"))?;
-        let issue = crate::executor::runtime()?.block_on(client.issue(&repo, *number))?;
+        let issue = crate::executor::runtime()?
+            .block_on(client.issue(&repo, *number))
+            .map_err(|error| {
+                crate::input_resources::github(
+                    error,
+                    crate::input_resources::Resource::prerequisite(
+                        &repository,
+                        tl3_kernel::PrerequisiteKind::Issue,
+                        *number,
+                    ),
+                    repository.installation,
+                )
+            })?;
         if issue.pull_request.is_some() || issue.state != "open" {
             return Ok(vec![]);
         }

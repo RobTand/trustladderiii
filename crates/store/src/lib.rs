@@ -67,6 +67,10 @@ pub struct Store {
     input_boundaries: Vec<(SavePoint, String, serde_json::Value)>,
 }
 
+/// Q53 / #828: identity history is a bounded evidence cache, not the ending audit log.
+const WORKER_IDENTITY_LIMIT: i64 = 65_536;
+const WORKER_IDENTITY_LOCK: i64 = 0x544c334d4f44454c;
+
 const CONTROLLER_CLAIM: i64 = 0x544c33434f4e5452;
 const CONTROLLER_CLAIM_HELD: &str = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND granted)";
 
@@ -290,6 +294,14 @@ const MIGRATIONS: &[(i32, &str)] = &[
     ),
     (21, include_str!("../migrations/0021_dispatch_evidence.sql")),
     (22, include_str!("../migrations/0022_input_allocations.sql")),
+    (
+        23,
+        include_str!("../migrations/0023_worker_model_identity.sql"),
+    ),
+    (
+        24,
+        include_str!("../migrations/0024_worker_model_retention.sql"),
+    ),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -299,6 +311,18 @@ pub struct Ingress {
     pub delivery_key: String,
     pub event_name: String,
     pub payload: Vec<u8>,
+}
+
+fn recorded_worker_ending(row: Row) -> Result<RecordedWorkerEnding> {
+    let facts: WorkerRunFacts = serde_json::from_value(row.get(2))
+        .map_err(|_| Error::Invalid("invalid stored worker ending"))?;
+    facts.validate()?;
+    Ok(RecordedWorkerEnding {
+        key: row.get(0),
+        attempt: row.get(1),
+        family: row.get(3),
+        facts,
+    })
 }
 
 fn ingress_row(row: Row) -> Ingress {
@@ -1519,6 +1543,38 @@ impl Store {
             .is_some())
     }
 
+    /// Q53 / #828: terminal, unwatched deliveries with no claim cannot start again.
+    /// A claim survives until the adapter durably retires its actual attempt files.
+    pub fn worker_identity_abandoned(&mut self, key: &str) -> Result<bool> {
+        Ok(self.client.query_one(
+            "SELECT EXISTS (SELECT 1 FROM tl3_retired_workers WHERE effect_key = $1) AND NOT EXISTS (SELECT 1 FROM tl3_worker_progress WHERE run_key = $1)",
+            &[&key],
+        )?.get(0))
+    }
+
+    /// Q53 / #828: completion evidence is imported before worker ingress.
+    pub fn latest_worker_ending(&mut self, key: &str) -> Result<Option<RecordedWorkerEnding>> {
+        self.client.query_opt("SELECT r.run_key, r.attempt, r.facts, m.family FROM tl3_worker_runs r LEFT JOIN tl3_worker_run_models m USING (run_key, attempt) WHERE r.run_key = $1 ORDER BY r.attempt DESC LIMIT 1", &[&key])?.map(recorded_worker_ending).transpose()
+    }
+
+    /// Q53 / #828: a late quota observation cannot borrow a newer success's attempt.
+    pub fn latest_worker_quota(
+        &mut self,
+        key: &str,
+        model: Option<&str>,
+    ) -> Result<Option<RecordedWorkerEnding>> {
+        self.client.query_opt("SELECT r.run_key, r.attempt, r.facts, m.family FROM tl3_worker_runs r LEFT JOIN tl3_worker_run_models m USING (run_key, attempt) WHERE r.run_key = $1 AND r.outcome = 'quota' AND ($2::text IS NULL OR r.model = $2) ORDER BY r.attempt DESC LIMIT 1", &[&key, &model])?.map(recorded_worker_ending).transpose()
+    }
+
+    /// Q53 / #828: a late success remains evidence after its node moved on.
+    pub fn latest_worker_success(
+        &mut self,
+        node: &str,
+        model: &str,
+    ) -> Result<Option<RecordedWorkerEnding>> {
+        self.client.query_opt("SELECT r.run_key, r.attempt, r.facts, m.family FROM tl3_worker_runs r LEFT JOIN tl3_worker_run_models m USING (run_key, attempt) WHERE r.node_id = $1 AND r.model = $2 AND r.outcome = 'succeeded' ORDER BY r.finished_ms DESC NULLS LAST, r.attempt DESC LIMIT 1", &[&node, &model])?.map(recorded_worker_ending).transpose()
+    }
+
     /// Import a worker-owned terminal record before retiring its attempt files.
     /// A replay is harmless; changing an already imported attempt is refused.
     pub fn record_worker_facts(
@@ -1531,16 +1587,30 @@ impl Store {
     ) -> Result<()> {
         facts.validate()?;
         let value = serde_json::to_value(facts).expect("worker facts are JSON values");
-        self.client.execute(
+        let mut tx = operation(&mut self.client, self.input_active)?;
+        // Serialize identity admission/pruning without taking the controller's
+        // world lock: terminal import can run through an auxiliary connection.
+        tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&WORKER_IDENTITY_LOCK])?;
+        tx.execute(
             "INSERT INTO tl3_worker_runs (run_key, node_id, attempt, role, facts) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (run_key, attempt) DO NOTHING",
             &[&key, &node, &attempt, &role, &value],
         )?;
-        if self.client.query_opt(
+        if tx.query_opt(
             "SELECT 1 FROM tl3_worker_runs WHERE run_key = $1 AND node_id = $2 AND attempt = $3 AND role = $4 AND facts = $5",
             &[&key, &node, &attempt, &role, &value],
         )?.is_none() {
             return Err(Error::Invalid("worker completion record changed"));
         }
+        let id = serde_json::to_string(&(key, attempt)).expect("attempt identity serializes");
+        tx.execute(
+            "INSERT INTO tl3_worker_run_models (run_key, attempt, model, family) SELECT $1, $2, $4, COALESCE(value->'families'->>$4, CASE WHEN value->>'model' = $4 THEN value->>'family' END) FROM tl3_world WHERE table_name = 'model_attempts' AND row_id = $3 AND COALESCE(value->'families'->>$4, CASE WHEN value->>'model' = $4 THEN value->>'family' END) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tl3_worker_run_models WHERE run_key = $1 AND attempt = $2) ON CONFLICT DO NOTHING",
+            &[&key, &attempt, &id, &facts.model],
+        )?;
+        tx.execute(
+            "DELETE FROM tl3_worker_run_models WHERE retention_id <= (SELECT max(retention_id) FROM tl3_worker_run_models) - $1",
+            &[&WORKER_IDENTITY_LIMIT],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
