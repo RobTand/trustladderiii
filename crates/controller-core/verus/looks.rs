@@ -81,10 +81,10 @@ mod witnesses {
     /// Rust's disjoint mutable references are the production boundary, with no global counter store.
     fn q7_effect_frame(selected: &mut FailureCount, other: &mut FailureCount)
         requires old(selected).failures <= 1,
-        ensures other.failures == old(other).failures,
-            other.incidents == old(other).incidents, other.raise == old(other).raise,
-            selected.failures as int == 1 - old(selected).failures as int,
-            selected.raise == (old(selected).failures == 1),
+        ensures final(other).failures == old(other).failures,
+            final(other).incidents == old(other).incidents, final(other).raise == old(other).raise,
+            final(selected).failures as int == 1 - old(selected).failures as int,
+            final(selected).raise == (old(selected).failures == 1),
     {
         record_failure(selected);
     }

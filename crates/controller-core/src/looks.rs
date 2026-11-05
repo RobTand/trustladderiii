@@ -203,9 +203,9 @@ pub fn stall_action(source: StallUpstream, requeue: bool) -> StallAction {
 /// The mutable argument makes the per-effect frame explicit to the verifier.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
     requires old(state).failures < 255,
-    ensures state.raise == (old(state).failures >= 1),
-        state.failures == (if old(state).failures == 0 { 1u8 } else { 0u8 }),
-        state.incidents as int == (if old(state).failures == 0 || old(state).incidents == 255 { old(state).incidents as int } else { old(state).incidents as int + 1 }),
+    ensures final(state).raise == (old(state).failures >= 1),
+        final(state).failures == (if old(state).failures == 0 { 1u8 } else { 0u8 }),
+        final(state).incidents as int == (if old(state).failures == 0 || old(state).incidents == 255 { old(state).incidents as int } else { old(state).incidents as int + 1 }),
 ))]
 pub fn record_failure(state: &mut FailureCount) {
     *state = counted_failure(state.failures, state.incidents);
