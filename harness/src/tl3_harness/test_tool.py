@@ -335,10 +335,16 @@ def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
         notes.append(result["note"])
     summary = Summary(raw=True)
     summary.result.update(repeat=repeat, **extra, runs=runs)
+    clipped = False
+    # Preserve the legacy run-list cap independently of the final envelope bound.
+    for entry in reversed(runs):
+        while entry["failed"] and len(json.dumps(runs).encode()) > SUMMARY_BYTES // 2:
+            entry["failed"].pop()
+            clipped = True
     for item in worst.values():
         summary.add(item["test"], item["outcome"], item["message"])
     note = summary.result["note"] or next((note for note in notes if note), "")
-    if any(note.startswith("Truncated") for note in notes):
+    if clipped or any(note.startswith("Truncated") for note in notes):
         note = "Truncated: test entries or failure messages were cut. Totals include all results."
     summary.result["note"] = note
     return summary.result

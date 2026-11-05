@@ -46,7 +46,7 @@ verus_test = rule(
 def verus_proofs():
     """Proof inventory in existing crate packages; generated BUILD files stay Cargo-only."""
     if native.package_name() == "crates/harness-core":
-        for name, count in [("summary_size", 7), ("summary_reduction", 5), ("identity", 2)]:
+        for name, count in [("summary_size", 7), ("summary_reduction", 8), ("identity", 2)]:
             verus_test(
                 name = "verus_" + name,
                 src = "verus/" + name + ".rs",

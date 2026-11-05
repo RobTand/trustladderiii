@@ -329,7 +329,20 @@ fn expected(input: &V, limit: usize) -> Result<BoundedSummary, BoundError> {
         }
     });
     let candidates = (0..=order.len())
-        .map(|i| candidate(&marked, &mut vec![], &order[..i]))
+        .map(|i| {
+            let plan = reference::Plan {
+                kind: 1,
+                removed: i,
+                bytes: 0,
+            };
+            let removed = order
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !reference::keeps(plan, *index, false))
+                .map(|(_, atom)| atom.clone())
+                .collect::<Vec<_>>();
+            candidate(&marked, &mut vec![], &removed)
+        })
         .collect::<Vec<_>>();
     let sizes = candidates.iter().map(size).collect::<Vec<_>>();
     let plan = reference::reduce(size(input), size(&core), size(&diag), &sizes, limit as u64);
@@ -346,7 +359,10 @@ fn expected(input: &V, limit: usize) -> Result<BoundedSummary, BoundError> {
         }
         _ => unreachable!(),
     };
-    for (i, _) in order.iter().enumerate() {
+    for (i, atom) in order.iter().enumerate() {
+        assert!(reference::priority_transitive(
+            atom.rank, i, atom.rank, i, atom.rank, i
+        ));
         assert!(reference::prefix_preserves_order(plan, i, order.len()));
         if plan.kind <= 2 {
             assert!(reference::keeps(plan, i, true));

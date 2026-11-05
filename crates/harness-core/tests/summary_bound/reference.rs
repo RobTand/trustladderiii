@@ -106,3 +106,18 @@ pub fn keeps(plan: Plan, position: usize, mandatory: bool) -> bool {
 pub fn prefix_preserves_order(plan: Plan, earlier: usize, later: usize) -> bool {
     !keeps(plan, earlier, false) || keeps(plan, later, false)
 }
+
+/// #823(b): the priority/traversal comparison is transitive on the full domain.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out))]
+pub fn priority_transitive(
+    a_rank: u8,
+    a: usize,
+    b_rank: u8,
+    b: usize,
+    c_rank: u8,
+    c: usize,
+) -> bool {
+    !precedes(a_rank, a, b_rank, b)
+        || !precedes(b_rank, b, c_rank, c)
+        || precedes(a_rank, a, c_rank, c)
+}

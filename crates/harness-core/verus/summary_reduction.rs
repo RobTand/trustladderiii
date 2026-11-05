@@ -24,6 +24,8 @@ fn witnesses() {
     assert(priority);
     let tie = reference::precedes(2, 0, 2, 1);
     assert(tie);
+    let transitive = reference::priority_transitive(1, 4, 2, 3, 4, 2);
+    assert(transitive);
     let prefix_order = reference::prefix_preserves_order(prefix, 0, 2);
     assert(prefix_order);
 }
