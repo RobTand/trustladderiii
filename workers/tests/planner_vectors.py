@@ -291,9 +291,9 @@ def check_case(case, function=None, rehearsals=None):
         captured = []
         result = outcome(lambda: (function or planner.check_reply)(inputs, reply, rehearsals=ledger,
             **({'plan_errors': captured} if case.get('has_plan_errors') else {})))
-        if case.get('has_plan_errors'):
-            result['plan_errors'] = [exception(error) for error in captured]
     result['reply'] = reply
+    if case.get('has_plan_errors'):
+        result['plan_errors'] = [exception(error) for error in captured]
     if tape.recording:
         case['facts'], case['outcome'] = tape.rows, result
     else:
