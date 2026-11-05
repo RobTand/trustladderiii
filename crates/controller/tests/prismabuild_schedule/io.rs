@@ -345,8 +345,10 @@ impl Client {
         if n == 254 {
             return Err(tl3_prismabuild::Error::Tool { code: Some(1) });
         }
+        let published = IO.with(|io| io.borrow().persisted.contains_key(&format!("pb:{key}")));
         let state = match n % 8 {
-            0 => return Ok(RecordRead::Absent),
+            0 if !published => return Ok(RecordRead::Absent),
+            0 => ActionState::Queued,
             1 => return Ok(RecordRead::Moving),
             2 => ActionState::Queued,
             3 => ActionState::Claimed,

@@ -4,12 +4,17 @@ use super::io::*;
 struct Adapter(super::io::Adapter);
 impl std::ops::Deref for Adapter {
     type Target = super::io::Adapter;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl std::ops::DerefMut for Adapter {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
+#[rustfmt::skip]
 impl Adapter {
 // BEGIN BODY
     fn job(&self, delivery: &Delivery) -> Result<Option<Job>> {
@@ -32,7 +37,7 @@ impl Adapter {
                 .runtime
                 .block_on(self.client.read(&job.action))
                 .map_err(adapter_error)?;
-            if record.is_live() {
+            if decide::live(decision_record(&record)) {
                 return Err(crate::Error::Invalid(
                     "cannot retire an active PrismaBuild job",
                 ));
@@ -60,25 +65,26 @@ impl Adapter {
 // END BODY
 
 // BEGIN BODY
-    fn fence(&self, epoch: i64) -> Result<()> {
+    fn fence(&self, epoch: i64) -> Result<decide::Fence> {
         let path = self.settings.records.join("epoch.fence");
         let accepted = match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
             Err(e) => return Err(e.into()),
         };
-        if epoch < accepted {
+        let Some(fenced) = decide::fence(epoch, accepted) else {
             return Err(crate::Error::Invalid(
                 "PrismaBuild adapter refused an older epoch",
             ));
-        }
-        write(&path, &epoch)
+        };
+        write(&path, &epoch)?;
+        Ok(fenced)
     }
 // END BODY
 
 // BEGIN BODY
     fn plan_failure(&self, delivery: &Delivery) -> Result<Option<Completion>> {
-        if self.job(delivery)?.is_some() {
+        if !decide::inspect_plan(self.job(delivery)?.is_some()) {
             return Ok(None);
         }
         let Some(run) = &delivery.checks else {
@@ -112,7 +118,7 @@ impl Adapter {
 // END BODY
 
 // BEGIN BODY
-    fn submit(&self, delivery: &Delivery) -> Result<Job> {
+    fn submit(&self, delivery: &Delivery, _fenced: decide::Fence) -> Result<Job> {
         if let Some(job) = self.job(delivery)? {
             self.remove_input(delivery)?;
             return Ok(job);
@@ -232,9 +238,12 @@ impl Adapter {
         for path in node_job_paths(&node_root(&self.settings.records, delivery.node()), false)? {
             // An unreadable active binding cannot prove that withdrawal has finished.
             let job: Job = serde_json::from_slice(&fs::read(path)?)?;
-            if job.delivery.node() == delivery.node()
-                && Some(job.delivery.generation) == delivery.job_generation
-            {
+            if decide::target(
+                job.delivery.node().0,
+                delivery.node().0,
+                job.delivery.generation,
+                delivery.job_generation,
+            ) {
                 targets.push(job);
             }
         }
@@ -254,21 +263,31 @@ impl Adapter {
             .runtime
             .block_on(self.client.read(&job.action))
             .map_err(adapter_error)?;
-        if record.is_live() {
+        if decide::live(decision_record(&record)) {
             return Ok(Reconciliation::Pending);
         }
-        Ok(
-            match self.runtime.block_on(results::ending(
-                &self.settings.result_tool,
-                job,
-                false,
-                &record,
-            ))? {
-                Some(completion) => Reconciliation::Found(Box::new(completion)),
-                None if matches!(record, RecordRead::Absent) => Reconciliation::Absent,
-                None => Reconciliation::Pending,
-            },
-        )
+        let ending = self.runtime.block_on(results::ending(
+            &self.settings.result_tool,
+            job,
+            false,
+            &record,
+        ));
+        let classified = match &ending {
+            Ok(Some(_)) => decide::Ending::Complete,
+            Ok(None) => decide::Ending::Waiting,
+            Err(_) => decide::Ending::Unreadable,
+        };
+        match decide::check_result(decision_record(&record), classified) {
+            decide::CheckResult::Confirmed => Ok(Reconciliation::Found(Box::new(
+                ending?.ok_or(crate::Error::Invalid("missing classified completion"))?,
+            ))),
+            decide::CheckResult::Absent => Ok(Reconciliation::Absent),
+            decide::CheckResult::Pending => Ok(Reconciliation::Pending),
+            decide::CheckResult::Unreadable => {
+                ending?;
+                Err(crate::Error::Invalid("missing classified ending error"))
+            }
+        }
     }
 // END BODY
 
@@ -290,7 +309,7 @@ impl Adapter {
                 wait: wait.clone(),
             };
             let bytes = serde_json::to_vec(&subscription)?;
-            if fs::read(&path).ok().as_ref() == Some(&bytes) {
+            if !decide::write_wait(fs::read(&path).ok().as_ref() == Some(&bytes)) {
                 false
             } else {
                 fs::create_dir_all(path.parent().unwrap())?;
@@ -357,20 +376,24 @@ impl Adapter {
             else {
                 continue;
             };
-            if !world
-                .nodes
-                .get(node.0 as usize)
-                .is_some_and(|n| n.phase.is_closed())
-            {
+            if !decide::retire(
+                world
+                    .nodes
+                    .get(node.0 as usize)
+                    .is_some_and(|n| n.phase.is_closed()),
+                false,
+            ) {
                 continue;
             }
-            if pending.iter().any(|d| d.node() == node)
-                || watches.iter().any(|d| {
-                    d.node() == node
-                        && crate::executor::upstream(d.output)
-                            == crate::executor::Upstream::PrismaBuild
-                })
-            {
+            if !decide::retire(
+                true,
+                pending.iter().any(|d| d.node() == node)
+                    || watches.iter().any(|d| {
+                        d.node() == node
+                            && crate::executor::upstream(d.output)
+                                == crate::executor::Upstream::PrismaBuild
+                    }),
+            ) {
                 continue;
             }
             if let Err(error) = self.retire_node(node) {
@@ -383,7 +406,7 @@ impl Adapter {
 
 // BEGIN BODY
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
-        self.fence(delivery.epoch)?;
+        let fenced = self.fence(delivery.epoch)?;
         match delivery.output {
             Out::Effect {
                 kind: EffectKind::SubmitChecks,
@@ -392,14 +415,17 @@ impl Adapter {
                 if let Some(completion) = self.plan_failure(delivery)? {
                     return Ok(completion);
                 }
-                let job = self.submit(delivery)?;
+                let job = self.submit(delivery, fenced)?;
                 let _ = self.keys.send(delivery.node());
-                if decide::publish(decision_record(
-                    &self
-                        .runtime
-                        .block_on(self.client.read(&job.action))
-                        .map_err(adapter_error)?,
-                )) {
+                if decide::publish(
+                    decision_record(
+                        &self
+                            .runtime
+                            .block_on(self.client.read(&job.action))
+                            .map_err(adapter_error)?,
+                    ),
+                    fenced,
+                ) {
                     self.runtime
                         .block_on(self.client.publish(&job.action))
                         .map_err(adapter_error)?;
@@ -458,7 +484,10 @@ impl Adapter {
                         .runtime
                         .block_on(self.client.read(&job.action))
                         .map_err(adapter_error)?;
-                    if matches!(record, RecordRead::Absent) {
+                    if matches!(
+                        decide::withdrawal(decision_record(&record)),
+                        decide::Withdrawal::MarkGone
+                    ) {
                         // Share marker ownership with an ending already in flight on the source.
                         let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
                         let done = record_path(&self.settings.records, &job.delivery, "done");
@@ -468,10 +497,13 @@ impl Adapter {
                         let _ = self.keys.send(job.delivery.node());
                         continue;
                     }
-                    if matches!(record, RecordRead::Moving) {
+                    if matches!(
+                        decide::withdrawal(decision_record(&record)),
+                        decide::Withdrawal::Pending
+                    ) {
                         return Ok(Reconciliation::Pending);
                     }
-                    if record.is_live() {
+                    if decide::live(decision_record(&record)) {
                         self.fence(delivery.epoch)?;
                         self.runtime
                             .block_on(self.client.withdraw(&job.action, "controller withdrawal"))
@@ -500,12 +532,14 @@ impl Adapter {
 // END BODY
 }
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn encoded(key: &str) -> String {
     key.bytes().map(|b| format!("{b:02x}")).collect()
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn write(path: &Path, value: &impl Serialize) -> Result<()> {
     let temporary = path.with_extension("tmp");
@@ -522,6 +556,7 @@ fn write(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn read_job(path: &Path) -> Option<Job> {
     let result = fs::read(path)
@@ -537,18 +572,21 @@ fn read_job(path: &Path) -> Option<Job> {
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn node_root(root: &Path, node: NodeId) -> PathBuf {
     root.join(node.0.to_string())
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn record_path(root: &Path, delivery: &Delivery, extension: &str) -> PathBuf {
     node_root(root, delivery.node()).join(format!("{}.{extension}", encoded(&delivery.key)))
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn node_job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
     let entries = match fs::read_dir(root) {
@@ -569,6 +607,7 @@ fn node_job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn retire_superseded(root: &Path, delivery: &Delivery) -> Result<()> {
     let root = node_root(root, delivery.node());
@@ -577,7 +616,7 @@ fn retire_superseded(root: &Path, delivery: &Delivery) -> Result<()> {
         .chain(node_job_paths(&root, true)?)
     {
         let Some(job) = read_job(&path) else { continue };
-        if job.delivery.generation < delivery.generation {
+        if decide::superseded(job.delivery.generation, delivery.generation) {
             // A later delivered check proves the prior effect and watch have settled.
             // Delete the binding first so a crash cannot expose a job without its done marker.
             fs::remove_file(&path)?;
@@ -599,13 +638,16 @@ pub fn run(op: u8, delivery: &Delivery, wait: Option<&tl3_store::ExternalWait>) 
         0 => format!("{:?}", adapter.execute(delivery)),
         1 => format!("{:?}", adapter.reconcile(delivery)),
         2 => match adapter.job(delivery) {
-            Ok(Some(job)) => format!("{:?}",adapter.check_result(&job)),
+            Ok(Some(job)) => format!("{:?}", adapter.check_result(&job)),
             value => format!("job:{}", value.is_ok()),
         },
-        3 => format!("{:?}",adapter.plan_failure(delivery)),
-        4 => format!("{:?}",adapter.watch_wait(delivery,wait)),
-        5 => format!("{:?}",adapter.retire(&mut tl3_store::Store)),
-        6 => format!("{:?}",adapter.retire_node(delivery.node())),
-        _ => format!("{:?}",retire_superseded(&adapter.settings.records, delivery)),
+        3 => format!("{:?}", adapter.plan_failure(delivery)),
+        4 => format!("{:?}", adapter.watch_wait(delivery, wait)),
+        5 => format!("{:?}", adapter.retire(&mut tl3_store::Store)),
+        6 => format!("{:?}", adapter.retire_node(delivery.node())),
+        _ => format!(
+            "{:?}",
+            retire_superseded(&adapter.settings.records, delivery)
+        ),
     }
 }

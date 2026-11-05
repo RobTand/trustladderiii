@@ -4,12 +4,17 @@ use super::io::*;
 struct Adapter(super::io::Adapter);
 impl std::ops::Deref for Adapter {
     type Target = super::io::Adapter;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl std::ops::DerefMut for Adapter {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
+#[rustfmt::skip]
 impl Adapter {
 // BEGIN BODY
     fn job(&self, delivery: &Delivery) -> Result<Option<Job>> {
@@ -500,12 +505,14 @@ impl Adapter {
 // END BODY
 }
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn encoded(key: &str) -> String {
     key.bytes().map(|b| format!("{b:02x}")).collect()
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn write(path: &Path, value: &impl Serialize) -> Result<()> {
     let temporary = path.with_extension("tmp");
@@ -522,6 +529,7 @@ fn write(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn read_job(path: &Path) -> Option<Job> {
     let result = fs::read(path)
@@ -537,18 +545,21 @@ fn read_job(path: &Path) -> Option<Job> {
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn node_root(root: &Path, node: NodeId) -> PathBuf {
     root.join(node.0.to_string())
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn record_path(root: &Path, delivery: &Delivery, extension: &str) -> PathBuf {
     node_root(root, delivery.node()).join(format!("{}.{extension}", encoded(&delivery.key)))
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn node_job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
     let entries = match fs::read_dir(root) {
@@ -569,6 +580,7 @@ fn node_job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
 }
 // END BODY
 
+#[rustfmt::skip]
 // BEGIN BODY
 fn retire_superseded(root: &Path, delivery: &Delivery) -> Result<()> {
     let root = node_root(root, delivery.node());
@@ -599,13 +611,16 @@ pub fn run(op: u8, delivery: &Delivery, wait: Option<&tl3_store::ExternalWait>) 
         0 => format!("{:?}", adapter.execute(delivery)),
         1 => format!("{:?}", adapter.reconcile(delivery)),
         2 => match adapter.job(delivery) {
-            Ok(Some(job)) => format!("{:?}",adapter.check_result(&job)),
+            Ok(Some(job)) => format!("{:?}", adapter.check_result(&job)),
             value => format!("job:{}", value.is_ok()),
         },
-        3 => format!("{:?}",adapter.plan_failure(delivery)),
-        4 => format!("{:?}",adapter.watch_wait(delivery,wait)),
-        5 => format!("{:?}",adapter.retire(&mut tl3_store::Store)),
-        6 => format!("{:?}",adapter.retire_node(delivery.node())),
-        _ => format!("{:?}",retire_superseded(&adapter.settings.records, delivery)),
+        3 => format!("{:?}", adapter.plan_failure(delivery)),
+        4 => format!("{:?}", adapter.watch_wait(delivery, wait)),
+        5 => format!("{:?}", adapter.retire(&mut tl3_store::Store)),
+        6 => format!("{:?}", adapter.retire_node(delivery.node())),
+        _ => format!(
+            "{:?}",
+            retire_superseded(&adapter.settings.records, delivery)
+        ),
     }
 }

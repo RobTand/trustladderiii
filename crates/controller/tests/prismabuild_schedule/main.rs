@@ -69,10 +69,14 @@ fn delivery(withdraw: bool) -> Delivery {
     })).unwrap()
 }
 fn quiet_crashes() {
-    static ONCE:std::sync::Once=std::sync::Once::new();
+    static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let previous=std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info|{if !info.payload().is::<io::Crash>() {previous(info);}}));
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !info.payload().is::<io::Crash>() {
+                previous(info);
+            }
+        }));
     });
 }
 
@@ -259,4 +263,46 @@ fn replay_bodies_are_the_production_bodies() {
         count += 1;
     }
     assert_eq!(count, 19);
+}
+
+/// Once by action key: every before/after-write crash restarts using only durable
+/// bytes and the upstream's surviving authenticated record, never a cached result.
+#[test]
+fn publication_is_once_across_every_crash() {
+    let state = initial(&[0], false, false, false);
+    let uninterrupted = replay(false, state.clone(), 0, 0);
+    assert!(
+        uninterrupted
+            .calls
+            .iter()
+            .any(|c| c.starts_with("pb.publish:"))
+    );
+    for crash in 0..uninterrupted.writes * 2 {
+        let mut first = state.clone();
+        first.crash = crash;
+        let first = replay(false, first, 0, 0);
+        let mut recovered = state.clone();
+        recovered.files = first.persisted.clone();
+        // Directories survive their original mkdir/parent-fsync boundary.
+        recovered.files.entry("/records".into()).or_default();
+        recovered.files.entry("/records/0".into()).or_default();
+        recovered.synced = recovered.files.clone();
+        recovered.persisted = first.persisted.clone();
+        let second = replay(false, recovered, 0, 0);
+        let publications = first
+            .calls
+            .iter()
+            .chain(&second.calls)
+            .filter(|c| c.starts_with("pb.publish:"))
+            .count();
+        // A crash before the write records its attempted call, but publishes no work.
+        let landed_first = first.persisted.keys().any(|k| k.starts_with("pb:"));
+        if landed_first {
+            assert_eq!(publications, 1, "crash {crash} repeated publication");
+        }
+        assert!(
+            second.persisted.keys().any(|k| k.starts_with("pb:")),
+            "crash {crash} lost publication"
+        );
+    }
 }

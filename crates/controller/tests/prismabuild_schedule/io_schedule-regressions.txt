@@ -1,1 +1,2 @@
 # proptest failure persistence, fixed seed 73019; generated failures are uploaded as test artifacts.
+cc 183f4a0a49649f28aaa1d20d51e5606927d848fb32c24a60b027002ece1879b9 # red stub, shrunk to ([0, 0, 0, 0, 0], 0, 0, 0)
