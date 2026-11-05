@@ -74,12 +74,18 @@ pub(crate) fn append(
         && failure["generation"].as_u64() == generation
     {
         let diagnostic: Diagnostic = crate::decode_stored(failure["diagnostic"].clone())?;
+        // Redact before clipping so the display limit cannot split a secret.
+        let stderr = crate::redaction::text(diagnostic.stderr_tail.as_str())?;
+        let stderr: String = stderr
+            .chars()
+            .skip(stderr.chars().count().saturating_sub(512))
+            .collect();
         let detail = format!(
             " Check action {}: {} / {}; container stderr tail: {}",
             failure["action_key"].as_str().unwrap_or("unknown"),
             diagnostic.phase.as_str(),
             diagnostic.termination_reason.as_str(),
-            crate::evidence::label(diagnostic.stderr_tail.as_str())?
+            crate::evidence::label(&stderr)?
         );
         // Apply the controller's existing secret policy before the operations incident is published.
         summary.push_str(&crate::redaction::text(&detail)?);
