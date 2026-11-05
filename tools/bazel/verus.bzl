@@ -198,6 +198,37 @@ def verus_proofs():
             )
 
 
+        # ctrl-core C2: required-check Kani port and rerun budgets, independently owned.
+        for part, module, count in [
+            ("required_check", "enqueue#required_check", 1),
+            ("required_check_witness", "witness", 1),
+        ]:
+            root = part[:-8] if part.endswith("_witness") else part
+            verus_test(
+                name = "verus_enqueue_" + part,
+                src = "proofs/enqueue_" + root + ".rs",
+                srcs = [
+                    "src/decide/enqueue.rs",
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                ],
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_" + root + "_spec.rs",
+                    "proofs/enqueue_" + root + "_witness.rs",
+                ],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(

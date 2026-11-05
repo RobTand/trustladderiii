@@ -67,7 +67,6 @@ MUTANTS = [
     ("enqueue_stale_head", DECIDE + "enqueue.rs", "read.head != Head::Current\n                || !read.open", "!read.open"),
     ("enqueue_stale_head", DECIDE + "enqueue.rs", "} else if head != Head::Current {\n                Effect::Complete(Complete::Retryable)", "} else if false && head != Head::Current {\n                Effect::Complete(Complete::Retryable)"),
     ("enqueue_dequeue_fresh", DECIDE + "enqueue.rs", "event.id > queued", "event.id >= queued"),
-    ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
     ("enqueue_ack_sound", DECIDE + "enqueue.rs", "state.confirmed = true;", "// mutant: omit acknowledgement state"),
 ]
 

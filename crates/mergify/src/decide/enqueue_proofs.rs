@@ -6,7 +6,6 @@
 //! - `enqueue_ack_sound`: state-table Publishing, step 4 confirms before Queued.
 //! - `enqueue_stale_head`: Reviewing's Approved(head) row and #608's dispatch fence.
 //! - `enqueue_dequeue_fresh`: #608, retain prior dequeue without reusing stale labels.
-//! - `enqueue_required_check`: Q47, distinguish code failures from runner failures.
 use super::enqueue::*;
 use super::{Head, QueueState};
 
@@ -305,52 +304,5 @@ proof!(enqueue_dequeue_fresh, {
     kani::cover!(
         !pending && retry && !concluded && fresh,
         "fresh event finishes dequeue"
-    );
-});
-
-proof!(enqueue_required_check, {
-    use super::{App, Conclusion, Status};
-    let check: super::CheckView = kani::any();
-    let runner: bool = kani::any();
-    let expected = match (check.status, check.conclusion) {
-        (
-            Status::Completed,
-            Some(Conclusion::Success | Conclusion::Neutral | Conclusion::Skipped),
-        ) => RequiredState::Passed,
-        (Status::Completed, Some(Conclusion::ActionRequired | Conclusion::Stale)) => {
-            RequiredState::Pending
-        }
-        (Status::Completed, Some(conclusion)) => {
-            if check.app == App::Actions
-                && (matches!(
-                    conclusion,
-                    Conclusion::Cancelled | Conclusion::TimedOut | Conclusion::StartupFailure
-                ) || conclusion == Conclusion::Failure && runner)
-            {
-                RequiredState::Infrastructure
-            } else {
-                RequiredState::Tests
-            }
-        }
-        (Status::Completed, None) => RequiredState::Unknown,
-        _ => RequiredState::Pending,
-    };
-    assert_eq!(
-        required_check(check, runner),
-        expected,
-        "required check misclassified"
-    );
-    kani::cover!(expected == RequiredState::Passed, "head check passed");
-    kani::cover!(expected == RequiredState::Pending, "head check pending");
-    kani::cover!(expected == RequiredState::Unknown, "no conclusion");
-    kani::cover!(expected == RequiredState::Tests, "test failure");
-    kani::cover!(
-        expected == RequiredState::Infrastructure && check.conclusion == Some(Conclusion::Failure),
-        "runner annotation"
-    );
-    kani::cover!(
-        expected == RequiredState::Infrastructure
-            && check.conclusion == Some(Conclusion::Cancelled),
-        "cancelled runner"
     );
 });
