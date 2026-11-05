@@ -1,5 +1,6 @@
 """Small required Verus proofs with declared source, spec and toolchain inputs."""
 
+load("@rules_python//python:defs.bzl", "py_test")
 load("//tools/bazel:verus_toolchain.bzl", "VerusToolchainInfo")
 
 def _verus_test_impl(ctx):
@@ -377,12 +378,9 @@ def verus_proofs():
     if native.package_name() == "crates/harness-core":
         verus_test(
             name = "verus_red_match",
-            src = "//crates/harness-core/verus:red_match.rs",
+            src = "verus/red_match.rs",
             srcs = ["src/red_match.rs"],
-            specs = [
-                "//crates/harness-core/verus:red_match.rs",
-                "//crates/harness-core/verus:red_match_spec.rs",
-            ],
+            specs = native.glob(["verus/red_match*.rs"]),
             expected_obligations = 24,
             tags = ["rust", "verus"],
             size = "small",
@@ -390,6 +388,33 @@ def verus_proofs():
             target_compatible_with = ["@platforms//cpu:x86_64"],
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+        # #835: independent groups over the real limits source, with witnesses.
+        for group, count in [("arithmetic", 5), ("line", 3), ("accumulation", 8), ("delay", 2)]:
+            verus_test(
+                name = "verus_limits_" + group,
+                src = "verus/limits_" + group + ".rs",
+                srcs = ["src/limits.rs"],
+                module = "limits::" + group,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+        # One Python edge run while the action copy remains.
+        py_test(
+            name = "test_limits_boundary",
+            srcs = ["tests/fixtures/limits/test_boundary.py"],
+            main = "tests/fixtures/limits/test_boundary.py",
+            data = ["tests/fixtures/limits/delay.json"],
+            deps = ["//harness/src/tl3_harness"],
+            size = "small",
+            timeout = "short",
         )
 
     if native.package_name() == "crates/controller-core":
