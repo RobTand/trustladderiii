@@ -178,11 +178,12 @@ def verus_proofs():
                     "src/decide/observe.rs",
                     "src/decide/verification.rs",
                 ],
-                specs = [
-                    "proofs/enqueue_helpers.rs",
-                    "proofs/enqueue_" + root + "_spec.rs",
-                    "proofs/enqueue_" + root + "_witness.rs",
-                ],
+                # Standalone-function roots may reuse an existing decide contract.
+                # New families add inputs without editing another group's block.
+                specs = ["proofs/enqueue_helpers.rs"] + native.glob([
+                    "proofs/enqueue_*_spec.rs",
+                    "proofs/enqueue_*_witness.rs",
+                ]),
                 module = module,
                 expected_obligations = count,
                 tags = ["rust", "verus"],
