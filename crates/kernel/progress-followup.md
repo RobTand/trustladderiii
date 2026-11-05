@@ -1,4 +1,4 @@
-# Issue draft: prove unbounded progress over the executable kernel
+# #805: prove unbounded progress over the executable kernel
 
 ## Result required
 

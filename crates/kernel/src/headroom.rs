@@ -227,7 +227,8 @@ impl World {
     }
 
     kernel_fn! {
-        /// #771: the executable step-safety theorem is scoped to counter headroom.
+        /// State-table "Counter headroom" / #771: the executable step-safety
+        /// theorem is scoped to the checked per-step reserves.
         /// The u32 scratch counters reserve one new open root and six local
         /// settle moves per open node. Closed nodes do not contribute to these
         /// scans in a consistent world. This admits at most 715,827,881 open nodes;
@@ -240,7 +241,8 @@ impl World {
     }
 
     kernel_fn! {
-    /// #771: returning no incident is exactly the theorem's counter scope.
+    /// State-table "Counter headroom" / #771: returning no incident is exactly
+    /// the theorem's counter scope.
     pub fn counter_exhaustion(&self) -> (result: Option<CounterExhaustion>) [
         ensures result.is_none() == world_headroom(*self),
     ] proof [reveal(world_headroom); reveal(open_prefix);] {
@@ -313,7 +315,8 @@ impl World {
 }
 
 kernel_fn! {
-    /// #771: identify the first exhausted counter without altering the node.
+    /// State-table "Counter headroom" / #771: identify the first exhausted
+    /// counter without altering the node.
     fn node_counter_exhaustion(node: &Node) -> (result: Option<&'static str>) [
         ensures result.is_none() == node_headroom(*node),
     ] {

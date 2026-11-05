@@ -688,14 +688,35 @@ impl Controller {
     /// which sets its credit reserve (#416).
     pub fn issue_changed(&mut self, change: &IssueChange) -> Result<()> {
         let snapshot = self.store.load()?;
-        let Some(repo) = stored_repositories(&snapshot)?.into_iter().find(|r| {
+        let mut commit = Commit::new(
+            format!("github-issue:{}", change.delivery),
+            json!({"issue_change": change}),
+            &snapshot,
+        );
+        self.prepare_issue_change(&snapshot, change, &mut commit, false)?;
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
+    /// State-table "Counter headroom": retain complete edits before comparing
+    /// their priority or timestamp with a world that the halt has frozen.
+    pub(crate) fn prepare_issue_change(
+        &mut self,
+        snapshot: &Snapshot,
+        change: &IssueChange,
+        commit: &mut Commit,
+        replaying: bool,
+    ) -> Result<()> {
+        let Some(repo) = stored_repositories(snapshot)?.into_iter().find(|r| {
             r.owner.eq_ignore_ascii_case(&change.owner)
                 && r.name.eq_ignore_ascii_case(&change.repo)
                 && r.installation == change.installation
         }) else {
             return Ok(());
         };
-        let Some(row) = latest_request(&snapshot, &repo, change.number) else {
+        let Some(row) = latest_request(snapshot, &repo, change.number) else {
             return Ok(());
         };
         let node = NodeId(
@@ -703,7 +724,21 @@ impl Controller {
                 .parse()
                 .map_err(|_| Error::Invalid("invalid request node"))?,
         );
-        let world = snapshot::decode(&snapshot)?;
+        let world = snapshot::decode(snapshot)?;
+        if !replaying && input_errors::kernel_backlog(snapshot)
+            || !self.kernel_headroom(snapshot, &world, commit)?
+        {
+            if !replaying {
+                commit.rows.push(put(
+                    input_errors::PENDING_KERNEL,
+                    format!("github-issue:{}", change.delivery),
+                    json!(input_errors::PendingKernelInput::IssueChange(
+                        change.clone()
+                    )),
+                ));
+            }
+            return Ok(());
+        }
         let Some(n) = world
             .nodes
             .get(node.0 as usize)
@@ -732,12 +767,6 @@ impl Controller {
         if seen.is_some_and(|seen| updated_at < seen) {
             return Ok(());
         }
-        // The delivery's key makes a redelivery replay its stored receipt.
-        let mut commit = Commit::new(
-            format!("github-issue:{}", change.delivery),
-            json!({"issue_change": change}),
-            &snapshot,
-        );
         if seen == Some(updated_at) && priority != n.priority {
             // GitHub's updated_at has second precision, so two edits in one
             // second can arrive in either order. Apply neither: a timer
@@ -766,7 +795,6 @@ impl Controller {
                     next_due_ms: self.now_ms(),
                 }),
             ));
-            self.store.commit(&commit)?;
             return Ok(());
         }
         if seen.is_some_and(|seen| updated_at <= seen) && priority == n.priority {
@@ -790,17 +818,16 @@ impl Controller {
             ));
         }
         if priority != n.priority {
-            self.apply_or_defer(
-                &snapshot,
+            self.apply(
+                snapshot,
                 world,
                 Event::Fact {
                     node,
                     fact: Fact::Priority(priority),
                 },
-                &mut commit,
+                commit,
             )?;
         }
-        self.store.commit(&commit)?;
         Ok(())
     }
 
@@ -1918,6 +1945,7 @@ impl Controller {
         if !self.kernel_headroom(snapshot, &world, commit)? {
             return Ok(());
         }
+        let checkpoint = commit.clone();
         // A dequeue receipt can precede queue admission, where the kernel
         // intentionally ignores it. Only an accepted Resume releases that hold.
         if let Event::Command {
@@ -1983,7 +2011,7 @@ impl Controller {
             commit,
         )?;
         if !self.kernel_headroom(snapshot, &world, commit)? {
-            return self.record_kernel_result(snapshot, world, dependency_outputs, commit);
+            return self.defer_kernel_batch(snapshot, &world, checkpoint, commit);
         }
         let dependency_roots = merge_dependencies::changed_roots(&world, event);
         let (mut world, mut outputs) = tl3_kernel::step(world, event);
@@ -1995,6 +2023,9 @@ impl Controller {
             &mut outputs,
             commit,
         )?;
+        if input_errors::deferred(commit) {
+            return self.defer_kernel_batch(snapshot, &world, checkpoint, commit);
+        }
         if let Some((node, reason)) = closing_cause
             && world.nodes.get(node.0 as usize).is_some_and(|n| {
                 matches!(

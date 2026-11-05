@@ -248,9 +248,9 @@ impl Controller {
         event: Event,
         outputs: &mut Vec<Out>,
         commit: &mut Commit,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if !self.kernel_headroom(snapshot, world, commit)? {
-            return Ok(());
+            return Ok(false);
         }
         let (next, emitted) = tl3_kernel::step(world.clone(), event);
         *world = next;
@@ -267,7 +267,7 @@ impl Controller {
             .as_array_mut()
             .unwrap()
             .push(json!(event));
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn prepare_merge_dependencies(
@@ -560,7 +560,7 @@ impl Controller {
                         || status != DependencyStatus::Pending))
                     || unannounced
                 {
-                    self.apply_fact(
+                    let applied = self.apply_fact(
                         snapshot,
                         world,
                         Event::Fact {
@@ -576,13 +576,13 @@ impl Controller {
                         outputs,
                         commit,
                     )?;
-                }
-                if unannounced {
-                    commit.rows.push(put(
-                        "dependency_endings",
-                        ending.unwrap(),
-                        json!({"status":status}),
-                    ));
+                    if applied && unannounced {
+                        commit.rows.push(put(
+                            "dependency_endings",
+                            ending.unwrap(),
+                            json!({"status":status}),
+                        ));
+                    }
                 }
             }
         }
@@ -607,6 +607,8 @@ impl Controller {
                 "merge prerequisite fact is outside served repositories",
             ));
         }
+        let checkpoint = commit.clone();
+        let before = world.clone();
         let fact = retain_fact(snapshot, commit, fact)?;
         let mut outputs = Vec::new();
         for dependency in world.dependencies().to_vec() {
@@ -633,6 +635,11 @@ impl Controller {
             }
         }
         self.announce_dependency_endings(snapshot, world, Vec::new(), &mut outputs, commit)?;
+        if crate::input_errors::deferred(commit) {
+            self.defer_kernel_batch(snapshot, world, checkpoint, commit)?;
+            *world = before;
+            return Ok(());
+        }
         self.record_kernel_result(snapshot, world.clone(), outputs, commit)
     }
 }
@@ -687,7 +694,7 @@ mod tests {
         node
     }
 
-    /// #771: dependency reconciliation must use the same step headroom guard.
+    /// State-table "Counter headroom": dependency steps use the same guard.
     #[test]
     fn dependency_steps_stop_at_counter_exhaustion() {
         let mut db = Database::start();

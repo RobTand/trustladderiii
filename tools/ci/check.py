@@ -117,6 +117,7 @@ def python(files, *, selected=None, lint=True):
 
 def python_lint(files):
     """What the gate keeps outside Bazel: ruff, and lock checks for test-less projects."""
+    run(sys.executable, 'crates/controller/tools/check_command_ids.py')
     projects = python_projects(files)
     untested = {
         f"project:{directory}" for directory in projects

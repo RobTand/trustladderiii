@@ -369,7 +369,7 @@ fn close_records_a_balance_above_json_integer_range() {
     );
 }
 
-/// #771: ID exhaustion produces an incident without applying command intent.
+/// State-table "Counter headroom": ID exhaustion raises an incident without application.
 #[test]
 fn exhausted_steering_ids_raise_an_incident_without_an_event() {
     let mut db = support::Database::start();
@@ -396,7 +396,7 @@ fn exhausted_steering_ids_raise_an_incident_without_an_event() {
     }));
 }
 
-/// #771: the apply boundary must stop before any kernel mutation can overflow.
+/// State-table "Counter headroom": the apply boundary stops before overflow.
 #[test]
 fn exhausted_kernel_headroom_prevents_the_step_and_reports_the_counter() {
     let mut db = support::Database::start();
@@ -422,7 +422,7 @@ fn exhausted_kernel_headroom_prevents_the_step_and_reports_the_counter() {
     }));
 }
 
-/// #771 / facts are never dropped; Q27 halt approval is pending. Keep the
+/// State-table "Counter headroom" / facts are never dropped. Keep the
 /// original arrival order through exhaustion, restart, repair, and Rob's clear.
 #[test]
 fn exhausted_inputs_remain_queued_until_clearance_then_retry_in_order() {

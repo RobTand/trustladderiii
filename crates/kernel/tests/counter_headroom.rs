@@ -6,7 +6,7 @@ fn fixture() -> World {
     world
 }
 
-/// #771: each independently exhausted machine counter closes the theorem scope.
+/// State-table "Counter headroom": each exhausted counter closes the theorem scope.
 #[test]
 fn each_counter_has_its_own_headroom_check() {
     type CounterCase = (&'static str, fn(&mut World));
@@ -29,7 +29,7 @@ fn each_counter_has_its_own_headroom_check() {
     }
 }
 
-/// #771: global ticket reservations account for arbitrary node counts.
+/// State-table "Counter headroom": ticket reserves account for arbitrary node counts.
 #[test]
 fn ticket_budget_scales_with_the_world() {
     let mut world = fixture();
@@ -40,7 +40,7 @@ fn ticket_budget_scales_with_the_world() {
     assert!(!world.headroom_ok());
 }
 
-/// #771: checked allocation includes the final fresh ID and then exhausts.
+/// State-table "Counter headroom": checked allocation includes the final fresh ID.
 #[test]
 fn checked_command_allocation_has_no_wrapped_id() {
     let mut n = Node::new(RepoId(0));

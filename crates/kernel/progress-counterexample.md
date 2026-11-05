@@ -1,8 +1,9 @@
 # Progress scope and counter exhaustion
 
 Ticket #771 uses the lead's enforced-scope decision. Kernel transitions are
-unchanged. The controller's new durable halt at counter exhaustion awaits Rob's
-Q27 approval before merge.
+unchanged. Rob approved the controller's durable halt at counter exhaustion on 2026-11-05
+([Q27 approval](https://github.com/RobTand/trustladderiii/issues/771#issuecomment-6648842596)).
+The state-table row is **Counter headroom**; global progress is tracked in #805.
 The safety contract on the real `step` takes the production checker's invariant,
 normalized file storage, and `World::headroom_ok()`. It states the complete
 per-step counter budgets and nondecreasing command IDs. Verus also checks each
@@ -134,8 +135,11 @@ Q51 also clears this TL3-side halt once on a new release; a repeated failure
 raises a new incident, while a same-release restart leaves it open.
 Trusted internal acknowledgements and deferred intake use private durable inputs
 and share arrival order with the inbox. Rob's clearance can pass the retained
-queue through the existing operations-comment path. This new halt rule awaits
-Rob's Q27 approval before merge.
+queue through the existing operations-comment path. The **Counter headroom** state-table row records Rob's
+[Q27 approval](https://github.com/RobTand/trustladderiii/issues/771#issuecomment-6648842596).
+Complete issue edits join that queue before timestamp or priority filtering.
+A merge and its dependency deliveries form one atomic kernel batch: if any
+step refuses, no kernel change or ending announcement from that batch commits.
 The contracts on `step_with_passes`, `apply`, `settle`, and their actual
 handlers establish the bounds below. Helper equivalence alone would not do so.
 

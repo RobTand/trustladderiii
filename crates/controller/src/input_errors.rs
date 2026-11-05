@@ -15,6 +15,7 @@ pub(crate) const PENDING_KERNEL: &str = "pending_kernel_events";
 #[derive(Serialize, Deserialize)]
 pub(crate) enum PendingKernelInput {
     Event(tl3_kernel::Event),
+    IssueChange(crate::IssueChange),
     Intake {
         issue: crate::LabelledIssue,
         proposed: Option<crate::adoption::ProposedPullRequest>,
@@ -128,7 +129,7 @@ fn post_backoff_ms(class: &str) -> u64 {
 }
 
 impl Controller {
-    /// #771 / Q27 approval pending: a persisted counter incident halts kernel
+    /// State-table "Counter headroom" / Q27: a persisted counter incident halts kernel
     /// inputs across wakes and restarts. Only its authorized clearance can pass
     /// the retained head of the queue. A repair must also restore headroom.
     pub(crate) fn pause_kernel_inputs(&mut self, snapshot: &Snapshot) -> Result<Option<bool>> {
@@ -217,6 +218,10 @@ impl Controller {
         let mut commit = Commit::new(format!("consume:{}", row.id), row.value.clone(), snapshot);
         let event = match input {
             PendingKernelInput::Event(event) => Some(event),
+            PendingKernelInput::IssueChange(change) => {
+                self.prepare_issue_change(snapshot, &change, &mut commit, true)?;
+                None
+            }
             PendingKernelInput::Intake { issue, proposed } => {
                 let repository = self
                     .intake_repository(&issue)
@@ -238,6 +243,22 @@ impl Controller {
             });
         }
         self.store.commit(&commit)?;
+        Ok(())
+    }
+
+    /// State-table "Counter headroom": one inbox input and its dependency
+    /// deliveries are one atomic kernel batch. Discard every staged change if
+    /// any step refuses, then record only the incident against the exhausted
+    /// staged world. The original input remains available for a complete retry.
+    pub(crate) fn defer_kernel_batch(
+        &self,
+        snapshot: &Snapshot,
+        exhausted: &tl3_kernel::World,
+        checkpoint: Commit,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        *commit = checkpoint;
+        self.kernel_headroom(snapshot, exhausted, commit)?;
         Ok(())
     }
 
