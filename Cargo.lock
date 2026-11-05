@@ -3011,7 +3011,6 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
- "tl3-delivery",
  "chrono",
  "fancy-regex 0.18.0",
  "hex",
@@ -3037,6 +3036,7 @@ dependencies = [
  "thiserror",
  "tl3-config",
  "tl3-controller-core",
+ "tl3-delivery",
  "tl3-github",
  "tl3-kernel",
  "tl3-mergify",
