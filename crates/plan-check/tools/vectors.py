@@ -25,6 +25,13 @@ def oracle():
                  isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in names for t in node.targets)]
     namespace = {'re': re}
     exec(compile(tree, str(path), 'exec'), namespace)
+    for relative, functions in [
+            ('workers/src/tl3_workers/evidence.py', {'subject_covers'}),
+            ('harness/src/tl3_harness/proof.py', {'overlaps'})]:
+        path = ROOT / relative
+        tree = ast.parse(path.read_text())
+        tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in functions]
+        exec(compile(tree, str(path), 'exec'), namespace)
     return namespace
 
 
@@ -102,8 +109,8 @@ def generated():
     for _ in range(2000):
         chosen = rng.choice(['', 'a.py', 'a.py::C', 'a.py::C::f', 'a.py:', 'é.py::Δ'])
         subject = chosen + rng.choice(['', '::f', ':f', 'Other', '::C::f'])
-        subjects.append({'chosen': chosen, 'subject': subject, 'covers': subject == chosen or subject.startswith(chosen + '::'),
-                         'overlaps': subject == chosen or subject.startswith(chosen + '::') or chosen.startswith(subject + '::')})
+        subjects.append({'chosen': chosen, 'subject': subject, 'covers': reference['subject_covers'](chosen, subject),
+                         'overlaps': reference['overlaps'](chosen, subject)})
     return {'globs': globs, 'english': english, 'subjects': subjects}
 
 
