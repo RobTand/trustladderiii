@@ -1951,7 +1951,7 @@ kernel_fn! {
         final(m).last_cmd == old(m).last_cmd,
         final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
     ] {
-        kernel_proof! { hide(holding); timing3_lemmas::pause_resume(m.phase); }
+        kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
         if m.phase.holding() {
             if let Some(r) = m.phase.resume() {
                 m.holds = false;
