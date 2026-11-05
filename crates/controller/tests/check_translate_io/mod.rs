@@ -6,18 +6,26 @@ use std::collections::BTreeMap;
 use tl3_controller::{Error, Repository, Result, adoption, executor::Observation};
 use tl3_kernel::{Event, HeadId, NodeId, Reply};
 use tl3_store::{RowChange, Snapshot};
-mod io;
-mod properties;
-mod prepared_reference;
-mod prepared_current;
-mod plan_reference;
-mod plan_current;
-mod checks_reference;
 mod checks_current;
-mod production { include!("production_helpers.rs"); }
-mod goals { include!("goals_helpers.rs"); }
-mod memory { include!("memory_helpers.rs"); }
-mod evidence { include!("evidence_helpers.rs"); }
+mod checks_reference;
+mod io;
+mod plan_current;
+mod plan_reference;
+mod prepared_current;
+mod prepared_reference;
+mod properties;
+mod production {
+    include!("production_helpers.rs");
+}
+mod goals {
+    include!("goals_helpers.rs");
+}
+mod memory {
+    include!("memory_helpers.rs");
+}
+mod evidence {
+    include!("evidence_helpers.rs");
+}
 mod findings {
     pub use tl3_controller::findings::*;
     pub const MAX_OUTSIDE_PATHS: usize = 100;
