@@ -365,17 +365,17 @@
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "REPO_MAPPING:rules_rust+,rules_rust rules_rust+",
-          "FILE:@@+cargo_feature_lock+bazel_cargo_lock//Cargo.lock 7910abd5642be9fcda3827b28342424eec48b0d2f26e7eea53e820d04dd798db",
+          "FILE:@@+cargo_feature_lock+bazel_cargo_lock//Cargo.lock a961d1658a4f488a939f3d04c7a4ae9690af2a3b22b6feaf50753c2f30551fbf",
           "FILE:@@//Cargo.toml 7c80a39bd212ea0f30a05dd6f008195b8efcc37447d5521160de942781499675",
           "FILE:@@//crates/config/Cargo.toml da34abb220a0eca65b4ac9f481048cc4d70554fc5a1c02b740e76205a2ecb0f6",
           "FILE:@@//crates/worktrees/Cargo.toml 97aecec236d8e485cba2af2f82a0d841d696e362bf62dd31d6face435906bc93",
-          "FILE:@@//crates/controller/Cargo.toml eddcd53b7db5ca3f7c3ac6e71025cfda3e758c3d1ff9cd020be27004201f8a87",
+          "FILE:@@//crates/controller/Cargo.toml 482e28f778998b92777e84c68cc50593269a65652e1e5b5c203118dd8bc6b138",
           "FILE:@@//crates/github/Cargo.toml 71fc533676d152bc1224ffc58f17cf99c8e91543c97c260be29f6ed685223d08",
+          "FILE:@@//crates/harness-core/Cargo.toml e2bded79831ceca50935e8d53708ac8e9f8b75a95717aa97c35320589e073eb8",
           "FILE:@@//crates/kernel/Cargo.toml 66645e760a8a02fae42c17c5e9be8d9cad35617dec9199288bef3b4b511fc981",
           "FILE:@@//crates/mergify/Cargo.toml 445220ad6d0b90e933d139a43426e0b9f12f3b7737e960944c65349538df8a6b",
           "FILE:@@//crates/prismabuild/Cargo.toml d94963a8d312dfcf7d6d89ac61b899cb9c940d162357220bb86ca9f9ca2b3207",
-          "FILE:@@//crates/store/Cargo.toml 2d4eb6de9df10a061fb7b3818a54fd703c15645e6c5c33ef1c5c00345a419b82",
-          "FILE:@@//crates/harness-core/Cargo.toml 0385e9574876fac2bfa6f10a14ac0b921146a33850018ad7e5fd40518df529f1"
+          "FILE:@@//crates/store/Cargo.toml 2d4eb6de9df10a061fb7b3818a54fd703c15645e6c5c33ef1c5c00345a419b82"
         ],
         "generatedRepoSpecs": {
           "crates": {
