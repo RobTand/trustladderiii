@@ -14,13 +14,17 @@ pub(crate) const MISSING: &str = "worker_dispatch_missing";
 impl Controller {
     pub(crate) fn reconcile_worker_waits(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
-        self.reconcile_worker_waits_in(&snapshot)?;
+        self.reconcile_worker_waits_in(&snapshot, &mut |_, _| {})?;
         Ok(())
     }
 
     // Runs at startup and in the existing event drain, including pool changes.
     // No timer, historical effect scan, worker start, or kernel event is added.
-    pub(crate) fn reconcile_worker_waits_in(&mut self, snapshot: &Snapshot) -> Result<bool> {
+    pub(crate) fn reconcile_worker_waits_in(
+        &mut self,
+        snapshot: &Snapshot,
+        hook: &mut impl FnMut(crate::Boundary, &str),
+    ) -> Result<bool> {
         let world = snapshot::decode(snapshot)?;
         let mut commit = Commit::new(
             format!("worker-wait-recovery:{}", snapshot.revision.get()),
@@ -28,6 +32,7 @@ impl Controller {
             snapshot,
         );
         for (index, node) in world.nodes.iter().enumerate() {
+            hook(crate::Boundary::WorkerWait, &index.to_string());
             let kind = match node.phase {
                 Phase::Ingesting => EffectKind::StartRun(Role::Ingest),
                 Phase::Auditing => EffectKind::StartRun(Role::Audit),

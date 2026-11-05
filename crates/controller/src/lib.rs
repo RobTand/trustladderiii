@@ -317,6 +317,7 @@ struct Request {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
+    WorkerWait,
     BeforeDispatch,
     AfterDispatch,
     BeforeReconcile,
@@ -1066,7 +1067,7 @@ impl Controller {
             return Ok(true);
         }
         let snapshot = self.store.load()?;
-        if self.reconcile_worker_waits_in(&snapshot)? {
+        if self.reconcile_worker_waits_in(&snapshot, &mut hook)? {
             return Ok(true);
         }
         if self.retire_committed_waits(&snapshot)? {

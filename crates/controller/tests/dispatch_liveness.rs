@@ -334,3 +334,212 @@ fn stale_dispatch_raises_one_visible_incident_instead_of_relaunching() {
         "startup must deduplicate the incident"
     );
 }
+
+fn set_next_seq(controller: &mut Controller, settings: &tl3_config::Store, next_seq: u64) {
+    let snapshot = controller.snapshot().unwrap();
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "nodes" && r.id == "0")
+        .unwrap();
+    let mut value = row.value.clone();
+    value["next_seq"] = serde_json::json!(next_seq);
+    let mut commit = Commit::new(
+        format!("counter:{next_seq}"),
+        serde_json::json!({}),
+        &snapshot,
+    );
+    commit.rows.push(RowChange::Put {
+        table: "nodes".into(),
+        id: "0".into(),
+        value,
+    });
+    Store::open(settings).unwrap().commit(&commit).unwrap();
+}
+
+fn missing_incidents(controller: &mut Controller) -> usize {
+    controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .iter()
+        .filter(|r| {
+            r.table == "incidents" && r.value["signature"]["class"] == "worker_dispatch_missing"
+        })
+        .count()
+}
+
+#[test]
+fn startup_defers_dispatch_repair_while_counter_headroom_is_exhausted() {
+    let mut db = support::Database::start();
+    let settings = db.create("exhausted_repair");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    intake(&mut controller, 1);
+    let next_seq = controller.world().unwrap().nodes[0].next_seq;
+    let key = runs.borrow().starts[0].clone();
+    lose_watch(&settings, &key);
+    set_next_seq(&mut controller, &settings, u64::MAX);
+    close(controller, &settings);
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    assert_eq!(
+        missing_incidents(&mut controller),
+        0,
+        "counter exhaustion is not a missing dispatch"
+    );
+    drain(&mut controller);
+    assert_eq!(missing_incidents(&mut controller), 0);
+    set_next_seq(&mut controller, &settings, next_seq);
+    close(controller, &settings);
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    drain(&mut controller);
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "watches" && r.id == key)
+    );
+    assert_eq!(runs.borrow().starts.len(), 1);
+}
+
+#[test]
+fn startup_preserves_retained_input_and_its_counter_pause() {
+    let mut db = support::Database::start();
+    let settings = db.create("retained_repair");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    intake(&mut controller, 1);
+    let key = runs.borrow().starts[0].clone();
+    lose_watch(&settings, &key);
+    set_next_seq(&mut controller, &settings, u64::MAX);
+    controller
+        .observe(
+            "retained-priority",
+            Observation::Kernel(Event::Fact {
+                node: NodeId(0),
+                fact: tl3_kernel::Fact::Priority(tl3_kernel::Priority::P1),
+            }),
+        )
+        .unwrap();
+    close(controller, &settings);
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    assert_eq!(
+        missing_incidents(&mut controller),
+        0,
+        "startup must leave retained input to its headroom guard"
+    );
+    drain(&mut controller);
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "inbox" && r.id == "external:retained-priority")
+    );
+    assert_eq!(
+        snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents"
+                && r.value["signature"]["class"] == "kernel_counter_headroom"
+                && r.value["open"] == true)
+            .count(),
+        1
+    );
+    assert_eq!(missing_incidents(&mut controller), 0);
+    let revision = controller.snapshot().unwrap().revision;
+    assert!(!controller.drive_once().unwrap());
+    assert_eq!(controller.snapshot().unwrap().revision, revision);
+}
+
+#[test]
+fn pending_start_stays_on_its_original_dispatch_path() {
+    let mut db = support::Database::start();
+    let settings = db.create("pending_start_repair");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    controller
+        .intake(LabelledIssue {
+            delivery: "pending-label".into(),
+            owner: "owner".into(),
+            repo: "repo".into(),
+            installation: 1,
+            number: 1,
+            title: "Keep pending starts on the dispatch path".into(),
+            actor: 42,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    let node = controller.world().unwrap().nodes[0];
+    let key = format!("effect:0:{}", node.effect.unwrap().seq);
+    assert_eq!(runs.borrow().starts.len(), 0);
+    lose_watch(&settings, &key);
+    close(controller, &settings);
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "watches" && r.id == key),
+        "a pending start must settle through the original effect, before repairing its acknowledged result watch"
+    );
+    assert_eq!(missing_incidents(&mut controller), 0);
+    drain(&mut controller);
+    assert_eq!(runs.borrow().starts, [key.clone()]);
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "watches" && r.id == key)
+    );
+}
+
+#[test]
+fn unrelated_observations_and_idle_drives_visit_no_worker_waits() {
+    let mut db = support::Database::start();
+    let settings = db.create("no_per_drive_scan");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    intake(&mut controller, 1);
+    controller
+        .observe(
+            "priority-only",
+            Observation::Kernel(Event::Fact {
+                node: NodeId(0),
+                fact: tl3_kernel::Fact::Priority(tl3_kernel::Priority::P1),
+            }),
+        )
+        .unwrap();
+    let mut visited = 0;
+    for _ in 0..20 {
+        let progressed = controller
+            .drive_once_with(|boundary, _| {
+                if boundary == tl3_controller::Boundary::WorkerWait {
+                    visited += 1;
+                }
+            })
+            .unwrap();
+        if !progressed {
+            break;
+        }
+    }
+    assert_eq!(
+        controller.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::P1
+    );
+    assert_eq!(
+        visited, 0,
+        "unrelated input and idle drives must do no worker-wait reconciliation"
+    );
+}
