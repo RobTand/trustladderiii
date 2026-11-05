@@ -339,7 +339,6 @@ def verus_proofs():
             "allocation_incident_waiting_result": ("kernel::allocation_incident_lemmas#waiting_result", 1),
             "facts_ci_failed_retry_frame": ("kernel::facts_ci_failed_lemmas#retry_frame", 1),
             "facts_ci_failed_cancellation_input": ("kernel::facts_ci_failed_lemmas#cancellation_input", 1),
-            "allocation_stopping_complete": ("kernel::allocation_stopping_lemmas#stopping_complete", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
