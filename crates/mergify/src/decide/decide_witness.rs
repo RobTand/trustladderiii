@@ -140,11 +140,21 @@ fn person_covers() -> bool {
     let mut both = person_facts(&events, false);
     let mut ignored = person_facts(&bots, false);
     let mut suppressed = person_facts(&merged, false);
-    both.next_fact() == Some(PersonFact::Dequeued { event: 2 })
-        && both.next_fact() == Some(PersonFact::Closed { event: 1 })
-        && both.next_fact().is_none()
-        && ignored.next_fact().is_none()
-        && suppressed.next_fact().is_none()
+    decide_proof! {
+        assert(both.remaining() == seq![PersonFact::Dequeued { event: 2 }, PersonFact::Closed { event: 1 }]);
+        assert(ignored.remaining() == Seq::<PersonFact>::empty());
+        assert(suppressed.remaining() == Seq::<PersonFact>::empty());
+    }
+    let first = both.next_fact();
+    let second = both.next_fact();
+    let end = both.next_fact();
+    let bot_end = ignored.next_fact();
+    let merged_end = suppressed.next_fact();
+    first == Some(PersonFact::Dequeued { event: 2 })
+        && second == Some(PersonFact::Closed { event: 1 })
+        && end.is_none()
+        && bot_end.is_none()
+        && merged_end.is_none()
 }
 
 /// #743/K-facts-outcome: all seven original covers, including callback evaluation.

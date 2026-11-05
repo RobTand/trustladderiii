@@ -396,7 +396,10 @@ impl PersonFacts<'_> {
         requires old(self).valid(),
         ensures final(self).valid(),
             match result {
-                Some(fact) => old(self).remaining() == seq![fact] + final(self).remaining(),
+                Some(fact) => old(self).remaining() == seq![fact] + final(self).remaining()
+                    && old(self).remaining().len() > 0
+                    && fact == old(self).remaining()[0]
+                    && final(self).remaining() == old(self).remaining().skip(1),
                 None => old(self).remaining().len() == 0 && final(self).remaining().len() == 0,
             },
     ))]
@@ -426,6 +429,14 @@ impl PersonFacts<'_> {
             i += 1;
             if fact.is_some() {
                 self.position = i;
+                decide_proof! {
+                    if let Some(f) = fact {
+                        let tail = person_sequence(self.events@, i as int);
+                        assert(old(self).remaining() == seq![f] + tail);
+                        assert(old(self).remaining()[0] == f);
+                        assert(old(self).remaining().skip(1) =~= tail);
+                    }
+                }
                 return fact;
             }
         } }
