@@ -19,8 +19,10 @@ from tl3_harness.proof import assemble_proof
 from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.node_ids import selects
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
-from tl3_harness.test_tool import SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
+from tl3_harness.test_tool import SUMMARY_BYTES, OUTCOMES, infrastructure, options
 from tl3_harness.trees import export, configuration
+from tl3_workers import reply_check
+import jsonschema
 from tl3_workers.reply_check import ReplyCheckInfrastructureError, run_check
 
 
@@ -95,6 +97,65 @@ def ending_facts(ending):
     if 'diagnostics' in ending:
         result['diagnostics'] = diagnostics
     return result
+
+
+@cache
+def _harness_validator(kind):
+    source = Path(__file__).with_name('schemas') / 'harness-wire.json'
+    return jsonschema.Draft202012Validator(json.loads(source.read_text())['responses'][kind])
+
+
+def _harness_check(command, kind, **facts):
+    document = reply_check.run_check(['check-harness', command], {'kind': kind, **facts}, name='harness')
+    try:
+        if not isinstance(document, dict) or set(document) != {'result'}:
+            raise ValueError()
+        _harness_validator(kind).validate(document['result'])
+    except (ValueError, KeyError, TypeError, OSError, jsonschema.ValidationError, jsonschema.SchemaError):
+        raise ReplyCheckInfrastructureError('harness validator returned invalid output') from None
+    return document['result']
+
+
+def bounded(result, *, limit=SUMMARY_BYTES - 2048):
+    response = _harness_check('summary', 'bounded', summary_json=json.dumps(result, allow_nan=False), limit=limit)
+    try:
+        return json.loads(response['summary_json'])
+    except (ValueError, TypeError):
+        raise ReplyCheckInfrastructureError('harness validator returned invalid output') from None
+
+
+def selector_identity(selectors):
+    selected = [list(map(ord, selector)) for selector in selectors]
+    response = _harness_check('identity', 'identity', selectors=selected)
+    try:
+        # Preserve the legacy JSON field order at this transport boundary.
+        return {'schema': response['schema'], 'count': response['count'],
+                'sha256': response['sha256'],
+                'prefix': [''.join(map(chr, points)) for points in response['prefix']]}
+    except (ValueError, TypeError):
+        raise ReplyCheckInfrastructureError('harness validator returned invalid output') from None
+
+
+def _candidate_fact(value):
+    """Serialize Python strings explicitly; JSON merges adjacent surrogate escapes."""
+    if value is None:
+        return {'kind': 'null'}
+    if isinstance(value, bool):
+        return {'kind': 'boolean', 'value': value}
+    if isinstance(value, (int, float)):
+        return {'kind': 'number', 'json': json.dumps(value)}
+    if isinstance(value, str):
+        return {'kind': 'text', 'codepoints': list(map(ord, value))}
+    if isinstance(value, list):
+        return {'kind': 'array', 'items': [_candidate_fact(item) for item in value]}
+    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+        return {'kind': 'object', 'fields': [[key, _candidate_fact(item)] for key, item in value.items()]}
+    return {'kind': 'invalid'}
+
+
+def selection_matches(value, selectors):
+    selected = [list(map(ord, selector)) for selector in selectors]
+    return _harness_check('identity', 'matches', selectors=selected, candidate=_candidate_fact(value))
 
 
 @dataclass(frozen=True)

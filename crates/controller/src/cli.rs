@@ -287,6 +287,10 @@ pub fn daemon() -> Result<()> {
         controller.register_github_translator("adoption", adoption);
     }
     controller.set_allowances(config.allowances.clone());
+    controller.set_model_quota_policy(
+        &config.models,
+        std::time::Duration::from_secs(u64::from(config.limits.model_quota_horizon_secs)),
+    )?;
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
     controller.set_delegated_attributions(
@@ -317,6 +321,10 @@ fn production(config: tl3_config::Config) -> Result<()> {
         Bootstrap::from_config(&config)?,
     )?;
     controller.set_allowances(config.allowances.clone());
+    controller.set_model_quota_policy(
+        &config.models,
+        std::time::Duration::from_secs(u64::from(config.limits.model_quota_horizon_secs)),
+    )?;
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
     controller.set_delegated_attributions(

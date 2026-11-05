@@ -501,6 +501,8 @@ def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monk
     from tl3_harness import execution, test_tool
     from tl3_workers.tools import Evidence
 
+    monkeypatch.setattr(execution.time, 'time', lambda: 1000.0)
+
     root, _ = submission
     names = ['test_' + str(index) + '_' + 'x' * 1780 for index in range(10)]
     selected = ['test_exit.py::' + name for name in names]
