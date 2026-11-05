@@ -262,6 +262,29 @@ impl Writer for FakeWriter {
     }
 }
 
+// #833/#432: trust the complete typed name, never a prefix of another resource.
+fn mask_resource(text: &str, name: &str) -> String {
+    let mut masked = String::with_capacity(text.len());
+    let mut copied = 0;
+    for (start, _) in text.match_indices(name) {
+        let end = start + name.len();
+        if text[end..].chars().next().is_some_and(|c| {
+            !c.is_ascii_whitespace()
+                && !matches!(
+                    c,
+                    '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\'' | '`' | '*'
+                )
+        }) {
+            continue;
+        }
+        masked.push_str(&text[copied..start]);
+        masked.push_str("the resource");
+        copied = end;
+    }
+    masked.push_str(&text[copied..]);
+    masked
+}
+
 pub fn checked_draft(
     writer: &mut dyn Writer,
     key: &str,
@@ -418,12 +441,11 @@ pub fn checked_draft(
                 // Other references supplied by the writer still pass the normal checks.
                 let mut written = written;
                 if let Some(failure) = &resource_failure {
-                    written =
-                        written.replace(&failure.requested.to_string(), "the requested resource");
+                    written = mask_resource(&written, &failure.requested.to_string());
                     if let crate::input_resources::Problem::KindMismatch { observed } =
                         &failure.problem
                     {
-                        written = written.replace(&observed.to_string(), "the observed resource");
+                        written = mask_resource(&written, &observed.to_string());
                     }
                 }
                 message::check_prose(&written, &policy).map(|_| text.text.clone())
