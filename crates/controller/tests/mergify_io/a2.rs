@@ -488,6 +488,7 @@ fn mandatory_a2_shell_new_attempt_ready() {
 fn mandatory_a2_shell_nonconfirmed_receipts() {
     for final_read in [false, true] {
         let mut s = schedule(Profile::Plain);
+        over(&mut s, "github.pull", "", if final_read { 5 } else { 0 }, 2);
         over(&mut s, "github.pull", "", if final_read { 6 } else { 1 }, 2);
         let r = compare(&s, Entry::Execute, A2Config::default(), false);
         assert_eq!(r["result"]["completion"]["ack"], "Retryable", "{r:#}");
@@ -496,6 +497,7 @@ fn mandatory_a2_shell_nonconfirmed_receipts() {
     }
     let mut s = schedule(Profile::Plain);
     over(&mut s, "github.pull", "", 4, 2);
+    over(&mut s, "github.pull", "", 5, 2);
     over(&mut s, "github.pull", "", 6, 2);
     let r = compare(&s, Entry::Execute, A2Config::default(), false);
     assert_eq!(r["result"]["completion"]["ack"], "Retryable", "{r:#}");
@@ -513,6 +515,7 @@ fn mandatory_a2_shell_nonconfirmed_receipts() {
 fn mandatory_a2_shell_closed_and_merged() {
     for word in [1, 4] {
         let mut s = schedule(Profile::Body);
+        over(&mut s, "github.pull", "", 0, word);
         over(&mut s, "github.pull", "", 1, word);
         let r = compare(&s, Entry::Read, A2Config::default(), false);
         assert_eq!(count(&r, "github.patch_body"), 0);
