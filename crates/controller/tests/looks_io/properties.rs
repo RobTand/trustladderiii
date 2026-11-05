@@ -177,6 +177,7 @@ fn differential_schedules() {
                 stopping: bits & 2048 != 0,
                 progress: bits & 4096 != 0,
                 counted: (bits & 8192 != 0).then_some(1_000_000),
+                ..Schedule::default()
             };
             io::compare(&s);
             Ok(())
@@ -210,6 +211,12 @@ fn source_pins_and_production_copies() {
         function(include_str!("../../src/looks.rs"), "incident_view", false),
         function(include_str!("current.rs"), "incident_view", false)
     );
+    for name in ["look_kind", "wait_status"] {
+        assert_eq!(
+            function(include_str!("../../src/looks.rs"), name, false),
+            function(include_str!("current.rs"), name, false)
+        );
+    }
     for (source, copy) in [
         (base, include_str!("reference.rs")),
         (
@@ -228,6 +235,9 @@ fn source_pins_and_production_copies() {
             "save_allowance",
             "allowance_row",
             "record_progress",
+            "progress_allowance",
+            "quota_allowance",
+            "expire_model_quotas",
         ] {
             assert_eq!(
                 function(source, name, true),
