@@ -120,8 +120,11 @@ pub struct Translation {
     result.is_some() == !recorded,
 ))]
 pub fn begin(recorded: bool) -> Option<Translation> {
-    let _ = recorded;
-    Some(Translation { receipt: () })
+    if recorded {
+        None
+    } else {
+        Some(Translation { receipt: () })
+    }
 }
 
 /// Q52 / #447; docs/state-table.md:542-545,555-557,578 on cdacce8f.

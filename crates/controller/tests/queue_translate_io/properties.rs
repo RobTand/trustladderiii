@@ -145,7 +145,8 @@ fn mandatory_recorded_open_closed_matrix() {
         for merged in [false, true] {
             for recorded in [false, true] {
                 for tag in [4, 5, 10] {
-                    let mut s = stable(evidence(tag, NEW_HEAD, 0));
+                    let head = if tag == 5 { OLD_HEAD } else { NEW_HEAD };
+                    let mut s = stable(evidence(tag, head, 0));
                     s.phase = phase;
                     s.merged = merged;
                     if recorded {
