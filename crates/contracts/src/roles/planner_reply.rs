@@ -67,15 +67,11 @@ impl<const MIN: u64> JsonSchema for PlanInteger<MIN> {
 }
 
 /// Undeclared differs from an explicitly empty declaration. Q54 and #683/#696 repair.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Declaration<T> {
+    #[default]
     Undeclared,
     Declared(T),
-}
-impl<T> Default for Declaration<T> {
-    fn default() -> Self {
-        Self::Undeclared
-    }
 }
 impl<T> Declaration<T> {
     pub fn is_undeclared(&self) -> bool {
