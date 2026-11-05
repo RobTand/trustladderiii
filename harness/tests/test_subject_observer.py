@@ -962,3 +962,24 @@ def test_t842_loader_trust_rejects_repository_stdlib_shadows(tmp_path, t842_case
     case['proof']['observer_support'].append(shadow)
     with pytest.raises(model.ProofRefusal, match='unshadowed standard-library'):
         assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('binding', [
+    'TOKEN = _DATA = 0\n_DATA = 1',
+    'TOKEN, _DATA = (0, 0)\n_DATA = 1',
+    'TOKEN = 0; _DATA = 0\n_DATA = 1',
+])
+def test_t842_declared_literal_cannot_hide_a_second_binding_in_its_source_line(repository, binding):
+    # #842/#645 sibling: another declared name must not smuggle omitted data.
+    case = json.loads((Path(__file__).parent / 'fixtures/subject_observer/review_842.json').read_text())[0]
+    path = 'tests/test_observer.py'
+    source = case['after'][path]
+    observer = source[source.index('def test_observer():'):].replace('_DATA["expected"]', '_DATA')
+    case['after'][path] = binding + '\n\n' + observer
+    case['proof']['observer_support'] = [path + '::TOKEN']
+    check = Check('declared literal sibling', Kind.DEMONSTRATING, tuple(case['tests']),
+                  proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'Proof assembly refused' in results[0].tests[0].message, results
+    assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
