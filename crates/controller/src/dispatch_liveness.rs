@@ -1,3 +1,4 @@
+pub mod decision;
 use crate::{
     Controller, Error, Result, decode_stored,
     executor::{Delivery, Output},
@@ -5,6 +6,7 @@ use crate::{
     input_errors::IssueTarget,
     put, request, snapshot,
 };
+pub use decision::{DispatchStatus, Evidence, ProcessEvidence, classify};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use tl3_kernel::{EffectKind, Node, NodeId, Phase, Role, World};
@@ -252,6 +254,9 @@ impl Controller {
                     .map_err(|_| Error::Invalid("invalid worker wait node"))
             })
             .collect::<Result<Vec<_>>>()?;
+        if !candidates.is_empty() {
+            hook(crate::Boundary::WorkerWaitHeadroom, "headroom");
+        }
         if candidates.is_empty() || blocked(snapshot, world) {
             return Ok(false);
         }
@@ -359,5 +364,11 @@ impl Controller {
         }
         self.store.commit(&commit)?;
         Ok(true)
+    }
+}
+
+impl Controller {
+    pub fn dispatch_status(&mut self, _id: NodeId) -> Result<DispatchStatus> {
+        Ok(DispatchStatus::Silent)
     }
 }

@@ -697,6 +697,56 @@ fn ready_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// #817 / Q7: a pidfd ending with no exit record must wake the controller.
+    #[test]
+    fn lost_worker_evidence_emits_failure_without_a_timer() {
+        let root = tempfile::tempdir().unwrap();
+        let mut database = crate::git_tests::support::Database::start();
+        let settings = database.create("t817_lost_source");
+        let mut store = Store::open(&settings).unwrap();
+        let delivery: Delivery = serde_json::from_value(serde_json::json!({
+            "key":"t817-lost", "epoch":0, "generation":0,
+            "output":{"Effect":{"node":0,"kind":{"StartRun":"Ingest"},"seq":0,"head":null}},
+            "repository":{"owner":"owner","name":"repo","installation":1},
+            "issue":1,"paths":[],"attempt":0,"round":0
+        }))
+        .unwrap();
+        let run_root = run_root(root.path(), &delivery.key);
+        let attempt = run_root.join("attempt-00000000");
+        fs::create_dir_all(&attempt).unwrap();
+        let identity = serde_json::json!({"pid":2147483647,"start":1,
+            "machine":fs::read_to_string("/etc/machine-id").unwrap().trim(),
+            "boot":fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap().trim()});
+        for name in ["claim.json", "process.json"] {
+            fs::write(attempt.join(name), identity.to_string()).unwrap();
+        }
+        let mut source =
+            WorkerOutputSource::new(root.path().into(), settings, ActiveRuns::default());
+        let mut run = Run {
+            root: run_root,
+            delivery,
+            attempt: Some((0, attempt)),
+            watches: vec![],
+            offset: 0,
+            processes: BTreeMap::new(),
+        };
+        let (sender, receiver) = crate::sync::mpsc::channel();
+        assert!(!source.refresh(&mut run, &mut store, &sender).unwrap());
+        let input = receiver
+            .try_recv()
+            .expect("lost worker was silently retired");
+        assert!(
+            matches!(
+                input,
+                Input::Observation {
+                    observation: Observation::WorkerFailed { .. },
+                    ..
+                }
+            ),
+            "a lost worker must produce an infrastructure failure, never its uncommitted reply"
+        );
+    }
+
     fn boundary_failure(boundary: &'static str) {
         use crate::adapters::workers::source_error::fail_next;
         use crate::git_tests::support::Database;

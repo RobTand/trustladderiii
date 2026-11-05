@@ -21,7 +21,7 @@ pub mod clock;
 pub mod console;
 pub mod contracts;
 mod decisions;
-mod dispatch_liveness;
+pub mod dispatch_liveness;
 pub mod evidence;
 pub mod executor;
 mod github_messages;
@@ -318,6 +318,7 @@ struct Request {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
     WorkerWait,
+    WorkerWaitHeadroom,
     BeforeDispatch,
     AfterDispatch,
     BeforeReconcile,

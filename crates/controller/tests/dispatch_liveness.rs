@@ -553,3 +553,165 @@ fn unrelated_observations_and_idle_drives_visit_no_worker_waits() {
             .any(|r| r.table == "watches" && r.id == key)
     );
 }
+
+/// #816 P2 / counter headroom: unchanged drives and allowance wakes do no rescan.
+#[test]
+fn exhausted_recovery_is_parked_between_clearance_events() {
+    let mut db = support::Database::start();
+    let settings = db.create("t817_parked_repair");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    intake(&mut controller, 1);
+    let key = runs.borrow().starts[0].clone();
+    lose_watch(&settings, &key);
+    set_next_seq(&mut controller, &settings, u64::MAX);
+    close(controller, &settings);
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    let mut scans = 0;
+    for _ in 0..12 {
+        controller
+            .drive_once_with(|boundary, _| {
+                if boundary == tl3_controller::Boundary::WorkerWaitHeadroom {
+                    scans += 1;
+                }
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        scans, 0,
+        "parked exhaustion recovery scanned on unrelated drives"
+    );
+}
+
+/// Q39 and state-table "Pausing": neither wait implies a dispatched operation.
+fn t817_assert_undispatched_wait(
+    controller: &mut Controller,
+    settings: &tl3_config::Store,
+    expected: tl3_kernel::Wait,
+) {
+    let classified = controller.dispatch_status(NodeId(2)).unwrap();
+    assert_eq!(
+        classified,
+        if expected == tl3_kernel::Wait::AgentPool {
+            tl3_controller::dispatch_liveness::DispatchStatus::PoolWait
+        } else {
+            tl3_controller::dispatch_liveness::DispatchStatus::Paused
+        }
+    );
+    let world = controller.world().unwrap();
+    assert!(world.valid());
+    assert!(world.consistent());
+    let node = world.nodes[2];
+    assert_eq!(node.phase, Phase::Ingesting);
+    assert_eq!(node.waiting_on(), expected);
+    assert_eq!(
+        node.ticket.is_some(),
+        expected == tl3_kernel::Wait::AgentPool
+    );
+    assert!(!node.pool);
+    assert!(node.effect.is_none() && node.run.is_none() && node.job.is_none());
+    assert_eq!(
+        node.next_seq, 0,
+        "this node has never dispatched any effect"
+    );
+    assert_eq!((node.run_failures, node.fx_failures), (0, 0));
+    assert!(!node.waiting_incident);
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot
+            .pending_effects
+            .iter()
+            .all(|e| !e.key.starts_with("effect:2:"))
+    );
+    assert!(
+        Reader::open(settings)
+            .unwrap()
+            .effects()
+            .unwrap()
+            .iter()
+            .all(|e| !e.key.starts_with("effect:2:"))
+    );
+    for row in &snapshot.rows {
+        if row.table == "watches" {
+            let delivery: Delivery = serde_json::from_value(row.value.clone()).unwrap();
+            assert_ne!(delivery.node(), NodeId(2), "case (a) has no watch");
+        }
+        if row.table == "allowances" {
+            let delivery: Delivery = serde_json::from_value(row.value["delivery"].clone()).unwrap();
+            assert_ne!(delivery.node(), NodeId(2), "case (c) has no deadline");
+        }
+        assert!(
+            row.table != "incidents" || row.value["open"] != true,
+            "case (d) has no open incident"
+        );
+    }
+    assert_eq!(
+        node.generation, 0,
+        "no operation has started for this request"
+    );
+    println!(
+        "T817_COUNTEREXAMPLE wait={expected:?} node=2 phase=Ingesting next_seq=0 run=None job=None failures=0 watches=0 allowances=0 open_incidents=0"
+    );
+}
+
+/// Q39 permits waiting behind occupied grants, including accepted starvation.
+#[test]
+fn t817_pool_wait_classifies_without_an_incident() {
+    let mut db = support::Database::start();
+    let settings = db.create("t817_pool_scope");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    for number in 1..=3 {
+        intake(&mut controller, number);
+    }
+    assert_eq!(runs.borrow().starts.len(), 2);
+    for _ in 0..3 {
+        t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::AgentPool);
+        let before = controller.world().unwrap();
+        for _ in 0..4 {
+            assert!(!controller.drive_once().unwrap());
+            assert_eq!(controller.world().unwrap(), before);
+        }
+        close(controller, &settings);
+        controller = open(&settings, root.path(), Role::Ingest, &runs);
+    }
+    t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::AgentPool);
+    assert_eq!(runs.borrow().starts.len(), 2);
+}
+
+/// State-table "Pausing" keeps the pending start until an authorized Resume.
+#[test]
+fn t817_pause_classifies_without_an_incident() {
+    let mut db = support::Database::start();
+    let settings = db.create("t817_resume_scope");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    for number in 1..=3 {
+        intake(&mut controller, number);
+    }
+    tl3_store::ConsoleCommands::open(&settings)
+        .unwrap()
+        .submit(
+            "00000000-0000-4000-8000-000000000817",
+            2,
+            &serde_json::json!({"kind":"pause"}),
+        )
+        .unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    drain(&mut controller);
+    for _ in 0..3 {
+        t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::Resume);
+        let before = controller.world().unwrap();
+        for _ in 0..4 {
+            assert!(!controller.drive_once().unwrap());
+            assert_eq!(controller.world().unwrap(), before);
+        }
+        close(controller, &settings);
+        controller = open(&settings, root.path(), Role::Ingest, &runs);
+    }
+    t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::Resume);
+    assert_eq!(runs.borrow().starts.len(), 2);
+}
