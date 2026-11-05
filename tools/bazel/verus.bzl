@@ -506,7 +506,7 @@ def verus_proofs():
 
     # #820 pure planner rules. No controller or worker-runtime dependency.
     if native.package_name() == "crates/plan-check":
-        for group, count in [("paths", 10), ("subjects", 4)]:
+        for group, count in [("paths", 12), ("subjects", 4)]:
             verus_test(
                 name = "verus_" + group,
                 src = "proofs/" + group + ".rs",

@@ -68,10 +68,16 @@ vstd::prelude::verus! {
                 Step::Star => cell(atoms,separators,(t-1) as nat,p) || cell(atoms,separators,t,(p-1) as nat) && !separators[p as int-1],
                 Step::NonemptyStar => (cell(atoms,separators,(t-1) as nat,(p-1) as nat) || cell(atoms,separators,t,(p-1) as nat)) && !separators[p as int-1],
                 Step::Recursive => cell(atoms,separators,(t-1) as nat,p) || cell(atoms,separators,t,(p-1) as nat),
-                Step::Directories => cell(atoms,separators,(t-1) as nat,p) || separators[p as int-1] && (exists|j:nat| j+2<=p && #[trigger] cell(atoms,separators,(t-1) as nat,j)),
+                Step::Directories => cell(atoms,separators,(t-1) as nat,p) || separators[p as int-1] && earlier(atoms,separators,(t-1) as nat,(p-1) as nat),
             }
         }
     }
+    pub open spec fn earlier(atoms: Seq<Atom>, separators: Seq<bool>, t: nat, count: nat) -> bool
+        decreases t, count,
+    {
+        count > 0 && (cell(atoms,separators,t,(count-1) as nat) || earlier(atoms,separators,t,(count-1) as nat))
+    }
+
 }
 
 /// #820 protected paths: evaluate the whole typed AST against the path.
@@ -110,16 +116,16 @@ pub fn evaluate(atoms: &[Atom], separators: &[bool]) -> bool {
                 1<=p<=n+1, row.len()==p,
                 forall|j:int| 0<=j<=n ==> previous[j]==cell(atoms@,separators@,t as nat,j as nat),
                 forall|j:int| 0<=j<p ==> row[j]==cell(atoms@,separators@,(t+1) as nat,j as nat),
-                older == (exists|j:int| 0<=j && j+2<p && previous[j]),
+                older == (if p<2 { false } else { earlier(atoms@,separators@,t as nat,(p-2) as nat) }),
             decreases n+1-p,
         ] {
             if p>=2 {older |= previous[p-2];}
             let next=transition(kind,previous[p],previous[p-1],row[p-1],older,separators[p-1],atoms[t].accepts[p-1]);
             #[cfg(verus_keep_ghost)]
             vstd::prelude::verus_exec_expr! { proof {
-                assert(older == (exists|j:int| 0<=j && j+2<=p && previous[j]));
-                assert forall|j:nat| j+2<=p implies previous[j as int]==cell(atoms@,separators@,t as nat,j) by {}
-                assert(older == (exists|j:nat| j+2<=p && #[trigger] cell(atoms@,separators@,t as nat,j)));
+                reveal_with_fuel(earlier,2);
+                assert(older == earlier(atoms@,separators@,t as nat,(p-1) as nat));
+                reveal_with_fuel(cell,2);
                 assert(next == cell(atoms@,separators@,(t+1) as nat,p as nat));
             }};
             row.push(next);

@@ -26,5 +26,16 @@ fn witnesses() {
     let root=decision::transition(decision::Step::Directories,true,false,false,false,false,false); assert(root);
     let nested=decision::transition(decision::Step::Directories,false,false,false,true,true,false); assert(nested);
 }
+/// #820 full evaluator witnesses, including the empty path and a slash consumed by `**`.
+fn evaluation_witnesses() {
+    reveal_with_fuel(decision::cell, 3);
+    let mut atoms=Vec::new();
+    let empty=decision::evaluate(&atoms,&[]); assert(empty);
+    let absent=decision::evaluate(&atoms,&[true]); assert(!absent);
+    let mut accepts=Vec::new(); accepts.push(false);
+    atoms.push(decision::Atom{kind:decision::Step::Recursive,accepts});
+    let recursive=decision::evaluate(&atoms,&[true]); assert(recursive);
+}
+
 }
 fn main() {}
