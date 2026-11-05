@@ -1,5 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary")
-load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
+load("//tools/bazel:python.bzl", "tl3_py_test")
 
 py_binary(
     name = "queue_pr",
@@ -13,14 +13,14 @@ tl3_py_test(
     deps = [":queue_pr"],
 )
 
-py_library(
-    name = "recover_setup_incidents",
-    srcs = ["recover_setup_incidents.py"],
-    visibility = ["//visibility:public"],
-)
-
 tl3_py_test(
     name = "test_recover_setup_incidents",
     srcs = ["test_recover_setup_incidents.py"],
     deps = [":recover_setup_incidents"],
+)
+
+py_binary(
+    name = "recover_setup_incidents",
+    srcs = ["recover_setup_incidents.py"],
+    visibility = ["//visibility:public"],
 )
