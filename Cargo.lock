@@ -3008,6 +3008,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tl3-contracts"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
@@ -3036,6 +3045,7 @@ dependencies = [
  "thiserror",
  "tl3-config",
  "tl3-controller-core",
+ "tl3-contracts",
  "tl3-github",
  "tl3-kernel",
  "tl3-mergify",
