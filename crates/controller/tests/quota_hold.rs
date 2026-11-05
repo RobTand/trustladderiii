@@ -83,10 +83,14 @@ struct Fixture {
     source: WorkerOutputSource,
     store: Store,
     clock: Clock,
+    config: tl3_config::Config,
 }
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_earlier_rung(false)
+    }
+    fn with_earlier_rung(earlier: bool) -> Self {
         let mut db = support::Database::start();
         let settings = db.create("quota_hold");
         let root = tempfile::tempdir().unwrap();
@@ -94,6 +98,11 @@ impl Fixture {
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         config.store = settings.clone();
         config.limits.agent_pool = 2;
+        if earlier {
+            let mut model = config.models.audit[0].clone();
+            model.name = "earlier-model".into();
+            config.models.audit.insert(0, model);
+        }
         config.models.key_file = root.path().join("fixture-key");
         fs::write(&config.models.key_file, "fixture-only").unwrap();
         config.workers.python = "/usr/bin/python3".into();
@@ -117,7 +126,8 @@ facts = dict(started_ms=now, finished_ms=now, outcome='quota' if quota else 'suc
              trace_id=None, failure=None)
 pathlib.Path(r['trace']['completion']).write_text(json.dumps(facts))
 if quota:
-    print(json.dumps(dict(event='quota', role='audit', reset_ms=1900000000000)), flush=True)
+    reset = 1899913600000 if r['model']['name'] == 'earlier-model' else 1900000000000
+    print(json.dumps(dict(event='quota', role='audit', reset_ms=reset)), flush=True)
 else:
     print(json.dumps(dict(event='reply', role='audit', reply=dict(verdict='agree', objections=[], evidence_contract=[]))), flush=True)
 "#.into(), root.path().to_str().unwrap().into()];
@@ -155,6 +165,56 @@ else:
             source,
             store,
             clock,
+            config,
+        }
+    }
+    fn restart(self) -> Self {
+        let Self {
+            _db,
+            root,
+            settings,
+            controller,
+            source,
+            store,
+            clock,
+            config,
+        } = self;
+        drop(controller);
+        drop(source);
+        // Wait for the old ownership guard to release its advisory lock.
+        let mut reader = Reader::open(&settings).unwrap();
+        let mut tx = reader.transaction().unwrap();
+        tx.query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        tx.query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        tx.commit().unwrap();
+        let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+        let mut ownership =
+            tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+        let supervisor =
+            Supervisor::new(&config, &root.path().join("records"), &mut ownership).unwrap();
+        let source = supervisor.source();
+        registry.register(
+            Upstream::Workers,
+            Audit(supervisor, adapters::workers::Fake::new(root.path())),
+        );
+        let controller = Controller::open_with_clock(
+            ownership.into_store(),
+            registry,
+            Bootstrap::from_config(&config).unwrap(),
+            clock.clone(),
+        )
+        .unwrap();
+        Self {
+            _db,
+            root,
+            settings,
+            controller,
+            source,
+            store,
+            clock,
+            config,
         }
     }
     fn intake(&mut self, number: u64) {
@@ -331,4 +391,77 @@ fn same_model_success_redispatches_the_quota_held_key() {
         1,
         "a later same-model success must redispatch the held idempotency key before reset"
     );
+}
+
+/// Q53 / #828 review: legacy status survives restart with the ladder's earlier reset,
+/// even when the next scheduled look only posts the #759 maintenance note.
+#[test]
+fn legacy_restart_restores_the_earliest_ladder_deadline() {
+    const EARLIER: u64 = RESET - 86_400_000;
+    for maintenance in [false, true] {
+        let mut f = Fixture::with_earlier_rung(true);
+        let key = f.held(false);
+        f.until(|f| {
+            f.hold()
+                .is_some_and(|(_, hold)| hold["last_quota_model"] == "alternate-model")
+        });
+        f.controller.look_due().unwrap();
+        assert_eq!(
+            f.attempt(&key),
+            1,
+            "both ladder rungs really ended with quota"
+        );
+        let (_, mut hold) = f.hold().unwrap();
+        assert_eq!(hold["quota_ms"], RESET);
+        assert_eq!(
+            hold["quota_retry_ms"], EARLIER,
+            "real controller chose the earlier rung"
+        );
+        let due = if maintenance {
+            f.clock.0.get() + 30 * 60 * 1000
+        } else {
+            EARLIER
+        };
+        // Emulate a pre-#828 durable row, preserving its scheduled look.
+        hold.as_object_mut().unwrap().remove("quota_retry_ms");
+        hold["due_ms"] = json!(due);
+        let snapshot = f.store.load().unwrap();
+        let mut commit = Commit::new(
+            format!("fixture:legacy:{maintenance}"),
+            json!({}),
+            &snapshot,
+        );
+        commit.rows.push(RowChange::Put {
+            table: "allowances".into(),
+            id: key.clone(),
+            value: hold,
+        });
+        f.store.commit(&commit).unwrap();
+        let mut f = f.restart();
+        let (_, hold) = f.hold().unwrap();
+        assert_eq!(
+            hold["due_ms"], due,
+            "migration preserves maintenance and retry scheduling"
+        );
+        let holds = tl3_controller::looks::model_quota_holds(
+            &f.controller.snapshot().unwrap(),
+            Some(&f.config.models),
+        )
+        .unwrap();
+        let hold = holds.iter().find(|hold| hold.key == key).unwrap();
+        assert_eq!(
+            hold.retry_at_ms, EARLIER,
+            "legacy restart must advertise the earliest ladder deadline, not the last ending's reset"
+        );
+        assert_eq!(hold.reset_ms, RESET);
+        let view = status::load(&mut Reader::open(&f.settings).unwrap()).unwrap();
+        let wait = &view.requests[0].waiting_on;
+        assert!(
+            wait.contains("until 2030-03-17T17:46:40Z; earliest retry 2030-03-16T17:46:40Z"),
+            "{wait}"
+        );
+        assert!(status::render_text(&view).contains(wait));
+        assert!(status::render_html(&view).contains(wait));
+        assert_eq!(f.attempt(&key), 1, "migration does not dispatch");
+    }
 }
