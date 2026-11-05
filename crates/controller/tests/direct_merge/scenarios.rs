@@ -8,7 +8,7 @@ fn reviewed_checked_direct_head_does_not_enqueue_with_mergify() {
         "owner":"owner", "name":"sandbox", "installation_id":3, "delivery":"direct"
     })).unwrap();
     assert_eq!(repo.delivery, tl3_config::Delivery::Direct);
-    let controller = queued_with(&settings, &api, root.path(), true, &[repo]);
+    let mut controller = queued_with(&settings, &api, root.path(), true, &[repo]);
     assert_eq!(api.state.lock().unwrap().posts, 0,
         "#830: a direct-mode repository must never enqueue with Mergify");
     assert!(matches!(controller.world().unwrap().nodes[0].phase,
