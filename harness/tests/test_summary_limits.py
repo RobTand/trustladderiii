@@ -215,3 +215,20 @@ def test_action_core_keeps_exact_identity_for_a_selection_above_the_action_cap()
     assert observed['tests'] == result['tests']
     assert observed['proof'] == result['proof']
     assert len(json.dumps(observed).encode()) <= test_tool.ACTION_SUMMARY_BYTES
+
+
+def test_repeat_keeps_legacy_twenty_failure_ids_without_byte_pressure(monkeypatch, tmp_path):
+    # #823 review: run display count is independent of the byte-bound divergences.
+    def observed(tree, container, tests, parallel, summary):
+        for index in range(21):
+            summary.add(f't.py::t{index:02}', 'failed')
+        return summary.result
+
+    monkeypatch.setattr(test_tool, 'run_current', observed)
+    result = test_tool.run(tmp_path, None, (), repeat=2)
+    assert len(json.dumps(result).encode()) < 14_336
+    assert result['totals']['failed'] == 21
+    assert result['runs'] == [
+        {'run':number, 'status':'completed', 'totals':result['totals'],
+         'failed':[f't.py::t{index:02}' for index in range(20)]}
+        for number in (1, 2)]
