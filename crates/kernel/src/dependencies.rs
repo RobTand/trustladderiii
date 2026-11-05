@@ -384,116 +384,164 @@ impl World {
     }
 
     kernel_fn! {
-    /// State-table planning admission / #771: withholding preserves ledger amounts.
-    pub(super) fn withhold_dependency_credit(&mut self, i: usize) -> (result: ()) [
-        requires i < old(self).nodes@.len(),
-        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
-            credit: Credit {
-                withheld: old(self).nodes@[i as int].credit.withheld
-                    || (!prerequisites_delivered(*old(self), NodeId(i as u64))
-                        && !old(self).nodes@[i as int].planning_started
-                        && (match old(self).nodes@[i as int].phase {
-                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true,
-                            _ => false,
-                        })
-                        && old(self).nodes@[i as int].credit.ready),
-                ..old(self).nodes@[i as int].credit
-            },
-            ..old(self).nodes@[i as int]
-        }),
-            final(self).next_ticket == old(self).next_ticket,
-            final(self).next_question == old(self).next_question,
-            final(self).gates@ == old(self).gates@,
-            final(self).pool_capacity == old(self).pool_capacity,
-            final(self).fail_fast == old(self).fail_fast,
-            final(self).file_sets@ == old(self).file_sets@,
-            final(self).dependencies@ == old(self).dependencies@,
-            final(self).nodes@.len() == old(self).nodes@.len(),
-            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
-            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
-            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
-            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
-            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
-            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
-            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
-            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
-            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
-            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
-            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] {
-        if !self.dependencies_delivered(NodeId(i as u64))
-            && !self.nodes[i].planning_started
-            && matches!(
-                self.nodes[i].phase,
-                Phase::Ingesting | Phase::Auditing | Phase::Unplanned
-            )
-        {
-            let n = &mut self.nodes[i];
-            if n.credit.ready {
-                n.credit.withheld = true;
+        /// State-table planning admission / #771: withholding preserves ledger amounts.
+        pub(super) fn withhold_dependency_credit(&mut self, i: usize) -> (result: ()) [
+            requires i < old(self).nodes@.len(),
+            ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+                credit: Credit {
+                    withheld: old(self).nodes@[i as int].credit.withheld
+                        || (!prerequisites_delivered(*old(self), NodeId(i as u64))
+                            && !old(self).nodes@[i as int].planning_started
+                            && (match old(self).nodes@[i as int].phase {
+                                Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true,
+                                _ => false,
+                            })
+                            && old(self).nodes@[i as int].credit.ready),
+                    ..old(self).nodes@[i as int].credit
+                },
+                ..old(self).nodes@[i as int]
+            }),
+                final(self).next_ticket == old(self).next_ticket,
+                final(self).next_question == old(self).next_question,
+                final(self).gates@ == old(self).gates@,
+                final(self).pool_capacity == old(self).pool_capacity,
+                final(self).fail_fast == old(self).fail_fast,
+                final(self).file_sets@ == old(self).file_sets@,
+                final(self).dependencies@ == old(self).dependencies@,
+                final(self).nodes@.len() == old(self).nodes@.len(),
+                final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+                final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+                final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+                final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+                final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+                final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+                final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+                final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+                final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+                final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+                final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
+        ] {
+            kernel_snapshot! { before_budget = *self }
+
+            if !self.dependencies_delivered(NodeId(i as u64))
+                && !self.nodes[i].planning_started
+                && matches!(
+                    self.nodes[i].phase,
+                    Phase::Ingesting | Phase::Auditing | Phase::Unplanned
+                )
+            {
+                let n = &mut self.nodes[i];
+                if n.credit.ready {
+                    n.credit.withheld = true;
+                }
             }
+
+            kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+            }
+    }
         }
-    }
-    }
 
     kernel_fn! {
-    /// Prerequisite removal rows / #693 / #771: stable in-place compaction
-    /// preserves every ledger amount and changes only this node's wait flags.
-    pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind,
-        number: u64) -> (result: ()) [
-        requires i < old(self).nodes@.len(),
-        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
-            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
-            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
-                ..old(self).nodes@[i as int].credit },
-            ..old(self).nodes@[i as int]
-        }),
-            final(self).next_ticket == old(self).next_ticket,
-            final(self).next_question == old(self).next_question,
-            final(self).gates@ == old(self).gates@,
-            final(self).pool_capacity == old(self).pool_capacity,
-            final(self).fail_fast == old(self).fail_fast,
-            final(self).file_sets@ == old(self).file_sets@,
-            final(self).nodes@.len() == old(self).nodes@.len(),
-            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
-                ==> final(self).nodes@[j] == old(self).nodes@[j],
-            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
-            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
-            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
-            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
-            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
-            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
-            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
-            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
-            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
-            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
-            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
-            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
-            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] {
-        if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
-            return;
-        }
-        let node = NodeId(i as u64);
-        let mut read = 0usize;
-        let mut write = 0usize;
-        kernel_while! { (read < self.dependencies.len()) [
-            invariant write <= read <= self.dependencies.len(),
-            decreases self.dependencies.len() - read,
+        /// Prerequisite removal rows / #693 / #771: stable in-place compaction
+        /// preserves every ledger amount and changes only this node's wait flags.
+        pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind,
+            number: u64) -> (result: ()) [
+            requires i < old(self).nodes@.len(),
+            ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+                waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+                credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
+                    ..old(self).nodes@[i as int].credit },
+                ..old(self).nodes@[i as int]
+            }),
+                final(self).next_ticket == old(self).next_ticket,
+                final(self).next_question == old(self).next_question,
+                final(self).gates@ == old(self).gates@,
+                final(self).pool_capacity == old(self).pool_capacity,
+                final(self).fail_fast == old(self).fail_fast,
+                final(self).file_sets@ == old(self).file_sets@,
+                final(self).nodes@.len() == old(self).nodes@.len(),
+                forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
+                    ==> final(self).nodes@[j] == old(self).nodes@[j],
+                final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
+                final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
+                final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+                final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+                final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+                final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+                final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+                final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+                final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+                final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+                final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+                final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+                final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
         ] {
-            let d = self.dependencies[read];
-            if d.node != node || d.target.kind != kind || d.target.number != number {
-                self.dependencies[write] = d;
-                write += 1;
+            kernel_snapshot! { before_budget = *self }
+
+            if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
+                        kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
             }
-            read += 1;
-        } }
-        self.dependencies.truncate(write);
-        self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
-        self.nodes[i].credit.withheld =
-            !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
+            return;
+            }
+            let node = NodeId(i as u64);
+            let mut read = 0usize;
+            let mut write = 0usize;
+            kernel_while! { (read < self.dependencies.len()) [
+                invariant write <= read <= self.dependencies.len(),
+                decreases self.dependencies.len() - read,
+            ] {
+                let d = self.dependencies[read];
+                if d.node != node || d.target.kind != kind || d.target.number != number {
+                    self.dependencies[write] = d;
+                    write += 1;
+                }
+                read += 1;
+            } }
+            self.dependencies.truncate(write);
+            self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
+            self.nodes[i].credit.withheld =
+                !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
+
+            kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+            }
     }
-    }
+        }
 
     kernel_fn! {
     /// #693 / #771: find the same first blocking declaration as the public query.
@@ -522,150 +570,263 @@ impl World {
     }
 
     kernel_fn! {
-    /// Prerequisite fact rows / #693 / #771: declarations and terminal facts
-    /// preserve every numeric ledger and emit at most one note.
-    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-    pub(super) fn dependency_fact(&mut self, i: usize, target: DependencyTarget,
-        status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
-        requires i < old(self).nodes@.len(), i <= u64::MAX as int,
-            edges_indexable(*old(self)), old(out).len < OUTBOX,
-        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
-            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
-            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
-                ..old(self).nodes@[i as int].credit },
-            ..old(self).nodes@[i as int]
-        }),
-            final(self).next_ticket == old(self).next_ticket,
-            final(self).next_question == old(self).next_question,
-            final(self).gates@ == old(self).gates@,
-            final(self).pool_capacity == old(self).pool_capacity,
-            final(self).fail_fast == old(self).fail_fast,
-            final(self).file_sets@ == old(self).file_sets@,
-            final(out).len <= old(out).len + 1,
-            final(self).nodes@.len() == old(self).nodes@.len(),
-            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
-                ==> final(self).nodes@[j] == old(self).nodes@[j],
-            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
-            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
-            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
-            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
-            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
-            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
-            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
-            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
-            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
-            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
-            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
-            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
-            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] proof [reveal(edges_indexable);] {
-        if target.number == 0 {
+        /// Prerequisite fact rows / #693 / #771: declarations and terminal facts
+        /// preserve every numeric ledger and emit at most one note.
+        #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+        pub(super) fn dependency_fact(&mut self, i: usize, target: DependencyTarget,
+            status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
+            requires i < old(self).nodes@.len(), i <= u64::MAX as int,
+                edges_indexable(*old(self)), old(out).len < OUTBOX,
+            ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+                waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+                credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
+                    ..old(self).nodes@[i as int].credit },
+                ..old(self).nodes@[i as int]
+            }),
+                final(self).next_ticket == old(self).next_ticket,
+                final(self).next_question == old(self).next_question,
+                final(self).gates@ == old(self).gates@,
+                final(self).pool_capacity == old(self).pool_capacity,
+                final(self).fail_fast == old(self).fail_fast,
+                final(self).file_sets@ == old(self).file_sets@,
+                final(out).len <= old(out).len + 1,
+                final(self).nodes@.len() == old(self).nodes@.len(),
+                forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
+                    ==> final(self).nodes@[j] == old(self).nodes@[j],
+                final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
+                final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
+                final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+                final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+                final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+                final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+                final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+                final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+                final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+                final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+                final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+                final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+                final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
+        ] proof [reveal(edges_indexable);] {
+            kernel_snapshot! { before_budget = *self }
+            kernel_snapshot! { budget_out = out.len }
+
+            if target.number == 0 {
+                        kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+                assert(out.len as int <= budget_out@ as int + 1);
+            }
             return;
-        }
-        if let Some(node) = target.request {
-            match self.index(node) {
-                None => return,
-                Some(j) => if self.nodes[i].repo != self.nodes[j].repo { return; },
             }
-        }
-        let node = NodeId(i as u64);
-        let existing = self.find_dependency(node, target.kind, target.number);
-        if let Some(index) = existing {
-            let previous = self.dependencies[index];
-            if previous.rejected || previous.status != DependencyStatus::Pending {
-                return;
+            if let Some(node) = target.request {
+                match self.index(node) {
+                    None => return,
+                    Some(j) => if self.nodes[i].repo != self.nodes[j].repo {         kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+                assert(out.len as int <= budget_out@ as int + 1);
             }
-            if status == DependencyStatus::Pending && target.request == previous.target.request {
-                return;
+            return; },
+                }
             }
-        } else if self.nodes[i].planning_started
-            || !matches!(
-                self.nodes[i].phase,
-                Phase::Ingesting | Phase::Auditing | Phase::Unplanned
-            )
-        {
+            let node = NodeId(i as u64);
+            let existing = self.find_dependency(node, target.kind, target.number);
+            if let Some(index) = existing {
+                let previous = self.dependencies[index];
+                if previous.rejected || previous.status != DependencyStatus::Pending {
+                            kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+                assert(out.len as int <= budget_out@ as int + 1);
+            }
             return;
-        }
-        let rejected = if status == DependencyStatus::Pending {
-            match target.request {
-                Some(target) => self.dependency_path(target, node),
-                None => false,
+                }
+                if status == DependencyStatus::Pending && target.request == previous.target.request {
+                            kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+                assert(out.len as int <= budget_out@ as int + 1);
             }
-        } else { false };
-        let dependency = Dependency {
-            node,
-            target,
-            status,
-            rejected,
-        };
-        self.record_dependency(i, existing, dependency, out);
+            return;
+                }
+            } else if self.nodes[i].planning_started
+                || !matches!(
+                    self.nodes[i].phase,
+                    Phase::Ingesting | Phase::Auditing | Phase::Unplanned
+                )
+            {
+                        kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+                assert(out.len as int <= budget_out@ as int + 1);
+            }
+            return;
+            }
+            let rejected = if status == DependencyStatus::Pending {
+                match target.request {
+                    Some(target) => self.dependency_path(target, node),
+                    None => false,
+                }
+            } else { false };
+            let dependency = Dependency {
+                node,
+                target,
+                status,
+                rejected,
+            };
+            self.record_dependency(i, existing, dependency, out);
+
+            kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+                assert(out.len as int <= budget_out@ as int + 1);
+            }
     }
-    }
+        }
 
     kernel_fn! {
-    /// #693 / #771: store the validated declaration, then reconcile wait flags.
-    /// This separates the unchanged writes from cycle-query validation.
-    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-    fn record_dependency(&mut self, i: usize, existing: Option<usize>,
-        dependency: Dependency, out: &mut Outbox) -> (result: ()) [
-        requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
-            match existing { None => true, Some(index) => index < old(self).dependencies@.len() },
-        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
-            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
-            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
-                ..old(self).nodes@[i as int].credit },
-            ..old(self).nodes@[i as int]
-        }),
-            final(self).next_ticket == old(self).next_ticket,
-            final(self).next_question == old(self).next_question,
-            final(self).gates@ == old(self).gates@,
-            final(self).pool_capacity == old(self).pool_capacity,
-            final(self).fail_fast == old(self).fail_fast,
-            final(self).file_sets@ == old(self).file_sets@,
-            final(out).len <= old(out).len + 1,
-            final(self).nodes@.len() == old(self).nodes@.len(),
-            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
-                ==> final(self).nodes@[j] == old(self).nodes@[j],
-            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
-            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
-            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
-            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
-            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
-            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
-            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
-            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
-            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
-            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
-            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
-            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
-            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] {
-        let node = NodeId(i as u64);
-        match existing {
-            Some(index) => self.dependencies[index] = dependency,
-            None => self.dependencies.push(dependency),
-        }
-        if dependency.rejected {
-            notice(
-                out,
-                i,
-                Notice::Note(NoteKind::DependencyCycle {
-                    number: dependency.target.number,
-                }),
-            );
-        } else if dependency.status == DependencyStatus::Abandoned {
-            notice(
-                out,
-                i,
-                Notice::Note(NoteKind::DependencyAbandoned {
-                    number: dependency.target.number,
-                }),
-            );
-        }
-        self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
-        self.withhold_dependency_credit(i);
+        /// #693 / #771: store the validated declaration, then reconcile wait flags.
+        /// This separates the unchanged writes from cycle-query validation.
+        #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+        fn record_dependency(&mut self, i: usize, existing: Option<usize>,
+            dependency: Dependency, out: &mut Outbox) -> (result: ()) [
+            requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
+                match existing { None => true, Some(index) => index < old(self).dependencies@.len() },
+            ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+                waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+                credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
+                    ..old(self).nodes@[i as int].credit },
+                ..old(self).nodes@[i as int]
+            }),
+                final(self).next_ticket == old(self).next_ticket,
+                final(self).next_question == old(self).next_question,
+                final(self).gates@ == old(self).gates@,
+                final(self).pool_capacity == old(self).pool_capacity,
+                final(self).fail_fast == old(self).fail_fast,
+                final(self).file_sets@ == old(self).file_sets@,
+                final(out).len <= old(out).len + 1,
+                final(self).nodes@.len() == old(self).nodes@.len(),
+                forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
+                    ==> final(self).nodes@[j] == old(self).nodes@[j],
+                final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
+                final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
+                final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
+                final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
+                final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
+                final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
+                final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
+                final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
+                final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
+                final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
+                final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
+                final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
+                final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
+        ] {
+            kernel_snapshot! { before_budget = *self }
+            kernel_snapshot! { budget_out = out.len }
+
+            let node = NodeId(i as u64);
+            match existing {
+                Some(index) => self.dependencies[index] = dependency,
+                None => self.dependencies.push(dependency),
+            }
+            if dependency.rejected {
+                notice(
+                    out,
+                    i,
+                    Notice::Note(NoteKind::DependencyCycle {
+                        number: dependency.target.number,
+                    }),
+                );
+            } else if dependency.status == DependencyStatus::Abandoned {
+                notice(
+                    out,
+                    i,
+                    Notice::Note(NoteKind::DependencyAbandoned {
+                        number: dependency.target.number,
+                    }),
+                );
+            }
+            self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
+            self.withhold_dependency_credit(i);
+
+            kernel_proof! {
+                assert(self.nodes@.len() == before_budget@.nodes@.len());
+                assert forall|j: int| 0 <= j < before_budget@.nodes@.len() && j != i implies
+                    self.nodes@[j] == before_budget@.nodes@[j] by {}
+                assert(self.nodes@[i as int].generation == before_budget@.nodes@[i as int].generation);
+                assert(self.nodes@[i as int].next_seq == before_budget@.nodes@[i as int].next_seq);
+                assert(self.nodes@[i as int].credit.start == before_budget@.nodes@[i as int].credit.start);
+                assert(self.nodes@[i as int].credit.earned == before_budget@.nodes@[i as int].credit.earned);
+                assert(self.nodes@[i as int].credit.added == before_budget@.nodes@[i as int].credit.added);
+                assert(self.nodes@[i as int].credit.spent == before_budget@.nodes@[i as int].credit.spent);
+                assert(self.nodes@[i as int].last_cmd == before_budget@.nodes@[i as int].last_cmd);
+                assert(self.next_ticket == before_budget@.next_ticket);
+                assert(self.next_question == before_budget@.next_question);
+                assert(out.len as int <= budget_out@ as int + 1);
+            }
     }
-    }
+        }
 
     kernel_fn! {
     /// #693 / #771: declaration identity selects the first matching table row.
