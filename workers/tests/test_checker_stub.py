@@ -119,7 +119,7 @@ def test_cursor_is_not_published_if_fsync_fails(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == [cursor]
 
 
-def test_replay_latency(tmp_path, capsys):
+def test_replay_latency(checker_state_directory, capsys):
     """Measure actual child calls under four concurrent replay streams, without a timing threshold."""
     case, rows = recorded_case()
     row = rows[0]
@@ -141,7 +141,7 @@ print('CHECKER_TIMING ' + json.dumps([imported-started, finished-imported]), fil
 '''
 
     def sample(index):
-        cursor = tmp_path / str(index)
+        cursor = checker_state_directory / str(index)
         prepare = getattr(checker_stub, "prepare_replay", None)
         if prepare is not None:
             prepare(case, cursor)

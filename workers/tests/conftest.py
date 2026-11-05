@@ -32,6 +32,19 @@ def fake_model_tool_binding(monkeypatch):
     monkeypatch.setattr(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self)
 
 
+@pytest.fixture
+def checker_state_directory(tmp_path_factory):
+    import tempfile
+    from pathlib import Path
+
+    # Keep real fsync/rename for the cursor, without shared-disk durability waits
+    # for ephemeral test coordination. Executables stay in pytest scratch.
+    memory = Path("/dev/shm")
+    directory = memory if memory.is_dir() else tmp_path_factory.getbasetemp()
+    with tempfile.TemporaryDirectory(prefix="tl3-checker-", dir=directory) as state:
+        yield Path(state)
+
+
 @pytest.fixture(autouse=True)
 def budget_binary(request, tmp_path_factory, monkeypatch):
     import json
@@ -49,7 +62,7 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
         yield
         return
 
-    cursor = tmp_path / "checker-cursor"
+    cursor = request.getfixturevalue("checker_state_directory") / "checker-cursor"
     checker_stub.prepare_replay(request.node.nodeid, cursor)
     checker = tmp_path / "recorded-rust-checker"
     checker.write_text(
