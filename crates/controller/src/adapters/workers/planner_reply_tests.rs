@@ -86,6 +86,47 @@ fn planner_reply_preserves_errors_and_forecast_precedence() {
     }
 }
 
+#[test]
+fn planner_reply_mapping_preserves_nested_schema_acceptance() {
+    let leaf = json!({"kind":"leaf","files":[],"checks":[{
+        "kind":"demonstrating","node_ids":["tests/test_a.py::test_a"],"goal_ids":[0],
+        "forcing":{"symptom":"deadline","environment":{},"patches":[]},
+        "proof":{"subjects":[],"observer_support":[],"red_message":"deadline"},
+        "declared_symptom":{"node":"tests/test_a.py::test_a","exception":"builtins.TimeoutError",
+            "phase":"call","repeat":1,"parallel":0}}],
+        "no_design_questions":true,"lands_on_its_own":true,
+        "forecast":{"tokenizer":"o200k_base","brief_tokens":0,"file_tokens":{},
+            "overhead_tokens":0,"tokens":0,"fit_tokens":100,"context_tokens":150,"fits":true},
+        "violations":[]});
+    assert!(matches!(legacy(&leaf).unwrap(), Reply::PlanLeaf { .. }));
+    let mut cases = vec![leaf.clone()];
+    for exception in ["module.Erreuré", "module.A\u{301}", "module.Error\n"] {
+        let mut case = leaf.clone();
+        case["checks"][0]["declared_symptom"]["exception"] = exception.into();
+        cases.push(case);
+    }
+    for name in ["DEADLINE", "DEADLINE\n"] {
+        let mut case = leaf.clone();
+        case["checks"][0]["forcing"]["environment"] = json!({name:"1"});
+        cases.push(case);
+    }
+    for target in ["module.deadline", "module.deadline\n"] {
+        let mut case = leaf.clone();
+        case["checks"][0]["forcing"]["patches"] = json!([{"target":target,"returns":null}]);
+        cases.push(case);
+    }
+    for case in cases {
+        let expected = legacy(&case).map_err(|e| e.to_string());
+        let actual = map_reply("planner", &case)
+            .map(|mapped| match mapped {
+                MappedReply::Kernel(reply) => reply,
+                _ => panic!("planner kernel reply"),
+            })
+            .map_err(|e| e.to_string());
+        assert_eq!(actual, expected, "{case}");
+    }
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config { cases: 64, ..Default::default() })]
     #[test]
