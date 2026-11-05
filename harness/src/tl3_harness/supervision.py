@@ -133,6 +133,8 @@ class Supervised:
         # Omit that entire incomplete line until its newline, even if it looks harmless.
         visible = context.partition(b'\n')[2] if self.stderr_boundary else context
         self.stderr_diagnostic = safe_stderr(visible.decode('utf-8', errors='replace'))
+        if self.stderr_boundary and not self.stderr_diagnostic:
+            self.stderr_diagnostic = '[stderr omitted: incomplete capture boundary]'
         # The shared redactor saw the complete retained context before this byte cut.
         if len(context) > MAX_STDERR_BYTES:
             self.stderr_boundary = True

@@ -160,6 +160,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
     "tests/production.rs": ["tests/prismabuild_fixture/**"],
+    "tests/environment_incidents.rs": ["tests/redaction_support/**"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],
     "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs", "tests/support/ownership.rs"],

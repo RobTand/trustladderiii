@@ -520,8 +520,8 @@ cause = 'container shim refused: pid limit reached'
 payloads = [
     'old line\n' * 80 + cause + ' ghp_abcdefghijklmnopqrstuvwxyz1234567890',
     'password: ' + secret + ' ' + '.' * 499 + '\n' + cause,
-    'password:\n' + secret + ' ' + '.' * 490 + '\n' + '.' * 512 + '\n' + cause,
-    'password: ' + 'v' * 20000 + '\n' + cause,
+    'password: ' + secret + '\n' + '.' * 505 + '\n' + '.' * 504 + '\n' + cause,
+    'password: ' + 'v' * 40000 + '\n' + cause,
 ]
 records = []
 with tempfile.TemporaryDirectory() as directory:

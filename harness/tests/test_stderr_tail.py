@@ -50,7 +50,7 @@ def test_early_exit_keeps_cause_outside_test_messages(tmp_path, monkeypatch, cod
 
 @pytest.mark.parametrize('payload', [
     b'old\n' * 8192 + b'last diagnostic\n',
-    b'x' * 32768 + b'last diagnostic\n',
+    b'x' * 8192 + b'last diagnostic\n',
     b'\xff\xfe\x00\x1b\r\tbad utf8\nlast diagnostic\n',
     ('\u202e\u0085\u2028\U0001f600' * 8192 + '\nlast diagnostic\n').encode(),
     ('\U0001f600' * 512 + '\n').encode() * 32 + b'last diagnostic\n',

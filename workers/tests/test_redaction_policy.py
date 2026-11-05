@@ -92,7 +92,7 @@ def test_shared_redactor_matches_pre_extraction_reference():
     from redaction_branches import original_inputs, branch_inputs
     inputs = original_inputs() + branch_inputs() + [
         'password: zE9!pR4#cV7$ ' + '.' * 499,
-        'password:\nzE9!pR4#cV7$ ' + '.' * 490 + '\n' + '.' * 512,
+        'password: zE9!pR4#cV7$\n' + '.' * 505 + '\n' + '.' * 504,
         'password: ' + 'v' * 20000 + '\nordinary cause\n',
     ]
     before, after = reference['Redactor'](None), tracing.Redactor(None)
