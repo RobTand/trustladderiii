@@ -81,6 +81,10 @@ def cargo_binaries(metadata, root=ROOT):
             binary = f"{package['name']}/{target['name']}"
             for group in GATE_GROUPS.get(binary, ['']):
                 binaries[binary + (f'-{group}' if group else '')] = (source, harness)
+    # The separately gated controller library variant executes cfg(loom) tests.
+    controller = 'tl3-controller/tl3_controller'
+    if controller in binaries:
+        binaries[controller + '_loom'] = binaries[controller]
     return binaries
 
 

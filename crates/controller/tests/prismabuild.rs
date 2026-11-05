@@ -18,6 +18,7 @@ use std::{
     thread,
     time::Duration,
 };
+use support::scenario_shard;
 use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository,
     adapters::{
@@ -2476,15 +2477,11 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
 }
 
 fn main() {
-    if std::env::args().len() == 1
-        || std::env::args().nth(1).as_deref() == Some("--router-regression")
-    {
+    if std::env::args().nth(1).as_deref() == Some("--router-regression") {
         let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
         support::executor_probe::assert_retire_delivery(&mut router);
         println!("test router_retire_delivery ... ok");
-        if std::env::args().len() > 1 {
-            return;
-        }
+        return;
     }
 
     let args: Vec<_> = std::env::args().collect();
@@ -2592,7 +2589,7 @@ fn main() {
         println!("test retirement_continues_after_corrupt_node ... ok");
         return;
     }
-    for (name, test) in [
+    let cases = [
         (
             "oversized_plan_is_refused_before_submission",
             oversized_plan_is_refused_before_submission as fn(),
@@ -2718,38 +2715,87 @@ fn main() {
             "footprint_paths_and_merge_base",
             footprint_paths_and_merge_base,
         ),
-    ] {
-        test();
-        println!("test {name} ... ok");
+        (
+            "result_budget_rejects_repeated_checks",
+            result_budget_rejects_repeated_checks,
+        ),
+    ];
+    type DatabaseScenario = fn(&mut support::Database);
+    let database_cases: &[(&str, DatabaseScenario)] = &[
+        (
+            "oversized_planner_reply_reaches_plan_feedback",
+            |database| {
+                oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
+            },
+        ),
+        ("retirement_continues_after_corrupt_node", |database| {
+            retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+        }),
+        ("recorded_records_reach_kernel", |database| {
+            through_controller(&database.create("pb_pass"), false, false, false);
+        }),
+        ("outside_footprint_fails_round", |database| {
+            through_controller(&database.create("pb_footprint"), true, false, false);
+        }),
+        ("cancelling_unbound_checks_starts_no_work", |database| {
+            through_controller(&database.create("pb_cancel"), false, true, false);
+        }),
+        ("controller_recovers_failed_publication", |database| {
+            through_controller(&database.create("pb_recover"), false, false, true);
+        }),
+        (
+            "cancelling_never_published_seal_starts_no_work",
+            |database| {
+                through_controller(&database.create("pb_cancel_sealed"), false, true, true);
+            },
+        ),
+        ("base_moved_completion_keys_each_observation", |database| {
+            base_moved_completion_keys_each_observation(
+                &database.create("pb_observation_keys"),
+                &database.create("pb_observation_keys_legacy"),
+            );
+        }),
+        ("quiet_alive_job_is_not_a_failed_read", |database| {
+            quiet_alive_job_is_not_a_failed_read(&database.create("pb_quiet_alive"), false);
+        }),
+        ("unreadable_job_record_is_a_failed_read", |database| {
+            quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
+        }),
+    ];
+    let names: Vec<_> = std::iter::once("router_retire_delivery")
+        .chain(cases.iter().map(|(name, _)| *name))
+        .chain(database_cases.iter().map(|(name, _)| *name))
+        .collect();
+    let weights = scenario_shard::weights_ms(
+        &scenario_shard::measured("tl3-controller/prismabuild"),
+        &names,
+    );
+    let groups: Vec<_> = names
+        .iter()
+        .zip(weights)
+        .map(|(name, weight)| (*name, 1, weight))
+        .collect();
+    let mut shard = scenario_shard::Shard::from_groups(&groups);
+    shard.run("router_retire_delivery", || {
+        let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
+        support::executor_probe::assert_retire_delivery(&mut router);
+        println!("test router_retire_delivery ... ok");
+    });
+    for (name, test) in cases {
+        shard.run(name, || {
+            test();
+            println!("test {name} ... ok");
+        });
     }
     let mut database = support::Database::start();
-    oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
-    println!("test oversized_planner_reply_reaches_plan_feedback ... ok");
-    result_budget_rejects_repeated_checks();
-    println!("test result_budget_rejects_repeated_checks ... ok");
-    retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
-    println!("test retirement_continues_after_corrupt_node ... ok");
-    through_controller(&database.create("pb_pass"), false, false, false);
-    println!("test recorded_records_reach_kernel ... ok");
-    through_controller(&database.create("pb_footprint"), true, false, false);
-    println!("test outside_footprint_fails_round ... ok");
-    through_controller(&database.create("pb_cancel"), false, true, false);
-    println!("test cancelling_unbound_checks_starts_no_work ... ok");
-    through_controller(&database.create("pb_recover"), false, false, true);
-    println!("test controller_recovers_failed_publication ... ok");
-    through_controller(&database.create("pb_cancel_sealed"), false, true, true);
-    println!("test cancelling_never_published_seal_starts_no_work ... ok");
-    base_moved_completion_keys_each_observation(
-        &database.create("pb_observation_keys"),
-        &database.create("pb_observation_keys_legacy"),
-    );
-    println!("test base_moved_completion_keys_each_observation ... ok");
-    quiet_alive_job_is_not_a_failed_read(&database.create("pb_quiet_alive"), false);
-    println!("test quiet_alive_job_is_not_a_failed_read ... ok");
-    quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
-    println!("test unreadable_job_record_is_a_failed_read ... ok");
+    for (name, test) in database_cases {
+        shard.run(*name, || {
+            test(&mut database);
+            println!("test {name} ... ok");
+        });
+    }
     database.stop();
-    println!("53 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    shard.finish("PrismaBuild adapter");
 }
 
 fn declared_wait_uses_bell() {

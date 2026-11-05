@@ -19,6 +19,7 @@ SHARD_AWARE_BINARIES = {
     'tl3-controller/github-notices',
     'tl3-controller/mergify',
     'tl3-controller/publishing',
+    'tl3-controller/prismabuild',
     'tl3-controller/simulation',
     'tl3-controller/workers',
 }
@@ -73,18 +74,29 @@ def main():
     if name.startswith('tl3-controller/'):
         binary['command'] = ['bash', str(Path('tools/ci/controller_test_runner.sh').resolve()),
                              '--controller', *binary['command']]
+    selection = [argument.removeprefix('--libtest-select=') for argument in arguments
+                 if argument.startswith('--libtest-select=')]
+    arguments = [argument for argument in arguments if not argument.startswith('--libtest-select=')]
+    names = None
+    if selection:
+        names = [test for test in list_tests(binary['command'])
+                 if any(pattern in test for pattern in selection)]
+        if not names:
+            raise RuntimeError(f'{name}: empty libtest selection {selection}')
     shard = None
     if int(os.environ.get('TEST_TOTAL_SHARDS', '1')) > 1:
         shard = {'index': int(os.environ['TEST_SHARD_INDEX']),
                  'total': int(os.environ['TEST_TOTAL_SHARDS'])}
         if harness == 'libtest':
             weights = json.loads(libtest_shards.WEIGHTS.read_text()).get(name, {})
-            selected = libtest_shards.select(list_tests(binary['command']), weights,
+            selected = libtest_shards.select(names if names is not None else list_tests(binary['command']), weights,
                                              shard['index'], shard['total'])
             arguments = ['--exact', *selected, *arguments]
         elif name not in SHARD_AWARE_BINARIES:
             raise RuntimeError('scenario sharding requires a shard-aware custom harness')
         Path(os.environ['TEST_SHARD_STATUS_FILE']).touch()
+    if names is not None and shard is None:
+        arguments = ['--exact', *names, *arguments]
     cpu_seconds, cpu_details = {}, {}
     results = rust_gate.execute_binary(binary, harness == 'custom', arguments, cpu_seconds=cpu_seconds,
                                        cpu_details=cpu_details)
