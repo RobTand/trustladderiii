@@ -182,21 +182,65 @@ fn mandatory_a2_shell_request_sources() {
 /// #751/#760: dispatch and retry schedules compare real old/new shells at every durable write.
 #[test]
 fn mandatory_a2_shell_execute_branches() {
-    for profile in [
-        Profile::Plain,
-        Profile::Label,
-        Profile::Flip,
-        Profile::Command,
-        Profile::Active,
-    ] {
+    for profile in [Profile::Plain, Profile::Command] {
         let r = compare(
             &schedule(profile),
             Entry::Execute,
             A2Config::default(),
             false,
         );
-        println!("A2 execute {profile:?}: {r}");
+        assert_eq!(
+            count(&r, "github.add_label"),
+            usize::from(profile == Profile::Plain)
+        );
+        assert_eq!(
+            count(&r, "github.command"),
+            usize::from(profile == Profile::Command)
+        );
+        assert_eq!(file(&r, ".applied"), Some(json!(true)), "{r:#}");
+        assert_eq!(
+            r["result"]["error"],
+            "enqueue request sent; Mergify acceptance is still unknown"
+        );
+        let calls = r["calls"].as_array().unwrap();
+        let intent = calls
+            .iter()
+            .position(|c| {
+                c["op"] == "file.rename" && c["args"].as_str().unwrap().ends_with(".intent")
+            })
+            .unwrap();
+        let fence = calls
+            .iter()
+            .enumerate()
+            .skip(intent + 1)
+            .find(|(_, c)| {
+                c["op"] == "file.read" && c["args"].as_str().unwrap().ends_with("epoch.fence")
+            })
+            .unwrap()
+            .0;
+        let effect = calls
+            .iter()
+            .position(|c| c["op"] == "github.add_label" || c["op"] == "github.command")
+            .unwrap();
+        let applied = calls
+            .iter()
+            .position(|c| {
+                c["op"] == "file.rename" && c["args"].as_str().unwrap().ends_with(".applied")
+            })
+            .unwrap();
+        assert!(intent < fence && fence < effect && effect < applied);
     }
+    let pending = compare(
+        &schedule(Profile::Flip),
+        Entry::Execute,
+        A2Config::default(),
+        false,
+    );
+    assert_eq!(
+        pending["result"]["error"],
+        "Mergify acceptance is still unknown"
+    );
+    assert!(file(&pending, ".applied").is_none());
 }
 
 /// Preserved existing behaviour (no rule): completed and stale heals skip reruns; pending same-head resumes without an edit.
@@ -342,5 +386,75 @@ fn mandatory_a2_rerun_boundary_shapes() {
         Some(tl3_kernel::Phase::Checking),
     ] {
         assert_eq!(a2_reference::a2_phase(phase), a2_current::a2_phase(phase));
+    }
+}
+
+/// Preserved existing behaviour (no rule): Confirmed without local receipt is delivered, while an existing receipt is reused.
+#[test]
+fn mandatory_a2_shell_confirmed_receipts() {
+    for missing in [false, true] {
+        let mut s = schedule(Profile::Active);
+        if missing {
+            over(&mut s, "file.read", ".json", 3, 1);
+        }
+        let r = compare(&s, Entry::Execute, A2Config::default(), false);
+        assert_eq!(r["result"]["completion"]["ack"], "Confirmed", "{r:#}");
+        assert_eq!(
+            file(&r, ".json").unwrap()["deliveries"],
+            u64::from(missing),
+            "{r:#}"
+        );
+        assert_eq!(count(&r, "github.add_label"), 0);
+        assert_eq!(count(&r, "github.command"), 0);
+    }
+    let mut s = schedule(Profile::Plain);
+    over(&mut s, "github.checks", "", 2, 1024);
+    let r = compare(&s, Entry::Execute, A2Config::default(), false);
+    assert_eq!(r["result"]["completion"]["ack"], "Confirmed", "{r:#}");
+    assert_eq!(file(&r, ".applied"), Some(json!(true)));
+    assert_eq!(file(&r, ".json").unwrap()["deliveries"], 1, "{r:#}");
+}
+/// #760: changed final head re-runs completion after intent, before applied.
+#[test]
+fn mandatory_a2_shell_retryable_reread() {
+    let mut s = schedule(Profile::Plain);
+    over(&mut s, "github.pull", "", 4, 2);
+    let r = compare(&s, Entry::Execute, A2Config::default(), false);
+    assert_eq!(r["result"]["error"], "PR changed during enqueue", "{r:#}");
+    assert!(file(&r, ".intent").is_some());
+    assert!(file(&r, ".applied").is_none());
+    assert_eq!(count(&r, "github.add_label"), 0);
+    assert_eq!(count(&r, "github.checks"), 3, "{r:#}");
+}
+/// Preserved existing behaviour (no rule): a saved attempt skips the new-attempt event read.
+#[test]
+fn mandatory_a2_shell_saved_attempt() {
+    let mut s = schedule(Profile::Plain);
+    over(&mut s, "file.read", ".intent", 1, 14);
+    let r = compare(&s, Entry::Execute, A2Config::default(), false);
+    assert_eq!(count(&r, "github.add_label"), 1, "{r:#}");
+    assert_eq!(file(&r, ".intent").unwrap()["last_event"], 1);
+    let calls = r["calls"].as_array().unwrap();
+    let intent = calls
+        .iter()
+        .position(|c| c["op"] == "file.rename" && c["args"].as_str().unwrap().ends_with(".intent"))
+        .unwrap();
+    assert!(!calls[..intent].iter().any(|c| c["op"] == "github.events"));
+}
+/// Preserved existing behaviour (no rule): malformed, denied and other file errors propagate; upstream errors retain their classes.
+#[test]
+fn mandatory_a2_shell_heal_error_shapes() {
+    for word in [1024, 2048, 4096] {
+        let mut s = schedule(Profile::Body);
+        over(&mut s, "file.read", ".body-heal", 0, word);
+        let r = compare(&s, Entry::Read, A2Config::default(), true);
+        assert!(r["result"].get("error").is_some(), "{r:#}");
+        assert_eq!(count(&r, "github.patch_body"), 0);
+    }
+    for (op, nth) in [("github.issue", 0), ("github.runs", 0)] {
+        let mut s = schedule(Profile::Body);
+        over(&mut s, op, "", nth, 256);
+        let r = compare(&s, Entry::Read, A2Config::default(), true);
+        assert!(r["result"].get("error").is_some(), "{r:#}");
     }
 }
