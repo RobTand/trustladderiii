@@ -5487,7 +5487,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"claude-sonnet-5-5\"}}",
-    "expected": "{\"identity\":\"tl3-cache-8b027a0aac3f4ae5b50ca3ebfeb78640ca830eb32856b6e2\"}"
+    "expected": "{\"identity\":\"tl3-cache-78cd0a2d84395dbaf698b2a0bd5e39eccbe684d59b1ce97f\"}"
   },
   {
     "kind": "prefix",
@@ -5497,7 +5497,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"gpt-6.1-sol\"}}",
-    "expected": "{\"identity\":\"tl3-cache-8b027a0aac3f4ae5b50ca3ebfeb78640ca830eb32856b6e2\"}"
+    "expected": "{\"identity\":\"tl3-cache-78cd0a2d84395dbaf698b2a0bd5e39eccbe684d59b1ce97f\"}"
   },
   {
     "kind": "prefix",
@@ -5507,7 +5507,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"claude-sonnet-5-5\"}}",
-    "expected": "{\"identity\":\"tl3-cache-57e99fb04ae54e0a480f8ce8e4e06aa4fad9df3a8d4d438e\"}"
+    "expected": "{\"identity\":\"tl3-cache-cd26b21870eefec59f670a462789ce976e6586cf02013520\"}"
   },
   {
     "kind": "prefix",
@@ -5517,7 +5517,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {\"base_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"gpt-6.1-sol\"}}",
-    "expected": "{\"identity\":\"tl3-cache-57e99fb04ae54e0a480f8ce8e4e06aa4fad9df3a8d4d438e\"}"
+    "expected": "{\"identity\":\"tl3-cache-cd26b21870eefec59f670a462789ce976e6586cf02013520\"}"
   },
   {
     "kind": "prefix",
@@ -5527,7 +5527,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {\"repo\": {\"z\": 1e+16, \"a\": [\"\\u00e9\", 1267650600228229401496703205376]}}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"claude-sonnet-5-5\"}}",
-    "expected": "{\"identity\":\"tl3-cache-20dcf6fa95c176924320a1f0a938a48dbc4c8060af419651\"}"
+    "expected": "{\"identity\":\"tl3-cache-ea73c0608d2fded1a299699d82f19de222442cb7209a0843\"}"
   },
   {
     "kind": "prefix",
@@ -5537,7 +5537,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {\"repo\": {\"z\": 1e+16, \"a\": [\"\\u00e9\", 1267650600228229401496703205376]}}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"gpt-6.1-sol\"}}",
-    "expected": "{\"identity\":\"tl3-cache-20dcf6fa95c176924320a1f0a938a48dbc4c8060af419651\"}"
+    "expected": "{\"identity\":\"tl3-cache-ea73c0608d2fded1a299699d82f19de222442cb7209a0843\"}"
   },
   {
     "kind": "prefix",
@@ -5547,7 +5547,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"repo\": {\"nested\": {\"\\ud83d\\ude00\": \"/\", \"\\u00e9\": 1.0}}}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"claude-sonnet-5-5\"}}",
-    "expected": "{\"identity\":\"tl3-cache-0ddcb7b1a83dc01e45aaddfeed7ad92833d855e438e17717\"}"
+    "expected": "{\"identity\":\"tl3-cache-1762bf13a455c05d7bb1fd02ee46ee6cd5adcbd7cc25c773\"}"
   },
   {
     "kind": "prefix",
@@ -5557,7 +5557,7 @@
   {
     "kind": "cache",
     "document": "{\"role\": \"ingest\", \"inputs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"repo\": {\"nested\": {\"\\ud83d\\ude00\": \"/\", \"\\u00e9\": 1.0}}}, \"trace\": {\"repo\": \"owner/repo\"}, \"prompt\": {\"version\": 3, \"text\": \"Pinned \\u00e9 / \\ud83d\\ude00\\n\"}, \"test_cpus\": 7, \"model\": {\"name\": \"gpt-6.1-sol\"}}",
-    "expected": "{\"identity\":\"tl3-cache-0ddcb7b1a83dc01e45aaddfeed7ad92833d855e438e17717\"}"
+    "expected": "{\"identity\":\"tl3-cache-1762bf13a455c05d7bb1fd02ee46ee6cd5adcbd7cc25c773\"}"
   },
   {
     "kind": "prefix",
