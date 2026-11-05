@@ -108,7 +108,7 @@ def verus_proofs():
         for name, module, count in [
             ("observe", "observe", 11),
             ("check", "check", 12),
-            ("check_facts", "facts", 6),
+            ("check_facts", "facts", 26),
             ("observe_witness", "observe_witness", 8),
             ("observe_properties", "observe_properties", 2),
         ]:
@@ -160,6 +160,26 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+        # #743 M1b: real translation, fact decisions, and all original covers.
+        for name, module, count in [
+            ("translate", "translate", 11),
+            ("decide_properties", "decide_properties", 9),
+            ("decide_witness", "decide_witness", 8),
+        ]:
+            verus_test(
+                name = "verus_" + name,
+                src = "proofs/decide.rs",
+                srcs = ["src/decide/check.rs", "src/decide/observe.rs", "src/decide/facts.rs", "src/decide/translate.rs", "src/decide/verification.rs"],
+                specs = ["src/decide/decide_witness.rs", "proofs/decide_properties.rs"],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
 
     if native.package_name() == "crates/controller":
         native.exports_files(["src/kernel_boundary.rs"])
@@ -488,3 +508,38 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
+
+    # #819: selected-release prompt identity and cache-control policy.
+    if native.package_name() == "crates/controller":
+        verus_test(
+            name = "verus_prompt_render",
+            src = "proofs/prompt_render.rs",
+            srcs = ["src/prompt_render/decision.rs"],
+            expected_obligations = 4,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+    if native.package_name() == "crates/controller-core":
+        # G2e: total post-match finding selection and concrete non-vacuity witnesses.
+        for name, module, count in [
+            ("finding", "translate_tail#finding", 1),
+            ("witnesses", "translate_tail_witnesses", 5),
+        ]:
+            verus_test(
+                name = "verus_translate_tail_" + name,
+                src = "verus/translate_tail.rs",
+                srcs = ["src/translate_tail.rs"],
+                specs = ["verus/translate_tail_witnesses.rs"],
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
