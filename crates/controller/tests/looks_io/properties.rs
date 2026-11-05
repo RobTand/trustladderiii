@@ -322,15 +322,21 @@ fn mandatory_observation_commit_persists() {
 /// r1 / Q7: a kernel incident clears through a persisted kernel observation, not an effect-row shortcut.
 #[test]
 fn mandatory_kernel_incident_probe_clearance() {
-    let r = io::compare(&Schedule {
-        incident: true,
-        kernel_incident: true,
-        entries: vec![Entry::Probe],
-        ..Schedule::default()
-    });
-    let kernel: Value = serde_json::from_slice(&r.files["kernel-state"]).unwrap();
-    assert_eq!(kernel["waiting_incident"], false);
-    assert!(r.files.keys().any(|key| key.starts_with("observed/")));
+    for needs_rob in [false, true] {
+        let r = io::compare(&Schedule {
+            incident: true,
+            kernel_incident: true,
+            needs_rob,
+            entries: vec![Entry::Probe],
+            ..Schedule::default()
+        });
+        let kernel: Value = serde_json::from_slice(&r.files["kernel-state"]).unwrap();
+        assert_eq!(kernel["waiting_incident"], needs_rob);
+        assert_eq!(
+            r.files.keys().any(|key| key.starts_with("observed/")),
+            !needs_rob
+        );
+    }
 }
 /// r1 / state-table.md:577: the real kernel enters its incident wait once and preserves an already-open incident.
 #[test]

@@ -397,6 +397,8 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     node.incident_needs_rob = node.waiting_incident && s.needs_rob;
     world.nodes.push(node);
     let mut files = BTreeMap::new();
+    let node = &world.nodes[0];
+    files.insert("kernel-state".into(), serde_json::to_vec(&json!({"phase":node.phase,"waiting_incident":node.waiting_incident,"run_incidents":node.run_incidents,"needs_rob":node.incident_needs_rob})).unwrap());
     if s.incident {
         files.insert("incidents/1.read".into(), serde_json::to_vec(&json!({"id":"1.read","node":0,"open":true,"needs_rob":s.needs_rob,"blocking":false,"summary":"outage","signature":{"upstream":"Mergify","class":if s.refused {"queue_command_refused"} else {"transport"}},"effect":if s.kernel_incident { Value::Null } else { json!("effect-1") }})).unwrap());
     }
