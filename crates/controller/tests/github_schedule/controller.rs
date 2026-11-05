@@ -299,3 +299,50 @@ fn production_shell_copies_are_exact() {
         );
     }
 }
+
+#[test]
+fn legacy_functions_are_pinned_to_cdacce8f99() {
+    use sha2::{Digest, Sha256};
+    let legacy = include_str!("legacy_controller.rs");
+    for (name, indent, expected) in [
+        (
+            "request_notice",
+            4,
+            "0923f999d075ce4367e2d019a08c7c9bbe71bcc598bbdc85e770f6ef5d94a45e",
+        ),
+        (
+            "close_reason",
+            4,
+            "e751e012a492d19bf7bcde12928df5e2b67b1b399ce18b9e3d7641b52dd751c8",
+        ),
+        (
+            "reconcile",
+            4,
+            "2b194366b36487b6aabec0c97898dc5c2ef521dc88b746261f917a66d12f76d3",
+        ),
+        (
+            "execute_delivery",
+            4,
+            "206254f2fb9674b991db258f63ab0127b0fbd673bfba96a8f4034f3cf6197024",
+        ),
+        (
+            "recover_deliveries",
+            4,
+            "30ca82654fa9be0f66026f07adad0da6032910ca60db379181cc7313f381faf0",
+        ),
+        (
+            "writer_facts",
+            0,
+            "e938fcd5c4833c5255f1e0e1f40b5bb537193ac0283b2e9c77b4241416ca04e0",
+        ),
+    ] {
+        let start = legacy.find(&format!("fn {name}(")).unwrap();
+        let ending = format!("\n{}}}", " ".repeat(indent));
+        let end = start + legacy[start..].find(&ending).unwrap() + ending.len();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&legacy.as_bytes()[start..end])),
+            expected,
+            "changed old function {name}"
+        );
+    }
+}
