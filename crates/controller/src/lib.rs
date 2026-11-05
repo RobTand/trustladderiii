@@ -48,6 +48,7 @@ pub mod pr_body;
 pub mod priority;
 pub mod production;
 pub mod prompts;
+pub mod prompt_render;
 mod protected_requests;
 pub mod publication_failure;
 mod question_findings;
