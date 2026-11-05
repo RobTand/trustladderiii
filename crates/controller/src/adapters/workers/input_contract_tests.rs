@@ -298,6 +298,43 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             labels: vec![],
         })
         .unwrap();
+    // #839 / Q27: build the evidence through the controller, real store and
+    // mock GitHub bounded read, then pass the retained row to both builders.
+    let target = tl3_kernel::DependencyTarget {
+        kind: tl3_kernel::PrerequisiteKind::Issue,
+        number: 2763,
+        request: None,
+    };
+    controller
+        .observe(
+            "t839-contract-declaration",
+            Observation::Kernel(Event::Fact {
+                node: NodeId(0),
+                fact: Fact::Dependency {
+                    target,
+                    status: tl3_kernel::DependencyStatus::Pending,
+                },
+            }),
+        )
+        .unwrap();
+    assert!(controller.drive_once().unwrap());
+    crate::adapters::github::set_fake_issue(&f.root.path().join("fakes"), &serde_json::from_value(json!({"number":2763,"title":"Closed prerequisite","body":null,"state":"closed","state_reason":"not_planned","updated_at":"2026-11-03T23:00:00Z"})).unwrap());
+    controller
+        .observe(
+            "t839-contract-catch-up",
+            Observation::PrerequisiteRead {
+                node: NodeId(0),
+                repository: controller.bootstrap.repos[0].clone(),
+                kind: target.kind,
+                number: target.number,
+            },
+        )
+        .unwrap();
+    assert!(controller.drive_once().unwrap());
+    assert_eq!(
+        controller.world().unwrap().dependencies()[0].status,
+        tl3_kernel::DependencyStatus::Delivered
+    );
     let mut store = Store::open(&config.store).unwrap();
     let brief = json!({"kind":"brief","brief":"Preserve evidence","memory_ids":[],"goals":[{"description":"Preserve evidence","verification":"test"}]});
     let plan = json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"evidence","kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]});
@@ -335,11 +372,6 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         )
         .unwrap(),
     );
-    commit.rows.push(crate::put(
-        "prerequisite_closures",
-        "0:Issue:2763".into(),
-        json!({"kind":"issue","number":2763,"reason":"not_planned"}),
-    ));
     store.commit(&commit).unwrap();
     let postmortem = store.owed_postmortem().unwrap().unwrap().id;
     let mut coverage = std::collections::BTreeSet::new();
