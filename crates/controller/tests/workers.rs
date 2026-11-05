@@ -2967,6 +2967,7 @@ fn run_default() {
     shard.run(WorkerGroup::IngestMaterials, || {
         ingest_verbatim::run();
         let database = fixture.database();
+        ingest_verbatim::stored_reply(&database.create("stored_ingest_verbatim"));
         for wrapped in [false, true] {
             linked_materials(
                 &database.create(&format!("linked_materials_{wrapped}")),
