@@ -116,7 +116,8 @@ pub fn github(error: tl3_github::Error, resource: Resource, installation: u64) -
     }
 }
 
-pub(crate) fn of(error: &Error) -> Option<&Failure> {
+#[doc(hidden)]
+pub fn of(error: &Error) -> Option<&Failure> {
     let source = match error {
         Error::Permanent { source, .. } | Error::Adapter(source) => source,
         _ => return None,

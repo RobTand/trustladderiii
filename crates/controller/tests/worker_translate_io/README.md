@@ -40,6 +40,12 @@ for conformance of the shell's boundary projections and I/O schedule.
 
 Run `//crates/controller:test_test_worker_translate_io` alone on BuildBuddy.
 
+The current shell includes #833's typed prerequisite validation. Its resource
+inspection calls the production Rust helper, and its buffered diagnostic write
+is copied verbatim and source-checked. Existing differential schedules return
+non-mismatching prerequisite results and preserve the original write/read order.
+The real mismatch and rollback cases run in `test_test_input_resources`.
+
 Reviewer verdict and head presence are generated independently. The successful
 findings property varies nonempty blocker counts/text, existing feedback and
 material/document tapes, and asserts a committed populated maker_findings row.

@@ -292,13 +292,34 @@ impl Shell<'_> {
                             });
                     }
                 }
+                let checkpoint = commit.rows.len();
                 if let Some(document) = document {
                     commit
                         .rows
                         .push(put(document, node.0.to_string(), reply.clone()));
                 }
                 if role == "ingest" && reply["kind"] == "brief" {
-                    self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)?;
+                    if let Err(error) =
+                        self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)
+                    {
+                        if let Some(failure) = input_resources::of(&error)
+                            && matches!(
+                                failure.problem,
+                                input_resources::Problem::KindMismatch { .. }
+                            )
+                        {
+                            // Q7/Q51: invalid ingest output uses the existing bounded run-failure path.
+                            // Discard partial declarations from this reply, atomically with its rejection.
+                            commit.rows.truncate(checkpoint);
+                            input_resources::record(commit, node, generation, failure);
+                            return Ok(Some(Event::Reply {
+                                node,
+                                generation,
+                                reply: Reply::RunFailed,
+                            }));
+                        }
+                        return Err(error);
+                    }
                 }
                 if role == "ingest" {
                     commit.rows.push(put(

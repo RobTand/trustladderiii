@@ -3693,8 +3693,13 @@ impl Controller {
                             });
                     }
                 }
+                let checkpoint = commit.rows.len();
+                if let Some(document) = document {
+                    commit
+                        .rows
+                        .push(put(document, node.0.to_string(), reply.clone()));
+                }
                 if role == "ingest" && reply["kind"] == "brief" {
-                    let checkpoint = commit.rows.len();
                     if let Err(error) =
                         self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)
                     {
@@ -3716,11 +3721,6 @@ impl Controller {
                         }
                         return Err(error);
                     }
-                }
-                if let Some(document) = document {
-                    commit
-                        .rows
-                        .push(put(document, node.0.to_string(), reply.clone()));
                 }
                 if role == "ingest" {
                     commit.rows.push(put(
