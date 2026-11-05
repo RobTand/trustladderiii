@@ -312,7 +312,7 @@ def verus_proofs():
         ]:
             verus_test(
                 name = "verus_" + group,
-                src = "proofs/" + ("identity" if group == "independent" else group) + ".rs",
+                src = "proofs/" + group + ".rs",
                 srcs = ["src/decision.rs", "src/identity_fields.rs"],
                 expected_obligations = count,
                 module = module,

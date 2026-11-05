@@ -20,7 +20,7 @@ from tl3_harness.node_ids import selects
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import SUMMARY_BYTES, OUTCOMES, bounded, infrastructure, options
 from tl3_harness.trees import export, configuration
-from tl3_workers.pb_evidence import check as _check_pb, encoded, ending_facts
+from tl3_workers.pb_evidence import fields, check as _check_pb, encoded, ending_facts
 
 
 @dataclass(frozen=True)
@@ -208,7 +208,7 @@ def _failure_receipt(ending, settings):
             value = json.loads(raw) if len(raw) <= 2_097_152 else None
             if isinstance(value, dict):
                 record = {'action_key': value.get('action_key'), 'published_unix': value.get('published_unix'),
-                          'termination_reason': (value.get('detail') or {}).get('termination_reason')}
+                          'detail': fields(value.get('detail'), ('termination_reason',))}
         except (OSError, ValueError, TypeError):
             pass
     return _check_pb('failure-receipt', ending=facts, record=record)

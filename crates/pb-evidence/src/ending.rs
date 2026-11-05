@@ -301,7 +301,7 @@ pub fn failure_read(ending: &PbEnding) -> bool {
 pub struct FailedRecord {
     pub action_key: Value,
     pub published_unix: Value,
-    pub termination_reason: Value,
+    pub detail: Value,
 }
 
 pub fn failure(ending: &PbEnding, record: Option<&FailedRecord>) -> Result<Value> {
@@ -320,9 +320,21 @@ pub fn failure(ending: &PbEnding, record: Option<&FailedRecord>) -> Result<Value
                     &record.published_unix,
                     &ending.publication.optional()["published_unix"],
                 )
-                && truth(&record.termination_reason)
             {
-                reason = record.termination_reason.clone();
+                let detail = &record.detail;
+                if truth(detail) && !detail.is_object() {
+                    return Err(Refusal::typed(
+                        "AttributeError",
+                        format!(
+                            "'{}' object has no attribute 'get'",
+                            crate::error::python_type(detail)
+                        ),
+                    ));
+                }
+                let fallback = &detail["termination_reason"];
+                if truth(fallback) {
+                    reason = fallback.clone();
+                }
             }
         }
     }
