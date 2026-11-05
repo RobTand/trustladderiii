@@ -1819,17 +1819,17 @@ impl WorkerRequest {
         Self {
             mlflow: None,
             trace: None,
-            protocol: protocol,
-            operation: operation,
-            role: role,
-            model: model,
+            protocol,
+            operation,
+            role,
+            model,
             hindsight_key_file: None,
-            key_file: key_file,
+            key_file,
             test_cpus: None,
             silence_secs: None,
             no_progress_secs: None,
-            inputs: inputs,
-            worktree: worktree,
+            inputs,
+            worktree,
             session_file: None,
             last_accepted_generation: None,
             resume_session: None,
@@ -1846,9 +1846,9 @@ impl Forecast {
         overhead_tokens: BTreeMap<String, u64>,
     ) -> Self {
         Self {
-            fit_tokens: fit_tokens,
-            context_tokens: context_tokens,
-            overhead_tokens: overhead_tokens,
+            fit_tokens,
+            context_tokens,
+            overhead_tokens,
             generated_files: None,
             generator_available: None,
             generator_timeout_s: None,
@@ -1860,8 +1860,8 @@ impl Forecast {
 impl TestSettings {
     pub fn new(image: String, tools_path: String) -> Self {
         Self {
-            image: image,
-            tools_path: tools_path,
+            image,
+            tools_path,
             cpus: None,
             mem_gb: None,
             quiet_seconds: None,
@@ -1880,11 +1880,11 @@ impl PlannerInput {
         Self {
             repair_plan_consistency: None,
             always_tests: None,
-            must_split: must_split,
-            findings: findings,
-            protected_paths: protected_paths,
-            ingest: ingest,
-            forecast: forecast,
+            must_split,
+            findings,
+            protected_paths,
+            ingest,
+            forecast,
             memories: None,
             memory_note: None,
             decision_context: None,
@@ -1899,7 +1899,7 @@ impl PlannerInput {
 impl MakerInputCurrentReviewFindingsItem {
     pub fn new(id: String) -> Self {
         Self {
-            id: id,
+            id,
             reviewed_sha: None,
             extra: BTreeMap::new(),
         }
@@ -1909,12 +1909,12 @@ impl MakerInputCurrentReviewFindingsItem {
 impl Feedback {
     pub fn new(kind: FeedbackKind, report: String, goal_ids: Vec<String>) -> Self {
         Self {
-            kind: kind,
+            kind,
             id: None,
             reviewed_sha: None,
             resolved_round: None,
-            report: report,
-            goal_ids: goal_ids,
+            report,
+            goal_ids,
             failed_tests: None,
             outside_paths: None,
             outside_paths_total: None,
@@ -1925,19 +1925,13 @@ impl Feedback {
 
 impl Hindsight {
     pub fn new(endpoint: String, bank: String) -> Self {
-        Self {
-            endpoint: endpoint,
-            bank: bank,
-        }
+        Self { endpoint, bank }
     }
 }
 
 impl ReviewerInputIssue {
     pub fn new(title: String, body: String) -> Self {
-        Self {
-            title: title,
-            body: body,
-        }
+        Self { title, body }
     }
 }
 
@@ -1955,19 +1949,19 @@ impl ReviewerInput {
             memories: None,
             memory_note: None,
             context_size: None,
-            goals: goals,
-            base_sha: base_sha,
+            goals,
+            base_sha,
             check_base_sha: None,
-            head_sha: head_sha,
-            diff: diff,
+            head_sha,
+            diff,
             scope_diff: None,
             unresolved_displaced_failures: None,
             edited_selected_tests: None,
             issue: None,
-            checks: checks,
+            checks,
             test_evidence: None,
             review_fixes: None,
-            standing_rules: standing_rules,
+            standing_rules,
         }
     }
 }
@@ -1975,8 +1969,8 @@ impl ReviewerInput {
 impl Comment {
     pub fn new(author: String, body: String) -> Self {
         Self {
-            author: author,
-            body: body,
+            author,
+            body,
             delegated_by: None,
         }
     }
@@ -1985,9 +1979,9 @@ impl Comment {
 impl Conversation {
     pub fn new(comment_id: String, comment: String, question: String) -> Self {
         Self {
-            comment_id: comment_id,
-            comment: comment,
-            question: question,
+            comment_id,
+            comment,
+            question,
         }
     }
 }
@@ -1995,8 +1989,8 @@ impl Conversation {
 impl ClassifierInput {
     pub fn new(comment: Comment, state: ClassifierState) -> Self {
         Self {
-            comment: comment,
-            state: state,
+            comment,
+            state,
             conversation: None,
             decision_context: None,
             question_context: None,
@@ -2009,9 +2003,9 @@ impl ClassifierInput {
 impl PostmortemRecord {
     pub fn new(id: u64, trigger: String, reason: String) -> Self {
         Self {
-            id: id,
-            trigger: trigger,
-            reason: reason,
+            id,
+            trigger,
+            reason,
         }
     }
 }
@@ -2019,10 +2013,10 @@ impl PostmortemRecord {
 impl PostmortemTags {
     pub fn new(node: String, request: String, repo: String, issue: String) -> Self {
         Self {
-            node: node,
-            request: request,
-            repo: repo,
-            issue: issue,
+            node,
+            request,
+            repo,
+            issue,
         }
     }
 }
@@ -2038,13 +2032,13 @@ impl PostmortemInput {
         trace_tags: PostmortemTags,
     ) -> Self {
         Self {
-            record: record,
-            r#case: r#case,
-            rubric: rubric,
-            release: release,
-            grade_model: grade_model,
-            deadline_secs: deadline_secs,
-            trace_tags: trace_tags,
+            record,
+            r#case,
+            rubric,
+            release,
+            grade_model,
+            deadline_secs,
+            trace_tags,
         }
     }
 }

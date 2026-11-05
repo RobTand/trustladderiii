@@ -43,6 +43,11 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Lossless<T> {
     }
 }
 impl<T: JsonSchema> JsonSchema for Lossless<T> {
+    // maker-reply.json references reviewer-input.json#/properties/checks/items/
+    // properties/proof. Keep that public schema pointer while deriving the shape.
+    fn inline_schema() -> bool {
+        true
+    }
     fn schema_name() -> Cow<'static, str> {
         T::schema_name()
     }
