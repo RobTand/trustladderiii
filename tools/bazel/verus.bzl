@@ -155,6 +155,12 @@ def verus_proofs():
             "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
+            "progress_gate_apply_reserves": ("kernel::progress_gate_apply", 1),
+            "progress_gate_apply_merge_safe": ("kernel::progress_gate_apply_merge_safe", 1),
+            "progress_gate_apply_resume_safe": ("kernel::progress_gate_apply_resume_safe", 1),
+            "progress_gate_apply_merge": ("kernel::progress_gate_apply_merge", 1),
+            "progress_gate_apply_resume": ("kernel::progress_gate_apply_resume", 1),
+            "progress_gate_apply_witness": ("kernel::progress_gate_apply_witness", 3),
         }
         for name, (module, count) in groups.items():
             verus_test(
