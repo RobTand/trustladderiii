@@ -1000,3 +1000,129 @@ def test_t842_class_literal_support_cannot_hide_writes_in_one_compound_statement
                       'red_message': 'bug'}}
     with pytest.raises(model.ProofRefusal):
         assemble_t842_case(tmp_path, case)
+
+
+def test_review_t842_r2_matrix(repository, tmp_path):
+    """Independent adversarial review. Only this test is selected remotely."""
+    from copy import deepcopy
+
+    outcomes = []
+    def probe(label, case):
+        root = tmp_path / ('probe-' + str(len(outcomes)))
+        root.mkdir()
+        try:
+            assemble_t842_case(root, deepcopy(case))
+        except model.ProofRefusal as error:
+            outcome = 'REFUSED: ' + str(error)
+        except Exception as error:
+            outcome = 'ERROR: ' + type(error).__name__ + ': ' + str(error)
+        else:
+            outcome = 'ACCEPTED'
+        outcomes.append((label, outcome))
+        print('REVIEW_CASE', json.dumps({'label': label, 'outcome': outcome}), flush=True)
+        return outcome
+
+    data = [
+        ('a-alias-nested-list', '_DATA = (0, [0])\nalias = _DATA[1]\nalias.append(1)'),
+        ('a-global-write-called', '_DATA = 0\ndef change():\n    global _DATA\n    _DATA = 1\nchange()'),
+        ('a-setattr-module', '_DATA = 0\nimport sys\nsetattr(sys.modules[__name__], "_DATA", 1)'),
+        ('a-globals-update', '_DATA = 0\nglobals().update({"_DATA": 1})'),
+        ('a-call-mutation', '_DATA = {"expected": 0}\ndef change(value):\n    value.update(expected=1)\nchange(_DATA)'),
+        ('a-default-mutation', '_DATA = [0]\ndef change(value=_DATA):\n    value[0] = 1\nchange()'),
+    ]
+    for label, binding in data:
+        probe(label, t842_immutable_case(binding, '_DATA'))
+
+    path = 'tests/test_subject.py'
+    before = 'class Context:\n    pass\n\ndef helper():\n    # base\n    return 1\n'
+    observer = '\ndef test_observer():\n    assert helper() == Context.TOKEN, "bug"\n'
+    class_cases = {}
+    for label, extra in [
+        ('a-class-direct', 'Context.TOKEN = 1\n'),
+        ('a-class-alias', 'alias = Context\nalias.TOKEN = 1\n'),
+        ('a-class-call', 'def change(cls):\n    cls.TOKEN = 1\nchange(Context)\n'),
+        ('a-class-default', 'def change(cls=Context):\n    cls.TOKEN = 1\nchange()\n'),
+        ('a-class-init-subclass', 'def install(cls):\n    cls.TOKEN = 1\nclass Base:\n    def __init_subclass__(cls):\n        install(Context)\nclass Child(Base):\n    pass\n'),
+        ('a-class-decorator', 'def change(fn):\n    Context.TOKEN = 1\n    return fn\n@change\ndef trigger():\n    pass\n'),
+    ]:
+        case = {'case': label, 'before': {path: before},
+                'after': {path: before.replace('    pass', '    TOKEN = 0', 1).replace('# base', '# head') + extra + observer},
+                'tests': [path + '::test_observer'],
+                'proof': {'subjects': [path + '::helper'], 'observer_support': [path + '::Context::TOKEN'],
+                          'red_message': 'bug'}}
+        class_cases[label] = case
+        probe(label, case)
+
+    real = json.loads((Path(__file__).parent / 'fixtures/subject_observer/ops_1105.json').read_text())[1]
+    real_path = 'tests/test_pb_duplicate_arms.py'
+    binding_forms = [
+        ('b-walrus-comprehension', '[(Path := None) for ignored in ()]'),
+        ('b-for-nested', 'def nested():\n    for __file__ in (): pass'),
+        ('b-except-nested', 'def nested():\n    try: pass\n    except Exception as __file__: pass'),
+        ('b-import-as', 'def nested():\n    import os as __file__'),
+        ('b-delete', 'def nested():\n    del __file__'),
+        ('b-nonlocal', 'def outer():\n    __file__ = None\n    def inner():\n        nonlocal __file__'),
+        ('b-star-unpacking', 'def nested():\n    *Path, other = ()'),
+        ('b-type-alias', 'type __file__ = str'),
+        ('b-type-parameter', 'type Alias[__file__] = list[__file__]'),
+    ]
+    for label, extra in binding_forms:
+        case = deepcopy(real)
+        case['after'][real_path] += '\n' + extra + '\n'
+        probe(label, case)
+
+    indirect = [
+        ('c-import-builtins', 'import builtins as b\nTOKEN = b.__import__("sys")'),
+        ('c-direct-import', 'TOKEN = __import__("sys")'),
+        ('c-vars-alias', 'lookup = vars\nTOKEN = lookup(sys)["modules"]'),
+        ('c-getattr-chain', 'TOKEN = getattr(getattr(sys, "modules"), "update")'),
+        ('c-partial', 'import functools\nTOKEN = functools.partial(getattr, sys, "modules")'),
+        ('c-methodcaller-alias', 'from operator import methodcaller as invoke\nTOKEN = invoke("__getattribute__", "modules")'),
+        ('c-fstring-format', 'TOKEN = f"{sys:{1}}"'),
+    ]
+    for label, extra in indirect:
+        case = deepcopy(real)
+        case['after'][real_path] += '\n' + extra + '\n'
+        probe(label, case)
+
+    # String-based attribute traversal avoids every AST attribute/name denial.
+    loader_source = '''from pathlib import Path
+from string import Formatter
+from types import SimpleNamespace
+
+
+def load_subject():
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / 'app.py'
+    spec = importlib.util.spec_from_file_location('proof_subject', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+source = (Path(__file__).resolve().parents[1] / 'app.py').read_text()
+namespace = Formatter().get_field('0.value.__globals__[sys].modules', (load_subject(),), {})[0]
+namespace.update({'app': SimpleNamespace(value=lambda: int('# head' in source))})
+
+def test_observer():
+    import app
+    assert app.value() == 1, 'bug'
+'''
+    formatter_case = {'case': 'c-formatter-get-field',
+                      'before': {'app.py': 'import sys\ndef value():\n    # base\n    return 1\n'},
+                      'after': {'app.py': 'import sys\ndef value():\n    # head\n    return 1\n',
+                                'tests/test_subject.py': loader_source},
+                      'tests': [path + '::test_observer'],
+                      'proof': {'subjects': ['app.py::value'], 'observer_support': [path], 'red_message': 'bug'}}
+    probe('c-formatter-get-field', formatter_case)
+
+    bypasses = []
+    for case in [class_cases['a-class-direct'], formatter_case]:
+        check = Check(case['case'], Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+        results, base, head = round_result(repository, case['before'], case['after'], check)
+        result = results[0]
+        print('REVIEW_E2E', json.dumps({'case': case['case'], 'base': base, 'head': head,
+                                      'result': json.loads(execution.result_json(results))}), flush=True)
+        if result.verdict == Verdict.PASS:
+            bypasses.append(case['case'])
+    print('REVIEW_SUMMARY', json.dumps({'cases': len(outcomes), 'bypasses': bypasses}), flush=True)
+    assert not bypasses, 'accepted manufactured RED: ' + repr(bypasses)
