@@ -85,7 +85,7 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
-    "tl3-controller/input_resources": 9,
+    "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/worker_budget_orchestration": 21,

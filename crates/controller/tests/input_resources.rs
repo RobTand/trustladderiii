@@ -413,3 +413,34 @@ fn a_corrected_kind_on_the_validation_retry_reaches_audit() {
     );
     assert!(w.incidents().is_empty());
 }
+
+/// #833/#432: a trusted resource name must not authorize a different issue number.
+#[test]
+fn typed_resource_facts_do_not_allow_a_different_number_in_writer_prose() {
+    use tl3_controller::adapters::workers::writer::{MessageKind, TextDraft, checked_draft};
+    struct WrongNumber;
+    impl Writer for WrongNumber {
+        fn draft(&mut self, _: &str, _: &WriteRequest) -> tl3_controller::Result<WriterReply> {
+            Ok(WriterReply::Text(TextDraft {
+                text: "Missing GitHub issue owner/sandbox#40400.".into(),
+            }))
+        }
+    }
+    let input = WriteRequest {
+        kind: MessageKind::Note,
+        facts: json!({"issue_title":"Cover scanned sources","request":"Cover scanned sources",
+            "input_resource_failure":{"requested":{"kind":"github_issue","repository":"owner/sandbox","number":4040},"problem":{"kind":"not_found"}}}),
+        violations: vec![],
+        request: None,
+    };
+    assert!(
+        checked_draft(
+            &mut WrongNumber,
+            "wrong-resource",
+            input,
+            &Policy::default()
+        )
+        .is_err(),
+        "the typed resource exception must not hide a different issue number"
+    );
+}
