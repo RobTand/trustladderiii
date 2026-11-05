@@ -10,7 +10,7 @@
 
 `tests/fixtures/p2a.json` contains all 26 P2a glob cases, 50 English cases, and 91 prerequisite/citation calls. It retains source case IDs and the original corpus SHA-256. Repeated recorder metadata is omitted. No tests are deleted.
 
-`tools/vectors.py` reads the real planner heuristic functions through Python's AST and generates 9,336 additional glob cases, 4,000 English cases, and 2,000 subject cases. It also generates the Unicode tables used by production Rust. Python remains here only as the migration oracle.
+`tools/vectors.py` reads the real planner heuristic functions through Python's AST and generates 9,336 additional glob cases, 4,000 English cases, 2,000 subject cases, 16 citation cases, and 16 prerequisite cases. The citation and prerequisite cases call the real Python checks, including Unicode digit boundaries, claim normalization, duplicate IDs, and diagnostic precedence. It also generates the Unicode tables used by production Rust. Python remains here only as the migration oracle.
 
 Run this command on BuildBuddy with CPython 3.14 to regenerate the committed files. Add `--check` to check drift.
 

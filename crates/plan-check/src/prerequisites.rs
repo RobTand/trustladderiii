@@ -21,7 +21,7 @@ pub fn check_prerequisites(
                 quote[start + marker.len()..]
                     .chars()
                     .next()
-                    .is_none_or(|c| !is_decimal(c))
+                    .is_none_or(|c| !c.is_ascii_digit())
             })
         {
             return Err(

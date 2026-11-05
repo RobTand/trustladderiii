@@ -27,10 +27,12 @@ def oracle():
     exec(compile(tree, str(path), 'exec'), namespace)
     for relative, functions in [
             ('workers/src/tl3_workers/evidence.py', {'subject_covers'}),
-            ('harness/src/tl3_harness/proof.py', {'overlaps'})]:
+            ('harness/src/tl3_harness/proof.py', {'overlaps'}),
+            ('workers/src/tl3_workers/recall.py', {'check_citations'}),
+            ('workers/src/tl3_workers/prerequisites.py', {'check_prerequisites', 'MergePrerequisiteError'})]:
         path = ROOT / relative
         tree = ast.parse(path.read_text())
-        tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in functions]
+        tree.body = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in functions]
         exec(compile(tree, str(path), 'exec'), namespace)
     return namespace
 
@@ -82,6 +84,55 @@ def p2a():
                 for c in corpus['cases'] if c['operation'] in operations]}
 
 
+def recorded_case(reference, name, operation, inputs, reply):
+    try:
+        reference[operation.split('.')[-1]](inputs, reply)
+    except ValueError as error:
+        outcome = {'error': {'message': str(error)}}
+    else:
+        outcome = {'return': None}
+    return {'id': name, 'operation': operation, 'args': [inputs, reply], 'outcome': outcome}
+
+
+def citation_cases(reference):
+    cases = [
+        ('exact', ['alpha beta'], ['m'], [('m', 'alpha beta')]),
+        ('substring', ['prefix alpha beta suffix'], ['m'], [('m', 'alpha beta')]),
+        ('invalid-claim', ['alpha beta'], ['m'], [('m', 'alpha gamma')]),
+        ('case-sensitive', ['Alpha beta'], ['m'], [('m', 'alpha beta')]),
+        ('empty-claim', [''], ['m'], [('m', '')]),
+        ('unicode-space', ['\u00a0alpha\u2003beta\tgamma\u202f'], ['m'], [('m', 'alpha\nbeta\u3000gamma')]),
+        ('control-space', ['\u001calpha\u0085beta\u001f'], ['m'], [('m', 'alpha beta')]),
+        ('zero-width-is-not-space', ['alpha\u200bbeta'], ['m'], [('m', 'alpha beta')]),
+        ('duplicate-last-accepted', ['first content', 'last content'], ['m'], [('m', 'last content')]),
+        ('duplicate-first-rejected', ['first content', 'last content'], ['m'], [('m', 'first content')]),
+        ('unknown-citation-first', ['alpha'], ['m', 'missing'], [('uncited', 'absent')]),
+        ('uncited-flag-before-claim', ['alpha'], ['m'], [('m', 'absent'), ('uncited', 'alpha')]),
+        ('later-invalid-claim', ['alpha beta'], ['m'], [('m', 'alpha'), ('m', 'absent')]),
+        ('wrong-memory-claim', ['alpha'], ['m'], [('m', 'beta')]),
+        ('whitespace-only-claim', ['alpha'], ['m'], [('m', '\u00a0\u2003\u001c')]),
+        ('substring-without-word-boundary', ['alpha beta'], ['m'], [('m', 'pha be')]),
+    ]
+    return [recorded_case(reference, 'citation-' + name, 'recall.check_citations',
+                          {'memories': [{'id': 'm', 'content': content} for content in contents]},
+                          {'memory_ids': cited, 'memory_flags': [{'id': key, 'claim': claim} for key, claim in flags]})
+            for name, contents, cited, flags in cases]
+
+
+def prerequisite_cases(reference):
+    suffixes = [
+        ('end', ''), ('ascii', '0'), ('arabic-indic', '\u0661'), ('eastern-arabic-indic', '\u06f1'),
+        ('devanagari', '\u0967'), ('fullwidth', '\uff11'), ('double-struck', '\U0001d7d9'),
+        ('osmanya', '\U000104a1'), ('superscript', '\u00b2'), ('subscript', '\u2081'),
+        ('circled', '\u2460'), ('roman', '\u2160'), ('combining', '\u0301'),
+        ('zero-width', '\u200b'), ('space', ' '), ('later-valid-marker', '\u0661 #1'),
+    ]
+    return [recorded_case(reference, 'prerequisite-' + name, 'prerequisites.check_prerequisites',
+                          {'issue': {'body': 'Merge ' + '#1' + suffix + ' first.'}},
+                          {'merge_prerequisites': [{'kind': 'issue', 'number': 1, 'source_quote': '#1' + suffix}]})
+            for name, suffix in suffixes]
+
+
 def generated():
     rng = random.Random(820)
     reference = oracle()
@@ -111,7 +162,8 @@ def generated():
         subject = chosen + rng.choice(['', '::f', ':f', 'Other', '::C::f'])
         subjects.append({'chosen': chosen, 'subject': subject, 'covers': reference['subject_covers'](chosen, subject),
                          'overlaps': reference['overlaps'](chosen, subject)})
-    return {'globs': globs, 'english': english, 'subjects': subjects}
+    return {'globs': globs, 'english': english, 'subjects': subjects,
+            'citations': citation_cases(reference), 'prerequisites': prerequisite_cases(reference)}
 
 
 def main():

@@ -64,6 +64,28 @@ fn p2a_english() {
     }
 }
 
+fn check_prerequisite_case(case: &Value) {
+    let args = unpack(&case["args"]);
+    let issue = &args[0]["issue"];
+    let mut sources = vec![text(&issue["body"]), text(&issue["title"])];
+    sources.extend(list(&issue["comments"]).iter().map(|c| text(&c["body"])));
+    let prerequisites = list(&args[1]["merge_prerequisites"])
+        .iter()
+        .map(|p| Prerequisite {
+            kind: text(&p["kind"]),
+            number: p["number"].as_u64().unwrap(),
+            source_quote: text(&p["source_quote"]),
+        })
+        .collect::<Vec<_>>();
+    let result = check_prerequisites(&sources, &prerequisites);
+    assert_eq!(
+        result.err(),
+        case["outcome"]["error"]["message"].as_str(),
+        "{}",
+        case["id"]
+    );
+}
+
 #[test]
 fn p2a_prerequisites() {
     let corpus = corpus();
@@ -72,28 +94,38 @@ fn p2a_prerequisites() {
         .iter()
         .filter(|c| c["operation"] == "prerequisites.check_prerequisites")
     {
-        let args = unpack(&case["args"]);
-        let issue = &args[0]["issue"];
-        let mut sources = vec![text(&issue["body"]), text(&issue["title"])];
-        sources.extend(list(&issue["comments"]).iter().map(|c| text(&c["body"])));
-        let prerequisites = list(&args[1]["merge_prerequisites"])
-            .iter()
-            .map(|p| Prerequisite {
-                kind: text(&p["kind"]),
-                number: p["number"].as_u64().unwrap(),
-                source_quote: text(&p["source_quote"]),
-            })
-            .collect::<Vec<_>>();
-        let result = check_prerequisites(&sources, &prerequisites);
-        assert_eq!(
-            result.err(),
-            case["outcome"]["error"]["message"].as_str(),
-            "{}",
-            case["id"]
-        );
+        check_prerequisite_case(case);
         count += 1;
     }
     assert_eq!(count, 46);
+}
+
+fn check_citation_case(case: &Value) {
+    let args = unpack(&case["args"]);
+    let memories = list(&args[0]["memories"])
+        .iter()
+        .map(|m| Memory {
+            id: text(&m["id"]),
+            content: text(&m["content"]),
+        })
+        .collect::<Vec<_>>();
+    let cited = list(&args[1]["memory_ids"])
+        .iter()
+        .map(text)
+        .collect::<Vec<_>>();
+    let flags = list(&args[1]["memory_flags"])
+        .iter()
+        .map(|f| MemoryFlag {
+            id: text(&f["id"]),
+            claim: text(&f["claim"]),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        check_citations(&memories, &cited, &flags).err(),
+        case["outcome"]["error"]["message"].as_str(),
+        "{}",
+        case["id"]
+    );
 }
 
 #[test]
@@ -104,31 +136,7 @@ fn p2a_citations() {
         .iter()
         .filter(|c| c["operation"] == "recall.check_citations")
     {
-        let args = unpack(&case["args"]);
-        let memories = list(&args[0]["memories"])
-            .iter()
-            .map(|m| Memory {
-                id: text(&m["id"]),
-                content: text(&m["content"]),
-            })
-            .collect::<Vec<_>>();
-        let cited = list(&args[1]["memory_ids"])
-            .iter()
-            .map(text)
-            .collect::<Vec<_>>();
-        let flags = list(&args[1]["memory_flags"])
-            .iter()
-            .map(|f| MemoryFlag {
-                id: text(&f["id"]),
-                claim: text(&f["claim"]),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            check_citations(&memories, &cited, &flags).err(),
-            case["outcome"]["error"]["message"].as_str(),
-            "{}",
-            case["id"]
-        );
+        check_citation_case(case);
         count += 1;
     }
     assert_eq!(count, 45);
@@ -151,4 +159,28 @@ fn subject_boundaries_and_transitivity() {
         );
     }
     assert!(subject_covers("a.py", "a.py::C::f"));
+}
+
+fn generated_corpus() -> Value {
+    serde_json::from_str(include_str!("fixtures/generated.json")).unwrap()
+}
+
+#[test]
+fn oracle_citation_claims() {
+    let corpus = generated_corpus();
+    let cases = corpus["citations"].as_array().unwrap();
+    assert_eq!(cases.len(), 16);
+    for case in cases {
+        check_citation_case(case);
+    }
+}
+
+#[test]
+fn oracle_prerequisite_digits() {
+    let corpus = generated_corpus();
+    let cases = corpus["prerequisites"].as_array().unwrap();
+    assert_eq!(cases.len(), 16);
+    for case in cases {
+        check_prerequisite_case(case);
+    }
 }
