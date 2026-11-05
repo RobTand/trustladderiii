@@ -11,6 +11,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import textwrap
@@ -23,7 +24,7 @@ from tl3_harness.selector_identity import selector_identity
 from tl3_harness.supervision import ExecutionFailure
 from tl3_harness.test_tool import OUTCOMES, PREFIX, Summary
 from tl3_workers import forcing_rehearsal as rehearsal
-from tl3_workers import pb_generators, pb_tests
+from tl3_workers import pb_generators, pb_tests, tools
 from tl3_workers.tools import Evidence, Worktree
 
 DIRECTORY = Path(__file__).with_name('pb-evidence-vectors')
@@ -469,28 +470,52 @@ def observe(kind, data):
         return json.loads(json.dumps(value, default=str).replace(str(root), '$ROOT'))
 
 
-# Source-derived refusal coverage makes a newly added refusal require a vector.
-# These are the decisions this slice freezes, not an AST model of their logic.
+# Scope is the evidence decisions, not generator process lifecycle or staging.
 COVERED = (pb_tests._summary, pb_tests.TestSettings.__post_init__, pb_tests._selectors, pb_tests._priority,
-           pb_generators._artifact)
+           pb_tests._json_command, pb_tests._stdout_json_command, pb_generators._artifact,
+           generator.validate_artifact, generator.text, generator.changed, generator.path_parts,
+           generator._check_interpreter, generator.budget, tools._selectors, Evidence.restore)
+
+REQUIRED_CASES = {
+    'ending-summary': {'result-null', 'result-list', 'result-string', 'result-empty',
+                       'stdout-null', 'stdout-list', 'stdout-string', 'stdout-empty',
+                       'root-null', 'root-list', 'root-string', 'root-int', 'root-bool',
+                       'summary-bytes-below', 'summary-bytes-at', 'summary-bytes-above'},
+    'machine-record-fallback': {'descriptor-unavailable'},
+    'generator-artifact': {'file-bytes-below', 'file-bytes-at', 'file-bytes-above',
+                           'total-bytes-below', 'total-bytes-at', 'total-bytes-above',
+                           'outputs-below', 'outputs-at', 'outputs-above', 'control-text', 'invalid-utf8'},
+    'evidence-ledger': {'invalid-selectors-base', 'invalid-selectors-test',
+                        'invalid-state-key', 'invalid-state-tool', 'invalid-state-runs', 'invalid-state-run'},
+}
 
 
-def refusal_strings():
+def refusal_patterns():
+    """Derive literal refusals, f-string templates, and transport cause tokens."""
     result = set()
     for function in COVERED:
         tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
         for node in ast.walk(tree):
+            values = []
             if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
-                for arg in node.exc.args:
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                        result.add(arg.value)
+                # ExecutionFailure(outcome, phase, reason), ValueError(message).
+                values = node.exc.args[2:3] if len(node.exc.args) == 3 else node.exc.args[:1]
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'cause' for t in node.targets):
+                values = [node.value]
+            for value in values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    result.add(re.escape(value.value))
+                elif isinstance(value, ast.JoinedStr):
+                    result.add(''.join(re.escape(v.value) if isinstance(v, ast.Constant) else '.+' for v in value.values))
     return result
 
 
 def check_coverage(vectors):
     observed = {text for items in vectors.values() for case in items for text in strings(case['output'])}
-    missing = refusal_strings() - observed
-    assert not missing, 'refusal coverage missing cases: ' + ', '.join(sorted(missing))
+    missing = {pattern for pattern in refusal_patterns() if not any(re.fullmatch(pattern, text) for text in observed)}
+    absent = {kind: sorted(names - {case['case'] for case in vectors[kind]})
+              for kind, names in REQUIRED_CASES.items() if names - {case['case'] for case in vectors[kind]}}
+    assert not missing and not absent, f'refusal/bound coverage missing: refusals={sorted(missing)}, cases={absent}'
     for kind in KINDS:
         assert vectors[kind], f'{kind}: no cases'
 
