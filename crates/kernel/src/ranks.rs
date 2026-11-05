@@ -852,6 +852,7 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn advance_teardown(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
