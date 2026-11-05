@@ -2836,7 +2836,7 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
         }
         Item::Await | Item::Merge | Item::Answer => false,
         Item::Admit => {
-            if n.paused || !w.dependencies_delivered(NodeId(i as u64)) || !admits(w, n.repo) {
+            if n.paused || false || !admits(w, n.repo) {
                 return false;
             }
             let m = &mut w.nodes[i];
