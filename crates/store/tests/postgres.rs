@@ -2529,6 +2529,14 @@ fn settings_editor(settings: &tl3_config::Store) {
 
 fn worker_completion_facts(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut identity = Commit::new("fixture:model-identity", json!({}), &snapshot);
+    identity.rows.push(RowChange::Put {
+        table: "model_attempts".into(),
+        id: serde_json::to_string(&("run:83:17", 0)).unwrap(),
+        value: json!({"model":"fixture-model", "family":"fixture-family"}),
+    });
+    store.commit(&identity).unwrap();
     let facts = WorkerRunFacts {
         prismabuild: serde_json::from_value(json!([{
             "phase": "prismabuild_capability", "cause": "machine_record_unsupported",
@@ -2555,6 +2563,21 @@ fn worker_completion_facts(settings: &tl3_config::Store) {
     store
         .record_worker_facts("run:83:17", "83", 0, "maker", &facts)
         .unwrap();
+    assert_eq!(
+        store
+            .latest_worker_ending("run:83:17")
+            .unwrap()
+            .unwrap()
+            .family
+            .as_deref(),
+        Some("fixture-family")
+    );
+    assert!(
+        raw(settings)
+            .batch_execute("UPDATE tl3_worker_run_models SET family = 'changed'")
+            .is_err(),
+        "ending identity is immutable"
+    );
     let mut second = facts.clone();
     second.finished_ms = Some(second.started_ms + 764_000);
     second.outcome = "failed".into();

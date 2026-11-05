@@ -1754,7 +1754,7 @@ impl Controller {
             snapshot,
         );
         let stopped_node = match delivery.output {
-            Out::Effect {
+            executor::Output::Effect {
                 node,
                 kind: tl3_kernel::EffectKind::StopRun,
             } if completion.ack == Ack::Confirmed => Some(node),
