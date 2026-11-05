@@ -1,4 +1,4 @@
-# D1 looks I/O equivalence
+# Looks I/O equivalence
 
 The reference is the complete cdacce8f looks source blob, SHA-256 pinned by
 `source_pins_and_production_copies`. `reference.rs` compiles verbatim methods
@@ -7,7 +7,7 @@ from that blob. `current.rs` compiles verbatim production methods. Run
 production edit. The assertions reject drift on both sides.
 
 The smallest seam is a `controller!()` macro that supplies Controller's fields
-and the methods outside D1. Both versions use the same production Delivery,
+and the methods outside the extracted slice. Both versions use the same production Delivery,
 Look, Completion, store Snapshot, Commit and RowChange types. The original
 AllowanceState and incident serde boundaries compile unchanged. The full
 look_state, look_failed, look_alive, finish_stall, rearm, probe_passed,
@@ -26,8 +26,7 @@ after the mutation. Store row changes are staged together and become durable
 at the transaction commit boundary.
 
 The shared shell shims cover unrelated boundaries, not alternate decision
-implementations. Scenarios keep requests active with no worker-input context,
-queue setup evidence or kernel-owned incident. The request projection is fixed;
+implementations. Scenarios keep requests active with no worker-input context. The request projection is fixed;
 publication diagnostic presence varies; worker-input prose is absent. Kernel
 observe/complete calls, notice retry, hold changes and ladder notes are recorded.
 The retained real-controller looks scenarios cover those boundaries separately.
@@ -52,3 +51,26 @@ Rob-authorized `clear_incident` route remains covered by the real-controller
 scenario because lib.rs is owned by group G. A second allowance input exercises
 per-effect counter isolation. Every new recorded write participates in the same
 before/after crash sweep. No verbatim-body name list changes were needed for r1.
+
+D2 adds the verbatim `progress_allowance`, `quota_allowance`, and
+`expire_model_quotas` bodies to sync.py's METHODS list. The expiry helper is
+unchanged production code called by look_state; compiling it avoids a shared
+shim that could hide quota-store reads or commits. `look_kind` and `wait_status`
+are the new current-only typed converters and are checked against production.
+The base digest remains unchanged.
+
+The D2 schedules cover every Look variant, GitHub not-found recovery, pending
+and settled effects, within and beyond allowance, stopping, quota resume,
+ladder-out notice boundaries, external wait owner records and errors, progress
+retirement, and quota replay by model. Four completion shapes cover empty,
+progress token only, observations only, and both. Complete, ladder note, watch,
+and observe effects are persisted and included in every crash comparison.
+D2 runs 128 additional schedules with seed `0x00d2_0760_2026`, plus seven mandatory
+branch tests. The repeated-look witness checks the notice is emitted once and
+its allowance flag persists. D1's mandatory tests and 128 schedules remain.
+
+Settled completion witnesses include setup and ordinary queue evidence. The
+unchanged QueueFact boundary records independent recorded/not-recorded responses,
+including errors. Two reads verify that ordinary facts are deduplicated while an
+unrecorded setup gap is observed again. This supersedes the original no-queue-
+evidence restriction.
