@@ -40,7 +40,7 @@ fn mandatory_d2_quota_wait_and_ladder_bound() {
                 since,
                 noticed,
                 entries: vec![Entry::State, Entry::State],
-                frames: vec![(0, 0); 64],
+                frames: std::iter::once((0, 1_000_000)).chain(std::iter::repeat_n((0, 0), 63)).collect(),
                 ..schedule()
             });
             assert_eq!(
