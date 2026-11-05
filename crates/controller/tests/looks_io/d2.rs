@@ -107,7 +107,11 @@ fn mandatory_d2_alive_allowance_and_effect_read() {
                 failures: 1,
                 progress: true,
                 recent_progress: recent,
-                overrides: vec![("look".into(), 0, 6), ("store.effect".into(), 0, effect)],
+                overrides: vec![
+                    ("look".into(), 0, 6),
+                    ("store.effect".into(), 0, effect),
+                    ("store.effect".into(), 1, effect),
+                ],
                 ..schedule()
             });
             assert_eq!(has(&r, "store.effect"), !recent);
