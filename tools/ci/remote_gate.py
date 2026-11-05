@@ -110,8 +110,11 @@ def cancel_recorded():
 
 
 def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sleep=time.sleep,
-         retries=3):
-    """Observe one run: BES disconnects do not establish execution completion."""
+         retries=3, handle_signals=True):
+    """Observe one run: BES disconnects do not establish execution completion.
+
+    Callers that follow several runs from threads pass handle_signals=False
+    and cancel every run from their own main-thread handler."""
     def interrupted(signum, _frame):
         # GitHub sends SIGINT, then SIGTERM after 7.5 s, then kills after 2.5 s.
         # Leave time for the cancelled() cleanup step to retry a failed request.
@@ -123,7 +126,8 @@ def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sle
             print(f'::warning::Remote cancellation failed: {error}', flush=True)
         raise SystemExit(128 + signum)
 
-    previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
+    previous = ({sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
+                if handle_signals else {})
     try:
         errors = 0
         recovering = False
