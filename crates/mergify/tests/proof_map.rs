@@ -213,7 +213,13 @@ fn groups(source: &str) -> Vec<Group> {
         .split_once("        enqueue_groups = {")
         .expect("missing enqueue groups")
         .1;
-    let ts = tokens(table.split_once("        }").expect("unclosed groups").0);
+    let table = table.split_once("        }").expect("unclosed groups").0;
+    let table = table
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ts = tokens(&table);
     let mut result = Vec::new();
     for entry in ts.chunks(10) {
         let [
