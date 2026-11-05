@@ -14,6 +14,8 @@ fn main() {
         tl3_controller::budget::check()
     } else if std::env::args().nth(1).as_deref() == Some("check-reply") {
         tl3_controller::classifier::check_reply(std::env::args().nth(2).as_deref())
+    } else if std::env::args().nth(1).as_deref() == Some("render-prompt") {
+        tl3_controller::prompt_render::command(std::env::args().nth(2).as_deref())
     } else if std::env::args().nth(1).as_deref() == Some("replay-check") {
         tl3_controller::replay::command()
     } else if std::env::args().nth(1).as_deref() == Some("store-stats") {

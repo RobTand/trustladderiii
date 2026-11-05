@@ -3,7 +3,7 @@
 //! The controller's Mergify adapter reads GitHub and Mergify, then decides
 //! which queue facts to report and how each one reaches the kernel. This
 //! module holds those decisions as pure functions over small typed domains,
-//! so Kani can prove them. The adapter parses upstream JSON into these types
+//! so Verus can prove them. The adapter parses upstream JSON into these types
 //! at its boundary and keeps every read, write and store access.
 //!
 //! - `check`: check runs as enums (status, conclusion, app, name, head).
@@ -16,6 +16,9 @@
 //! The module does no I/O and uses no `std` item. It has no `unsafe`, no
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
 
+#[macro_use]
+mod verification;
+
 pub mod check;
 pub mod delivery_step;
 pub mod enqueue;
@@ -25,8 +28,6 @@ pub mod translate;
 
 #[cfg(kani)]
 mod enqueue_proofs;
-#[cfg(kani)]
-mod proofs;
 
 pub use check::{App, CheckView, Conclusion, Head, Name, Status, Time};
 pub use enqueue::{EnqueueState, QueueEvent, decide};
@@ -39,3 +40,17 @@ pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
 pub const MERGIFY_APP_ID: u64 = 10562;
 pub const MERGIFY_APP_SLUG: &str = "mergify";
 pub const QUEUE_LABEL: &str = "tl3-queue";
+
+pub mod completion;
+
+pub mod recovery;
+pub mod required;
+
+pub mod heal;
+pub mod plan;
+
+#[cfg(test)]
+mod observe_witness;
+
+#[cfg(any(test, verus_keep_ghost))]
+mod decide_witness;

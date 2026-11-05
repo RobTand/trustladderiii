@@ -248,7 +248,9 @@ fn init(schedule: Schedule, cut: Option<Cut>) {
     }
 }
 fn delivery_value(key: &str) -> Value {
-    json!({"key":key,"epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0})
+    configured_delivery(
+        json!({"key":key,"epoch":1,"output":{"Effect":{"node":0,"seq":0,"kind":"Enqueue","head":null}},"generation":0,"head_sha":"head","repository":{"owner":"owner","name":"sandbox","installation":3},"issue":1,"pull_request":100,"paths":[],"attempt":0,"round":0}),
+    )
 }
 fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
     static HOOK: ::std::sync::Once = ::std::sync::Once::new();
@@ -514,6 +516,7 @@ pub(crate) struct Row {
     pub table: &'static str,
     pub id: String,
     pub value: Value,
+    pub version: Version,
 }
 #[derive(Clone)]
 pub(crate) struct Snapshot {
@@ -542,14 +545,15 @@ impl Store {
         let f = read("store.snapshot", "");
         let repaired = (profile() == Profile::Waiting) ^ (f.word & 4 != 0);
         returned(&(repaired, f.word & 8 != 0, f.word & 16 != 0));
-        Ok(Snapshot {
+        Ok(configured_snapshot(Snapshot {
             rows: vec![Row {
                 table: "nodes",
                 id: "0".into(),
                 value: json!({"held":f.word&8!=0,"paused":f.word&16!=0}),
+                version: Version(0),
             }],
             repaired,
-        })
+        }))
     }
     pub fn effects(&self) -> Result<Vec<Archive>> {
         let f = read("store.effects", "");
@@ -628,7 +632,7 @@ fn github_frame(op: &str, args: &str) -> ::std::result::Result<Frame, ::tl3_gith
     Ok(f)
 }
 fn pull(f: &Frame) -> PullRequest {
-    serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0 || profile() == Profile::Draft,"merged_at":if f.word&4!=0 || profile() == Profile::Merged {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":!(f.word&512!=0 || profile()==Profile::MergeFalse),"mergeable_state":if f.word&512!=0 || profile()==Profile::MergeFalse {"dirty"}else{"clean"},"body":if profile()==Profile::Body {""} else {"Change type: fix"},"merge_commit_sha":if profile()==Profile::Merged {Some("merge")}else{None},"head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap()
+    configured_pull(serde_json::from_value(json!({"number":100,"user":{"id":1,"login":"factory[bot]"},"state":if f.word&1!=0 {"closed"}else{"open"},"draft":f.word&8!=0 || profile() == Profile::Draft,"merged_at":if f.word&4!=0 || profile() == Profile::Merged {Some("2026-11-01T00:00:00Z")}else{None},"mergeable":!(f.word&512!=0 || profile()==Profile::MergeFalse),"mergeable_state":if f.word&512!=0 || profile()==Profile::MergeFalse {"dirty"}else{"clean"},"body":if profile()==Profile::Body {""} else {"Change type: fix"},"merge_commit_sha":if profile()==Profile::Merged {Some("merge")}else{None},"head":{"sha":if f.word&2!=0 {"other"}else{"head"},"ref":"topic","repo":null},"base":{"sha":"base","ref":"main","repo":null},"updated_at":"2026-11-01T00:00:00Z"})).unwrap())
 }
 fn check(f: &Frame, queue: bool) -> CheckRun {
     let summary = include_str!("../../../mergify/tests/fixtures/waiting/checks.json");
@@ -1065,4 +1069,468 @@ fn base64(s: &str) -> String {
         }
     }
     out
+}
+
+// A1 r1 fixtures extend returned facts; the I/O recorder and crash machinery
+// remain shared and unchanged. Thread-local fixtures reset even on a panic.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Version(pub i64);
+impl Version {
+    pub fn get(self) -> i64 {
+        self.0
+    }
+}
+#[derive(Clone, Default)]
+pub(super) struct A1Inputs {
+    pub rows: Vec<Row>,
+    pub delivery: Option<Delivery>,
+    pub body: Option<String>,
+}
+thread_local! { static A1_INPUTS: RefCell<A1Inputs> = RefCell::new(A1Inputs::default()); }
+pub(super) fn with_inputs<T>(inputs: A1Inputs, f: impl FnOnce() -> T) -> T {
+    struct Restore(A1Inputs);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            A1_INPUTS.with(|v| *v.borrow_mut() = self.0.clone());
+        }
+    }
+    let _restore = Restore(A1_INPUTS.with(|v| v.replace(inputs)));
+    f()
+}
+fn configured_snapshot(mut snapshot: Snapshot) -> Snapshot {
+    A1_INPUTS.with(|v| snapshot.rows.extend(v.borrow().rows.clone()));
+    snapshot
+}
+fn configured_delivery(default: Value) -> Value {
+    A1_INPUTS.with(|v| {
+        v.borrow()
+            .delivery
+            .as_ref()
+            .map_or(default, |d| serde_json::to_value(d).unwrap())
+    })
+}
+fn configured_pull(mut pull: PullRequest) -> PullRequest {
+    A1_INPUTS.with(|v| {
+        if let Some(body) = &v.borrow().body {
+            pull.body = Some(body.clone());
+        }
+    });
+    pull
+}
+pub(super) fn fixture_delivery() -> Delivery {
+    serde_json::from_value(delivery_value("enqueue-1")).unwrap()
+}
+pub(super) fn projection(name: &str) {
+    with(|r| {
+        r.calls.push(Call {
+            op: format!("projection.{name}"),
+            args: String::new(),
+            result: vec![],
+        })
+    });
+}
+pub(super) fn require_no_writes(s: &Schedule, e: Entry) {
+    assert_eq!(run(s, e, false, None).writes, 0);
+}
+
+// B1 reachability checks inspect the reference trace as well as comparing both shells.
+pub(super) fn require_recovery(s: &Schedule, entry: Entry, command: &str, timer: Option<u64>) {
+    let trace = run(s, entry, false, None);
+    let bytes = trace.files.get(&recovery_path()).expect("recovery receipt");
+    let saved: Value = serde_json::from_slice(bytes).unwrap();
+    assert_eq!(saved["command"], json!(command), "{trace:#?}");
+    assert_eq!(saved["eligible_since_ms"], json!(timer), "{trace:#?}");
+}
+pub(super) fn require_no_op(s: &Schedule, entry: Entry, op: &str) {
+    let trace = run(s, entry, false, None);
+    assert!(!trace.calls.iter().any(|c| c.op == op), "{trace:#?}");
+}
+pub(super) fn require_command_fence(s: &Schedule) {
+    let trace = run(s, Entry::Command, false, None);
+    let fence = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "file.read" && c.args.ends_with("epoch.fence"))
+        .unwrap();
+    let intent = trace
+        .calls
+        .iter()
+        .position(|c| {
+            c.op == "file.write" && String::from_utf8_lossy(&c.result).contains("Sending")
+        })
+        .unwrap();
+    let post = trace
+        .calls
+        .iter()
+        .position(|c| c.op == "github.command")
+        .unwrap();
+    assert!(fence < intent && intent < post, "{trace:#?}");
+}
+
+// ctrl-core C1: direct evaluate inputs share the existing recorded leaf boundary.
+pub(super) fn c1_pull() -> PullRequest {
+    pull(&Frame {
+        word: 0,
+        elapsed_ms: 0,
+    })
+}
+pub(super) fn c1_check(
+    id: u64,
+    name: &str,
+    app: Option<(u64, &str)>,
+    conclusion: Option<&str>,
+    current: bool,
+) -> CheckRun {
+    let mut value = check(
+        &Frame {
+            word: 0,
+            elapsed_ms: 0,
+        },
+        false,
+    );
+    value.id = id;
+    value.name = name.into();
+    value.app = app.map(|(id, slug)| tl3_github::CheckApp {
+        id,
+        slug: slug.into(),
+    });
+    value.conclusion = conclusion.map(str::to_owned);
+    if !current {
+        value.head_sha = "other".into();
+    }
+    value
+}
+pub(super) fn c1_evaluate(s: &Schedule, execute: impl Fn(bool) -> Value) -> Value {
+    let record = |new| {
+        init(s.clone(), None);
+        let result = execute(new);
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    };
+    let old = record(false);
+    let new = record(true);
+    assert_eq!(old, new, "C1 evaluate divergence: {s:?}");
+    assert_eq!(old.writes, 0, "evaluate must have no write/crash boundary");
+    new.result
+}
+pub(super) fn c1_require_order(s: &Schedule, e: Entry, ops: &[&str]) {
+    let trace = run(s, e, false, None);
+    let mut next = 0;
+    for call in &trace.calls {
+        if next < ops.len() && call.op == ops[next] {
+            next += 1;
+        }
+    }
+    assert_eq!(
+        next,
+        ops.len(),
+        "mandatory ordered calls missed: {trace:#?}"
+    );
+}
+pub(super) fn c1_require_error(s: &Schedule, e: Entry, expected: &str) {
+    assert_eq!(run(s, e, false, None).result["error"], json!(expected));
+}
+pub(super) fn c1_require_read_count(s: &Schedule, e: Entry, suffix: &str, expected: usize) {
+    let trace = run(s, e, false, None);
+    assert_eq!(
+        trace
+            .calls
+            .iter()
+            .filter(|call| call.op == "file.read" && call.args.ends_with(suffix))
+            .count(),
+        expected
+    );
+}
+
+// ctrl-core C1 r1: payload tapes extend the leaf boundary without changing #760's tapes.
+pub(super) mod c1_payloads {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, Serialize)]
+    pub(in crate::mergify_io) enum Outcome {
+        Accepted,
+        Http408,
+        AppAccess,
+        RunExpired,
+        OtherRefusal,
+    }
+    #[derive(Clone, Debug)]
+    pub(in crate::mergify_io) struct Payloads {
+        pub schedule: Schedule,
+        pub statuses: Vec<Vec<Value>>,
+        pub runs: Vec<Vec<WorkflowRun>>,
+        pub outcome: Outcome,
+    }
+    thread_local! {
+        static PAYLOAD: RefCell<Option<(Payloads, usize, usize)>> = const { RefCell::new(None) };
+    }
+    #[derive(Clone)]
+    pub(in crate::mergify_io) struct GitHub(super::GitHub);
+    impl ::std::ops::Deref for GitHub {
+        type Target = super::GitHub;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl GitHub {
+        pub fn new() -> Self {
+            Self(super::GitHub::new())
+        }
+        pub async fn commit_statuses(
+            &self,
+            repo: &str,
+            head: &str,
+        ) -> ::std::result::Result<Vec<CommitStatus>, ::tl3_github::Error> {
+            github_frame("github.statuses", &format!("{repo}@{head}"))?;
+            let values = PAYLOAD.with(|p| {
+                let mut p = p.borrow_mut();
+                let (payload, next, _) = p.as_mut().unwrap();
+                let values = payload.statuses.get(*next).cloned().unwrap_or_default();
+                *next += 1;
+                values
+            });
+            returned(&values);
+            Ok(values
+                .into_iter()
+                .map(|v| serde_json::from_value(v).unwrap())
+                .collect())
+        }
+        pub async fn workflow_runs(
+            &self,
+            repo: &str,
+            head: &str,
+        ) -> ::std::result::Result<Vec<WorkflowRun>, ::tl3_github::Error> {
+            github_frame("github.runs", &format!("{repo}@{head}"))?;
+            let values = PAYLOAD.with(|p| {
+                let mut p = p.borrow_mut();
+                let (payload, _, next) = p.as_mut().unwrap();
+                let values = payload.runs.get(*next).cloned().unwrap_or_default();
+                *next += 1;
+                values
+            });
+            returned(&values);
+            Ok(values)
+        }
+        pub async fn rerun_workflow_run(
+            &self,
+            repo: &str,
+            id: u64,
+        ) -> ::std::result::Result<(), ::tl3_github::Error> {
+            let outcome = PAYLOAD.with(|p| p.borrow().as_ref().unwrap().0.outcome);
+            with(|r| r.api_writes += 1);
+            mutation(
+                "github.rerun",
+                &format!("{repo}/{id}"),
+                &serde_json::to_vec(&outcome).unwrap(),
+                matches!(outcome, Outcome::Accepted),
+                |_| {},
+            );
+            use ::tl3_github::{ActionsRefusal, Error};
+            match outcome {
+                Outcome::Accepted => Ok(()),
+                Outcome::Http408 => Err(Error::Http { status: 408 }),
+                Outcome::AppAccess => Err(Error::ActionsForbidden(ActionsRefusal::AppAccess)),
+                Outcome::RunExpired => Err(Error::ActionsForbidden(ActionsRefusal::RunExpired)),
+                Outcome::OtherRefusal => Err(Error::ActionsForbidden(ActionsRefusal::Other)),
+            }
+        }
+    }
+    #[derive(Debug)]
+    pub(in crate::mergify_io) struct Side {
+        pub result: Value,
+        pub receipt: Option<Value>,
+        pub posts: Vec<String>,
+    }
+    pub(in crate::mergify_io) struct Report {
+        pub sides: [Side; 2],
+        pub comparisons: usize,
+        pub receipt_crashes: usize,
+    }
+    fn receipt(run: &Run) -> Option<Value> {
+        run.files
+            .iter()
+            .find(|(path, _)| path.ends_with(".reruns"))
+            .map(|(_, bytes)| serde_json::from_slice(bytes).unwrap())
+    }
+    fn record(
+        p: &Payloads,
+        new: bool,
+        cut: Option<Cut>,
+        execute: &impl Fn(bool, &Delivery) -> Value,
+    ) -> Run {
+        static HOOK: ::std::sync::Once = ::std::sync::Once::new();
+        HOOK.call_once(|| {
+            let original = ::std::panic::take_hook();
+            ::std::panic::set_hook(Box::new(move |info| {
+                if !info.payload().is::<Crash>() {
+                    original(info);
+                }
+            }));
+        });
+        init(p.schedule.clone(), cut);
+        PAYLOAD.with(|active| *active.borrow_mut() = Some((p.clone(), 0, 0)));
+        let delivery = serde_json::from_value(delivery_value("enqueue-1")).unwrap();
+        let result = match catch_unwind(AssertUnwindSafe(|| execute(new, &delivery))) {
+            Ok(result) => result,
+            Err(error) if error.is::<Crash>() => json!("crash"),
+            Err(error) => ::std::panic::resume_unwind(error),
+        };
+        PAYLOAD.with(|active| *active.borrow_mut() = None);
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    }
+    pub(in crate::mergify_io) fn compare(
+        p: &Payloads,
+        execute: impl Fn(bool, &Delivery) -> Value,
+    ) -> Report {
+        let old = record(p, false, None, &execute);
+        let new = record(p, true, None, &execute);
+        assert_eq!(old, new, "C1 payload divergence: {p:?}");
+        let mut receipt_crashes = 0;
+        let mut post_seen = false;
+        let mutations: Vec<_> = old
+            .calls
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.op.as_str(),
+                    "file.create" | "file.write" | "file.fsync" | "file.rename" | "github.rerun"
+                )
+            })
+            .collect();
+        assert_eq!(mutations.len(), old.writes);
+        for (write, call) in mutations.iter().enumerate() {
+            if call.op == "github.rerun" {
+                post_seen = true;
+            }
+            for after in [false, true] {
+                let cut = Some(Cut { write, after });
+                let a = record(p, false, cut, &execute);
+                let b = record(p, true, cut, &execute);
+                assert_eq!(a, b, "C1 payload crash divergence: {p:?}, {cut:?}");
+                if post_seen && call.op == "file.rename" && call.args.ends_with(".reruns") {
+                    assert_eq!(a.result, json!("crash"));
+                    if after {
+                        assert_eq!(
+                            receipt(&a),
+                            receipt(&old),
+                            "receipt rename must publish final bytes"
+                        );
+                    } else {
+                        let before = receipt(&a).expect("intent was persisted before POST");
+                        assert_eq!(before[0]["accepted"], false);
+                        assert_eq!(before[0]["waiting_for_completion"], false);
+                    }
+                    receipt_crashes += 1;
+                }
+            }
+        }
+        let side = |r: &Run| Side {
+            result: r.result.clone(),
+            receipt: receipt(r),
+            posts: r
+                .calls
+                .iter()
+                .filter(|c| c.op == "github.rerun")
+                .map(|c| c.args.clone())
+                .collect(),
+        };
+        Report {
+            sides: [side(&old), side(&new)],
+            comparisons: 1 + old.writes * 2,
+            receipt_crashes,
+        }
+    }
+    pub(in crate::mergify_io) fn workflow(
+        id: u64,
+        event: &str,
+        conclusion: &str,
+        attempt: u64,
+    ) -> WorkflowRun {
+        let mut run = run_value(&Frame {
+            word: 0,
+            elapsed_ms: 0,
+        });
+        run.id = id;
+        run.event = event.into();
+        run.conclusion = Some(conclusion.into());
+        run.run_attempt = attempt;
+        run
+    }
+}
+
+// ctrl-core A2: configurable entry runner; the real old/current shells remain separate.
+pub(super) fn a2_compare(s: &Schedule, execute: impl Fn(bool, &Delivery) -> Value) -> Value {
+    // Install the existing crash-only panic hook before exercising custom entries.
+    let _ = run(s, Entry::Read, false, None);
+    let record = |new, cut| {
+        init(s.clone(), cut);
+        let d = serde_json::from_value(delivery_value("enqueue-1")).unwrap();
+        let result = match catch_unwind(AssertUnwindSafe(|| execute(new, &d))) {
+            Ok(value) => value,
+            Err(error) if error.is::<Crash>() => json!("crash"),
+            Err(error) => ::std::panic::resume_unwind(error),
+        };
+        ACTIVE.with(|active| {
+            let r = active.borrow_mut().take().unwrap();
+            Run {
+                calls: r.calls,
+                effects: r.effects,
+                files: r.files,
+                result,
+                writes: r.writes,
+            }
+        })
+    };
+    let old = record(false, None);
+    let new = record(true, None);
+    assert_eq!(old, new, "A2 differential divergence: {s:?}");
+    for write in 0..old.writes {
+        for after in [false, true] {
+            let cut = Some(Cut { write, after });
+            assert_eq!(
+                record(false, cut),
+                record(true, cut),
+                "A2 crash divergence: {s:?}, {cut:?}"
+            );
+        }
+    }
+    json!({
+        "result":new.result,
+        "calls":new.calls.iter().map(|c|json!({"op":c.op,"args":c.args})).collect::<Vec<_>>(),
+        "files":new.files.iter().map(|(p,b)|(p.clone(),String::from_utf8_lossy(b).into_owned())).collect::<BTreeMap<_,_>>(),
+        "comparisons":1+2*new.writes,
+    })
+}
+
+// A2 initial durable state is installed before any shell operation, on both sides.
+pub(super) fn a2_seed_heal(same_head: bool, reran: bool) {
+    let key = "body-heal:owner/sandbox#100";
+    let path = format!(
+        "root/{}.body-heal",
+        key.bytes().map(|b| format!("{b:02x}")).collect::<String>()
+    );
+    with(|r| {
+        r.files.insert(
+            path,
+            serde_json::to_vec(&json!({"head":if same_head {"head"} else {"old"},"reran":reran}))
+                .unwrap(),
+        );
+    });
 }

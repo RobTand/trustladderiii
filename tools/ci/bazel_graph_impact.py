@@ -105,6 +105,9 @@ def allowlist_errors(current, previous):
         if crate and (not isinstance(entry, dict) or type(entry.get('sources')) is not int
                       or entry['sources'] < 0):
             errors.append(f'allowlist exception {key} needs a nonnegative integer sources count')
+        if crate and (not isinstance(entry, dict) or type(entry.get('max_fanout')) is not int
+                      or entry['max_fanout'] < 0):
+            errors.append(f'allowlist exception {key} needs a nonnegative integer max_fanout')
         if not isinstance(reason, str) or not reason.strip():
             errors.append(f'allowlist exception {key} needs a reason')
         elif (crate or key not in previous) and not re.search(
@@ -142,6 +145,26 @@ def bounded_crate_sources(base, head, allowlist, previous):
             errors.append(f'allowlist exception {key} cannot change N={limit} without a source-count change')
             continue
         excused.update(sources)
+    return excused, errors
+
+
+def bounded_crate_fanout(head, allowlist, crate_sources):
+    """Exact absolute head fanout, independent of the comparison's base tests."""
+    excused, errors = set(), []
+    for key, entry in sorted(allowlist.items()):
+        if not key.startswith('crate:'):
+            continue
+        owner = head.get('crate_packages', {}).get(key.removeprefix('crate:'))
+        if owner is None:
+            continue  # bounded_crate_sources reports unresolved packages.
+        sources = {source for source in head['loc'] if package(source) == owner}
+        measured = max((head['dependents'][source] for source in sources), default=0)
+        limit = entry.get('max_fanout') if isinstance(entry, dict) else None
+        if type(limit) is not int or limit < 0 or limit != measured:
+            errors.append(f'allowlist exception {key} has max_fanout={limit!r}, but the head graph has '
+                          f'max_fanout={measured}; update max_fanout in the same change to match the fanout')
+        else:
+            excused.update(sources & crate_sources)
     return excused, errors
 
 
@@ -211,6 +234,8 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     errors = allowlist_errors(allowlist, previous_allowlist)
     crate_sources, crate_errors = bounded_crate_sources(base, head, allowlist, previous_allowlist)
     errors += crate_errors
+    fanout_sources, fanout_errors = bounded_crate_fanout(head, allowlist, crate_sources)
+    errors += fanout_errors
     errors += graph_impact.baseline_errors(ratchet(policy), ratchet(previous_policy) if previous_policy else None)
     base_edges = set(map(tuple, base['edges']))
     # The core also checks absolute forbidden-edge exceptions. Supply those
@@ -222,18 +247,35 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
                          'figures': {key: value for key, value in policy['figures'].items() if key != 'scc_max'}}
     # SCC growth is checked component-by-component against base by compare().
     moves = source_moves(base, head, head['edge_diff'])
+    # Credits follow renamed identities only within their original package.
+    credit_moves = {destination: origin for destination, origin in moves.items()
+                    if package(destination) == package(origin)}
+    crate_sources = {credit_moves.get(source, source) for source in crate_sources}
+    fanout_sources = {credit_moves.get(source, source) for source in fanout_sources}
     comparison_head = moved_head(head, moves)
     compared = graph_impact.compare({**base, 'edge_groups': base_groups}, comparison_head, comparison_policy,
                                     changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
     reach_head = crate_reach_head(base, comparison_head, crate_sources)
     if crate_sources:
-        # Keep fanout, SCC and edge checks on the full graph. Only the core's
-        # per-test budgets and our structural reach diagnostic use the credits.
+        # Only per-test budgets and structural reach use the reach credits.
+        # Fanout gets its own package-scoped credit below; SCC and edges stay full.
         budget_errors = graph_impact.compare(
             {**base, 'edge_groups': base_groups}, reach_head, comparison_policy,
             changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
         compared = [error for error in compared if error.partition(' reach ')[0] not in head['reach']]
         compared += [error for error in budget_errors if error.partition(' reach ')[0] in head['reach']]
+    if fanout_sources and any(error.startswith('existing source fanout grew: ') for error in compared):
+        # Reuse the pinned core's consumer counting and edge attribution. Only
+        # its fanout diagnostic uses this source universe; every other check
+        # above sees the complete graph. Keep reach and identity paths intact.
+        fanout_head = {**comparison_head, 'loc': {
+            source: weight for source, weight in comparison_head['loc'].items()
+            if source not in fanout_sources}}
+        fanout_errors = graph_impact.compare(
+            {**base, 'edge_groups': base_groups}, fanout_head, comparison_policy,
+            changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
+        compared = [error for error in compared if not error.startswith('existing source fanout grew: ')]
+        compared += [error for error in fanout_errors if error.startswith('existing source fanout grew: ')]
     errors += [error for error in compared if not error.startswith('existing test reach grew: ')]
     errors += structural_reach_errors(base, reach_head, allowlist)
     added = set(map(tuple, head['edges'])) - set(map(tuple, base['edges']))
