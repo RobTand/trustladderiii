@@ -2648,10 +2648,19 @@ fn confirmed_absence(settings: &tl3_config::Store) {
         source.active_runs() == 0
     });
     assert!(!attempt.join("exit.json").exists());
-    assert!(
-        rx.try_recv().is_err(),
-        "source emits nothing for confirmed absence"
-    );
+    let tl3_controller::cli::Input::Observation { key, observation } =
+        rx.try_recv().expect("confirmed process loss wakes ingress")
+    else {
+        panic!("confirmed absence must emit an infrastructure failure");
+    };
+    assert!(matches!(
+        &observation,
+        Observation::WorkerFailed { node, generation, failure_class, .. }
+            if *node == run.node() && *generation == run.generation
+                && failure_class == "LostWorker"
+    ));
+    controller.observe(&key, observation).unwrap();
+    assert!(rx.try_recv().is_err(), "one authoritative loss observation");
     while controller.drive_once().unwrap() {}
     let replacement = store_worker_run(settings);
     assert_ne!(
