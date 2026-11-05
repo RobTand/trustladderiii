@@ -1,0 +1,1 @@
+# Persist minimized proptest seeds here. The fixed RNG seed is 0xF17602026005.
