@@ -2,6 +2,14 @@
 use super::*;
 
 verus! {
+/// #805 / #806: recording the observed merge leaves the progress metric unchanged
+/// until the real handler enters Stopping. Isolate metric expansion from its full frame.
+pub(super) proof fn merge_input_distance(n: Node, head: HeadId)
+    ensures distance(Node { merged: Some(head), pr_open: false, ..n }) == distance(n),
+{
+    reveal(distance);
+}
+
 /// State-table phase changes: exact update used by the existing set_phase body.
 pub(super) open spec fn phased(n: Node, phase: Phase) -> Node {
     Node { generation: (n.generation + 1) as u64, phase, pos: 0, ticket: None,

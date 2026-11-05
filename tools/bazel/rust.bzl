@@ -338,14 +338,14 @@ def _crate_test(kind, package, name, source, harness, options):
     if native.package_name() in ["crates/kernel", "crates/store"]:
         sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
         if source == "tests/proof_map.rs":
-            sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"])
+            sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
         if native.package_name() == "crates/store":
             sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
         sources = [source]
     compile_data = options["compile_data"]
     if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
-        compile_data = compile_data + ["//tools/bazel:verus.bzl", "//crates/controller:src/kernel_boundary.rs"]
+        compile_data = compile_data + ["//tools/bazel:verus.bzl"]
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":

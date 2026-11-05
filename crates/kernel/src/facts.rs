@@ -195,6 +195,29 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
 kernel_fn! {
 /// Merge fact rows / Q18 / #771: a late merge earns credit once; other merges
 /// enter teardown. Even an unapproved late merge emits at most four notices.
+pub(super) fn merge_open(m: &mut Node, head: HeadId) -> (result: ()) [
+    requires !(old(m).phase is Closed), node_headroom(*old(m)),
+    ensures *final(m) == retirement::stopped(
+            Node { merged: Some(head), pr_open: false, ..*old(m) }, Outcome::Merged),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        settle_shape(*old(m)) ==> settle_shape(*final(m)),
+        final(m).generation as int <= old(m).generation as int + 1,
+        final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
+        final(m).last_cmd == old(m).last_cmd,
+        old(m).phase == Phase::Queued && !old(m).paused
+            && !old(m).waiting_incident && old(m).effect.is_none()
+            ==> distance(*final(m)) < distance(*old(m)),
+] {
+    kernel_snapshot! { before_merge = *m }
+    m.merged = Some(head);
+    m.pr_open = false;
+    kernel_proof! { retirement::merge_input_distance(before_merge@, head); }
+    enter_stopping(m, Outcome::Merged);
+}
+}
+
+kernel_fn! {
+/// State-table merge rows / #805 and #806: compose progress and complete safety.
 pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
@@ -236,7 +259,7 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
             && !(old(w).nodes@[i as int].phase is Closed)
             && !(old(w).nodes@[i as int].approved == Some(head) && checks_passed)
             ==> retirement::unapproved_note(*final(out), i),
-] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retirement::unapproved_note); reveal(distance);] {
+] proof [reveal(retirement::fact_node); reveal(retirement::unapproved_note);] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
         return;
@@ -255,9 +278,7 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
             notice(out, i, Notice::Incident { needs_rob: false });
         }
         _ => {
-            m.merged = Some(head);
-            m.pr_open = false;
-            enter_stopping(m, Outcome::Merged);
+            merge_open(m, head);
         }
     }
     if !approved {

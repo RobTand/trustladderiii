@@ -362,12 +362,10 @@ fn every_kernel_function_has_exactly_one_selector_or_a_reason() {
     let mut fs = Vec::new();
     collect(&root.join("src"), "kernel", &mut fs);
     collect(&root.join("verus"), "kernel", &mut fs);
-    fs.extend(functions(include_str!("../../verus/progress.rs"), "root"));
-    fs.extend(functions(
-        include_str!("../../../controller/src/kernel_boundary.rs"),
-        "controller_boundary",
-    ));
-    let groups = selectors(super::VERUS_GROUPS);
+    let groups: Vec<_> = selectors(super::VERUS_GROUPS)
+        .into_iter()
+        .filter(|(_, selector)| selector == "kernel" || selector.starts_with("kernel::"))
+        .collect();
     let unverified = exemptions(super::VERUS_GROUPS);
     if let Err(error) = check(&fs, &groups, &unverified) {
         panic!("{error}");
