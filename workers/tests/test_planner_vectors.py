@@ -32,6 +32,8 @@ def test_inventory_includes_subscript_conflict_class_and_constructor_diagnostics
     rules = diagnostic_rules()
     for module, message in (
         ('planner', 'Correction must remain a leaf or honestly report cant_meet.'),
+        ('planner', 'Planner coverage correction attempts: 0.'),
+        ('planner', 'Correction may only add the named uncovered goal ids and must preserve every existing citation.'),
         ('generated_scope', 'Invented generated-output prohibition in ingest:'),
         ('generated_scope', 'Remove the generated-output prohibition:'),
         ('evidence', 'Return evidence_contract with source requirements and separately marked method choices.'),
@@ -78,10 +80,42 @@ def test_local_correction_retains_current_base_sha_asymmetry():
 
 
 def test_mismatch_capture_includes_every_constructor_defect():
+    fields = set(mismatch_fields())
+    assert 'missing_goals' in fields
+    coverage_defects = []
     for case in DOCUMENT['cases']:
-        value = case.get('mismatch', case['outcome'].get('error', {}))
-        if value.get('class', '').endswith('.PlanConsistencyError'):
-            assert set(unpacked(value['mismatch'])) == set(mismatch_fields())
+        for value in (case.get('mismatch', {}), case['outcome'].get('error', {})):
+            if value.get('class', '').endswith('.PlanConsistencyError'):
+                mismatch = unpacked(value['mismatch'])
+                assert set(mismatch) == fields, case['id']
+                if mismatch['missing_goals']:
+                    coverage_defects.append(case['id'])
+    assert coverage_defects, 'the corpus must exercise missing_goals, not only record an empty field'
+
+
+@pytest.mark.parametrize('resolution', ['accepted', 'unrelated_change'])
+def test_pb2710_golden_records_coverage_repair_and_constraints(resolution):
+    import json
+    from pathlib import Path
+    fixture = json.loads((Path(__file__).parent / 'fixtures/planner-pb2710.json').read_text())
+    prefix = f'extra/pb2710/{resolution}#'
+    cases = [case for case in DOCUMENT['cases'] if case['id'].startswith(prefix)]
+    repair = next(case for case in cases if case['outcome'].get('error', {}).get('class', '').endswith('.PlanConsistencyError'))
+    assert repair['reply']['files'] == fixture['files']
+    assert repair['reply']['checks'] == fixture['checks']
+    assert repair['inputs']['ingest']['goals'] == fixture['goals']
+    error = repair['outcome']['error']
+    assert unpacked(error['mismatch'])['missing_goals'] == {3: repair['inputs']['ingest']['goals'][3]['description']}
+    assert error['local']
+    assert error['violations'] == ['Required goals have no check coverage: goal 3: ' + repair['inputs']['ingest']['goals'][3]['description']]
+    assert error['repair_text'] == error['message']
+    correction = next(case for case in cases if case['operation'] == 'constrain')
+    assert correction['reply']['checks'][0]['goal_ids'] == [0, 1, 4, 3]
+    violations = correction['outcome']['reply']['violations']
+    if resolution == 'accepted':
+        assert violations == []
+    else:
+        assert 'Correction changes declarations outside the test consistency error.' in violations
 
 
 def test_goal_id_oracle_contains_int_float_and_bool_inputs():
