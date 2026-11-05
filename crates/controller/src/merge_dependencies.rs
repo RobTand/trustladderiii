@@ -483,10 +483,20 @@ impl Controller {
             if !self.bootstrap.repos.contains(&request.repo) || !seen.insert(key.clone()) {
                 continue;
             }
-            commit.rows.push(RowChange::Delete {
-                table: "prerequisite_facts".into(),
-                id: key.clone(),
-            });
+            if retained_fact(
+                &snapshot,
+                &commit,
+                &request.repo,
+                dependency.target.kind,
+                dependency.target.number,
+            )?
+            .is_some()
+            {
+                commit.rows.push(RowChange::Delete {
+                    table: "prerequisite_facts".into(),
+                    id: key.clone(),
+                });
+            }
             let queued = snapshot.rows.iter().any(|row| row.table == "inbox" && matches!(
                 serde_json::from_value::<executor::Observation>(row.value.clone()),
                 Ok(executor::Observation::PrerequisiteRead { repository, kind, number, .. })
@@ -1526,24 +1536,21 @@ mod tests {
     }
 
     #[test]
-    fn declaration_reconciles_already_observed_delivery_for_active_root() {
+    fn declaration_reads_current_open_state_after_observed_delivery() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "observed_delivery");
         intake(&mut c, &repo, 2761);
-        external(&mut c, &repo, 2761, DependencyStatus::Delivered);
+        external(&mut c, &repo, 2761, DependencyStatus::Pending);
         external(&mut c, &repo, 2761, DependencyStatus::Pending);
         let waiter = intake(&mut c, &repo, 42);
         ingest(&mut c, waiter, &[2761]);
         let world = c.world().unwrap();
-        assert_eq!(world.dependencies()[0].status, DependencyStatus::Delivered);
-        assert_eq!(
-            world.nodes[waiter.0 as usize].phase,
-            Phase::Planning { must_split: false }
-        );
+        assert_eq!(world.dependencies()[0].status, DependencyStatus::Pending);
+        assert_eq!(world.nodes[waiter.0 as usize].phase, Phase::Unplanned);
     }
 
     #[test]
-    fn declaration_reconciles_already_observed_abandonment_for_active_root() {
+    fn declaration_reads_current_open_state_after_observed_abandonment() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "observed_abandonment");
         intake(&mut c, &repo, 2761);
@@ -1553,16 +1560,16 @@ mod tests {
         ingest(&mut c, waiter, &[2761]);
         assert_eq!(
             c.world().unwrap().dependencies()[0].status,
-            DependencyStatus::Delivered
+            DependencyStatus::Pending
         );
         assert_eq!(
             c.world().unwrap().nodes[waiter.0 as usize].phase,
-            Phase::Planning { must_split: false }
+            Phase::Unplanned
         );
     }
 
     #[test]
-    fn reingest_retains_closed_evidence_and_delivers_without_abandonment_note() {
+    fn reingest_retains_historical_closure_but_waits_for_current_open_state() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "reingest_abandoned");
         intake(&mut c, &repo, 2761);
@@ -1575,13 +1582,14 @@ mod tests {
             Phase::Ingesting
         );
         ingest(&mut c, waiter, &[2761]);
+        assert!(!closures(&c.snapshot().unwrap(), waiter).unwrap().is_empty());
         assert_eq!(
             c.world().unwrap().dependencies()[0].status,
-            DependencyStatus::Delivered
+            DependencyStatus::Pending
         );
         assert_eq!(
             c.world().unwrap().nodes[waiter.0 as usize].phase,
-            Phase::Planning { must_split: false }
+            Phase::Unplanned
         );
         assert_eq!(
             c.snapshot()

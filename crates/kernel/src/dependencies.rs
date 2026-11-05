@@ -255,19 +255,19 @@ pub proof fn visit_reduces_unseen(seen: Seq<bool>, index: int, end: nat)
 
 kernel_fn! {
 /// #839 / Q27: finite total decision over 3 statuses x 2 rejection states x
-/// 3 incoming statuses x 2 planning states. No loop or unwind. Reopens revoke
+/// 3 incoming statuses x 2 revocation states. No loop or unwind. Reopens revoke
 /// provisional delivery; consumed admission and rejected cycles stay unchanged.
 fn update_allowed(previous: DependencyStatus, rejected: bool, incoming: DependencyStatus,
-    planning_started: bool) -> (allowed: bool) [
+    revocable: bool) -> (allowed: bool) [
     ensures allowed == (!rejected && (previous == DependencyStatus::Pending
         || (previous == DependencyStatus::Abandoned && incoming == DependencyStatus::Delivered)
-        || (!planning_started && incoming == DependencyStatus::Pending))),
+        || (revocable && incoming == DependencyStatus::Pending))),
 ] {
     !rejected && match previous {
         DependencyStatus::Pending => true,
-        DependencyStatus::Delivered => !planning_started && incoming == DependencyStatus::Pending,
+        DependencyStatus::Delivered => revocable && incoming == DependencyStatus::Pending,
         DependencyStatus::Abandoned => incoming == DependencyStatus::Delivered
-            || (!planning_started && incoming == DependencyStatus::Pending),
+            || (revocable && incoming == DependencyStatus::Pending),
     }
 }
 }
@@ -802,7 +802,17 @@ impl World {
         }
         if let Some(index) = existing {
             let previous = self.dependencies[index];
-            if !update_allowed(previous.status, previous.rejected, status, self.nodes[i].planning_started) {
+            let owner = &self.nodes[i];
+            // #839: preserve the existing dependency frame for every valid world,
+            // including restored pre-planning questions and teardown phases.
+            let revocable = !owner.planning_started
+                && matches!(owner.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned
+                    | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_))
+                && !matches!(owner.question, Some(q) if !matches!(q.cont,
+                    Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere))
+                && (owner.phase != Phase::Unplanned
+                    || (!owner.holds && !owner.pool && owner.ticket.is_none() && owner.run.is_none()));
+            if !update_allowed(previous.status, previous.rejected, status, revocable) {
                 return None;
             }
             if previous.status == DependencyStatus::Pending

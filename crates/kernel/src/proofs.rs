@@ -769,9 +769,24 @@ fn check_dependency_fact() {
         fact(Fact::Dependency { target, status }),
         &mut out,
     );
+    let owner = &world.nodes[0];
+    let can_wait = !owner.planning_started
+        && matches!(
+            phase,
+            Phase::Ingesting
+                | Phase::Auditing
+                | Phase::Unplanned
+                | Phase::AwaitingRob
+                | Phase::Stopping(_)
+                | Phase::Closed(_)
+        )
+        && !matches!(owner.question, Some(q) if !matches!(q.cont,
+            Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere))
+        && (phase != Phase::Unplanned
+            || (!owner.holds && !owner.pool && owner.ticket.is_none() && owner.run.is_none()));
     let expected = if previous_status == DependencyStatus::Pending
         || status == DependencyStatus::Delivered
-        || (!world.nodes[0].planning_started && status == DependencyStatus::Pending)
+        || (can_wait && status == DependencyStatus::Pending)
     {
         status
     } else {
