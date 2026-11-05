@@ -1,0 +1,822 @@
+{
+  "version": 1,
+  "kind": "failure-receipt",
+  "cases": [
+    {
+      "case": "missing-record",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "published-record",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "published_unix": 42,
+          "detail": {
+            "termination_reason": "memory_limit_oom",
+            "private_metadata": "must-not-copy"
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "memory_limit_oom",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "record-bytes-below",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "published_unix": 42,
+          "detail": {
+            "termination_reason": "memory_limit_oom",
+            "private_metadata": "must-not-copy"
+          }
+        },
+        "record_bytes": 2097151
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "memory_limit_oom",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "record-bytes-at",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "published_unix": 42,
+          "detail": {
+            "termination_reason": "memory_limit_oom",
+            "private_metadata": "must-not-copy"
+          }
+        },
+        "record_bytes": 2097152
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "memory_limit_oom",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "record-bytes-above",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "published_unix": 42,
+          "detail": {
+            "termination_reason": "memory_limit_oom",
+            "private_metadata": "must-not-copy"
+          }
+        },
+        "record_bytes": 2097153
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "reason-bytes-127",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "reason-bytes-128",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "wrong-key",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record": {
+          "action_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "published_unix": 42,
+          "detail": {
+            "termination_reason": "memory_limit_oom",
+            "private_metadata": "must-not-copy"
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "wrong-publication",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "published_unix": 43,
+          "detail": {
+            "termination_reason": "memory_limit_oom",
+            "private_metadata": "must-not-copy"
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "invalid-record-json",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record_raw": "{"
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "record-over-limit",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        },
+        "record_padding": 2097153
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "diagnostic-oom",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            },
+            "termination_reason": "memory_limit_oom"
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "memory_limit_oom",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "exit-precedence",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 3,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 3,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "reason-unsafe",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "private/path",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "reason-empty",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "reason-long",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "attempt-bool",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": true,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "attempt-zero",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 0,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "generation-case",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 0
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "memory_peak_bytes": 0
+        }
+      }
+    },
+    {
+      "case": "peak-bool",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": true
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      }
+    },
+    {
+      "case": "peak-negative",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": -1
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      }
+    },
+    {
+      "case": "peak-positive",
+      "input": {
+        "ending": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": null,
+          "reason": "worker_lost",
+          "attempt": 1,
+          "publication": {
+            "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "published_unix": 42
+          },
+          "diagnostics": {
+            "returncode": 137,
+            "resource_profile": {
+              "scope": {
+                "memory_peak_bytes": 123456
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "return": {
+          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "failed",
+          "exit_code": 137,
+          "termination_reason": "worker_lost",
+          "attempt": 1,
+          "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "memory_peak_bytes": 123456
+        }
+      }
+    }
+  ]
+}
