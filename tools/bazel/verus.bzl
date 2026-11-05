@@ -185,7 +185,7 @@ def verus_proofs():
             cmd = "python3 $(location tests/mergify_io/recovery_schedule_types.py) $(location //crates/mergify:src/decide/enqueue.rs) $(location //crates/mergify:src/decide/check.rs) $@",
         )
         for group, module, count in [
-            ("core", "recovery", 7),
+            ("core", "recovery", 8),
             ("one_command", "recovery::proof_one_command", 2),
             ("refused", "recovery::proof_refused", 2),
             ("grace", "recovery::proof_grace", 2),

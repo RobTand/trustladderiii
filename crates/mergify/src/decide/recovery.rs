@@ -51,7 +51,7 @@ pub fn tick(recovery: Option<Recovery>, eligible: bool, now_ms: u64) -> Transiti
             command: Command::Ready,
         },
     };
-    if saved.command != Command::Ready {
+    if !matches!(saved.command, Command::Ready) {
         return Transition {
             recovery: Some(saved),
             first: Some(Effect::Complete(completion(saved.command))),
@@ -125,7 +125,7 @@ pub fn dispatch(recovery: Option<Recovery>, read: CommandRead) -> Transition {
             command: Command::Ready,
         },
     };
-    if saved.command != Command::Ready {
+    if !matches!(saved.command, Command::Ready) {
         Transition {
             recovery: Some(saved),
             first: Some(Effect::Complete(completion(saved.command))),
@@ -138,7 +138,7 @@ pub fn dispatch(recovery: Option<Recovery>, read: CommandRead) -> Transition {
             first: Some(Effect::SaveRecovery),
             second: Some(Effect::Complete(Complete::Pending)),
         }
-    } else if read.head != Head::Current
+    } else if !matches!(read.head, Head::Current)
         || !read.open
         || read.merged
         || read.draft
@@ -170,7 +170,7 @@ pub fn done(recovery: Option<Recovery>, result: CommandResult) -> Transition {
             second: None,
         };
     };
-    if saved.command != Command::Sending {
+    if !matches!(saved.command, Command::Sending) {
         return Transition {
             recovery: Some(saved),
             first: Some(Effect::Complete(completion(saved.command))),
