@@ -407,7 +407,7 @@ fn classifier_uses_the_earliest_ladder_retry_before_the_last_hint() {
     let (_, hold) = f.hold().unwrap();
     assert_eq!(hold["quota_ms"], RESET, "T2 is the last provider hint");
     assert_eq!(hold["quota_retry_ms"], EARLIER, "T1 is the earliest retry");
-    assert!(EARLIER < RESET);
+    assert!(hold["quota_retry_ms"].as_u64().unwrap() < hold["quota_ms"].as_u64().unwrap());
     let before = f.controller.world().unwrap();
     for _ in 0..2 {
         assert_eq!(
