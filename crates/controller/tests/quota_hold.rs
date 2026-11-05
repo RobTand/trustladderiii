@@ -1093,6 +1093,26 @@ fn ordinary_probe_failure_releases_the_other_held_key_across_restart() {
     } else {
         (key1, key0, 0)
     };
+    // A persisted #759 maintenance look may precede the hourly retry. It must
+    // survive terminal release without becoming the advertised retry deadline.
+    let maintenance_due = f.clock.0.get() + 600_000;
+    let next_probe = f.clock.0.get() + 3_600_000;
+    let snapshot = f.store.load().unwrap();
+    let mut state = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "allowances" && row.id == waiter)
+        .unwrap()
+        .value
+        .clone();
+    state["due_ms"] = json!(maintenance_due);
+    let mut commit = Commit::new("fixture:earlier-maintenance-look", json!({}), &snapshot);
+    commit.rows.push(RowChange::Put {
+        table: "allowances".into(),
+        id: waiter.clone(),
+        value: state,
+    });
+    f.store.commit(&commit).unwrap();
     fs::write(f.root.path().join("probe-fail"), "yes").unwrap();
     fs::write(f.root.path().join("probe-release"), "yes").unwrap();
     f.until(|f| {
@@ -1111,7 +1131,11 @@ fn ordinary_probe_failure_releases_the_other_held_key_across_restart() {
         wait.value["due_ms"].is_u64(),
         "a terminal probe cannot leave a timerless waiter"
     );
-    assert_eq!(wait.value["quota_retry_ms"], wait.value["due_ms"]);
+    assert_eq!(wait.value["due_ms"], maintenance_due);
+    assert_eq!(
+        wait.value["quota_retry_ms"], next_probe,
+        "maintenance is not a model retry"
+    );
     let mut f = f.restart();
     fs::write(f.root.path().join("restored"), "yes").unwrap();
     f.clock.0.set(f.clock.0.get() + 3_600_000);
