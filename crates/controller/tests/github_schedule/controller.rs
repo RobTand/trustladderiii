@@ -86,6 +86,85 @@ fn delivery(case: u8) -> Delivery {
             text: "A note".into(),
         });
     }
+    if case >= 13 {
+        delivery.steering = None;
+        delivery.output = Output::Comment {
+            node,
+            kind: tl3_controller::executor::CommentKind::ReplacementDropped,
+        };
+        delivery.steering = match case {
+            13 => Some(steering::Task::FileRequest {
+                text: "Correct this request".into(),
+                comment: 42,
+                correction: true,
+                revert: true,
+                since: "2026-10-30T00:00:00Z".into(),
+                comment_issue: 12,
+                question: None,
+            }),
+            14 => Some(steering::Task::Restart {
+                comment_key: "restart".into(),
+                text: "restart".into(),
+                issue: None,
+            }),
+            15 | 16 => Some(steering::Task::ReplacementDropped {
+                text: "Change the request".into(),
+                outcome: if case == 15 {
+                    Outcome::Merged
+                } else {
+                    Outcome::Stopped
+                },
+            }),
+            17 => {
+                delivery.question_context =
+                    Some(json!({"issue_title":"Current title", "request":"Current request"}));
+                Some(steering::Task::RestartDropped {
+                    text: "restart".into(),
+                })
+            }
+            18 => Some(steering::Task::ClarifyComment {
+                question: "Which change?".into(),
+                excerpt: "Please change this".into(),
+            }),
+            19..=24 => {
+                let kinds = [
+                    QKind::AuditDisagreement,
+                    QKind::NeedsSplitting,
+                    QKind::CantMeet,
+                    QKind::OutOfCredit,
+                    QKind::EffectFailed,
+                    QKind::CleanupFailed,
+                ];
+                delivery.output = Output::Notice {
+                    node,
+                    notice: Notice::Ask { question: 1 },
+                };
+                delivery.question = Some(Question {
+                    id: 1,
+                    kind: kinds[usize::from(case - 19)],
+                    cont: Cont::Nowhere,
+                    cost: 0,
+                    clarified: case % 2 == 0,
+                });
+                delivery.question_context =
+                    Some(json!({"findings":{"report":"The action failed."}}));
+                None
+            }
+            25 => {
+                delivery.output = Output::Notice {
+                    node,
+                    notice: Notice::Summary(Outcome::Replaced),
+                };
+                None
+            }
+            _ => None,
+        };
+    }
+    if case % 2 == 1 {
+        delivery.request_text = Some("Edited request".into());
+        delivery.scope_removals = Some("A removed change".into());
+        delivery.paths = vec!["src/example.rs".into()];
+    }
     delivery
 }
 #[derive(Debug, PartialEq)]
@@ -185,6 +264,10 @@ fn check(values: &[u16], case: u8) -> Result<(), TestCaseError> {
 fn controller_io_schedule() {
     // Varying per-call reads while preserving valid fence and issue results.
     check(&[0, 0, 0, 0, 0, 0, 0, 1, 0, 0], 11).unwrap();
+    for case in 0..26 {
+        check(&[0], case).unwrap();
+        check(&[1, 0, 2, 0, 1, 3, 0, 0], case).unwrap();
+    }
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("controller-regressions.txt");
     std::fs::write(&path, include_str!("controller-regressions.txt")).unwrap();
