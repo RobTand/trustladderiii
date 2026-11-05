@@ -154,6 +154,7 @@ def verus_proofs():
             "retirement_witness": ("kernel::retirement_witness", 2),
             "retirement_merge_witness": ("kernel::retirement_merge_witness", 2),
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
+            "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
         }
         for name, (module, count) in groups.items():
             verus_test(

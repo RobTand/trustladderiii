@@ -113,10 +113,11 @@ pub(super) open spec fn accepted(w: World) -> bool {
 }
 
 verus! {
-/// State-table fact rows selected for #806's first slice.
+/// State-table fact rows selected for #806 safety retirement.
 pub(super) open spec fn selected(fact: Fact) -> bool {
     matches!(fact, Fact::IncidentCleared { .. } | Fact::PrDequeuedByPerson
-        | Fact::CiFailed { infra: true } | Fact::PrMerged { .. })
+        | Fact::CiFailed { infra: true } | Fact::PrMerged { .. }
+        | Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict)
 }
 
 /// State-table fact rows: complete node update, checked against the real handler.
@@ -144,6 +145,21 @@ pub(super) open spec fn fact_node(n: Node, fact: Fact) -> Node {
                         waiting_incident: true, incident_needs_rob: count >= 2,
                         holds: false, ..n }, Phase::Ready(Resume::Publishing))
                 }
+            } else { n }
+        },
+        Fact::Priority(priority) => {
+            if n.phase is Closed { n } else { Node { priority, ..n } }
+        },
+        Fact::PrClosedByPerson => {
+            if !n.pr_open { n } else {
+                let closed_pr = Node { pr_open: false, ..n };
+                if n.phase is Stopping || n.phase is Closed { closed_pr }
+                else { stopped(closed_pr, Outcome::Stopped) }
+            }
+        },
+        Fact::Conflict => {
+            if matches!(n.phase, Phase::Publishing | Phase::Queued) {
+                phased(n, Phase::Rebasing)
             } else { n }
         },
         Fact::PrMerged { head, .. } => {
@@ -229,6 +245,7 @@ pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
         Fact::PrDequeuedByPerson => {},
         Fact::CiFailed { infra: true } => {},
         Fact::PrMerged { .. } => {},
+        Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict => {},
         _ => {},
     }
 }
@@ -271,7 +288,7 @@ pub(super) open spec fn bounded(w: World) -> bool {
 }
 
 kernel_fn! {
-/// State-table incident, dequeue, publishing infrastructure and merge rows / #806.
+/// State-table selected safety fact rows / #806.
 /// Bound: one real apply on the original two-node construction, with no unwind.
 /// Settledness is unnecessary. Full consistency, all shared Kani node assertions,
 /// notice-only outputs, truthful merges and unapproved-merge notes are preserved.
@@ -281,7 +298,16 @@ pub(super) fn verify_selected_apply(mut w: World, fact: Fact) -> (result: (World
     ensures domain(result.0), accepted(result.0),
         result.0.nodes@ == w.nodes@.update(0, fact_node(w.nodes@[0], fact)),
         notices_only(result.1),
+        fact is Priority ==> result.1.len == 0,
         match fact {
+            Fact::Conflict => {
+                let n = w.nodes@[0];
+                let after = result.0.nodes@[0];
+                if matches!(n.phase, Phase::Publishing | Phase::Queued) {
+                    after.phase == Phase::Rebasing && after.generation == n.generation + 1
+                        && after.credit == n.credit && after.holds == n.holds
+                } else { after == n }
+            },
             Fact::PrMerged { head, checks_passed } => w.nodes@[0].had_pr
                 && w.nodes@[0].merged.is_none() && !(w.nodes@[0].phase is Closed)
                 ==> result.0.nodes@[0].merged == Some(head)

@@ -42,6 +42,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             == retirement::fact_node(old(w).nodes@[i as int], fact),
         retirement::selected(fact) && retirement::notices_only(*old(out))
             ==> retirement::notices_only(*final(out)),
+        fact is Priority ==> *final(out) == *old(out),
         match fact {
             Fact::PrMerged { head, checks_passed } => old(w).nodes@[i as int].had_pr
                 && old(w).nodes@[i as int].merged.is_none()
@@ -128,6 +129,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             == retirement::fact_node(old(w).nodes@[i as int], fact),
         retirement::selected(fact) && retirement::notices_only(*old(out))
             ==> retirement::notices_only(*final(out)),
+        fact is Priority ==> *final(out) == *old(out),
         match fact {
             Fact::PrMerged { head, checks_passed } => old(w).nodes@[i as int].had_pr
                 && old(w).nodes@[i as int].merged.is_none()
@@ -136,7 +138,8 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 ==> retirement::unapproved_note(*final(out), i),
             _ => true,
         },
-] proof [reveal(retry_bounds); reveal(retirement::fact_frame); reveal(distance);] {
+] proof [reveal(retry_bounds); reveal(retirement::fact_frame); reveal(distance);
+    reveal(retirement::fact_node); reveal(retirement::stopped);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {

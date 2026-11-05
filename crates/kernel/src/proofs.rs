@@ -1333,7 +1333,6 @@ proof!(apply_ack_body_policy_refused, {
         );
     }
 });
-proof!(apply_pr_closed, check_apply(fact(Fact::PrClosedByPerson)));
 proof!(
     apply_outside_push,
     check_apply(fact(Fact::PushByOther { head: kani::any() }))
@@ -1342,19 +1341,6 @@ proof!(
     apply_ci_failed,
     check_apply(fact(Fact::CiFailed { infra: kani::any() }))
 );
-fn check_conflict() {
-    let before = check_apply(fact(Fact::Conflict));
-    kani::cover!(
-        before.nodes[0].phase == Phase::Publishing,
-        "Q46 conflict before the queue"
-    );
-    kani::cover!(
-        before.nodes[0].phase == Phase::Queued,
-        "conflict after enqueue"
-    );
-}
-proof!(apply_conflict, check_conflict());
-proof!(apply_priority, check_priority());
 proof!(
     apply_upstream_stalled,
     check_apply(fact(Fact::UpstreamStalled))
@@ -1478,48 +1464,6 @@ proof!(
 proof!(
     progress_from_closed,
     check_witness(Phase::Closed(kani::any()))
-);
-
-/// A merge TL3 observes keeps every rule, is recorded truthfully, and a merge
-/// of a head TL3 didn't approve raises an incident and a note to Rob. Merges
-/// are the heaviest event to prove, so they get one proof per phase.
-fn check_pr_merged(phase: Phase) {
-    let before = any_settled_world(Some(phase));
-    let n = &before.nodes[0];
-    let head: HeadId = kani::any();
-    kani::assume(head.0 < 8);
-    let checks_passed: bool = kani::any();
-    let event = fact(Fact::PrMerged {
-        head,
-        checks_passed,
-    });
-    let mut after = before.clone();
-    let mut out = Outbox::new();
-    apply(&mut after, event.clone(), &mut out);
-    kani::cover!(after != before, "the merge changes the world");
-    require_consistent(&after);
-    check_nodes(&before, &after);
-    check_outputs(&before, &after, &out, None);
-    if n.had_pr && n.merged.is_none() && !n.phase.is_closed() {
-        let m = &after.nodes[0];
-        assert!(m.merged == Some(head));
-        assert!(m.phase == Phase::Stopping(Outcome::Merged));
-        if !(n.approved == Some(head) && checks_passed) {
-            assert!(out.contains(Out::Notice {
-                node: NodeId(0),
-                notice: Notice::Note(NoteKind::UnapprovedMerge)
-            }));
-        }
-    }
-}
-
-proof!(
-    pr_merged_stopping,
-    check_pr_merged(Phase::Stopping(kani::any()))
-);
-proof!(
-    pr_merged_closed,
-    check_pr_merged(Phase::Closed(kani::any()))
 );
 
 proof!(apply_new_adoption, {
@@ -2192,35 +2136,6 @@ fn check_gate_leaf_progress(width: u8) {
 
 proof!(gate_leaf_progress_w2, check_gate_leaf_progress(2));
 proof!(gate_leaf_progress_w3, check_gate_leaf_progress(3));
-
-// Q39: agent-pool grants go strictly by priority, then ticket.
-
-fn check_priority() {
-    let before = any_settled_world(None);
-    let priority: Priority = kani::any();
-    let mut after = before.clone();
-    let mut out = Outbox::new();
-    apply(&mut after, fact(Fact::Priority(priority)), &mut out);
-    require_consistent(&after);
-    check_nodes(&before, &after);
-    check_outputs(&before, &after, &out, None);
-    let n = before.nodes[0];
-    if n.phase.is_closed() {
-        assert_eq!(after.nodes[0], n, "Closed is final");
-    } else {
-        assert_eq!(
-            after.nodes[0],
-            Node { priority, ..n },
-            "only the priority changes"
-        );
-    }
-    assert_eq!(&after.nodes[1..], &before.nodes[1..]);
-    assert!(out.is_empty());
-    kani::cover!(
-        !n.phase.is_closed() && n.priority != priority,
-        "a priority changes"
-    );
-}
 
 /// The state table's place in the pool line, written independently of the
 /// kernel: the priority's level, then the ticket.

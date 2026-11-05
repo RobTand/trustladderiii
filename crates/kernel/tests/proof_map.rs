@@ -73,6 +73,11 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("pr_merged_queued", "facts_merge"),
     ("pr_merged_rebasing", "facts_merge"),
     ("pr_merged_awaiting_rob", "facts_merge"),
+    ("pr_merged_stopping", "facts_merge"),
+    ("pr_merged_closed", "facts_merge"),
+    ("apply_priority", "facts_transition"),
+    ("apply_pr_closed", "facts_transition"),
+    ("apply_conflict", "facts_transition"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

@@ -54,6 +54,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                     && final(w).dependencies@ == old(w).dependencies@
                     && (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)))
                     && match fact {
+                        Fact::Priority(_) => *final(out) == *old(out),
                         Fact::PrMerged { head, checks_passed } => old(w).nodes@[node.0 as int].had_pr
                             && old(w).nodes@[node.0 as int].merged.is_none()
                             && !(old(w).nodes@[node.0 as int].phase is Closed)
