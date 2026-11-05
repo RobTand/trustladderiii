@@ -1,6 +1,4 @@
 //! Q53 / #828: durable quota holds must be visible and wake on evidence.
-#[path = "support/ownership.rs"]
-mod startup_ownership;
 mod support;
 
 use serde_json::json;
@@ -123,19 +121,17 @@ else:
 "#.into(), root.path().to_str().unwrap().into()];
         let clock = Clock(Rc::new(Cell::new(RESET - 4 * 86_400_000)));
         let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
-        let supervisor = Supervisor::new(
-            &config,
-            &root.path().join("records"),
-            &mut startup_ownership::ownership(),
-        )
-        .unwrap();
+        let mut ownership =
+            tl3_controller::Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+        let supervisor =
+            Supervisor::new(&config, &root.path().join("records"), &mut ownership).unwrap();
         let source = supervisor.source();
         registry.register(
             Upstream::Workers,
             Audit(supervisor, adapters::workers::Fake::new(root.path())),
         );
         let controller = Controller::open_with_clock(
-            Store::open(&settings).unwrap(),
+            ownership.into_store(),
             registry,
             Bootstrap::from_config(&config).unwrap(),
             clock.clone(),
