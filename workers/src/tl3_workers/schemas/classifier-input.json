@@ -13,7 +13,11 @@
         "body": {
           "type": "string"
         },
-        "delegated_by": {"type": "string", "minLength": 1, "maxLength": 1000}
+        "delegated_by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
       },
       "required": [
         "author",

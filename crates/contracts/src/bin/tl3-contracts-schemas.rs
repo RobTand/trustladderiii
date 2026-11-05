@@ -1,4 +1,4 @@
-//! Write the JSON Schemas generated from `tl3_controller::contracts` (#741).
+//! Write the JSON Schemas generated from `tl3_contracts` (#741).
 //!
 //! tl3-contracts-schemas [--check] [--root DIR]
 //!
@@ -8,7 +8,7 @@
 
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
-const FIX: &str = "bazel run --config=remote //crates/controller:tl3-contracts-schemas";
+const FIX: &str = "bazel run --config=remote //crates/contracts:tl3-contracts-schemas";
 
 fn main() -> ExitCode {
     let mut check = false;
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
         .or_else(|| env::var_os("BUILD_WORKSPACE_DIRECTORY").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let mut stale = vec![];
-    for file in tl3_controller::contracts::generated() {
+    for file in tl3_contracts::generated() {
         let path = root.join(&file.path);
         if fs::read_to_string(&path).ok().as_deref() == Some(file.text.as_str()) {
             continue;
