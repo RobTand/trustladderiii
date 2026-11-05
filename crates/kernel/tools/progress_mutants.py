@@ -11,20 +11,20 @@ import tempfile
 
 CASES = [
     ('command_id', 'lib.rs', 'self.last_cmd.checked_add(1)', 'self.last_cmd.checked_add(0)'),
-    ('credit_balance', 'lib.rs', 'if self.withheld {\n                0', 'if false {\n                0'),
-    ('credit_ledger', 'lib.rs',
+    ('credit_balance', 'credit_methods.rs', 'if self.withheld {\n                0', 'if false {\n                0'),
+    ('credit_ledger', 'credit_methods.rs',
      'self.start as i128 + self.earned as i128 + self.added as i128 - self.spent as i128',
      'self.start as i128 + self.earned as i128 - self.spent as i128'),
-    ('credit_spend', 'lib.rs', 'self.spent += cost;', 'self.spent += cost + 1;'),
-    ('credit_topup', 'lib.rs', 'self.added += short as u64;', 'self.added += 0;'),
-    ('agenda', 'lib.rs', 'Phase::Unplanned => &[I::Admit],', 'Phase::Unplanned => &[],'),
-    ('phase_rank', 'lib.rs', 'Phase::Unplanned => 28,', 'Phase::Unplanned => 27,'),
-    ('distance', 'ranks.rs', 'd += 8;', 'd += 7;'),
-    ('pending_rank', 'ranks.rs', 'return 3;', 'return 2;'),
-    ('sum_update', 'ranks.rs',
+    ('credit_spend', 'credit_methods.rs', 'self.spent += cost;', 'self.spent += cost + 1;'),
+    ('credit_topup', 'credit_methods.rs', 'self.added += short as u64;', 'self.added += 0;'),
+    ('agenda', 'agenda_methods.rs', 'Phase::Unplanned => &[I::Admit],', 'Phase::Unplanned => &[],'),
+    ('phase_rank', 'agenda_methods.rs', 'Phase::Unplanned => 28,', 'Phase::Unplanned => 27,'),
+    ('distance', 'ranks/node_ranks.rs', 'd += 8;', 'd += 7;'),
+    ('pending_rank', 'ranks/node_ranks.rs', 'return 3;', 'return 2;'),
+    ('sum_update', 'rank_sums.rs',
      'node_total(nodes.drop_last()) + distance(nodes.last())',
      'node_total(nodes.drop_last()) + 0'),
-    ('credit_deposit', 'lib.rs', 'self.added += deposit as u64;', 'self.added += 0;'),
+    ('credit_deposit', 'credit_methods.rs', 'self.added += deposit as u64;', 'self.added += 0;'),
     ('phase_generation', 'lib.rs', 'm.generation += 1;', 'm.generation += 0;', 'set_phase'),
     ('merge_credit', 'lib.rs', 'm.credit.earned += 1;', 'm.credit.earned += 0;', 'merge_credit'),
     ('effect_sequence', 'lib.rs', 'm.next_seq += 1;', 'm.next_seq += 0;', 'emit_node'),
@@ -48,7 +48,7 @@ CASES = [
     ('settle_admit', 'ranks.rs', 'set_phase(m, Phase::Planning { must_split: false });',
      'let _ = m;', 'advance_admit'),
     ('settle_slot', 'ranks.rs', 'take_ticket_node(node, next_ticket);',
-     'let _ = next_ticket;', 'advance_slot'),
+     'let _ = next_ticket;', 'advance_slot_update'),
     ('settle_release', 'ranks.rs', 'm.pos += 1;', 'm.pos += 0;', 'advance_release'),
     ('settle_teardown', 'ranks.rs', 'm.pos += 1;', 'm.pos += 0;', 'advance_teardown'),
     ('settle_idle', 'ranks.rs', 'false', 'true', 'advance_idle'),
@@ -64,7 +64,7 @@ CASES = [
     ('headroom_open_count', 'headroom.rs',
      'if !self.nodes[index].phase.is_closed()',
      'if self.nodes[index].phase.is_closed()', 'counter_exhaustion'),
-    ('potential_sum', 'ranks.rs',
+    ('potential_sum', 'rank_sums.rs',
      '+ potential(nodes[end as int - 1])', '+ 0'),
     ('pool_count', 'lib.rs', 'runs += 1;', 'runs += 0;', 'pool_free'),
     ('admission_count', 'lib.rs', 'waiting += 1;', 'waiting += 0;', 'admits'),
@@ -147,11 +147,11 @@ def main():
         raise SystemExit('baseline did not verify; mutant rejection would be ambiguous')
     for name, filename, old, new, *scope in CASES:
         if scope:
-            owners = [path for path in (kernel / 'src').glob('*.rs')
+            owners = [path for path in (kernel / 'src').rglob('*.rs')
                       if f'fn {scope[0]}(' in path.read_text()]
             if len(owners) != 1:
                 raise SystemExit(f'{name}: function must have exactly one executable owner')
-            filename = owners[0].name
+            filename = str(owners[0].relative_to(kernel / 'src'))
         if args.case and name not in args.case:
             continue
         with tempfile.TemporaryDirectory(prefix=f't771-{name}-') as scratch:
@@ -178,7 +178,7 @@ def main():
             selected = None
             if scope and not args.full_mutants:
                 module = 'kernel' if filename in {'lib.rs', 'headroom.rs'} else (
-                    'kernel::' + Path(filename).stem)
+                    'kernel::' + str(Path(filename).with_suffix('')).replace('/', '::'))
                 selected = (module, scope[0])
             result = verify(args.verifier, args.sysroot, copy / 'verus/progress.rs', selected)
             print(f'CASE {name} source_sha256={digest} target={selected} '

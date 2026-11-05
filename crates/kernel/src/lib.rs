@@ -33,7 +33,23 @@ mod ranks;
 use ranks::advance_node;
 #[cfg(verus_keep_ghost)]
 use ranks::*;
+mod agenda_methods;
+mod credit_methods;
+use agenda_methods::*;
+#[cfg(verus_keep_ghost)]
+mod world_lemmas;
+#[cfg(verus_keep_ghost)]
+use world_lemmas::*;
+#[cfg(verus_keep_ghost)]
+mod rank_sums;
+#[cfg(verus_keep_ghost)]
+use rank_sums::*;
+#[cfg(verus_keep_ghost)]
+mod rank_frames;
+#[cfg(verus_keep_ghost)]
+use rank_frames::*;
 mod gate_transition;
+mod phase_methods;
 use gate_transition::*;
 
 mod checking;
@@ -198,25 +214,6 @@ pub enum EarlyEnd {
     NotActionable,
 }
 
-impl EarlyEnd {
-    kernel_fn! {
-    /// Ingest early-end rows / #771: preserve the recorded terminal outcome.
-    pub fn outcome(self) -> (result: Outcome) [
-        ensures result == match self {
-            EarlyEnd::Duplicate => Outcome::Duplicate,
-            EarlyEnd::AlreadyDone => Outcome::AlreadyDone,
-            EarlyEnd::NotActionable => Outcome::NotActionable,
-        },
-    ] {
-        match self {
-            EarlyEnd::Duplicate => Outcome::Duplicate,
-            EarlyEnd::AlreadyDone => Outcome::AlreadyDone,
-            EarlyEnd::NotActionable => Outcome::NotActionable,
-        }
-    }
-    }
-}
-
 /// The holding phase a leaf waiting in Ready goes back to.
 #[cfg_attr(
     all(feature = "serde", not(kani)),
@@ -232,22 +229,6 @@ pub enum Resume {
     Reviewing,
     Publishing,
     Rebasing,
-}
-
-impl Resume {
-    kernel_fn! {
-        pub fn phase(self) -> (result: Phase) [
-            ensures result == resumed_phase(self),
-        ] {
-            match self {
-                Resume::Making => Phase::Making,
-                Resume::Checking => Phase::Checking,
-                Resume::Reviewing => Phase::Reviewing,
-                Resume::Publishing => Phase::Publishing,
-                Resume::Rebasing => Phase::Rebasing,
-            }
-        }
-    }
 }
 
 #[cfg_attr(
@@ -273,83 +254,6 @@ pub enum Phase {
     AwaitingRob,
     Stopping(Outcome),
     Closed(Outcome),
-}
-
-impl Phase {
-    kernel_fn! {
-        /// The phases in which a leaf holds a slot and its files.
-        pub fn holding(self) -> (result: bool) [
-            ensures result == holding(self),
-        ] {
-            matches!(
-                self,
-                Phase::Making
-                    | Phase::Checking
-                    | Phase::Reviewing
-                    | Phase::Publishing
-                    | Phase::Queued
-                    | Phase::Rebasing
-            )
-        }
-    }
-
-    kernel_fn! {
-        /// Where a holding leaf picks up again after waiting in Ready.
-        pub fn resume(self) -> (result: Option<Resume>) [
-            ensures result == match self {
-                Phase::Making => Some(Resume::Making),
-                Phase::Checking => Some(Resume::Checking),
-                Phase::Reviewing => Some(Resume::Reviewing),
-                Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
-                Phase::Rebasing => Some(Resume::Rebasing),
-                _ => None,
-            },
-        ] {
-            match self {
-                Phase::Making => Some(Resume::Making),
-                Phase::Checking => Some(Resume::Checking),
-                Phase::Reviewing => Some(Resume::Reviewing),
-                Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
-                Phase::Rebasing => Some(Resume::Rebasing),
-                _ => None,
-            }
-        }
-    }
-
-    kernel_fn! {
-        pub fn is_closed(self) -> (result: bool) [
-            ensures result == (self is Closed),
-        ] {
-            matches!(self, Phase::Closed(_))
-        }
-    }
-
-    kernel_fn! {
-        fn is_stopping(self) -> (result: bool) [
-            ensures result == (self is Stopping),
-        ] {
-            matches!(self, Phase::Stopping(_))
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Phase::Ingesting => "Ingesting",
-            Phase::Auditing => "Auditing",
-            Phase::Unplanned => "Unplanned",
-            Phase::Planning { .. } => "Planning",
-            Phase::Ready(_) => "Ready",
-            Phase::Making => "Making",
-            Phase::Checking => "Checking",
-            Phase::Reviewing => "Reviewing",
-            Phase::Publishing => "Publishing",
-            Phase::Queued => "Queued",
-            Phase::Rebasing => "Rebasing",
-            Phase::AwaitingRob => "AwaitingRob",
-            Phase::Stopping(_) => "Stopping",
-            Phase::Closed(_) => "Closed",
-        }
-    }
 }
 
 #[cfg_attr(
@@ -394,21 +298,6 @@ pub enum EffectKind {
     ClosePr,
     /// Remove the worktree, then delete the branch.
     RemoveWorktree,
-}
-
-impl EffectKind {
-    kernel_fn! {
-        /// Effects that start an operation. The operation's reply moves the node on.
-        fn starts_operation(self) -> (result: bool) [
-            ensures result == matches!(self, EffectKind::StartRun(_)
-                | EffectKind::SubmitChecks | EffectKind::StartRebase),
-        ] {
-            matches!(
-                self,
-                EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase
-            )
-        }
-    }
 }
 
 /// The one effect a node may have in flight.
@@ -521,118 +410,6 @@ pub struct Credit {
     /// Declared prerequisites withhold the ledger until planning admission.
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub withheld: bool,
-}
-
-impl Credit {
-    kernel_fn! {
-        pub fn balance(&self) -> (balance: i128) [
-            ensures balance as int == if self.withheld { 0int } else {
-                self.start as int + self.earned as int + self.added as int - self.spent as int
-            },
-        ] {
-            if self.withheld {
-                0
-            } else {
-                self.ledger_balance()
-            }
-        }
-    }
-
-    kernel_fn! {
-        fn ledger_balance(&self) -> (balance: i128) [
-            ensures balance as int == self.start as int + self.earned as int
-                + self.added as int - self.spent as int,
-        ] {
-            self.start as i128 + self.earned as i128 + self.added as i128 - self.spent as i128
-        }
-    }
-
-    kernel_fn! {
-    /// Q18 / #771: compare spendable credit, including dependency withholding.
-    fn can_spend(&self, cost: u64) -> (result: bool) [
-        ensures result == (!self.withheld && self.start as int + self.earned as int
-            + self.added as int >= self.spent as int + cost as int
-            || self.withheld && cost == 0),
-    ] {
-        self.balance() >= cost as i128
-    }
-    }
-
-    kernel_fn! {
-        /// State-table credit ledger: one unit per paid retry or continuation.
-        fn spend(&mut self, cost: u64) -> (result: ()) [
-            requires old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures final(self).spent as int == old(self).spent as int + cost as int,
-                final(self).start == old(self).start,
-                final(self).earned == old(self).earned,
-                final(self).added == old(self).added,
-                final(self).withheld == old(self).withheld,
-                *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
-        ] {
-            self.spent += cost;
-        }
-    }
-
-    kernel_fn! {
-        /// State-table credit ledger: Rob's answers top up the shortfall first.
-        /// #771: consistent ledgers are nonnegative; withholding permits only
-        /// zero-cost continuations. Hence automatic top-up adds at most cost.
-        fn pay(&mut self, cost: u64) -> (result: ()) [
-            requires
-                old(self).start as int + old(self).earned as int + old(self).added as int
-                    >= old(self).spent as int,
-                old(self).withheld ==> cost == 0,
-                old(self).added as int + (if cost as int > (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) { cost as int - (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) } else { 0int }) <= u64::MAX as int,
-                old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures
-                final(self).added as int == old(self).added as int + (if cost as int > (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) { cost as int - (old(self).start as int + old(self).earned as int + old(self).added as int - old(self).spent as int) } else { 0int }),
-                final(self).ready == old(self).ready,
-                final(self).merge_credited == old(self).merge_credited,
-                final(self).added as int >= old(self).added as int,
-                final(self).added as int <= old(self).added as int + cost as int,
-                final(self).spent as int == old(self).spent as int + cost as int,
-                final(self).start == old(self).start,
-                final(self).earned == old(self).earned,
-                final(self).withheld == old(self).withheld,
-                final(self).start as int + final(self).earned as int + final(self).added as int
-                    >= final(self).spent as int,
-        ] {
-            let short = cost as i128 - self.balance();
-            if short > 0 {
-                self.added += short as u64;
-            }
-            self.spent += cost;
-        }
-    }
-    kernel_fn! {
-        /// Q18 / #771: a u8 AddCredit answer and its automatic top-up together
-        /// add at most 255. Valid questions cost at most one credit.
-        fn fund_and_pay(&mut self, deposit: u8, cost: u8) -> (result: ()) [
-            requires cost <= 1,
-                old(self).start as int + old(self).earned as int + old(self).added as int
-                    >= old(self).spent as int,
-                old(self).withheld ==> cost == 0,
-                old(self).added as int + 255 <= u64::MAX as int,
-                old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures final(self).added as int >= old(self).added as int,
-                final(self).added as int <= old(self).added as int + 255,
-                final(self).spent as int == old(self).spent as int + cost as int,
-                final(self).start == old(self).start, final(self).earned == old(self).earned,
-                final(self).ready == old(self).ready, final(self).withheld == old(self).withheld,
-                final(self).merge_credited == old(self).merge_credited,
-                final(self).start as int + final(self).earned as int + final(self).added as int
-                    >= final(self).spent as int,
-                final(self).added as int == old(self).added as int + deposit as int
-                    + if cost as int > old(self).start as int + old(self).earned as int
-                        + old(self).added as int + deposit as int - old(self).spent as int {
-                        cost as int - (old(self).start as int + old(self).earned as int
-                            + old(self).added as int + deposit as int - old(self).spent as int)
-                    } else { 0int },
-        ] {
-            self.added += deposit as u64;
-            self.pay(cost as u64);
-        }
-    }
 }
 
 #[cfg_attr(
@@ -1339,93 +1116,6 @@ enum Item {
 const RELEASE_STEP: u8 = 3;
 
 kernel_fn! {
-    fn agenda(phase: Phase) -> (result: &'static [Item]) [
-        ensures result@ == items(phase), result.len() <= 5,
-    ] {
-        use EffectKind as K;
-        use Item as I;
-        match phase {
-            Phase::Ingesting => &[I::Start(Role::Ingest), I::Await],
-            Phase::Auditing => &[I::Start(Role::Audit), I::Await],
-            Phase::Unplanned => &[I::Admit],
-            Phase::Planning { .. } => &[I::Start(Role::Plan), I::Await],
-            Phase::Ready(_) => &[I::Slot],
-            Phase::Making => &[I::Do(K::PrepareWorktree), I::Start(Role::Make), I::Await],
-            Phase::Checking => &[I::StartChecks, I::Await],
-            Phase::Reviewing => &[I::Start(Role::Review), I::Await],
-            Phase::Publishing => &[
-                I::Do(K::Push),
-                I::Do(K::PostApproval),
-                I::Do(K::OpenPr),
-                I::Do(K::Enqueue),
-            ],
-            Phase::Queued => &[I::Merge],
-            Phase::Rebasing => &[I::StartRebase, I::Await],
-            Phase::AwaitingRob => &[I::Answer],
-            Phase::Stopping(_) => &[
-                I::Teardown(K::StopRun),
-                I::Teardown(K::WithdrawJob),
-                I::Teardown(K::ClosePr),
-                I::Release,
-                I::Teardown(K::RemoveWorktree),
-            ],
-            Phase::Closed(_) => &[],
-        }
-    }
-}
-
-kernel_fn! {
-/// #771: a retried run starts at its original operation agenda entry.
-fn operation_start(phase: Phase) -> (result: u8) [
-    ensures result == if phase == Phase::Making { 1u8 } else { 0u8 },
-] {
-    match phase {
-        Phase::Making => 1,
-        _ => 0,
-    }
-}
-}
-
-kernel_fn! {
-    fn rank(phase: Phase) -> (result: u64) [
-        ensures result as int == phase_rank(phase), result <= 32,
-        decreases if phase is Ready { 1nat } else { 0nat },
-    ] {
-        match phase {
-            Phase::Closed(_) => 0,
-            Phase::Stopping(_) => 2,
-            Phase::Queued => 4,
-            Phase::Publishing => 6,
-            Phase::Reviewing => 10,
-            Phase::Checking => 14,
-            Phase::Rebasing => 18,
-            Phase::Making => 22,
-            Phase::Ready(r) => rank(r.phase()) + 2,
-            Phase::Planning { .. } => 26,
-            Phase::Unplanned => 28,
-            Phase::Auditing => 30,
-            Phase::Ingesting => 32,
-            Phase::AwaitingRob => 3,
-        }
-    }
-}
-
-kernel_fn! {
-    fn cont_rank(cont: Cont) -> (result: u64) [
-        ensures result as int == continuation_rank(cont), result <= 32,
-    ] {
-        match cont {
-            Cont::Ingesting => 32,
-            Cont::Auditing => 30,
-            Cont::Unplanned => 28,
-            Cont::Planning { .. } => 26,
-            Cont::Ready(r) => rank(Phase::Ready(r)),
-            Cont::Stop(_) | Cont::Nowhere => 2,
-        }
-    }
-}
-
-kernel_fn! {
     fn notice(out: &mut Outbox, node: usize, value: Notice) -> (result: ()) [
     requires old(out).len < OUTBOX,
     ensures final(out).len == old(out).len + 1,
@@ -1757,15 +1447,6 @@ pub closed spec fn world_checked(w: World) -> bool {
         && dependencies::dependencies_checked(w)
 }
 
-/// #805: the production checker projection, exposed to its proof modules.
-proof fn world_checked_definition(w: World)
-    ensures world_checked(w) == (w.gates@.len() > 0 && w.pool_capacity > 0
-        && (forall|j: int| 0 <= j < w.gates@.len() ==> w.gates@[j].w > 0)
-        && (forall|j: int| 0 <= j < w.nodes@.len() ==> node_checked(w, w.nodes@[j]))
-        && dependencies::dependencies_checked(w)),
-{
-    reveal(world_checked);
-}
 
 
 /// Q30/Q39 / #771: obstruction proof needs no sufficient internal move. The
@@ -1775,31 +1456,8 @@ pub closed spec fn settled_world(w: World) -> bool {
     forall|i: int| 0 <= i < w.nodes@.len() ==> !movable(w, i)
 }
 
-/// #805: the production checker projection, exposed to its proof modules.
-proof fn settled_world_definition(w: World)
-    ensures settled_world(w) == (forall|i: int| 0 <= i < w.nodes@.len() ==> !movable(w, i)),
-{
-    reveal(settled_world);
-}
 
 
-/// #771: the production checker and enforced reserves supply the step scope.
-proof fn checked_reserves(w: World)
-    requires world_checked(w), world_headroom(w), footprint::ordered_table(w),
-    ensures step_scope(w), settle_ready(w),
-{
-    reveal(world_checked);
-    reveal(world_headroom);
-    reveal(step_scope);
-    settle_reserve_totals(w.nodes@);
-    assert forall|j: int| 0 <= j < w.nodes@.len() implies
-        w.nodes@[j].generation as int + generation_capacity(w.nodes@[j]) <= u64::MAX as int
-            && w.nodes@[j].next_seq as int + effect_capacity(w.nodes@[j]) <= u64::MAX as int
-            && w.nodes@[j].credit.earned as int + merge_capacity(w.nodes@[j]) <= u64::MAX as int
-    by { local_capacities(w.nodes@[j]); }
-    open_prefix_monotone(w.nodes@, 0, w.nodes@.len());
-    reveal(open_prefix);
-}
 
 /// #771: arithmetic and storage projection of the production checker.
 /// `checked_reserves` proves this scope from `world_checked` and headroom.
@@ -1872,15 +1530,6 @@ spec fn movable(w: World, i: int) -> bool {
     })
 }
 
-/// Q30/Q39 / #771: scheduling depends on these storage views, not Vec identity.
-proof fn movable_frame(before: World, after: World, i: int)
-    requires before.nodes@ == after.nodes@, before.gates@ == after.gates@,
-        before.pool_capacity == after.pool_capacity,
-        before.dependencies@ == after.dependencies@,
-    ensures movable(before, i) == movable(after, i),
-{
-    assert(oldest_waiter(before, i) == oldest_waiter(after, i));
-}
 
 /// #771: conserved allocations and frames across the real settle loop.
 spec fn settle_chain(before: World, after: World) -> bool {

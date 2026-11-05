@@ -78,7 +78,40 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).question == old(m).question,
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
         final(m).last_cmd == old(m).last_cmd,
-] proof [reveal(distance);] {
+] {
+    confirmed_cleanup(m, kind);
+    confirmed_agenda(m, kind);
+}
+}
+
+kernel_fn! {
+/// Confirmed-effect rows / #771/#805: unchanged cleanup writes preserve the
+/// rank and agenda before confirmed_agenda consumes the matching item.
+fn confirmed_cleanup(m: &mut Node, kind: EffectKind) -> (result: ()) [
+    ensures distance(*final(m)) == distance(*old(m)),
+        current_item(*final(m)) == current_item(*old(m)),
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        kind == EffectKind::StopRun ==> !final(m).pool,
+        final(m).phase == old(m).phase,
+        final(m).pos == old(m).pos,
+        final(m).paused == old(m).paused,
+        final(m).waiting_incident == old(m).waiting_incident,
+        final(m).effect == old(m).effect,
+        final(m).question == old(m).question,
+        final(m).repo == old(m).repo,
+        final(m).footprint == old(m).footprint,
+        final(m).generation == old(m).generation,
+        final(m).next_seq == old(m).next_seq,
+        final(m).credit == old(m).credit,
+        final(m).last_cmd == old(m).last_cmd,
+        final(m).fx_failures == 0, final(m).fx_incidents == 0,
+        final(m).run == (if kind == EffectKind::StopRun { None } else { old(m).run }),
+        final(m).pool == (kind != EffectKind::StopRun && old(m).pool),
+        final(m).job == (if kind == EffectKind::WithdrawJob { None } else { old(m).job }),
+        final(m).pr_open == (kind != EffectKind::ClosePr && old(m).pr_open),
+        final(m).worktree == (kind != EffectKind::RemoveWorktree && old(m).worktree),
+] {
+    kernel_snapshot! { before_cleanup = *m }
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -91,7 +124,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
-    confirmed_agenda(m, kind);
+    kernel_proof! { distance_frame(before_cleanup@, *m); }
 }
 }
 

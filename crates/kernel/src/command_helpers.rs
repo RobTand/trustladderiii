@@ -39,7 +39,8 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
         final(m).question == old(m).question,
         final(m).phase == old(m).phase,
         final(m).last_cmd == old(m).last_cmd,
-] proof [reveal(distance);] {
+] {
+    kernel_snapshot! { before_handled = *m }
     if let Some(Item::Teardown(kind)) = m.current() {
         match kind {
             EffectKind::StopRun => {
@@ -52,6 +53,7 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
             _ => {}
         }
         m.pos += 1;
+        kernel_proof! { teardown_distance(before_handled@, *m); }
     }
 }
 }

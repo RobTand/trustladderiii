@@ -16,6 +16,12 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'split_confirmed_cleanup': ('crates/kernel/src/acknowledgements.rs',
+        '    m.fx_incidents = 0;', '    m.fx_incidents = 1;',
+        '//crates/kernel:verus_ack_confirmed_cleanup'),
+    'split_mark_handled': ('crates/kernel/src/command_helpers.rs',
+        '        m.pos += 1;', '        m.pos += 0;',
+        '//crates/kernel:verus_command_helpers'),
     'retire_upstream_stalled': ('crates/kernel/src/facts.rs',
         '    if m.phase != Phase::Queued || m.waiting_incident {\n        return;\n    }\n    m.run_incidents = (m.run_incidents + 1).min(2);',
         '    if m.phase != Phase::Queued || m.waiting_incident {\n        return;\n    }\n    m.run_incidents = m.run_incidents.min(2);',
@@ -43,11 +49,11 @@ CASES = {
     'retire_gate_grant_w2': ('crates/kernel/src/gate_transition.rs',
         '            m.holds = true;',
         '            m.holds = false;',
-        '//crates/kernel:verus_gate_transition'),
+        '//crates/kernel:verus_gate_slot_update'),
     'retire_gate_grant_w3': ('crates/kernel/src/gate_transition.rs',
         '            set_phase(m, r.phase());',
         '            let _ = r;',
-        '//crates/kernel:verus_gate_transition'),
+        '//crates/kernel:verus_gate_slot_update'),
     'selector_inventory': ('crates/kernel/src/allocation.rs',
                            'use super::*;',
                            'use super::*;\nkernel_fn! { fn selector_inventory_unlisted() '
