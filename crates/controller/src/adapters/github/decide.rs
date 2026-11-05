@@ -134,6 +134,23 @@ pub fn zero_pending_witness() -> u64 {
     recovery_cursor(0, 12, Some(0))
 }
 
+/// Anti-vacuity for every reliability/catch-up hook action.
+#[cfg(verus_keep_ghost)]
+#[vstd::prelude::verus_spec(out => ensures
+    out.0 == HookAction::Ignore,
+    out.1 == HookAction::Pending,
+    out.2 == HookAction::Delivered,
+    out.3 == HookAction::Redeliver,
+)]
+pub fn hook_witness() -> (HookAction, HookAction, HookAction, HookAction) {
+    (
+        hook_action(true, Some(500)),
+        hook_action(false, None),
+        hook_action(false, Some(204)),
+        hook_action(false, Some(503)),
+    )
+}
+
 #[cfg(verus_keep_ghost)]
 fn main() {}
 #[cfg(not(verus_keep_ghost))]

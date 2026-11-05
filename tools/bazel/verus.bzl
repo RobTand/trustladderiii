@@ -193,7 +193,7 @@ def verus_proofs():
             name = "verus_github_reconciliation",
             src = "src/adapters/github/decide.rs",
             srcs = ["src/adapters/github/decide.rs"],
-            expected_obligations = 9,
+            expected_obligations = 10,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
