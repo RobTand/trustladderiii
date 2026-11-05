@@ -26,8 +26,8 @@ try:
         from kani_gate import INSTALL_KANI
         run('bash', '-c', INSTALL_KANI.split('if [ "$(cargo-kani')[0])
     run('bash', 'tools/bazel/generate.sh')
-    python = subprocess.check_output(['uv', 'python', 'find', '3.14'], text=True).strip()
-    run(python, 'crates/controller/tools/redaction_policy.py')
+    run('bazel', 'run', '--config=remote', '--jobs=16', '//crates/controller:tl3', '--',
+        'redaction-policy', '--check', 'crates/controller/src/redaction/policy.json')
 finally:
     artifact = Path(os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY'], 'wr3-generated.patch')
     with artifact.open('w') as output:

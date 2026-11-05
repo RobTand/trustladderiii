@@ -1,4 +1,4 @@
-use crate::contracts::inputs::{self as wire, value as input_value};
+use crate::contracts::inputs::{self as wire, WirePath as _, value as input_value};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -111,9 +111,9 @@ impl Writer for ProcessWriter {
                 effort: model.effort.map(str::to_owned),
                 budget_tokens: model.budget_tokens.into(),
             },
-            self.config.models.key_file.to_string_lossy().into_owned(),
+            self.config.models.key_file.wire_path()?,
             wire::RoleInput::Writer(serde_json::from_value(input_value(input)?)?),
-            root.to_string_lossy().into_owned(),
+            root.wire_path()?,
         );
         request.trace = Some(serde_json::from_value(trace)?);
         let mut request = input_value(request)?;

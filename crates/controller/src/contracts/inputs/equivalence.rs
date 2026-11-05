@@ -124,7 +124,7 @@ fn old_and_typed_request_corpus_is_byte_identical() {
             ("goals", json!([{"id":"g1","description":text}])),
             ("review_fixes",json!({"head_sha":repo.head,"reviewed_sha":repo.base,
                 "findings":[{"id":"f1","report":text,"reason":"No valid assertion proof"}]}))]);
-        snapshot.rows.push(tl3_store::WorldRow { table:"check_reports".into(), id:format!("0:{}",repo.head),
+        snapshot.rows.push(tl3_store::WorldRow { version: snapshot.revision, arrival: 0, table:"check_reports".into(), id:format!("0:{}",repo.head),
             value:json!({"base_sha":repo.base,"selected_failures":[],"results":[{
                 "name":"regressions","kind":"regression","verdict":"pass","custody":"in-process",
                 "tests":[{"test":"test_a.py","base":"passed","head":"passed","pre_existing":false,"passed":true}]
@@ -169,4 +169,53 @@ fn schedule_documents(store: &mut Store, values: &[(&str, Value)]) -> Snapshot {
         .collect();
     store.commit(&commit).unwrap();
     store.load().unwrap()
+}
+
+/// #730 extraction equivalence: keep every store/clock/Git/checkpoint observation
+/// and material write in source order, in addition to the executable corpus.
+#[test]
+fn sampling_sites_and_material_writes_keep_their_order() {
+    fn calls(source: &str) -> Vec<String> {
+        let pattern = regex::Regex::new(r"(?:\.|::)\s*(worker_document|worker_materials|put_worker_materials|postmortem|code_grades|phase_history|now|exists|merge_base|diff|tree|changed_paths_since_merge_base|branch_state|is_ancestor|load|candidates|recall)\s*\(").unwrap();
+        pattern
+            .captures_iter(source)
+            .map(|call| call[1].to_owned())
+            .collect()
+    }
+    fn function<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let source = &source[source.find(start).unwrap()..];
+        &source[..source.find(end).unwrap()]
+    }
+    let workers = include_str!("../../adapters/workers.rs");
+    let review = include_str!("../../adapters/workers/review.rs");
+    let postmortem = include_str!("../../postmortems.rs");
+    let steering = include_str!("../../steering.rs");
+    for (name, old, new) in [
+        (
+            "request",
+            include_str!("reference/workers_before.rs"),
+            function(workers, "    fn build_request(", "    /// The step"),
+        ),
+        (
+            "review",
+            include_str!("reference/review_before.rs"),
+            function(review, "pub(super) fn inputs(", "pub(crate) fn criteria("),
+        ),
+        (
+            "postmortem",
+            include_str!("reference/postmortem_before.rs"),
+            function(postmortem, "pub(crate) fn case_file(", "/// Case-file"),
+        ),
+        (
+            "classifier",
+            include_str!("reference/steering_before.rs"),
+            steering,
+        ),
+    ] {
+        assert_eq!(
+            calls(old),
+            calls(new),
+            "{name} changed an I/O sampling point or write order"
+        );
+    }
 }

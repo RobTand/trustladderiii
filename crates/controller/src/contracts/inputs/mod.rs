@@ -201,3 +201,14 @@ pub struct CurrentFinding {
     pub id: Value,
     pub reviewed_sha: Value,
 }
+
+/// Use Path's serde implementation, including its refusal of non-UTF-8 paths.
+/// Lossy display conversion would silently change request identity.
+pub trait WirePath {
+    fn wire_path(&self) -> Result<String, serde_json::Error>;
+}
+impl<T: AsRef<std::path::Path>> WirePath for T {
+    fn wire_path(&self) -> Result<String, serde_json::Error> {
+        serde_json::from_value(value(self.as_ref())?)
+    }
+}

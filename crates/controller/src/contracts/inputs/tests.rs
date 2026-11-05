@@ -83,3 +83,117 @@ proptest::proptest! {
         proptest::prop_assert!(crate::adapters::workers::protocol::classifier_schema(&document, false).is_ok());
     }
 }
+
+include!(concat!(env!("OUT_DIR"), "/worker_schemas.rs"));
+
+fn input_validator(role: &str) -> &'static jsonschema::Validator {
+    static VALIDATORS: std::sync::OnceLock<
+        std::collections::BTreeMap<String, jsonschema::Validator>,
+    > = std::sync::OnceLock::new();
+    &VALIDATORS.get_or_init(|| {
+        let mut documents = PACKAGED_SCHEMAS
+            .iter()
+            .map(|(name, text)| {
+                (
+                    (*name).to_owned(),
+                    serde_json::from_str::<Value>(text).unwrap(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for file in crate::contracts::generated() {
+            documents.insert(
+                file.path.rsplit('/').next().unwrap().to_owned(),
+                serde_json::from_str(&file.text).unwrap(),
+            );
+        }
+        let mut registry = jsonschema::Registry::new();
+        for (name, document) in &documents {
+            registry = registry
+                .add(
+                    format!("{}{name}", crate::contracts::SCHEMA_BASE),
+                    document.clone(),
+                )
+                .unwrap();
+        }
+        let registry = registry.prepare().unwrap();
+        documents
+            .into_iter()
+            .filter(|(name, _)| name.ends_with("-input.json"))
+            .map(|(name, document)| {
+                (
+                    name,
+                    jsonschema::options()
+                        .with_registry(&registry)
+                        .build(&document)
+                        .unwrap(),
+                )
+            })
+            .collect()
+    })[&format!("{role}-input.json")]
+}
+
+fn request_input_corpus(text: &str, count: u64) -> Vec<(&'static str, Value)> {
+    let issue = json!({"number":count,"title":text,"body":text,"author":"requester","comments":[]});
+    let repo = json!({"readme":text,"file_list":["README.md"]});
+    let brief = json!({"kind":"brief","brief":text,"goals":[{"description":text}],"memory_ids":[]});
+    let goals = json!([{"id":"g1","description":text}]);
+    let forecast =
+        json!({"fit_tokens":count,"context_tokens":count+1000,"overhead_tokens":{"fixture":0}});
+    let sha = "a".repeat(40);
+    vec![
+        ("ingest", json!({"issue":issue,"repo":repo})),
+        ("audit", json!({"issue":issue,"repo":repo,"ingest":brief})),
+        (
+            "planner",
+            json!({"must_split":false,"findings":[text],"protected_paths":[],"ingest":brief,"forecast":forecast}),
+        ),
+        (
+            "maker",
+            json!({"brief":text,"goals":goals,"plan":{"files":["README.md"],"checks":[{
+            "name":text,"kind":"regression","tests":["test_a.py"],"goal_ids":["g1"]}]},
+            "attempt":1,"round":0,"tests":{"image":format!("sha256:{}","a".repeat(64)),"tools_path":"/fixture"},"context_size":count}),
+        ),
+        (
+            "reviewer",
+            json!({"goals":goals,"base_sha":sha,"head_sha":sha,"diff":text,"checks":[],"standing_rules":[]}),
+        ),
+        (
+            "writer",
+            json!({"kind":"note","facts":{"issue_title":text,"request":text,"change":text}}),
+        ),
+        (
+            "classifier",
+            json!({"comment":{"author":"requester","body":text},"state":{"phase":"Planning","closed":false}}),
+        ),
+        (
+            "postmortem",
+            json!({"record":{"id":count,"trigger":"close","reason":"sampled"},
+            "case":{"request":{},"outcome":text,"grades":[],"phases":[],"questions":[],"incidents":[],"release":text},
+            "rubric":{"version":1,"dimensions":{}},"release":text,"grade_model":text,"deadline_secs":count,
+            "trace_tags":{"node":count.to_string(),"request":count.to_string(),"repo":"owner/repo","issue":count.to_string()}}),
+        ),
+    ]
+}
+
+proptest::proptest! {
+    /// #730 C1/C2, #658/#663: every role and complete request preserves old json!
+    /// wire bytes, validates against Rust-generated schemas and round-trips.
+    #[test]
+    fn all_typed_role_inputs_round_trip(text in "[a-zA-Z0-9é]{1,64}", count in 1u64..1000) {
+        for (role, old_input) in request_input_corpus(&text, count) {
+            let typed = RoleInput::parse(role, old_input.clone()).unwrap();
+            let document = value(&typed).unwrap();
+            proptest::prop_assert_eq!(serde_json::to_vec(&document).unwrap(), serde_json::to_vec(&old_input).unwrap(), "{}", role);
+            let validator = input_validator(role);
+            let errors = validator.iter_errors(&document).map(|e| e.to_string()).collect::<Vec<_>>();
+            proptest::prop_assert!(errors.is_empty(), "{}: {:?}", role, errors);
+            let parsed = RoleInput::parse(role, document.clone()).unwrap();
+            proptest::prop_assert_eq!(parsed, typed);
+            let old_request = json!({"protocol":1,"operation":{"node":0,"generation":count,"kind":role},
+                "role":role,"model":{"base_url":"https://model.invalid/v1","name":"fixture","effort":null,"budget_tokens":count},
+                "key_file":"/fixture/key","inputs":old_input,"worktree":"/fixture/worktree"});
+            let request: WorkerRequest = serde_json::from_value(old_request.clone()).unwrap();
+            proptest::prop_assert_eq!(serde_json::to_vec(&value(request).unwrap()).unwrap(), serde_json::to_vec(&old_request).unwrap());
+        }
+    }
+}

@@ -302,7 +302,7 @@ impl Supervisor {
         store: &mut Store,
         snapshot: &Snapshot,
     ) -> Result<Value> {
-        use crate::contracts::inputs::{self as wire, value};
+        use crate::contracts::inputs::{self as wire, WirePath as _, value};
         let node = delivery.node().0.to_string();
         let review_restarted = role == "reviewer"
             && crate::snapshot::decode(snapshot)?.nodes[delivery.node().0 as usize]
@@ -462,7 +462,7 @@ impl Supervisor {
                 self.images
                     .for_repository(&delivery.repository, &self.tests.container_image)
                     .to_owned(),
-                self.tests.tools_dir.to_string_lossy().into_owned(),
+                self.tests.tools_dir.wire_path()?,
             ))?;
             let demand = self
                 .images
@@ -548,7 +548,7 @@ impl Supervisor {
                 self.images
                     .for_repository(&delivery.repository, &self.tests.container_image)
                     .to_owned(),
-                self.tests.tools_dir.to_string_lossy().into_owned(),
+                self.tests.tools_dir.wire_path()?,
             );
             tests.cpus = Some(demand.cpus.into());
             tests.mem_gb = Some(demand.mem_gb.into());
@@ -698,9 +698,9 @@ impl Supervisor {
                 effort: model.effort.map(str::to_owned),
                 budget_tokens: model.budget_tokens.into(),
             },
-            self.models.key_file.to_string_lossy().into_owned(),
+            self.models.key_file.wire_path()?,
             inputs,
-            worktree.to_string_lossy().into_owned(),
+            worktree.wire_path()?,
         );
         request.test_cpus = Some(test_cpus.into());
         request.silence_secs = Some(self.silence_secs.into());
@@ -709,7 +709,8 @@ impl Supervisor {
             self.hindsight
                 .api_key_file
                 .as_ref()
-                .map(|path| path.to_string_lossy().into_owned()),
+                .map(|path| path.wire_path())
+                .transpose()?,
         );
         request.trace = Some(
             wire::Trace::new(
@@ -743,7 +744,7 @@ impl Supervisor {
                 .join(&node)
                 .join(format!("plan-{}", u8::from(delivery.replanned)))
                 .join(format!("attempt-{}.json", delivery.attempt));
-            request.session_file = Some(session_file.to_string_lossy().into_owned());
+            request.session_file = Some(session_file.wire_path()?);
             let session = store
                 .worker_document(&node, "maker_session")?
                 .filter(|session| {
@@ -767,8 +768,7 @@ impl Supervisor {
                     .join(&node)
                     .join(format!("plan-{}", u8::from(delivery.replanned)))
                     .join("planner-rehearsals.json")
-                    .to_string_lossy()
-                    .into_owned(),
+                    .wire_path()?,
             );
         } else if role == "reviewer" {
             request.session_file = Some(
@@ -782,8 +782,7 @@ impl Supervisor {
                     } else {
                         format!("reviewer-attempt-{}.json", delivery.attempt)
                     })
-                    .to_string_lossy()
-                    .into_owned(),
+                    .wire_path()?,
             );
             // Even a retired conversation's checkpoint has an accepted generation.
             // Keep it from being mistaken for an unaccepted retry on a new head.
@@ -1782,6 +1781,9 @@ mod release_tests {
         );
     }
 }
+
+#[cfg(test)]
+use super::worktrees;
 
 #[cfg(test)]
 #[path = "../contracts/inputs/equivalence.rs"]
