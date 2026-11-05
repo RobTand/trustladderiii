@@ -78,7 +78,7 @@ CASES = [
      'd.rejected || d.status != DependencyStatus::Delivered',
      'd.rejected && d.status != DependencyStatus::Delivered', 'dependencies_delivered'),
     ('reply_ingest_budget', 'lib.rs', 'm.credit.start = size as u32 + RESERVE;',
-     'm.credit.start = size as u32 + RESERVE + 259;', 'reply_ingest'),
+     'm.credit.start = size as u32 + RESERVE + 259;', 'finish_ingest_node'),
     ('reply_plan_budget', 'lib.rs', 'set_phase(m, Phase::Ready(Resume::Making));',
      'set_phase(m, Phase::Ready(Resume::Making)); m.generation += 1;', 'reply_plan'),
     ('reply_work_budget', 'lib.rs', 'm.credit.spend(1);',
@@ -146,6 +146,9 @@ def main():
     ):
         raise SystemExit('baseline did not verify; mutant rejection would be ambiguous')
     for name, filename, old, new, *scope in CASES:
+        if filename == 'lib.rs' and old not in (kernel / 'src/lib.rs').read_text():
+            if old in (kernel / 'src/events.rs').read_text():
+                filename = 'events.rs'
         if args.case and name not in args.case:
             continue
         with tempfile.TemporaryDirectory(prefix=f't771-{name}-') as scratch:
@@ -171,7 +174,8 @@ def main():
             # that body against its contract; unscoped seeds still recheck all.
             selected = None
             if scope and not args.full_mutants:
-                module = {'ranks.rs': 'kernel::ranks',
+                module = {'events.rs': 'kernel::events',
+                          'ranks.rs': 'kernel::ranks',
                           'dependencies.rs': 'kernel::dependencies',
                           'footprint.rs': 'kernel::footprint'}.get(filename, 'kernel')
                 selected = (module, scope[0])
