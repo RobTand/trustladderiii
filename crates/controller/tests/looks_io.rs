@@ -82,7 +82,7 @@ mod postmortems {
 mod snapshot {
     use super::*;
     pub fn decode(_: &Snapshot) -> Result<World> {
-        Ok(World::new(&[1], 1))
+        Ok(io::world())
     }
 }
 fn ended_effect_look(_: &Snapshot, _: &World, _: &Delivery) -> bool {
@@ -211,7 +211,7 @@ macro_rules! controller {
                 })
             }
             fn observe(&self, key: &str, o: Observation) -> Result<()> {
-                io::write("observe", json!([key, o]), |_| {})
+                io::observe(key, o)
             }
             fn look_observations_stub(&self) {}
             fn queue_observation(
@@ -233,7 +233,7 @@ macro_rules! controller {
             }
             fn world(&self) -> Result<World> {
                 io::read("world", Value::Null)?;
-                Ok(World::new(&[1], 1))
+                Ok(io::world())
             }
             fn complete(&self, key: &str, c: Completion) -> Result<()> {
                 io::write("complete", json!([key, c]), |_| {})
@@ -262,7 +262,9 @@ macro_rules! controller {
         ) -> Result<()> {
             let mut c = Controller::new();
             match entry {
-                io::Entry::Failed(code) => c.look_failed(state, io::error(code)),
+                io::Entry::Failed(code) | io::Entry::FailedOther(code) => {
+                    c.look_failed(state, io::error(code))
+                }
                 io::Entry::State => c.look_state(s, state, io::now()),
                 io::Entry::Alive(changed) => c.look_alive(state, changed).map(|_| ()),
                 io::Entry::Probe => c.probe_passed(Some(state), state.incident.as_deref()),

@@ -6,6 +6,7 @@ use std::{
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Entry {
     Failed(u8),
+    FailedOther(u8),
     State,
     Alive(bool),
     Probe,
@@ -49,6 +50,7 @@ pub(super) struct Recording {
     writes: usize,
     now: u64,
     revision: i64,
+    world: World,
     cut: Option<(usize, bool)>,
 }
 thread_local! { static ACTIVE: RefCell<Option<Recording>> = const { RefCell::new(None) }; }
@@ -259,15 +261,15 @@ impl Adapter {
             4 => Look::Quota {
                 reset_ms: now().saturating_add(1000),
             },
-            5 => Look::Found(Box::new(Completion::confirmed(vec![]))),
+            5 => Look::Found(Box::new(completion(0))),
             _ => Look::Alive {
                 progress: adapters::mergify::REQUEUE_PROGRESS_PREFIX.into(),
             },
         })
     }
     pub fn stop_stalled(&self, d: &Delivery) -> Result<Completion> {
-        read("stop_stalled", json!(d.key))?;
-        Ok(Completion::confirmed(vec![]))
+        let word = read("stop_stalled", json!(d.key))?;
+        Ok(completion(word))
     }
     pub fn app_login(&self, installation: u64) -> Option<String> {
         let _ = read("app_login", json!(installation));
@@ -278,8 +280,8 @@ impl Adapter {
         Ok(announced)
     }
     pub fn resume_after_quota(&self, _: &Delivery) -> Result<Option<Completion>> {
-        read("resume_quota", Value::Null)?;
-        Ok(Some(Completion::confirmed(vec![])))
+        let word = read("resume_quota", Value::Null)?;
+        Ok(Some(completion(word)))
     }
     pub fn watch_wait(&self, _: &Delivery, _: Option<&tl3_store::ExternalWait>) -> Result<()> {
         read("watch_wait", Value::Null)?;
@@ -289,6 +291,43 @@ impl Adapter {
         read("wait_record", Value::Null)?;
         Ok(executor::WaitRecord::Ended)
     }
+}
+fn completion(code: u8) -> Completion {
+    Completion::confirmed(if code & 1 == 0 {
+        vec![Observation::Kernel(Event::Fact {
+            node: NodeId(0),
+            fact: Fact::UpstreamStalled,
+        })]
+    } else {
+        vec![]
+    })
+}
+pub(super) fn world() -> World {
+    with(|r| r.world.clone())
+}
+pub(super) fn observe(key: &str, observation: Observation) -> Result<()> {
+    let value = json!(observation);
+    write("observe", json!([key, value]), |r| {
+        if r.files.contains_key(&format!("observed/{key}")) {
+            return;
+        }
+        r.files.insert(
+            format!("observed/{key}"),
+            serde_json::to_vec(&value).unwrap(),
+        );
+        if let Observation::Kernel(event) = observation {
+            let (world, outputs) = tl3_kernel::step(r.world.clone(), event);
+            r.world = world;
+            for (index, output) in outputs.iter().enumerate() {
+                r.files.insert(
+                    format!("kernel-output/{key}/{index}"),
+                    serde_json::to_vec(output).unwrap(),
+                );
+            }
+            let node = &r.world.nodes[0];
+            r.files.insert("kernel-state".into(), serde_json::to_vec(&json!({"phase":node.phase,"waiting_incident":node.waiting_incident,"run_incidents":node.run_incidents,"needs_rob":node.incident_needs_rob})).unwrap());
+        }
+    })
 }
 fn initial(s: &Schedule) -> AllowanceState {
     let mut d = delivery("effect-1");
@@ -340,9 +379,26 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
         }));
     });
     let mut state = initial(s);
+    let mut other_state = initial(s);
+    other_state.delivery = delivery("effect-2");
+    other_state.read_failures = 0;
+    other_state.read_incidents = 0;
+    other_state.incident = None;
+    let mut world = World::new(&[1], 1);
+    let mut node = tl3_kernel::Node::new(tl3_kernel::RepoId(0));
+    node.phase = Phase::Queued;
+    node.pr_open = true;
+    node.had_pr = true;
+    node.head = Some(tl3_kernel::HeadId(0));
+    node.checked = node.head;
+    node.approved = node.head;
+    node.waiting_incident = s.incident && s.kernel_incident;
+    node.run_incidents = s.incidents.max(u8::from(node.waiting_incident));
+    node.incident_needs_rob = node.waiting_incident && s.needs_rob;
+    world.nodes.push(node);
     let mut files = BTreeMap::new();
     if s.incident {
-        files.insert("incidents/1.read".into(), serde_json::to_vec(&json!({"id":"1.read","node":0,"open":true,"needs_rob":s.needs_rob,"blocking":false,"summary":"outage","signature":{"upstream":"Mergify","class":if s.refused {"queue_command_refused"} else {"transport"}},"effect":"effect-1"})).unwrap());
+        files.insert("incidents/1.read".into(), serde_json::to_vec(&json!({"id":"1.read","node":0,"open":true,"needs_rob":s.needs_rob,"blocking":false,"summary":"outage","signature":{"upstream":"Mergify","class":if s.refused {"queue_command_refused"} else {"transport"}},"effect":if s.kernel_incident { Value::Null } else { json!("effect-1") }})).unwrap());
     }
     ACTIVE.with(|r| {
         *r.borrow_mut() = Some(Recording {
@@ -353,22 +409,27 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
             writes: 0,
             now: 1_000_000,
             revision: 1,
+            world,
             cut,
         })
     });
     let result = catch_unwind(AssertUnwindSafe(|| {
         for &entry in &s.entries {
             let snap = snapshot();
+            let (entry, target) = match entry {
+                Entry::FailedOther(code) => (Entry::Failed(code), &mut other_state),
+                entry => (entry, &mut state),
+            };
             let result = if new {
-                super::current::run(entry, &mut state, &snap)
+                super::current::run(entry, target, &snap)
             } else {
-                super::reference::run(entry, &mut state, &snap)
+                super::reference::run(entry, target, &snap)
             };
             if let Err(e) = result {
-                return json!({"error":e.to_string(),"state":state});
+                return json!({"error":e.to_string(),"state":state,"other_state":other_state});
             }
         }
-        json!({"ok":true,"state":state})
+        json!({"ok":true,"state":state,"other_state":other_state})
     }));
     let result = match result {
         Ok(r) => r,

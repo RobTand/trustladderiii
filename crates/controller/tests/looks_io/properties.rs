@@ -343,4 +343,41 @@ fn mandatory_stall_transition_persists() {
     assert_eq!(kernel["waiting_incident"], true);
     assert_eq!(kernel["run_incidents"], 1);
     assert!(r.files.keys().any(|key| key.starts_with("kernel-output/")));
+    let held = io::compare(&Schedule {
+        incident: true,
+        kernel_incident: true,
+        entries: vec![Entry::Alive(false)],
+        ..Schedule::default()
+    });
+    let kernel: Value = serde_json::from_slice(&held.files["kernel-state"]).unwrap();
+    assert_eq!(kernel["waiting_incident"], true);
+    assert_eq!(kernel["run_incidents"], 1);
+    assert!(
+        !held
+            .files
+            .keys()
+            .any(|key| key.starts_with("kernel-output/"))
+    );
+}
+
+/// Q7, state-table.md:309: both selected allowance values survive independent failures.
+#[test]
+fn mandatory_per_effect_failure_isolation() {
+    let r = io::compare(&Schedule {
+        entries: vec![Entry::Failed(4), Entry::FailedOther(4), Entry::Failed(4)],
+        ..Schedule::default()
+    });
+    assert_eq!(r.result["state"]["read_incidents"], 1);
+    assert_eq!(r.result["state"]["read_failures"], 0);
+    assert_eq!(r.result["other_state"]["read_incidents"], 0);
+    assert_eq!(r.result["other_state"]["read_failures"], 1);
+    let incident: Value = serde_json::from_slice(
+        r.files
+            .iter()
+            .find(|(k, _)| k.starts_with("incidents/"))
+            .unwrap()
+            .1,
+    )
+    .unwrap();
+    assert_eq!(incident["effect"], "effect-1");
 }
