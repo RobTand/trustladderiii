@@ -376,6 +376,56 @@ fn exhausted_inputs_remain_queued_until_clearance_then_retry_in_order() {
     );
 }
 
+/// Q51 / #771: the new counter halt holds kernel operations, so a new release
+/// clears it once through the same path as Rob's authorized clearance.
+#[test]
+fn new_release_clears_counter_halt_and_retries_retained_fact() {
+    let mut db = support::Database::start();
+    let settings = db.create("counter_release_clear");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    let next_seq = c.world().unwrap().nodes[0].next_seq;
+    seed_node_counter(&mut c, &settings, "next_seq", u64::MAX);
+    c.observe(
+        "held-priority",
+        Observation::Kernel(Event::Fact {
+            node: NodeId(0),
+            fact: tl3_kernel::Fact::Priority(tl3_kernel::Priority::P1),
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    seed_node_counter(&mut c, &settings, "next_seq", next_seq);
+    c.start_release("counter-repair").unwrap();
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents")
+            .all(|r| r.value["open"] == false),
+        "Q51 must clear the counter halt"
+    );
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::P1
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "inbox")
+    );
+    c.start_release("counter-repair").unwrap();
+    assert_eq!(
+        c.world().unwrap().nodes[0].priority,
+        tl3_kernel::Priority::P1
+    );
+}
+
 /// #771: widening the serialized ledger reads old JSON unchanged, and the
 /// derived balance must contain the sum of all four full-width entries.
 #[test]
