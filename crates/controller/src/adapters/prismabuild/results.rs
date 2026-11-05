@@ -170,7 +170,7 @@ pub(super) async fn ending(
 pub(crate) const HARNESS: &str = "harness";
 
 /// Q51/#822: disagreement between TL3's producer and judge is a TL3-side defect.
-const JUDGE_MISMATCH_CLASS: Option<&str> = None; // Red: seed a missing Q51 classification.
+const JUDGE_MISMATCH_CLASS: Option<&str> = Some(HARNESS);
 
 /// The harness's `SELECTED_CHECK`: existing tests that import the change (#359).
 const SELECTED_CHECK: &str = "Existing tests that import the change";
@@ -184,7 +184,7 @@ type CheckEvidence = (
 );
 
 fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
-    evidence_with_read(ending, job, JUDGE_MISMATCH_CLASS, |log| {
+    evidence_with_read(ending, job, |log| {
         let mut raw = Vec::new();
         File::open(&log.path)?
             .take(log.bytes + 1)
@@ -196,7 +196,6 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
 fn evidence_with_read(
     ending: Ending,
     job: &Job,
-    mismatch_class: Option<&'static str>,
     read: impl FnOnce(&Log) -> Result<Vec<u8>>,
 ) -> Result<CheckEvidence> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
@@ -231,7 +230,7 @@ fn evidence_with_read(
         // The typed report clips each message to MAX_MESSAGE_CHARS as it parses.
         if let Some(parsed) = parse(&raw, job) {
             if !rejudged(&parsed, job) {
-                return Ok((false, false, vec![], vec![], mismatch_class));
+                return Ok((false, false, vec![], vec![], JUDGE_MISMATCH_CLASS));
             }
             failed_tests = parsed
                 .results

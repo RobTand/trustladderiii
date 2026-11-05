@@ -40,23 +40,21 @@ fn ending(raw: &[u8]) -> Ending {
     })).unwrap()
 }
 
-fn evaluate(job: &Job, report: &Value, policy: Option<&'static str>) -> CheckEvidence {
+fn evaluate(job: &Job, report: &Value) -> CheckEvidence {
     let raw = raw(report);
-    evidence_with_read(ending(&raw), job, policy, |_| Ok(raw.clone())).unwrap()
+    evidence_with_read(ending(&raw), job, |_| Ok(raw.clone())).unwrap()
 }
 
 #[test]
-fn disagreement_uses_one_harness_class_with_injectable_none_policy() {
+fn disagreement_uses_the_confirmed_harness_class() {
     let (job, report) = fixture("skipped", "passed", true, false);
     assert!(
         parse(&raw(&report), &job).is_some(),
         "shape/identity validation must not swallow a judge disagreement"
     );
-    for policy in [Some(HARNESS), None] {
-        let (report, pass, results, failed, class) = evaluate(&job, &report, policy);
-        assert!(!report && !pass && results.is_empty() && failed.is_empty());
-        assert_eq!(class, policy);
-    }
+    let (report, pass, results, failed, class) = evaluate(&job, &report);
+    assert!(!report && !pass && results.is_empty() && failed.is_empty());
+    assert_eq!(class, Some(HARNESS));
     assert_eq!(JUDGE_MISMATCH_CLASS, Some(HARNESS));
 }
 
@@ -118,17 +116,11 @@ async fn mismatch_completion_rust_accepts_python_fail() {
 #[test]
 fn controller_rejects_false_negative_and_wrong_pre_existing() {
     let (job, false_negative) = fixture("passed", "passed", false, false);
-    assert_eq!(
-        evaluate(&job, &false_negative, JUDGE_MISMATCH_CLASS).4,
-        Some(HARNESS)
-    );
+    assert_eq!(evaluate(&job, &false_negative).4, Some(HARNESS));
     let (_, wrong_pre_existing) = fixture("added-name", "passed", true, true);
-    assert_eq!(
-        evaluate(&job, &wrong_pre_existing, JUDGE_MISMATCH_CLASS).4,
-        Some(HARNESS)
-    );
+    assert_eq!(evaluate(&job, &wrong_pre_existing).4, Some(HARNESS));
     let (_, correct) = fixture("added-name", "passed", true, false);
-    assert!(evaluate(&job, &correct, JUDGE_MISMATCH_CLASS).1);
+    assert!(evaluate(&job, &correct).1);
 }
 
 fn phases(call_status: &str, assertion: bool) -> Value {
@@ -142,19 +134,16 @@ fn controller_folds_phases_without_inventing_missing_name_facts() {
     let (job, mut report) = fixture("added-name", "passed", true, false);
     report["results"][0]["tests"][0]["phases"] = json!({
         "base": phases("failed", false), "head": phases("passed", false)});
-    assert!(evaluate(&job, &report, JUDGE_MISMATCH_CLASS).1);
+    assert!(evaluate(&job, &report).1);
     report["results"][0]["tests"][0]["phases"]["head"] = phases("failed", true);
-    assert_eq!(
-        evaluate(&job, &report, JUDGE_MISMATCH_CLASS).4,
-        Some(HARNESS)
-    );
+    assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
 }
 
 #[test]
 fn changed_test_override_is_not_reconstructed_from_clipped_message() {
     let (mut job, report) = fixture("passed", "passed", false, false);
     job.changed_paths.push("tests/test_x.py".into());
-    let result = evaluate(&job, &report, JUDGE_MISMATCH_CLASS);
+    let result = evaluate(&job, &report);
     assert!(result.0 && !result.1 && result.4.is_none());
 }
 
@@ -170,19 +159,16 @@ fn known_missing_red_match_is_a_judge_disagreement() {
         "observer_sha256": {"tests/test_x.py::test_x": "c".repeat(64)},
         "source_base_tree_sha256": "d".repeat(64), "base_tree_sha256": "d".repeat(64),
         "head_tree_sha256": "e".repeat(64), "red_message_matches": {}});
-    assert_eq!(
-        evaluate(&job, &report, JUDGE_MISMATCH_CLASS).4,
-        Some(HARNESS)
-    );
+    assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
     report["results"][0]["proof"]["red_message_matches"] =
         json!({"tests/test_x.py::test_x": "message"});
-    assert!(evaluate(&job, &report, JUDGE_MISMATCH_CLASS).1);
+    assert!(evaluate(&job, &report).1);
     // Previous-release receipts omit this field; do not infer a negative receipt.
     report["results"][0]["proof"]
         .as_object_mut()
         .unwrap()
         .remove("red_message_matches");
-    assert!(evaluate(&job, &report, JUDGE_MISMATCH_CLASS).1);
+    assert!(evaluate(&job, &report).1);
 }
 
 #[test]
@@ -209,10 +195,7 @@ fn retained_boundary_checks_campaign_flags_and_forced_heads() {
     report["results"][0]["kind"] = json!("demonstrating");
     report["results"][0]["declared_symptom"] = declaration;
     report["results"][0]["verdict"] = json!("fail");
-    assert_eq!(
-        evaluate(&job, &report, JUDGE_MISMATCH_CLASS).4,
-        Some(HARNESS)
-    );
+    assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
 
     report["results"][0]["verdict"] = json!("pass");
     report["results"][0]["forcing"] =
@@ -316,7 +299,7 @@ proptest! {
         let old = normalized(before::run(make_ending(), &job));
         let old_calls = recorded_io::calls();
         recorded_io::reset(observed, fail);
-        let new = normalized(evidence_with_read(make_ending(), &job, JUDGE_MISMATCH_CLASS, |log| {
+        let new = normalized(evidence_with_read(make_ending(), &job, |log| {
             let mut bytes = Vec::new();
             recorded_io::File::open(&log.path)?.take(log.bytes + 1).read_to_end(&mut bytes)?;
             Ok(bytes)
