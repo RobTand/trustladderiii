@@ -1411,6 +1411,7 @@ kernel_fn! {
 #[cfg(verus_keep_ghost)]
 verus! {
 /// #805 / #806: Ready continuations inherit the resumed phase rank and its bound.
+#[verifier::spinoff_prover]
 proof fn cont_rank_ready(r: Resume)
     ensures continuation_rank(Cont::Ready(r)) == phase_rank(Phase::Ready(r)),
         continuation_rank(Cont::Ready(r)) <= 24,
