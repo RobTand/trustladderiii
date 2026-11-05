@@ -686,6 +686,12 @@ fn quota_ending_is_a_model_quota_retry_across_recovery() {
         )
         .unwrap();
     settle(&mut controller);
+    // #828 persists the effective ladder retry on its first quota look. Start
+    // the recovery comparison from that settled hold, before losing the watch.
+    controller.look_due().unwrap();
+    assert!(controller.snapshot().unwrap().rows.iter().any(|row| {
+        row.table == "allowances" && row.id == key && row.value["quota_retry_ms"] == json!(until)
+    }));
     let attempt = run_root(&root.path().join("runs"), &key).join("attempt-00000000");
     let mut dead = identity();
     dead["pid"] = json!(2147483647);
