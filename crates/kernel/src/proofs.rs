@@ -1335,10 +1335,6 @@ proof!(apply_ack_body_policy_refused, {
 });
 proof!(apply_pr_closed, check_apply(fact(Fact::PrClosedByPerson)));
 proof!(
-    apply_pr_dequeued,
-    check_apply(fact(Fact::PrDequeuedByPerson))
-);
-proof!(
     apply_outside_push,
     check_apply(fact(Fact::PushByOther { head: kani::any() }))
 );
@@ -1362,12 +1358,6 @@ proof!(apply_priority, check_priority());
 proof!(
     apply_upstream_stalled,
     check_apply(fact(Fact::UpstreamStalled))
-);
-proof!(
-    apply_incident_cleared,
-    check_apply(fact(Fact::IncidentCleared {
-        by_rob: kani::any()
-    }))
 );
 proof!(apply_stop, check_apply(command(Command::Stop)));
 proof!(apply_pause, check_apply(command(Command::Pause)));
@@ -1523,8 +1513,6 @@ fn check_pr_merged(phase: Phase) {
     }
 }
 
-proof!(pr_merged_ingesting, check_pr_merged(Phase::Ingesting));
-proof!(pr_merged_auditing, check_pr_merged(Phase::Auditing));
 proof!(pr_merged_unplanned, check_pr_merged(Phase::Unplanned));
 proof!(
     pr_merged_planning,
@@ -2127,27 +2115,6 @@ proof!(
         Phase::Publishing,
         fact(Fact::CiFailed { infra: kani::any() })
     )
-);
-
-fn check_publishing_ci_infrastructure() {
-    let (before, after) = publishing_ci_transition(true);
-    let b = &before.nodes[0];
-    let n = &after.nodes[0];
-    assert_eq!(n.credit, b.credit);
-    assert!(n.waiting_incident || n.run_failures > b.run_failures);
-    kani::cover!(
-        b.run_failures == 0 && !n.waiting_incident,
-        "first infrastructure failure retries"
-    );
-    kani::cover!(
-        b.run_failures == 1 && n.waiting_incident,
-        "second infrastructure failure raises an incident"
-    );
-    kani::cover!(b.effect.is_some(), "an enqueue is cancelled");
-}
-proof!(
-    apply_publishing_ci_infrastructure,
-    check_publishing_ci_infrastructure()
 );
 
 fn check_publishing_ci_earlier_step() {

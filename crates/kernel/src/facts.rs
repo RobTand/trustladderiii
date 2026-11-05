@@ -34,6 +34,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         final(out).len <= old(out).len + 4,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         retirement::selected(fact) ==> final(w).next_question == old(w).next_question,
+        retirement::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         retirement::selected(fact) ==> final(w).nodes@[i as int]
             == retirement::fact_node(old(w).nodes@[i as int], fact),
         retirement::selected(fact) && retirement::notices_only(*old(out))
@@ -93,6 +94,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         retirement::selected(fact) ==> final(w).next_question == old(w).next_question,
+        retirement::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         retirement::selected(fact) ==> final(w).nodes@[i as int]
             == retirement::fact_node(old(w).nodes@[i as int], fact),
         retirement::selected(fact) && retirement::notices_only(*old(out))
@@ -105,7 +107,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 ==> retirement::unapproved_note(*final(out), i),
             _ => true,
         },
-] proof [reveal(retry_bounds);] {
+] proof [reveal(retry_bounds); reveal(retirement::fact_frame);] {
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
@@ -124,17 +126,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 enter_stopping(m, Outcome::Stopped);
             }
         }
-        Fact::PrDequeuedByPerson => {
-            let m = &mut w.nodes[i];
-            if m.phase != Phase::Queued {
-                return;
-            }
-            // Treated as Rob pausing it: the PR waits until he resumes.
-            m.holds = false;
-            m.paused = true;
-            set_phase(m, Phase::Ready(Resume::Publishing));
-            notice(out, i, Notice::Note(NoteKind::PrDequeued));
-        }
+        Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
@@ -150,33 +142,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
             }
         }
-        Fact::CiFailed { infra } => {
-            let m = &mut w.nodes[i];
-            let before_enqueue =
-                m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
-            if m.phase != Phase::Queued && !before_enqueue {
-                return;
-            }
-            if before_enqueue {
-                if let Some(effect) = m.effect.as_mut() {
-                    effect.cancelling = true;
-                }
-            }
-            if !infra {
-                failed_round(w, i, ReviewStop::CiFailed, out);
-                return;
-            }
-            let m = &mut w.nodes[i];
-            m.run_failures += 1;
-            if m.run_failures < 2 {
-                set_phase(m, Phase::Publishing); // enqueue again
-            } else {
-                m.run_failures = 0;
-                m.run_incidents = (m.run_incidents + 1).min(2);
-                let needs_rob = m.run_incidents >= 2;
-                raise_incident(w, i, needs_rob, out);
-            }
-        }
+        Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
         Fact::Conflict => {
             let m = &mut w.nodes[i];
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
@@ -192,13 +158,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             let needs_rob = m.run_incidents >= 2;
             raise_incident(w, i, needs_rob, out);
         }
-        Fact::IncidentCleared { by_rob } => {
-            let m = &mut w.nodes[i];
-            if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
-                m.waiting_incident = false;
-                // #806 seeded mutant: retain incident_needs_rob.
-            }
-        }
+        Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
 }
 }
@@ -242,7 +202,7 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
             && !(old(w).nodes@[i as int].phase is Closed)
             && !(old(w).nodes@[i as int].approved == Some(head) && checks_passed)
             ==> retirement::unapproved_note(*final(out), i),
-] {
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retirement::unapproved_note);] {
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
         return;
@@ -269,6 +229,133 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
     if !approved {
         notice(out, i, Notice::Incident { needs_rob: false });
         notice(out, i, Notice::Note(NoteKind::UnapprovedMerge));
+    }
+}
+}
+
+kernel_fn! {
+/// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
+pub(super) fn pr_dequeued(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::PrDequeuedByPerson),
+        final(w).next_question == old(w).next_question,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);] {
+    let m = &mut w.nodes[i];
+    if m.phase != Phase::Queued {
+        return;
+    }
+    // Treated as Rob pausing it: the PR waits until he resumes.
+    m.holds = false;
+    m.paused = true;
+    set_phase(m, Phase::Ready(Resume::Publishing));
+    notice(out, i, Notice::Note(NoteKind::PrDequeued));
+}
+}
+
+kernel_fn! {
+/// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
+#[allow(clippy::collapsible_if)]
+pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        infra ==> final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra }),
+        infra ==> final(w).next_question == old(w).next_question,
+        infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);] {
+    let m = &mut w.nodes[i];
+    let before_enqueue =
+        m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
+    if m.phase != Phase::Queued && !before_enqueue {
+        return;
+    }
+    if before_enqueue {
+        if let Some(effect) = m.effect.as_mut() {
+            effect.cancelling = true;
+        }
+    }
+    if !infra {
+        failed_round(w, i, ReviewStop::CiFailed, out);
+        return;
+    }
+    ci_infrastructure(w, i, out);
+}
+}
+
+kernel_fn! {
+/// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
+pub(super) fn incident_cleared(w: &mut World, i: usize, by_rob: bool, _out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(_out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::IncidentCleared { by_rob }),
+        final(w).next_question == old(w).next_question,
+        retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);] {
+    let m = &mut w.nodes[i];
+    if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
+        m.waiting_incident = false;
+        m.incident_needs_rob = false;
+    }
+}
+}
+
+kernel_fn! {
+/// State-table publishing/queued CI infrastructure row / Q50 / #806.
+/// The existing failure counter and incident update, with no work-credit charge.
+pub(super) fn ci_infrastructure(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        old(w).nodes@[i as int].phase == Phase::Queued ||
+            (old(w).nodes@[i as int].phase == Phase::Publishing
+                && current_item(old(w).nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue))),
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra: true }),
+        final(w).next_question == old(w).next_question,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] {
+    kernel_snapshot! { before_world = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { before_ci = w.nodes@[i as int] }
+    let escalation = infrastructure_retry(&mut w.nodes[i]);
+    if let Some(needs_rob) = escalation {
+        raise_incident(w, i, needs_rob, out);
+    }
+    kernel_proof! {
+        retirement::infrastructure_result(before_ci@, w.nodes@[i as int], escalation);
+        retirement::infrastructure_frame(before_world@, *w, i, before_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+/// State-table infrastructure failures / Q50 / #806: the existing counter
+/// updates and first retry, isolated from the world's frame obligations.
+fn infrastructure_retry(m: &mut Node) -> (result: Option<bool>) [
+    requires node_headroom(*old(m)), arithmetic_consistent(*old(m)),
+    ensures (*final(m), result) == retirement::infrastructure_retry(*old(m)),
+        final(m).generation as int <= old(m).generation as int + 1,
+] proof [reveal(retirement::infrastructure_retry);] {
+    m.run_failures += 1;
+    if m.run_failures < 2 {
+        set_phase(m, Phase::Publishing); // enqueue again
+        None
+    } else {
+        m.run_failures = 0;
+        m.run_incidents = (m.run_incidents + 1).min(2);
+        let needs_rob = m.run_incidents >= 2;
+        Some(needs_rob)
     }
 }
 }

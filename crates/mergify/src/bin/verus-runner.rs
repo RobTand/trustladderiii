@@ -78,10 +78,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .arg(sysroot)
         .arg(source)
         .args(["--edition", "2024"]);
-    if module == "root" {
+    let (selected_module, function) = module
+        .split_once('#')
+        .map_or((module.as_str(), None), |(owner, function)| {
+            (owner, Some(function))
+        });
+    if selected_module == "root" {
         process.arg("--verify-root");
-    } else if !module.is_empty() {
-        process.args(["--verify-only-module", module]);
+    } else if !selected_module.is_empty() {
+        process.args(["--verify-only-module", selected_module]);
+    }
+    if let Some(function) = function {
+        process.args(["--verify-function", function]);
     }
     let result = process
         .env_clear()

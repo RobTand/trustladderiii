@@ -1,4 +1,4 @@
-//! Every event variant and every phase has a Kani proof, and every proof is
+//! Every event variant and every phase has a Kani or gated Verus proof, and every proof is
 //! on the map. `proof_of_event` and `proofs_of_phase` are exhaustive matches,
 //! so a new variant or phase without an entry doesn't compile. This test
 //! checks that each entry names a proof that exists.
@@ -50,6 +50,20 @@ const ADDITIONAL_PROOFS: &[&str] = &[
 
 const LIB: &str = include_str!("../src/lib.rs");
 const PROOFS: &str = include_str!("../src/proofs.rs");
+const RETIREMENT: &str = include_str!("../verus/retirement.rs");
+const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
+
+// #806: these names retain their event/phase coverage after Kani retirement.
+const VERUS_RETIREMENTS: &[(&str, &str)] = &[
+    ("apply_incident_cleared", "facts_incident_cleared"),
+    ("apply_pr_dequeued", "facts_pr_dequeued"),
+    (
+        "apply_publishing_ci_infrastructure",
+        "facts_ci_infrastructure",
+    ),
+    ("pr_merged_ingesting", "facts_merge"),
+    ("pr_merged_auditing", "facts_merge"),
+];
 
 /// Quoted names between the proof-map markers in lib.rs.
 fn mapped() -> BTreeSet<&'static str> {
@@ -102,7 +116,23 @@ fn expand(mapped: BTreeSet<&'static str>) -> BTreeSet<String> {
 fn every_event_and_phase_has_a_proof() {
     let mut mapped = expand(mapped());
     mapped.extend(ADDITIONAL_PROOFS.iter().map(|name| name.to_string()));
-    let proven: BTreeSet<String> = proven().into_iter().map(String::from).collect();
+    let mut proven: BTreeSet<String> = proven().into_iter().map(String::from).collect();
+    assert!(RETIREMENT.contains("fn verify_selected_apply("));
+    assert!(RETIREMENT.contains("fn fact_preserves_node("));
+    assert!(RETIREMENT.contains("fn fact_preserves_world("));
+    for &(retired, group) in VERUS_RETIREMENTS {
+        assert!(
+            !proven.contains(retired),
+            "retired harness remains: {retired}"
+        );
+        assert!(
+            VERUS_GROUPS.contains(&format!("\"{group}\": (")),
+            "ungated replacement: {group}"
+        );
+        proven.insert(retired.to_string());
+    }
+    assert!(VERUS_GROUPS.contains("\"retirement\": (\"kernel::retirement\","));
+    assert!(VERUS_GROUPS.contains("\"retirement_witness\": (\"kernel::retirement_witness\","));
     let missing: Vec<_> = mapped.difference(&proven).collect();
     let unmapped: Vec<_> = proven.difference(&mapped).collect();
     assert!(missing.is_empty(), "mapped but not proven: {missing:?}");

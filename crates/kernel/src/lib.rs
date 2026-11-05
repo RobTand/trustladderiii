@@ -39,6 +39,16 @@ mod events;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_witness.rs"]
+mod retirement_witness;
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: domain of the retired two-node Kani consistency checks.
+pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
+/// #806: complete acceptance predicate, equivalent to the real checker in this domain.
+pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
+}
 use events::*;
 mod allocation;
 use allocation::*;
@@ -656,6 +666,13 @@ pub closed spec fn initial_node(n: Node, repo: RepoId) -> bool {
         && n.question.is_none() && !n.pool && !n.holds && !n.paused && !n.waiting_incident
         && n.run_failures == 0 && n.fx_failures == 0 && n.run_incidents == 0 && n.fx_incidents == 0
         && n.footprint == footprint::inline_footprint(0)
+        && !n.incident_needs_rob && n.proposed.is_none() && !n.adopted
+        && n.head.is_none() && n.checked.is_none() && n.approved.is_none() && n.merged.is_none()
+        && !n.pr_open && !n.had_pr && !n.worktree && n.review_stop.is_none()
+        && n.attempt == 0 && n.round == 0 && !n.replanned && n.plan_retries == 0
+        && n.audit_rounds == 0 && n.early_end.is_none() && n.rechecks == 0
+        && !n.review_restarted && n.priority == Priority::Unranked && !n.planning_started
+        && n.waiting_prerequisite.is_none()
 }
 }
 
@@ -1382,11 +1399,15 @@ kernel_fn! {
             Some(Out::Notice { node: NodeId(node as u64), notice: value })),
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         final(out).items@.contains(Some(Out::Notice { node: NodeId(node as u64), notice: value })),
-    ] {
+    ] proof [reveal(retirement::notices_only);] {
         out.push(Out::Notice {
             node: NodeId(node as u64),
             notice: value,
         });
+        kernel_proof! {
+            assert(out.items@[out.len as int - 1] == Some(Out::Notice {
+                node: NodeId(node as u64), notice: value }));
+        }
     }
 }
 
@@ -1595,7 +1616,7 @@ pub enum Broken {
 }
 
 // proof map start
-/// The Kani proof that covers each event variant. The match is exhaustive, so
+/// The proof-map entry that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.
 pub fn proof_of_event(event: &Event) -> &'static str {
@@ -1662,7 +1683,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
     }
 }
 
-/// The Kani proofs that cover each phase: settle's internal transitions, and
+/// The proofs that cover each phase: settle's internal transitions, and
 /// progress. Exhaustive for the same reason.
 pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
     match phase {

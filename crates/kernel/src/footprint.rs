@@ -47,9 +47,11 @@ pub closed spec fn valid_footprint(world: World, footprint: Footprint) -> bool {
 /// #771: every inline footprint is a valid handle in every world.
 pub(super) proof fn inline_is_valid(world: World, bits: u64)
     ensures valid_footprint(world, inline_footprint(bits)),
+        footprint_empty(inline_footprint(bits)) == (bits == 0),
 {
     reveal(valid_footprint);
     reveal(inline_footprint);
+    reveal(footprint_empty);
 }
 
 /// #771: appending immutable file sets preserves every existing handle.
@@ -58,6 +60,18 @@ pub(super) proof fn valid_under_table_growth(before: World, after: World, footpr
     ensures valid_footprint(after, footprint),
 {
     reveal(valid_footprint);
+}
+
+/// #806: consistency checks depend on the immutable storage contents only.
+pub(super) proof fn storage_frame(before: World, after: World, a: Footprint, b: Footprint)
+    requires before.file_sets@ == after.file_sets@,
+    ensures valid_footprint(before, a) == valid_footprint(after, a),
+        disjoint(before, a, b) == disjoint(after, a, b),
+{
+    reveal(valid_footprint); reveal(disjoint); reveal(file_view); reveal(contains_file);
+    assert(file_view(before, a) == file_view(after, a));
+    assert forall|file: FileId| contains_file(before, b, file) == contains_file(after, b, file) by {}
+
 }
 
 /// #771: stored file lists are strictly increasing, as produced by the interner.

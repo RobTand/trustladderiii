@@ -112,6 +112,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
 ] {
+    kernel_proof! { reveal(retirement::stopped); }
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {
@@ -270,8 +271,10 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len == old(out).len + 1,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
+    kernel_proof! { reveal(retirement::incident); }
     let m = &mut w.nodes[i];
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;

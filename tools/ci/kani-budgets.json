@@ -273,13 +273,6 @@
    "seconds": 149.1,
    "tier": "pr"
   },
-  "apply_incident_cleared": {
-   "cpu_seconds": 2391.3,
-   "invocation": "https://app.buildbuddy.io/invocation/24602a77-97b2-407a-9a37-c712bc83b772",
-   "peak_gb": 33.53,
-   "seconds": 2384.6,
-   "tier": "nightly"
-  },
   "apply_ingest_done": {
    "cpu_seconds": 290.3,
    "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
@@ -378,13 +371,6 @@
    "seconds": 1793.7,
    "tier": "nightly"
   },
-  "apply_pr_dequeued": {
-   "cpu_seconds": 2445.9,
-   "invocation": "https://app.buildbuddy.io/invocation/24602a77-97b2-407a-9a37-c712bc83b772",
-   "peak_gb": 34.31,
-   "seconds": 2446.6,
-   "tier": "nightly"
-  },
   "apply_priority": {
    "cpu_seconds": 1826.2,
    "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
@@ -405,13 +391,6 @@
    "peak_gb": 4.59,
    "seconds": 244.1,
    "tier": "pr"
-  },
-  "apply_publishing_ci_infrastructure": {
-   "cpu_seconds": 2524.0,
-   "invocation": "https://app.buildbuddy.io/invocation/24602a77-97b2-407a-9a37-c712bc83b772",
-   "peak_gb": 34.38,
-   "seconds": 2514.2,
-   "tier": "nightly"
   },
   "apply_publishing_ci_tests": {
    "cpu_seconds": 1984.5,
@@ -697,13 +676,6 @@
    "seconds": 2.0,
    "tier": "pr"
   },
-  "pr_merged_auditing": {
-   "cpu_seconds": 1860.1,
-   "invocation": "https://app.buildbuddy.io/invocation/7ebd8caa-1c42-4e43-9154-e275092a5455",
-   "peak_gb": 35.05,
-   "seconds": 1854.8,
-   "tier": "nightly"
-  },
   "pr_merged_awaiting_rob": {
    "cpu_seconds": 1757.0,
    "invocation": "https://app.buildbuddy.io/invocation/7ebd8caa-1c42-4e43-9154-e275092a5455",
@@ -723,13 +695,6 @@
    "invocation": "https://app.buildbuddy.io/invocation/7ebd8caa-1c42-4e43-9154-e275092a5455",
    "peak_gb": 33.85,
    "seconds": 1745.3,
-   "tier": "nightly"
-  },
-  "pr_merged_ingesting": {
-   "cpu_seconds": 1709.2,
-   "invocation": "https://app.buildbuddy.io/invocation/7ebd8caa-1c42-4e43-9154-e275092a5455",
-   "peak_gb": 35.05,
-   "seconds": 1700.8,
    "tier": "nightly"
   },
   "pr_merged_making": {

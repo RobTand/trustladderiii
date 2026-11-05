@@ -53,8 +53,9 @@ impl World {
     pub fn check(&self) -> (result: Result<(), Broken>) [
         requires world_headroom(*self), storage_ordered(*self),
         ensures result.is_ok() ==> world_checked(*self),
-            retirement::domain(*self) ==> result.is_ok() == retirement::accepted(*self),
-    ] proof [reveal(world_headroom); reveal(world_checked); reveal(storage_ordered);] {
+            retirement_domain(*self) ==> result.is_ok() == retirement_accepted(*self),
+    ] proof [reveal(world_headroom); reveal(world_checked); reveal(storage_ordered);
+        reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted);] {
         self.check_dependencies()?;
         if self.gates.is_empty() || self.pool_capacity == 0 {
             return Err(Broken::Config);
@@ -65,6 +66,7 @@ impl World {
                 forall|j: int| 0 <= j < gate_index ==> self.gates@[j].w > 0,
             decreases self.gates.len() - gate_index,
         ] {
+            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
             if self.gates[gate_index].w == 0 { return Err(Broken::Config); }
             gate_index += 1;
         } }
@@ -75,6 +77,7 @@ impl World {
                 forall|j: int| 0 <= j < i ==> retirement::node_rules(*self, self.nodes@[j]),
             decreases self.nodes.len() - i,
         ] {
+            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
             self.check_node(&self.nodes[i])?;
             i += 1;
         } }
@@ -89,11 +92,12 @@ impl World {
                 forall|j: int| 0 <= j < self.nodes@.len() ==> node_checked(*self, self.nodes@[j]),
             decreases self.nodes.len() - i,
         ] {
+            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
             let n = self.nodes[i];
             if n.holds {
                 let mut j = 0;
                 kernel_while! { (j < i) [
-                    invariant j <= i < self.nodes.len(), n == self.nodes@[i as int],
+                    invariant j <= i < self.nodes.len(), n == self.nodes@[i as int], n.holds,
                         retirement::domain(*self) && i == 1 && j >= 1 && n.holds
                             && self.nodes@[0].holds && self.nodes@[0].repo == n.repo
                             ==> footprint::disjoint(*self, self.nodes@[0].footprint, n.footprint),
@@ -101,6 +105,7 @@ impl World {
                         forall|k: int| 0 <= k < self.nodes@.len() ==> node_checked(*self, self.nodes@[k]),
                     decreases i - j,
                 ] {
+                    kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
                     let other = self.nodes[j];
                     kernel_proof! {
                         assert(node_checked(*self, n));
@@ -124,6 +129,7 @@ impl World {
                     ==> retirement::holders(*self, RepoId(k as u64), 2) <= self.gates@[k].w,
             decreases self.gates.len() - r,
         ] {
+            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
             let mut count = 0usize;
             let mut index = 0usize;
             kernel_while! { (index < self.nodes.len()) [
@@ -131,6 +137,7 @@ impl World {
                     retirement::domain(*self) ==> count == retirement::holders(*self, RepoId(r as u64), index as nat),
                 decreases self.nodes.len() - index,
             ] {
+                kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
                 let n = &self.nodes[index];
                 if n.holds && n.repo == RepoId(r as u64) { count += 1; }
                 index += 1;
@@ -149,6 +156,7 @@ impl World {
                 forall|j: int| 0 <= j < self.nodes@.len() ==> node_checked(*self, self.nodes@[j]),
             decreases self.nodes.len() - index,
         ] {
+            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
             kernel_proof! {
                 reveal(open_prefix);
                 open_prefix_monotone(self.nodes@, index as nat + 1, self.nodes@.len());
@@ -164,14 +172,16 @@ impl World {
                     (self.nodes@[0].ticket.is_some() ==> self.nodes@[0].ticket != self.nodes@[1].ticket),
             decreases self.nodes.len() - a,
         ] {
+            kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
             let x = &self.nodes[a];
             let mut b = 0usize;
             kernel_while! { (b < self.nodes.len()) [
-                invariant a < self.nodes.len(), b <= self.nodes.len(),
+                invariant a < self.nodes.len(), b <= self.nodes.len(), *x == self.nodes@[a as int],
                     retirement::domain(*self) && a == 0 && b > 1 ==>
                         (self.nodes@[0].ticket.is_some() ==> self.nodes@[0].ticket != self.nodes@[1].ticket),
                 decreases self.nodes.len() - b,
             ] {
+                kernel_proof! { reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); }
                 let y = &self.nodes[b];
                 if a != b && x.ticket.is_some() && x.ticket == y.ticket {
                     return Err(Broken::Ticket);
@@ -191,7 +201,7 @@ impl World {
     fn check_node(&self, n: &Node) -> (result: Result<(), Broken>) [
         ensures result.is_ok() ==> node_checked(*self, *n),
             result.is_ok() == retirement::node_rules(*self, *n),
-    ] {
+    ] proof [reveal(retirement::node_rules);] {
         let _gate_count = self.gates.len();
         let items = agenda(n.phase);
         if match n.repo.index() { Some(r) => r >= self.gates.len(), None => true } {

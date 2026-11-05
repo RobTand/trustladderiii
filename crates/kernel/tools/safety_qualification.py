@@ -15,6 +15,24 @@ import bazel_gate  # noqa: E402
 
 
 CASES = {
+    'retire_incident': ('crates/kernel/src/facts.rs',
+                        'm.incident_needs_rob = false;',
+                        'let _ = m.incident_needs_rob;',
+                        '//crates/kernel:verus_facts_incident_cleared'),
+    'retire_dequeued': ('crates/kernel/src/facts.rs',
+                        'm.paused = true;', 'm.paused = false;',
+                        '//crates/kernel:verus_facts_pr_dequeued'),
+    'retire_infrastructure': ('crates/kernel/src/facts.rs',
+                              'm.run_failures += 1;', 'm.run_failures += 0;',
+                              '//crates/kernel:verus_facts_infrastructure_retry'),
+    'retire_merge_ingesting': ('crates/kernel/src/facts.rs',
+                               'm.merged = Some(head);\n            m.pr_open = false;',
+                               'if m.phase != Phase::Ingesting { m.merged = Some(head); }\n            m.pr_open = false;',
+                               '//crates/kernel:verus_facts_merge'),
+    'retire_merge_auditing': ('crates/kernel/src/facts.rs',
+                              'm.merged = Some(head);\n            m.pr_open = false;',
+                              'if m.phase != Phase::Auditing { m.merged = Some(head); }\n            m.pr_open = false;',
+                              '//crates/kernel:verus_facts_merge'),
     'apply_enforcement': ('crates/controller/src/input_errors.rs',
                           'world.counter_exhaustion()',
                           'world.counter_exhaustion().filter(|_| false)',
@@ -95,7 +113,8 @@ def main():
         path.write_text(source.replace(before, after, 1))
         workspace.run('git', '-c', 'user.name=Kernel safety qualification', '-c',
                       'user.email=kernel-safety@invalid', 'commit', '--quiet', '--no-verify',
-                      '-am', 'Seed ' + args.case + ' in the executable source')
+                      '-am', 'Seed ' + args.case + ' in the executable source\n\n'
+                      'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>')
         report['mutant'] = workspace.run('git', 'rev-parse', 'HEAD').strip()
         statuses, log = run(workspace, target, 'safety-mutant-' + args.case)
         assert statuses.get(target) == 'FAILED', statuses
