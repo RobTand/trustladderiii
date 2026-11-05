@@ -21,7 +21,7 @@ parts = [
 ]
 (HERE / 'validation.rs').write_text('use super::*;\nuse std::sync::OnceLock;\n'
     + 'include!(concat!(env!("OUT_DIR"), "/worker_schemas.rs"));\n'
-    + ''.join(protocol[protocol.index(a):protocol.index(b)] for a, b in parts).replace('pub(super) fn validate_inputs(', 'pub fn validate_real('))
+    + ''.join(protocol[protocol.index(a):protocol.index(b)] for a, b in parts).replace('pub(super) fn validate_inputs(', 'pub fn validate_real(').rstrip() + '\n')
 failure = (ROOT / 'crates/controller/src/worker_inputs.rs').read_text()
 (HERE / 'failure.rs').write_text('use serde::{Deserialize, Serialize};\n'
     + failure[failure.index('#[derive(Clone, Debug, Deserialize'):failure.index('pub(crate) fn of(')]

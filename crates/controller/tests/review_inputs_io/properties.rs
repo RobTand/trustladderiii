@@ -911,7 +911,7 @@ fn validation_sources_match_production() {
         ("fn schemas_from(", "pub(crate) fn reply_field"),
     ];
     let body: String = parts.iter().map(|(a,b)| &source[source.find(a).unwrap()..source.find(b).unwrap()]).collect();
-    assert_eq!(include_str!("validation.rs"), format!("use super::*;\nuse std::sync::OnceLock;\ninclude!(concat!(env!(\"OUT_DIR\"), \"/worker_schemas.rs\"));\n{}", body.replace("pub(super) fn validate_inputs(", "pub fn validate_real(")));
+    assert_eq!(include_str!("validation.rs").trim_end(), format!("use super::*;\nuse std::sync::OnceLock;\ninclude!(concat!(env!(\"OUT_DIR\"), \"/worker_schemas.rs\"));\n{}", body.replace("pub(super) fn validate_inputs(", "pub fn validate_real(")).trim_end());
     let failure = std::fs::read_to_string(root.join("src/worker_inputs.rs")).unwrap();
     let body = &failure[failure.find("#[derive(Clone, Debug, Deserialize").unwrap()..failure.find("pub(crate) fn of(").unwrap()];
     assert!(include_str!("failure.rs").contains(body));

@@ -58,4 +58,3 @@ fn schemas_from(schemas: Vec<(String, Value)>) -> Result<BTreeMap<String, jsonsc
         })
         .collect()
 }
-
