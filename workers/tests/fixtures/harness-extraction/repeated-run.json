@@ -1,0 +1,381 @@
+{
+  "description": "#823 review: repeat=2 with 21 short failures is below all byte caps; retain the legacy 20 failure IDs per run.",
+  "action": {
+    "status": "completed",
+    "tests": [
+      {
+        "test": "t.py::t00",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t01",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t02",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t03",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t04",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t05",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t06",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t07",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t08",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t09",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t10",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t11",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t12",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t13",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t14",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t15",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t16",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t17",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t18",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t19",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t20",
+        "outcome": "failed",
+        "message": ""
+      }
+    ],
+    "totals": {
+      "passed": 0,
+      "failed": 21,
+      "error": 0,
+      "skipped": 0
+    },
+    "note": "",
+    "repeat": 2,
+    "runs": [
+      {
+        "run": 1,
+        "status": "completed",
+        "totals": {
+          "passed": 0,
+          "failed": 21,
+          "error": 0,
+          "skipped": 0
+        },
+        "failed": [
+          "t.py::t00",
+          "t.py::t01",
+          "t.py::t02",
+          "t.py::t03",
+          "t.py::t04",
+          "t.py::t05",
+          "t.py::t06",
+          "t.py::t07",
+          "t.py::t08",
+          "t.py::t09",
+          "t.py::t10",
+          "t.py::t11",
+          "t.py::t12",
+          "t.py::t13",
+          "t.py::t14",
+          "t.py::t15",
+          "t.py::t16",
+          "t.py::t17",
+          "t.py::t18",
+          "t.py::t19"
+        ]
+      },
+      {
+        "run": 2,
+        "status": "completed",
+        "totals": {
+          "passed": 0,
+          "failed": 21,
+          "error": 0,
+          "skipped": 0
+        },
+        "failed": [
+          "t.py::t00",
+          "t.py::t01",
+          "t.py::t02",
+          "t.py::t03",
+          "t.py::t04",
+          "t.py::t05",
+          "t.py::t06",
+          "t.py::t07",
+          "t.py::t08",
+          "t.py::t09",
+          "t.py::t10",
+          "t.py::t11",
+          "t.py::t12",
+          "t.py::t13",
+          "t.py::t14",
+          "t.py::t15",
+          "t.py::t16",
+          "t.py::t17",
+          "t.py::t18",
+          "t.py::t19"
+        ]
+      }
+    ]
+  },
+  "worker": {
+    "status": "completed",
+    "tests": [
+      {
+        "test": "t.py::t00",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t01",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t02",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t03",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t04",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t05",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t06",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t07",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t08",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t09",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t10",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t11",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t12",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t13",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t14",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t15",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t16",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t17",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t18",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t19",
+        "outcome": "failed",
+        "message": ""
+      },
+      {
+        "test": "t.py::t20",
+        "outcome": "failed",
+        "message": ""
+      }
+    ],
+    "totals": {
+      "passed": 0,
+      "failed": 21,
+      "error": 0,
+      "skipped": 0
+    },
+    "note": "",
+    "repeat": 2,
+    "runs": [
+      {
+        "run": 1,
+        "status": "completed",
+        "totals": {
+          "passed": 0,
+          "failed": 21,
+          "error": 0,
+          "skipped": 0
+        },
+        "failed": [
+          "t.py::t00",
+          "t.py::t01",
+          "t.py::t02",
+          "t.py::t03",
+          "t.py::t04",
+          "t.py::t05",
+          "t.py::t06",
+          "t.py::t07",
+          "t.py::t08",
+          "t.py::t09",
+          "t.py::t10",
+          "t.py::t11",
+          "t.py::t12",
+          "t.py::t13",
+          "t.py::t14",
+          "t.py::t15",
+          "t.py::t16",
+          "t.py::t17",
+          "t.py::t18",
+          "t.py::t19"
+        ]
+      },
+      {
+        "run": 2,
+        "status": "completed",
+        "totals": {
+          "passed": 0,
+          "failed": 21,
+          "error": 0,
+          "skipped": 0
+        },
+        "failed": [
+          "t.py::t00",
+          "t.py::t01",
+          "t.py::t02",
+          "t.py::t03",
+          "t.py::t04",
+          "t.py::t05",
+          "t.py::t06",
+          "t.py::t07",
+          "t.py::t08",
+          "t.py::t09",
+          "t.py::t10",
+          "t.py::t11",
+          "t.py::t12",
+          "t.py::t13",
+          "t.py::t14",
+          "t.py::t15",
+          "t.py::t16",
+          "t.py::t17",
+          "t.py::t18",
+          "t.py::t19"
+        ]
+      }
+    ],
+    "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "receipts": [
+      {
+        "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "executed",
+        "exit_code": 0,
+        "receipt_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "log_sha256": "ff5dcb5d44dd4909d64afaece2e9f69f6b91807459e93ed64e94cb1045d774b2"
+      }
+    ]
+  }
+}
