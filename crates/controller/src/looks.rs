@@ -7,6 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{Duration, UNIX_EPOCH};
+use tl3_controller_core::looks as decisions;
 use tl3_kernel::{Ack, Event, Fact, NodeId, Phase, World};
 use tl3_store::{Commit, EffectState, RowChange, Snapshot};
 
@@ -228,14 +229,35 @@ pub(crate) enum IncidentCause {
     NoticeFailure { incidents: u64 },
 }
 
-pub(crate) fn incident_needs_rob(cause: IncidentCause) -> bool {
-    match cause {
-        // Kernel notices also cover permanent failures and merge races.
-        IncidentCause::Kernel { needs_rob } => needs_rob,
-        IncidentCause::ReadFailure { incidents } | IncidentCause::NoticeFailure { incidents } => {
-            incidents > 1
-        }
+fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
+    match source {
+        Upstream::Workers => decisions::StallUpstream::Workers,
+        Upstream::GitHub => decisions::StallUpstream::GitHub,
+        Upstream::Mergify => decisions::StallUpstream::Mergify,
+        Upstream::PrismaBuild => decisions::StallUpstream::PrismaBuild,
+        Upstream::Worktrees => decisions::StallUpstream::Worktrees,
     }
+}
+
+fn incident_view(incident: &Incident, delivery: &Delivery) -> decisions::IncidentView {
+    decisions::IncidentView {
+        needs_rob: incident.needs_rob,
+        refused_command: incident.signature.class == "queue_command_refused",
+        own_effect: incident.effect.as_deref() == Some(&delivery.key),
+    }
+}
+
+pub(crate) fn incident_needs_rob(cause: IncidentCause) -> bool {
+    let cause = match cause {
+        IncidentCause::Kernel { needs_rob } => decisions::IncidentCause::Kernel { needs_rob },
+        IncidentCause::ReadFailure { incidents } => {
+            decisions::IncidentCause::ReadFailure { incidents }
+        }
+        IncidentCause::NoticeFailure { incidents } => {
+            decisions::IncidentCause::NoticeFailure { incidents }
+        }
+    };
+    decisions::incident_needs_rob(cause)
 }
 
 pub(crate) fn incident_id(snapshot: &Snapshot, cause: impl std::fmt::Display) -> String {
@@ -660,7 +682,9 @@ impl Controller {
             });
             if let Some(row) = incident {
                 let incident: Incident = crate::decode_stored(row.value.clone())?;
-                if !incident.needs_rob {
+                if decisions::incident_action(true, incident_view(&incident, &state.delivery))
+                    == decisions::IncidentAction::Probe
+                {
                     match self
                         .adapters
                         .adapter(&state.delivery)?
@@ -681,15 +705,13 @@ impl Controller {
                 .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
         {
             let incident: Incident = crate::decode_stored(row.value.clone())?;
-            // A healthy GET cannot prove that command restrictions were fixed.
-            // Keep this setup refusal for explicit incident clearance, even
-            // after the failed delivery's adapter records have retired.
-            if incident.signature.class == "queue_command_refused" {
-                self.save_allowance(state)?;
-                return Ok(());
-            }
-            if incident.effect.as_deref() == Some(&state.delivery.key) {
-                if !incident.needs_rob {
+            match decisions::incident_action(false, incident_view(&incident, &state.delivery)) {
+                decisions::IncidentAction::Hold => {
+                    // A healthy GET cannot prove command restrictions were fixed (#608).
+                    self.save_allowance(state)?;
+                    return Ok(());
+                }
+                decisions::IncidentAction::Probe => {
                     match self
                         .adapters
                         .adapter(&state.delivery)?
@@ -703,9 +725,10 @@ impl Controller {
                         Ok(false) => self.rearm(state),
                         Err(error) => self.look_failed(state, error)?,
                     }
+                    self.save_allowance(state)?;
+                    return Ok(());
                 }
-                self.save_allowance(state)?;
-                return Ok(());
+                decisions::IncidentAction::Continue => {}
             }
         }
         if let Some(announced) = state.quota_ms {
@@ -997,7 +1020,7 @@ impl Controller {
                 .map(|r| crate::decode_stored::<Incident>(r.value))
                 .transpose()?;
             if let Some(incident) = incident.filter(|i| i.open) {
-                if !incident.needs_rob {
+                if decisions::probe_allowed(true, incident.needs_rob) {
                     match self
                         .adapters
                         .adapter(&state.delivery)?
@@ -1076,24 +1099,29 @@ impl Controller {
         if changed {
             state.progress_ms = now;
             self.retry_held_effects(upstream(state.delivery.output));
-        } else if now.saturating_sub(state.progress_ms)
-            >= u64::from(allowance.no_progress_secs) * 1000
-        {
-            match upstream(state.delivery.output) {
-                Upstream::Workers => {
+        } else if decisions::stalled(
+            now,
+            state.progress_ms,
+            u64::from(allowance.no_progress_secs) * 1000,
+        ) {
+            let action = decisions::stall_action(
+                stall_upstream(upstream(state.delivery.output)),
+                state.progress.as_deref().is_some_and(|progress| {
+                    progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
+                }),
+            );
+            match action {
+                decisions::StallAction::StopWorker => {
                     state.stopping = true;
                     state.failure = Some("no_progress".into());
                     self.save_allowance(state)?;
                     self.finish_stall(state)?;
                     return Ok(true);
                 }
-                Upstream::GitHub | Upstream::Mergify => {
-                    let class = if state.progress.as_deref().is_some_and(|progress| {
-                        progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
-                    }) {
-                        "queue_requeue"
-                    } else {
-                        "queue_unfinished"
+                decisions::StallAction::Requeue | decisions::StallAction::Unfinished => {
+                    let class = match action {
+                        decisions::StallAction::Requeue => "queue_requeue",
+                        _ => "queue_unfinished",
                     };
                     state.failure = Some(class.into());
                     self.save_allowance(state)?;
@@ -1122,7 +1150,7 @@ impl Controller {
                     }
                 }
                 // PrismaBuild owns progress. Worktrees has no progress contract.
-                Upstream::PrismaBuild | Upstream::Worktrees => {}
+                decisions::StallAction::Ignore => {}
             }
         }
         if changed
@@ -1155,10 +1183,10 @@ impl Controller {
     }
 
     fn rearm(&self, state: &mut AllowanceState) {
-        state.due_ms = Some(
-            self.now_ms()
-                .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000),
-        );
+        state.due_ms = Some(decisions::rearm_at(
+            self.now_ms(),
+            u64::from(self.allowance(&state.delivery).silence_secs) * 1000,
+        ));
     }
 
     fn look_failed(&mut self, state: &mut AllowanceState, error: crate::Error) -> Result<()> {
@@ -1171,9 +1199,10 @@ impl Controller {
             state.delivery.key
         );
         if let crate::Error::Quota { retry_after } = &error {
-            let reset = self
-                .now_ms()
-                .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
+            let reset = decisions::rearm_at(
+                self.now_ms(),
+                retry_after.as_millis().min(u64::MAX as u128) as u64,
+            );
             state.quota_ms = Some(reset);
             state.due_ms = Some(reset);
             return Ok(());
@@ -1182,44 +1211,46 @@ impl Controller {
         state.healthy = false;
         self.rearm(state);
         // #403: a postmortem raises no incident; nothing waits on it.
-        if state.delivery.is_postmortem() {
+        if !decisions::incident_for_operation(state.delivery.is_postmortem()) {
             return Ok(());
         }
         let snapshot = self.store.load()?;
-        if state.incident.as_ref().is_some_and(|id| {
+        if !decisions::incident_allows_failure(state.incident.as_ref().is_some_and(|id| {
             snapshot
                 .rows
                 .iter()
                 .any(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
-        }) {
+        })) {
             return Ok(());
         }
-        if matches!(
+        if !decisions::incident_for_notice(matches!(
             state.delivery.output,
             Out::Notice {
                 notice: tl3_kernel::Notice::Incident { .. },
                 ..
             }
-        ) {
+        )) {
             return Ok(());
         }
         // #356: looks woken by webhooks can land seconds apart. Failed reads
         // within one allowance count once, so escalation keeps the allowance's pace.
         let now = self.now_ms();
         let period = u64::from(self.allowance(&state.delivery).silence_secs) * 1000;
-        if state
-            .counted_failure_ms
-            .is_some_and(|last| now.saturating_sub(last) < period)
-        {
+        if !decisions::count_failure(state.counted_failure_ms, now, period) {
             return Ok(());
         }
         state.counted_failure_ms = Some(now);
-        state.read_failures += 1;
-        if state.read_failures < 2 {
+        let mut count = decisions::FailureCount {
+            failures: state.read_failures,
+            incidents: state.read_incidents,
+            raise: false,
+        };
+        decisions::record_failure(&mut count);
+        state.read_failures = count.failures;
+        if !count.raise {
             return Ok(());
         }
-        state.read_failures = 0;
-        state.read_incidents = state.read_incidents.saturating_add(1);
+        state.read_incidents = count.incidents;
         let needs_rob = incident_needs_rob(IncidentCause::ReadFailure {
             incidents: u64::from(state.read_incidents),
         });
@@ -1348,7 +1379,7 @@ impl Controller {
             return Ok(());
         };
         let mut incident: Incident = crate::decode_stored(row.value.clone())?;
-        if !incident.open || incident.needs_rob {
+        if !decisions::probe_allowed(incident.open, incident.needs_rob) {
             return Ok(());
         }
         if incident.effect.is_some() || state.is_none() {

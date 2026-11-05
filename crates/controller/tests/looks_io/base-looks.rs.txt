@@ -1,0 +1,2578 @@
+use crate::executor::Output as Out;
+use crate::{
+    Controller, Result,
+    executor::{Completion, Delivery, Look, Observation, Upstream, upstream},
+    hydrate, put, snapshot,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::time::{Duration, UNIX_EPOCH};
+use tl3_kernel::{Ack, Event, Fact, NodeId, Phase, World};
+use tl3_store::{Commit, EffectState, RowChange, Snapshot};
+
+/// #759: how long every model a step may use can be out before an operations note.
+const LADDER_OUT_MS: u64 = 30 * 60 * 1000;
+/// #759: the operations note's fixed, typed reason.
+const LADDER_OUT_REASON: &str = "model_ladder_unavailable";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct AllowanceState {
+    pub delivery: Delivery,
+    #[serde(default)]
+    pub maintenance: bool,
+    due_ms: Option<u64>,
+    progress: Option<String>,
+    progress_ms: u64,
+    quota_ms: Option<u64>,
+    #[serde(default)]
+    last_quota_ms: Option<u64>,
+    #[serde(default)]
+    last_quota_model: Option<String>,
+    /// #759: since this step's first model ending with no model turn served
+    /// since. A progress checkpoint clears it.
+    #[serde(default)]
+    unserved_since_ms: Option<u64>,
+    /// #759: the operations note for this run of endings is posted.
+    #[serde(default)]
+    ladder_out_noticed: bool,
+    stopping: bool,
+    pub incident: Option<String>,
+    #[serde(default)]
+    healthy: bool,
+    #[serde(default)]
+    found: Option<String>,
+    #[serde(default)]
+    failure: Option<String>,
+    #[serde(default)]
+    read_failures: u8,
+    #[serde(default)]
+    read_incidents: u8,
+    /// When the last failed read was counted.
+    #[serde(default)]
+    counted_failure_ms: Option<u64>,
+    #[serde(default)]
+    external_wait: Option<tl3_store::ExternalWait>,
+    #[serde(default)]
+    wait_ended: bool,
+}
+
+impl AllowanceState {
+    pub(crate) fn new(delivery: Delivery, now: u64, delay: u64) -> Self {
+        Self {
+            delivery,
+            maintenance: false,
+            due_ms: Some(now.saturating_add(delay)),
+            progress: None,
+            progress_ms: now,
+            quota_ms: None,
+            last_quota_ms: None,
+            last_quota_model: None,
+            unserved_since_ms: None,
+            ladder_out_noticed: false,
+            stopping: false,
+            incident: None,
+            healthy: false,
+            found: None,
+            failure: None,
+            read_failures: 0,
+            read_incidents: 0,
+            counted_failure_ms: None,
+            external_wait: None,
+            wait_ended: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Incident {
+    pub id: String,
+    pub node: Option<NodeId>,
+    #[serde(default)]
+    pub input_failure: Option<crate::input_errors::InputFailure>,
+    pub open: bool,
+    pub needs_rob: bool,
+    pub blocking: bool,
+    pub summary: String,
+    pub signature: IncidentSignature,
+    #[serde(default)]
+    pub effect: Option<String>,
+    #[serde(default)]
+    pub post_key: Option<String>,
+    /// Absent on incidents stored before Q51; see `Incident::cause`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<Cause>,
+}
+
+/// Who caused an incident (Q51, Rob, 2026-11-01). A new TL3 release clears
+/// TL3-side incidents once; upstream incidents keep the probe and Rob rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cause {
+    /// GitHub, Mergify, PrismaBuild or the model proxy.
+    Upstream,
+    /// TL3's own code, prompts, tools or harness environment.
+    Tl3,
+}
+
+pub(crate) struct AttachedIncident {
+    pub upstream: Upstream,
+    pub class: String,
+    pub diagnostic: Option<crate::publication_failure::Diagnostic>,
+    pub input_failure: Option<crate::worker_inputs::Context>,
+}
+
+impl Cause {
+    /// Workers and worktrees are TL3's own harness: agent runs, reply
+    /// validation, Q50 blockers and local Git checkouts. A worktree failure
+    /// that reaches GitHub, a Git remote or its token, is upstream. Agent runs
+    /// that fail because the model proxy is down still count as TL3-side;
+    /// the controller can't yet tell them from worker bugs.
+    pub(crate) fn of(upstream: Upstream, class: &str) -> Self {
+        if matches!(
+            class,
+            "worker_input_schema"
+                | "redaction_infra"
+                | "pr_evidence"
+                | "pr_obligation"
+                | "pr_policy"
+        ) {
+            return Cause::Tl3;
+        }
+        match upstream {
+            Upstream::Workers => Cause::Tl3,
+            Upstream::Worktrees if matches!(class, "git_remote" | "invalid_token") => {
+                Cause::Upstream
+            }
+            Upstream::Worktrees => Cause::Tl3,
+            // The trusted check harness is TL3's code, running inside a PrismaBuild action.
+            Upstream::PrismaBuild if class == crate::adapters::prismabuild::HARNESS => Cause::Tl3,
+            Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
+        }
+    }
+}
+
+impl Incident {
+    pub(crate) fn cause(&self) -> Cause {
+        self.cause.unwrap_or(if self.input_failure.is_some() {
+            Cause::Upstream
+        } else {
+            Cause::of(self.signature.upstream, &self.signature.class)
+        })
+    }
+}
+
+pub(crate) fn resolve_effect_incidents(
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    mut resolved: impl FnMut(&Incident, &str) -> Result<bool>,
+) -> Result<()> {
+    for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
+        let mut incident: Incident = crate::decode_stored(row.value.clone())?;
+        if incident.open
+            && let Some(key) = incident.effect.as_deref()
+            && resolved(&incident, key)?
+        {
+            incident.open = false;
+            commit
+                .rows
+                .push(put("incidents", row.id.clone(), json!(incident)));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "StoredSignature")]
+pub(crate) struct IncidentSignature {
+    pub upstream: Upstream,
+    pub class: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredSignature {
+    Structured { upstream: Upstream, class: String },
+    Legacy(String),
+}
+
+impl TryFrom<StoredSignature> for IncidentSignature {
+    type Error = &'static str;
+
+    fn try_from(value: StoredSignature) -> std::result::Result<Self, Self::Error> {
+        let (upstream, class) = match value {
+            StoredSignature::Structured { upstream, class } => (upstream, class),
+            StoredSignature::Legacy(signature) => {
+                let (source, class) = signature
+                    .split_once(':')
+                    .ok_or("invalid incident signature")?;
+                let upstream = [
+                    Upstream::GitHub,
+                    Upstream::Mergify,
+                    Upstream::PrismaBuild,
+                    Upstream::Workers,
+                    Upstream::Worktrees,
+                ]
+                .into_iter()
+                .find(|upstream| upstream.kind() == source)
+                .ok_or("unknown incident upstream")?;
+                (upstream, class.into())
+            }
+        };
+        Ok(Self { upstream, class })
+    }
+}
+
+pub(crate) enum IncidentCause {
+    Kernel { needs_rob: bool },
+    ReadFailure { incidents: u64 },
+    NoticeFailure { incidents: u64 },
+}
+
+pub(crate) fn incident_needs_rob(cause: IncidentCause) -> bool {
+    match cause {
+        // Kernel notices also cover permanent failures and merge races.
+        IncidentCause::Kernel { needs_rob } => needs_rob,
+        IncidentCause::ReadFailure { incidents } | IncidentCause::NoticeFailure { incidents } => {
+            incidents > 1
+        }
+    }
+}
+
+pub(crate) fn incident_id(snapshot: &Snapshot, cause: impl std::fmt::Display) -> String {
+    format!("{}.{}", snapshot.revision.get() + 1, cause)
+}
+
+pub(crate) fn incident_note(repository: &crate::Repository, issue: u64, summary: &str) -> String {
+    format!(
+        "{summary} Request: `https://github.com/{}/{}/issues/{}`.",
+        repository.owner, repository.name, issue
+    )
+}
+
+impl Controller {
+    pub(crate) fn resolve_closed_effect_incidents(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &tl3_kernel::World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        resolve_effect_incidents(snapshot, commit, |incident, key| {
+            let Some(node) = incident.node else {
+                return Ok(false);
+            };
+            if !matches!(
+                world.nodes[node.0 as usize].phase,
+                tl3_kernel::Phase::Closed(_)
+            ) {
+                return Ok(false);
+            }
+            let Some(effect) = self.store.effect(key)? else {
+                return Ok(false);
+            };
+            let delivery: Delivery = crate::decode_stored(effect.payload)?;
+            // Failed summaries and other notices still need delivery after closure.
+            Ok(matches!(delivery.output, Out::Effect { .. }))
+        })
+    }
+
+    pub(crate) fn cleanup_ended_looks(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let world = snapshot::decode(&snapshot)?;
+        let mut commit = Commit::new(
+            format!("ended-look-retire:{}", snapshot.revision.get()),
+            json!({"retire_ended_looks":true}),
+            &snapshot,
+        );
+        self.retire_ended_effect_looks(&snapshot, &world, &mut commit)?;
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retire_ended_effect_looks(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let mut states = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "allowances")
+            .map(|row| crate::decode_stored::<AllowanceState>(row.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for row in &commit.rows {
+            if let RowChange::Put { table, value, .. } = row
+                && table == "allowances"
+            {
+                states.push(crate::decode_stored(value.clone())?);
+            }
+        }
+        let mut retired = std::collections::BTreeSet::new();
+        for state in states {
+            if !ended_effect_look(snapshot, world, &state.delivery)
+                || !retired.insert(state.delivery.key.clone())
+            {
+                continue;
+            }
+            if state.external_wait.is_some()
+                && !self.retire_wait(snapshot, &state.delivery, commit)?
+            {
+                continue;
+            }
+            commit.rows.push(RowChange::Delete {
+                table: "allowances".into(),
+                id: state.delivery.key.clone(),
+            });
+            self.remove_hold(&state.delivery);
+        }
+        Ok(())
+    }
+
+    fn retire_wait(
+        &mut self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        commit: &mut Commit,
+    ) -> Result<bool> {
+        // State-table "Counter headroom": filesystem subscriptions cannot
+        // participate in the input transaction. Their durable intent does.
+        commit.rows.push(put(
+            "retiring_waits",
+            delivery.key.clone(),
+            json!({"delivery": delivery}),
+        ));
+        let _ = snapshot;
+        Ok(true)
+    }
+
+    /// Only committed intents can remove an external wait subscription. A failed
+    /// removal waits for its incident's clearance, without a retry polling loop.
+    pub(crate) fn retire_committed_waits(&mut self, snapshot: &Snapshot) -> Result<bool> {
+        for row in snapshot.rows.iter().filter(|r| r.table == "retiring_waits") {
+            if let Some(id) = row.value["incident"].as_str()
+                && snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "incidents" && r.id == id && r.value["open"] == true)
+            {
+                continue;
+            }
+            let delivery: Delivery = crate::decode_stored(row.value["delivery"].clone())?;
+            let mut commit = Commit::new(
+                format!("retire-wait:{}:{}", row.id, snapshot.revision.get()),
+                json!({"retire_wait": row.id}),
+                snapshot,
+            );
+            match self
+                .adapters
+                .get(Upstream::PrismaBuild)?
+                .watch_wait(&delivery, None)
+            {
+                Ok(()) => commit.rows.push(RowChange::Delete {
+                    table: row.table.clone(),
+                    id: row.id.clone(),
+                }),
+                Err(error) => {
+                    let request = crate::request(snapshot, delivery.node())?;
+                    let scope = format!("retire-wait:{}", delivery.key);
+                    let existing = snapshot
+                        .rows
+                        .iter()
+                        .find(|r| {
+                            r.table == "incidents"
+                                && r.value["open"] == true
+                                && r.value["signature"]["upstream"] == json!(Upstream::PrismaBuild)
+                                && r.value["signature"]["class"] == failure_class(&error)
+                                && r.value["input_failure"]["scope"] == scope
+                        })
+                        .map(|r| r.id.clone());
+                    self.input_failed(
+                        snapshot,
+                        &scope,
+                        Some(crate::input_errors::IssueTarget {
+                            repository: request.repo,
+                            issue: request.issue,
+                        }),
+                        &request.title,
+                        Some(delivery.node()),
+                        Upstream::PrismaBuild,
+                        error,
+                        &mut commit,
+                    )?;
+                    let id = commit
+                        .rows
+                        .iter()
+                        .find_map(|r| match r {
+                            RowChange::Put { table, id, .. } if table == "incidents" => {
+                                Some(id.clone())
+                            }
+                            _ => None,
+                        })
+                        .or(existing)
+                        .ok_or(crate::Error::Invalid("wait retirement incident missing"))?;
+                    let mut value = row.value.clone();
+                    value["incident"] = json!(id);
+                    commit
+                        .rows
+                        .push(put("retiring_waits", row.id.clone(), value));
+                }
+            }
+            self.store.commit(&commit)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn link_allowance_incident(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        id: &str,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            state.incident = Some(id.into());
+            commit
+                .rows
+                .push(put("allowances", row.id.clone(), json!(state)));
+        }
+        Ok(())
+    }
+    pub fn set_allowances(&mut self, allowances: tl3_config::Allowances) {
+        self.allowances = allowances;
+    }
+
+    pub(crate) fn retry_queue_observation_looks(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("deferred-queue-look:{}", snapshot.revision.get()),
+            json!({"retry_deferred_queue_observation":true}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            if !matches!(
+                state.delivery.output,
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            ) || (!snapshot
+                .pending_effects
+                .iter()
+                .any(|effect| effect.key == row.id)
+                && !snapshot
+                    .rows
+                    .iter()
+                    .any(|watch| watch.table == "watches" && watch.id == row.id))
+            {
+                continue;
+            }
+            // Reuse the enqueue allowance. A deferred read creates no new polling timer.
+            let due = self
+                .now_ms()
+                .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000)
+                .max(state.quota_ms.unwrap_or(0));
+            if state.due_ms.is_none_or(|old| old > due) {
+                state.due_ms = Some(due);
+                commit
+                    .rows
+                    .push(put("allowances", row.id.clone(), json!(state)));
+            }
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn now_ms(&self) -> u64 {
+        self.now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64
+    }
+
+    pub(crate) fn allowance(&self, delivery: &Delivery) -> &tl3_config::Allowance {
+        match upstream(delivery.output) {
+            Upstream::Workers => &self.allowances.agent_worker,
+            Upstream::PrismaBuild => &self.allowances.prismabuild,
+            Upstream::GitHub | Upstream::Mergify => &self.allowances.github_mergify,
+            Upstream::Worktrees => &self.allowances.worktrees,
+        }
+    }
+
+    pub(crate) fn allowance_row(&self, delivery: Delivery) -> RowChange {
+        let delay = u64::from(
+            self.allowance(&delivery)
+                .silence_secs
+                .min(self.allowance(&delivery).no_progress_secs),
+        ) * 1000;
+        put(
+            "allowances",
+            delivery.key.clone(),
+            json!(AllowanceState::new(delivery, self.now_ms(), delay)),
+        )
+    }
+
+    /// One timer for the earliest outstanding allowance, including outage probes.
+    pub fn next_look_in(&mut self) -> Result<Option<Duration>> {
+        let now = self.now_ms();
+        let snapshot = self.store.load()?;
+        // Same-second priority rereads share the timer (Q39).
+        let reread = crate::priority::next_reread_ms(&snapshot)?;
+        Ok(snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "allowances")
+            .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .filter_map(|s| s.due_ms)
+            .chain(reread)
+            .chain(crate::memory::next_probe_ms(&snapshot)?)
+            .min()
+            .map(|due| Duration::from_millis(due.saturating_sub(now))))
+    }
+
+    pub fn look_due(&mut self) -> Result<()> {
+        self.looks(false, None)
+    }
+
+    /// Restart and webhook-gap recovery may request a look without consuming time.
+    pub fn look_now(&mut self) -> Result<()> {
+        self.looks(true, None)
+    }
+
+    pub fn look_key(&mut self, key: &str) -> Result<()> {
+        self.looks(true, Some(key))
+    }
+
+    fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
+        self.look_memory_probe(force, key)?;
+        self.retry_input_incident_posts()?;
+        let mut snapshot = self.store.load()?;
+        // Same-second priority rereads that are due share this timer (Q39).
+        if key.is_none() && self.reconcile_due(&snapshot)? {
+            snapshot = self.store.load()?;
+        }
+        let states = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "allowances")
+            .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let now = self.now_ms();
+        let mut github_due = false;
+        for mut state in states {
+            if key.is_some_and(|key| key != state.delivery.key) {
+                continue;
+            }
+            if !force && !state.due_ms.is_some_and(|due| due <= now) {
+                continue;
+            }
+            if let Some(effect) = self.store.effect(&state.delivery.key)? {
+                state.delivery = hydrate(&effect, &snapshot)?;
+            }
+            github_due |= upstream(state.delivery.output) == Upstream::GitHub;
+            if let Err(error) = self.look_state(&snapshot, &mut state, now) {
+                self.look_failed(&mut state, error)?;
+                self.save_allowance(&state)?;
+            }
+        }
+        if key.is_none() && (github_due || force) {
+            let after = self
+                .store
+                .load()?
+                .rows
+                .iter()
+                .find(|r| r.table == "delivery_looks" && r.id == "github")
+                .and_then(|r| r.value.as_u64());
+            let snapshot = self.store.load()?;
+            let since = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "delivery_looks" && r.id == "github_started")
+                .and_then(|r| r.value.as_u64());
+            let since = if let Some(since) = since {
+                since
+            } else if after.is_some() {
+                0
+            } else {
+                let mut commit = Commit::new(
+                    "github-delivery-start",
+                    json!({"delivery_start":now}),
+                    &snapshot,
+                );
+                commit
+                    .rows
+                    .push(put("delivery_looks", "github_started".into(), json!(now)));
+                self.store.commit(&commit)?;
+                now
+            };
+            match self
+                .adapters
+                .get(Upstream::GitHub)?
+                .recover_deliveries(after.unwrap_or_default(), since)
+            {
+                Ok(Some(next)) if Some(next) > after => {
+                    let snapshot = self.store.load()?;
+                    let mut commit = Commit::new(
+                        format!("github-delivery-look:{next}"),
+                        json!({"delivery_watermark":next}),
+                        &snapshot,
+                    );
+                    commit
+                        .rows
+                        .push(put("delivery_looks", "github".into(), json!(next)));
+                    self.store.commit(&commit)?;
+                    // Kept in the same controller snapshot as other look evidence.
+                }
+                Ok(_) => {}
+                Err(error) if !crate::input_errors::recoverable(&error) => return Err(error),
+                Err(error) => eprintln!("GitHub delivery look failed: {error}"),
+            }
+        }
+        Ok(())
+    }
+
+    fn look_state(
+        &mut self,
+        snapshot: &Snapshot,
+        state: &mut AllowanceState,
+        now: u64,
+    ) -> Result<()> {
+        state.due_ms = None;
+        if state.maintenance {
+            let incident = state.incident.as_ref().and_then(|id| {
+                snapshot
+                    .rows
+                    .iter()
+                    .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
+            });
+            if let Some(row) = incident {
+                let incident: Incident = crate::decode_stored(row.value.clone())?;
+                if !incident.needs_rob {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
+                        Ok(true) => self.probe_passed(Some(state), state.incident.as_deref())?,
+                        Ok(false) | Err(_) => self.rearm(state),
+                    }
+                }
+            }
+            self.save_allowance(state)?;
+            return Ok(());
+        }
+        if let Some(id) = &state.incident
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
+        {
+            let incident: Incident = crate::decode_stored(row.value.clone())?;
+            // A healthy GET cannot prove that command restrictions were fixed.
+            // Keep this setup refusal for explicit incident clearance, even
+            // after the failed delivery's adapter records have retired.
+            if incident.signature.class == "queue_command_refused" {
+                self.save_allowance(state)?;
+                return Ok(());
+            }
+            if incident.effect.as_deref() == Some(&state.delivery.key) {
+                if !incident.needs_rob {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
+                        Ok(true) => {
+                            self.probe_passed(Some(state), state.incident.as_deref())?;
+                            self.retry_held_effects(upstream(state.delivery.output));
+                            self.rearm(state);
+                        }
+                        Ok(false) => self.rearm(state),
+                        Err(error) => self.look_failed(state, error)?,
+                    }
+                }
+                self.save_allowance(state)?;
+                return Ok(());
+            }
+        }
+        if let Some(announced) = state.quota_ms {
+            self.expire_model_quotas(now)?;
+            let resume = self.adapters.adapter(&state.delivery)?.quota_resume_ms(
+                &state.delivery,
+                announced,
+                now,
+            )?;
+            if resume > now {
+                // #759: every model this step may use is out. Say so once
+                // when that has lasted LADDER_OUT_MS, so an outage can't wait silently.
+                let bound = state
+                    .unserved_since_ms
+                    .filter(|_| !state.ladder_out_noticed)
+                    .map(|since| since.saturating_add(LADDER_OUT_MS));
+                if bound.is_some_and(|bound| bound <= now) {
+                    state.ladder_out_noticed = true;
+                    state.due_ms = Some(resume);
+                    return self.ladder_out_note(state, resume, now);
+                }
+                state.due_ms = Some(bound.map_or(resume, |bound| bound.min(resume)));
+                self.save_allowance(state)?;
+                return Ok(());
+            }
+        }
+        if state.quota_ms.is_some() {
+            let effect = self
+                .store
+                .effect(&state.delivery.key)?
+                .expect("quota effect");
+            if effect.state == EffectState::Confirmed {
+                let mut delivery = state.delivery.clone();
+                delivery.epoch = self.store.load()?.epoch.get();
+                match self
+                    .adapters
+                    .adapter(&delivery)?
+                    .resume_after_quota(&delivery)
+                {
+                    Ok(Some(completion)) => {
+                        self.look_observations(&delivery, completion)?;
+                        state.progress = None;
+                        state.progress_ms = now;
+                        self.rearm(state);
+                    }
+                    result => {
+                        let error = match result {
+                            Err(error) => error,
+                            Ok(None) => {
+                                crate::Error::Invalid("adapter cannot resume a quota ending")
+                            }
+                            Ok(Some(_)) => unreachable!(),
+                        };
+                        self.look_failed(state, error)?;
+                        self.save_allowance(state)?;
+                        return Ok(());
+                    }
+                }
+            }
+            state.quota_ms = None;
+            self.remove_hold(&state.delivery);
+            self.save_allowance(state)?;
+            return Ok(());
+        }
+        if state.stopping {
+            self.finish_stall(state)?;
+            return Ok(());
+        }
+        let result = self
+            .adapters
+            .adapter(&state.delivery)?
+            .look(&state.delivery);
+        let result = match result {
+            Err(error)
+                if error.is_github_not_found()
+                    && state.failure.as_deref() == Some("not_found")
+                    && matches!(state.delivery.output, Out::Effect { .. }) =>
+            {
+                Ok(Look::Absent)
+            }
+            result => result,
+        };
+        if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending | Look::Alive { .. }))
+        {
+            state.read_failures = 0;
+        }
+        if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
+            self.adapters
+                .get(Upstream::PrismaBuild)?
+                .watch_wait(&state.delivery, None)?;
+            state.external_wait = None;
+            state.wait_ended = false;
+        }
+        match result {
+            Ok(Look::Found(completion)) => {
+                let mut completion = *completion;
+                let effect = self
+                    .store
+                    .effect(&state.delivery.key)?
+                    .expect("allowance effect");
+                let token_only =
+                    completion.progress.is_some() && completion.observations.is_empty();
+                let changed = if completion.progress.is_some() {
+                    let snapshot = self.store.load()?;
+                    let mut commit = Commit::new(
+                        format!(
+                            "look-progress:{}:{}",
+                            state.delivery.key,
+                            snapshot.revision.get()
+                        ),
+                        json!({"progress_read":state.delivery.key}),
+                        &snapshot,
+                    );
+                    let changed = self.record_progress(
+                        &snapshot,
+                        &mut commit,
+                        &state.delivery.key,
+                        completion.progress.as_ref(),
+                    )?;
+                    if !commit.rows.is_empty() {
+                        self.store.commit(&commit)?;
+                    }
+                    changed == Some(true)
+                } else {
+                    false
+                };
+                if changed {
+                    state.progress_ms = now;
+                    state.due_ms = Some(now.saturating_add(
+                        u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
+                    ));
+                }
+                // The typed watch row is the sole token store.
+                completion.progress = None;
+                if token_only {
+                    if effect.state.is_pending() {
+                        self.complete(&effect.key, completion)?;
+                    }
+                    if self.look_alive(state, changed)? {
+                        return Ok(());
+                    }
+                } else {
+                    let found = serde_json::to_string(&completion)?;
+                    let mut setup_gap = false;
+                    for observation in &completion.observations {
+                        if let Observation::Queue(fact) = observation
+                            && fact.setup()
+                            && !fact.recorded(snapshot)?
+                        {
+                            setup_gap = true;
+                            break;
+                        }
+                    }
+                    let new = effect.state.is_pending()
+                        || setup_gap
+                        || (state.found.as_ref() != Some(&found)
+                            && !completion.observations.is_empty());
+                    state.found = Some(found);
+                    if new {
+                        if completion.releases_holds() {
+                            self.retry_held_effects(upstream(state.delivery.output));
+                        }
+                        if effect.state.is_pending() {
+                            self.complete(&effect.key, completion)?;
+                        } else {
+                            self.look_observations(&state.delivery, completion)?;
+                        }
+                    }
+                }
+            }
+            Ok(Look::Absent) => {
+                let effect = self
+                    .store
+                    .effect(&state.delivery.key)?
+                    .expect("allowance effect");
+                if self.hold_class(&state.delivery) == Some(CHECKS_PENDING) {
+                    // Waiting for checks is not a failure: release the guard to run
+                    // again rather than spending a retry on the effect's absence.
+                    self.remove_hold(&state.delivery);
+                } else if (self.is_held(&state.delivery)
+                    || state.failure.as_deref() == Some("not_found"))
+                    && effect.state.is_pending()
+                    && effect.state != EffectState::Cancelling
+                    && matches!(state.delivery.output, Out::Effect { .. })
+                {
+                    // Absence or a repeated 404 spends the existing retry allowance.
+                    self.complete(
+                        &effect.key,
+                        Completion {
+                            diagnostic: None,
+                            failure_class: None,
+                            progress: None,
+                            ack: Ack::Retryable,
+                            observations: vec![],
+                        },
+                    )?;
+                    return Ok(());
+                }
+            }
+            Ok(Look::Alive { progress }) => {
+                let changed = state.progress.as_ref() != Some(&progress);
+                // An unacknowledged effect that stopped moving past its allowance
+                // keeps its failure count, so the stall can escalate (#356).
+                // Inside the allowance an alive look is a successful read (#373).
+                let within = now.saturating_sub(state.progress_ms)
+                    < u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000;
+                if changed
+                    || within
+                    || !self
+                        .store
+                        .effect(&state.delivery.key)?
+                        .is_some_and(|effect| effect.state.is_pending())
+                {
+                    state.read_failures = 0;
+                }
+                state.progress = Some(progress);
+                if self.look_alive(state, changed)? {
+                    return Ok(());
+                }
+            }
+            Ok(Look::Waiting { wait, checkout }) => {
+                if state.external_wait.as_ref() != Some(&wait) {
+                    state.external_wait = Some(wait.clone());
+                    state.wait_ended = false;
+                }
+                let record = if wait.upstream == "prismabuild" {
+                    self.adapters
+                        .get(Upstream::PrismaBuild)?
+                        .wait_record(&wait.key, &checkout)
+                } else {
+                    Ok(crate::executor::WaitRecord::Ended)
+                };
+                match record {
+                    Ok(crate::executor::WaitRecord::Alive) => {
+                        self.adapters
+                            .get(Upstream::PrismaBuild)?
+                            .watch_wait(&state.delivery, Some(&wait))?;
+                        state.read_failures = 0;
+                        state.wait_ended = false;
+                        state.progress = None;
+                    }
+                    Ok(crate::executor::WaitRecord::Ended) => {
+                        self.adapters
+                            .get(Upstream::PrismaBuild)?
+                            .watch_wait(&state.delivery, None)?;
+                        state.read_failures = 0;
+                        if !state.wait_ended {
+                            state.wait_ended = true;
+                            state.progress_ms = now;
+                        }
+                        if self.look_alive(state, false)? {
+                            return Ok(());
+                        }
+                    }
+                    Err(error) => self.look_failed(state, error)?,
+                }
+            }
+            Ok(Look::Healthy) => {
+                if !state.healthy {
+                    self.retry_held_effects(upstream(state.delivery.output));
+                }
+                state.healthy = true;
+                self.probe_passed(Some(state), state.incident.as_deref())?;
+            }
+            Ok(Look::Quota { reset_ms }) => {
+                state.quota_ms = Some(reset_ms);
+                state.due_ms = Some(reset_ms.max(now));
+            }
+            Ok(Look::Pending) => {
+                self.look_failed(state, crate::Error::Invalid("upstream record unavailable"))?;
+            }
+            Err(crate::Error::Quota { retry_after }) => {
+                let reset =
+                    now.saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
+                state.quota_ms = Some(reset);
+                state.due_ms = Some(reset.max(now));
+            }
+            Err(error) => {
+                self.look_failed(state, error)?;
+            }
+        }
+        if let Some(id) = &state.incident {
+            let incident = self
+                .store
+                .load()?
+                .rows
+                .into_iter()
+                .find(|r| r.table == "incidents" && r.id == *id)
+                .map(|r| crate::decode_stored::<Incident>(r.value))
+                .transpose()?;
+            if let Some(incident) = incident.filter(|i| i.open) {
+                if !incident.needs_rob {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
+                        Ok(true) => {
+                            state.healthy = true;
+                            self.retry_held_effects(upstream(state.delivery.output));
+                            self.probe_passed(Some(state), state.incident.as_deref())?;
+                        }
+                        Ok(false) => self.rearm(state),
+                        Err(error) => self.look_failed(state, error)?,
+                    }
+                }
+            } else {
+                state.incident = None;
+            }
+        }
+        self.save_allowance(state)?;
+        Ok(())
+    }
+
+    pub(crate) fn record_progress(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        key: &str,
+        token: Option<&crate::executor::ProgressToken>,
+    ) -> Result<Option<bool>> {
+        let Some(token) = token else { return Ok(None) };
+        let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "watches" && r.id == key)
+        else {
+            return Ok(None);
+        };
+        let previous: Option<crate::executor::WatchProgress> = row
+            .value
+            .get("progress")
+            .map(|value| crate::decode_stored(value.clone()))
+            .transpose()?;
+        let progress = crate::executor::WatchProgress {
+            previous: previous.as_ref().map(|p| p.current.clone()),
+            current: token.clone(),
+        };
+        let changed = progress.changed();
+        if previous.as_ref() != Some(&progress) {
+            let mut value = row.value.clone();
+            value["progress"] = json!(progress);
+            commit.rows.push(put("watches", key.into(), value));
+        }
+        if changed
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            state.progress_ms = self.now_ms();
+            state.due_ms = Some(state.progress_ms.saturating_add(
+                u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
+            ));
+            state.progress = None;
+            state.found = None;
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(Some(changed))
+    }
+
+    fn look_alive(&mut self, state: &mut AllowanceState, changed: bool) -> Result<bool> {
+        let now = self.now_ms();
+        let allowance = self.allowance(&state.delivery).clone();
+        if changed {
+            state.progress_ms = now;
+            self.retry_held_effects(upstream(state.delivery.output));
+        } else if now.saturating_sub(state.progress_ms)
+            >= u64::from(allowance.no_progress_secs) * 1000
+        {
+            match upstream(state.delivery.output) {
+                Upstream::Workers => {
+                    state.stopping = true;
+                    state.failure = Some("no_progress".into());
+                    self.save_allowance(state)?;
+                    self.finish_stall(state)?;
+                    return Ok(true);
+                }
+                Upstream::GitHub | Upstream::Mergify => {
+                    let class = if state.progress.as_deref().is_some_and(|progress| {
+                        progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
+                    }) {
+                        "queue_requeue"
+                    } else {
+                        "queue_unfinished"
+                    };
+                    state.failure = Some(class.into());
+                    self.save_allowance(state)?;
+                    self.observe(
+                        &format!("stall:{}:{}", state.delivery.key, state.progress_ms),
+                        Observation::Kernel(Event::Fact {
+                            node: state.delivery.node(),
+                            fact: Fact::UpstreamStalled,
+                        }),
+                    )?;
+                    // The kernel acts on a stall only in Queued. An effect still
+                    // unacknowledged past its allowance is a failed look, so it
+                    // raises the read incident at the allowances' pace (#356).
+                    if self
+                        .store
+                        .effect(&state.delivery.key)?
+                        .is_some_and(|effect| effect.state.is_pending())
+                    {
+                        self.look_failed(
+                            state,
+                            crate::Error::Permanent {
+                                class,
+                                source: "the upstream never acknowledged the request".into(),
+                            },
+                        )?;
+                    }
+                }
+                // PrismaBuild owns progress. Worktrees has no progress contract.
+                Upstream::PrismaBuild | Upstream::Worktrees => {}
+            }
+        }
+        if changed
+            || now.saturating_sub(state.progress_ms) < u64::from(allowance.no_progress_secs) * 1000
+        {
+            state.due_ms = Some(
+                state
+                    .progress_ms
+                    .saturating_add(u64::from(allowance.no_progress_secs) * 1000),
+            );
+        }
+        Ok(false)
+    }
+
+    fn finish_stall(&mut self, state: &mut AllowanceState) -> Result<()> {
+        let mut delivery = state.delivery.clone();
+        delivery.epoch = self.store.load()?.epoch.get();
+        let completion = match self.adapters.adapter(&delivery)?.stop_stalled(&delivery) {
+            Ok(completion) if delivery.is_postmortem() => crate::postmortems::stalled(completion),
+            Ok(completion) => completion,
+            Err(error) => {
+                self.look_failed(state, error)?;
+                return self.save_allowance(state);
+            }
+        };
+        self.look_observations(&delivery, completion)?;
+        state.stopping = false;
+        state.due_ms = None;
+        self.save_allowance(state)
+    }
+
+    fn rearm(&self, state: &mut AllowanceState) {
+        state.due_ms = Some(
+            self.now_ms()
+                .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000),
+        );
+    }
+
+    fn look_failed(&mut self, state: &mut AllowanceState, error: crate::Error) -> Result<()> {
+        if !crate::input_errors::recoverable(&error) {
+            return Err(error);
+        }
+        self.record_publication_refusal(&state.delivery, &error)?;
+        eprintln!(
+            "allowance action failed for {}: {error}",
+            state.delivery.key
+        );
+        if let crate::Error::Quota { retry_after } = &error {
+            let reset = self
+                .now_ms()
+                .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
+            state.quota_ms = Some(reset);
+            state.due_ms = Some(reset);
+            return Ok(());
+        }
+        state.failure = Some(failure_class(&error).into());
+        state.healthy = false;
+        self.rearm(state);
+        // #403: a postmortem raises no incident; nothing waits on it.
+        if state.delivery.is_postmortem() {
+            return Ok(());
+        }
+        let snapshot = self.store.load()?;
+        if state.incident.as_ref().is_some_and(|id| {
+            snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
+        }) {
+            return Ok(());
+        }
+        if matches!(
+            state.delivery.output,
+            Out::Notice {
+                notice: tl3_kernel::Notice::Incident { .. },
+                ..
+            }
+        ) {
+            return Ok(());
+        }
+        // #356: looks woken by webhooks can land seconds apart. Failed reads
+        // within one allowance count once, so escalation keeps the allowance's pace.
+        let now = self.now_ms();
+        let period = u64::from(self.allowance(&state.delivery).silence_secs) * 1000;
+        if state
+            .counted_failure_ms
+            .is_some_and(|last| now.saturating_sub(last) < period)
+        {
+            return Ok(());
+        }
+        state.counted_failure_ms = Some(now);
+        state.read_failures += 1;
+        if state.read_failures < 2 {
+            return Ok(());
+        }
+        state.read_failures = 0;
+        state.read_incidents = state.read_incidents.saturating_add(1);
+        let needs_rob = incident_needs_rob(IncidentCause::ReadFailure {
+            incidents: u64::from(state.read_incidents),
+        });
+        let id = incident_id(&snapshot, "read");
+        state.incident = Some(id.clone());
+        let request = crate::request(&snapshot, state.delivery.node())?;
+        let signature = IncidentSignature {
+            upstream: upstream(state.delivery.output),
+            class: failure_class(&error).into(),
+        };
+        let app_login = self
+            .adapters
+            .adapter(&state.delivery)?
+            .app_login(request.repo.installation);
+        let mut summary =
+            incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
+        crate::worker_inputs::append(&mut summary, crate::worker_inputs::of(&error));
+        if let Some(progress) = state.progress.as_deref().filter(|progress| {
+            progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
+        }) {
+            summary.push(' ');
+            summary.push_str(progress);
+        } else if let Some(detail) = queue_command_detail(&state.delivery, &signature.class) {
+            summary.push(' ');
+            summary.push_str(&detail);
+        }
+        let mut commit = Commit::new(
+            format!("incident:{id}"),
+            json!({"read_outage":state.delivery.key}),
+            &snapshot,
+        );
+        let diagnostic =
+            crate::publication_failure::retained(&snapshot, &commit, &state.delivery.key)?;
+        if let Some(diagnostic) = &diagnostic {
+            summary.push_str(&format!(
+                " Recorded occurrence {}. {}",
+                state.read_incidents,
+                diagnostic.render()
+            ));
+        }
+        commit.rows.push(put(
+            "incidents",
+            id.clone(),
+            json!(Incident {
+                id: id.clone(),
+                node: Some(state.delivery.node()),
+                input_failure: None,
+                open: true,
+                needs_rob,
+                blocking: false,
+                summary: summary.clone(),
+                signature: signature.clone(),
+                effect: Some(state.delivery.key.clone()),
+                post_key: Some(format!("incident:{id}")),
+                cause: Some(Cause::of(signature.upstream, &signature.class)),
+            }),
+        ));
+        let mut delivery = state.delivery.clone();
+        delivery.key = format!("incident:{id}");
+        delivery.output = Out::Notice {
+            node: delivery.node(),
+            notice: tl3_kernel::Notice::Incident { needs_rob },
+        };
+        delivery.epoch = snapshot.epoch.get();
+        delivery.note = Some(incident_note(&request.repo, request.issue, &summary));
+        delivery.question_context = Some(json!({"issue_title":request.title,
+            "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
+                request.repo.owner, request.repo.name, request.issue), "signature":signature, "incident_id":id,
+            "publication_diagnostic":diagnostic, "occurrences":state.read_incidents}));
+        if let Some(o) = &self.bootstrap.operations {
+            delivery.repository = crate::Repository {
+                owner: o.owner.clone(),
+                name: o.name.clone(),
+                installation: o.installation_id,
+            };
+            delivery.issue = o.number;
+        }
+        commit
+            .rows
+            .push(put("allowances", state.delivery.key.clone(), json!(state)));
+        commit.rows.push(self.allowance_row(delivery.clone()));
+        commit.effects.push(delivery.into_effect());
+        // Preserve the upstream key and unknown outcome. A read outage cannot
+        // acknowledge the write or authorize a replacement operation.
+        self.store.commit(&commit)?;
+        Ok(())
+    }
+
+    fn look_observations(&mut self, delivery: &Delivery, completion: Completion) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!(
+                "look-observations:{}:{}",
+                delivery.key,
+                snapshot.revision.get()
+            ),
+            json!(&completion),
+            &snapshot,
+        );
+        for (index, observation) in completion.observations.iter().enumerate() {
+            self.queue_observation(&snapshot, &mut commit, &delivery.key, index, observation)?;
+            if let Some(source) = crate::observation_upstream(&snapshot, observation)? {
+                self.retry_held_effects(source);
+            }
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn probe_passed(
+        &mut self,
+        state: Option<&AllowanceState>,
+        id: Option<&str>,
+    ) -> Result<()> {
+        let Some(id) = id else {
+            return Ok(());
+        };
+        let snapshot = self.store.load()?;
+        let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "incidents" && r.id == id)
+        else {
+            return Ok(());
+        };
+        let mut incident: Incident = crate::decode_stored(row.value.clone())?;
+        if !incident.open || incident.needs_rob {
+            return Ok(());
+        }
+        if incident.effect.is_some() || state.is_none() {
+            incident.open = false;
+            let mut commit =
+                Commit::new(format!("probe:{id}"), json!({"probe_passed":id}), &snapshot);
+            self.retry_notice(&snapshot, &incident, &mut commit)?;
+            commit
+                .rows
+                .push(put("incidents", id.to_owned(), json!(incident)));
+            self.store.commit(&commit)?;
+            return Ok(());
+        }
+        let state = state.expect("kernel incident has an allowance");
+        let world = self.world()?;
+        let node = &world.nodes[state.delivery.node().0 as usize];
+        if node.waiting_incident && !node.incident_needs_rob {
+            self.observe(
+                &format!(
+                    "probe:{}",
+                    state.incident.as_deref().unwrap_or(&state.delivery.key)
+                ),
+                Observation::Kernel(Event::Fact {
+                    node: state.delivery.node(),
+                    fact: Fact::IncidentCleared { by_rob: false },
+                }),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn resume_incident_look(
+        &self,
+        snapshot: &Snapshot,
+        incident: &Incident,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(key) = &incident.effect
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "allowances" && r.id == *key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            state.due_ms = Some(self.now_ms());
+            commit
+                .rows
+                .push(put("allowances", key.clone(), json!(state)));
+        }
+        Ok(())
+    }
+
+    fn save_allowance(&mut self, state: &AllowanceState) -> Result<()> {
+        let snapshot = self.store.load()?;
+        if ended_effect_look(&snapshot, &snapshot::decode(&snapshot)?, &state.delivery) {
+            return Ok(());
+        }
+        let value = json!(state);
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances" && r.id == state.delivery.key && r.value == value)
+        {
+            return Ok(());
+        }
+        let mut commit = Commit::new(
+            format!(
+                "allowance:{}:{}",
+                state.delivery.key,
+                snapshot.revision.get()
+            ),
+            json!({"look":state.delivery.key}),
+            &snapshot,
+        );
+        commit
+            .rows
+            .push(put("allowances", state.delivery.key.clone(), value));
+        self.store.commit(&commit)?;
+        Ok(())
+    }
+
+    pub(crate) fn failure_allowance(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        class: &str,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            state.failure = Some(class.into());
+            state.healthy = false;
+            if state.quota_ms.is_none() {
+                state.due_ms = Some(self.now_ms().saturating_add(
+                    u64::from(self.allowance(&state.delivery).silence_secs) * 1000,
+                ));
+            }
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn progress_allowance(
+        &mut self,
+        snapshot: &Snapshot,
+        key: &str,
+        checkpoint: String,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            if state.progress.as_ref() != Some(&checkpoint) {
+                if state.external_wait.take().is_some() {
+                    self.retire_wait(snapshot, &state.delivery, commit)?;
+                }
+                state.wait_ended = false;
+                state.progress = Some(checkpoint);
+                state.progress_ms = self.now_ms();
+                // A model turn or tool result: a model served this step (#759).
+                state.unserved_since_ms = None;
+                state.ladder_out_noticed = false;
+                state.due_ms = Some(
+                    state.progress_ms.saturating_add(
+                        u64::from(
+                            self.allowance(&state.delivery)
+                                .silence_secs
+                                .min(self.allowance(&state.delivery).no_progress_secs),
+                        ) * 1000,
+                    ),
+                );
+                commit
+                    .rows
+                    .push(put("allowances", key.into(), json!(state)));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clear_model_quota(
+        &self,
+        snapshot: &Snapshot,
+        model: Option<&str>,
+        commit: &mut Commit,
+    ) {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "model_quotas" && Some(row.id.as_str()) == model)
+        {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+    }
+
+    pub(crate) fn quota_allowance(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        reset_ms: u64,
+        model: Option<&str>,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        // Q53: record the model's quota so every step's ladder can skip it.
+        if let Some(model) = model
+            && snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "model_quotas" && r.id == model)
+                .and_then(|r| r.value["reset_ms"].as_u64())
+                .is_none_or(|old| old < reset_ms)
+        {
+            commit.rows.push(put(
+                "model_quotas",
+                model.into(),
+                json!({"reset_ms": reset_ms}),
+            ));
+        }
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            // A replayed ending of the same model never restarts its wait.
+            if state.last_quota_ms.is_some_and(|old| old >= reset_ms)
+                && state.last_quota_model.as_deref() == model
+            {
+                return Ok(());
+            }
+            state.last_quota_ms = Some(reset_ms);
+            state.last_quota_model = model.map(str::to_owned);
+            state.quota_ms = Some(reset_ms);
+            state.unserved_since_ms.get_or_insert(self.now_ms());
+            // The look asks the adapter whether another model can take the step now.
+            state.due_ms = Some(self.now_ms());
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(())
+    }
+
+    /// A model's quota ends at its announced reset; later steps may use it again.
+    fn expire_model_quotas(&mut self, now: u64) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("model-quota-reset:{}", snapshot.revision.get()),
+            json!({"model_quota_reset": now}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| {
+            row.table == "model_quotas" && row.value["reset_ms"].as_u64().is_none_or(|r| r <= now)
+        }) {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
+    /// #759: one operations note that every model this step may use has been
+    /// out for LADDER_OUT_MS, in the commit that marks it posted. Its reason
+    /// is the fixed `model_ladder_unavailable`; the text names only config
+    /// model names, the request and the wait's end.
+    fn ladder_out_note(&mut self, state: &AllowanceState, resume: u64, now: u64) -> Result<()> {
+        let snapshot = self.store.load()?;
+        if ended_effect_look(&snapshot, &snapshot::decode(&snapshot)?, &state.delivery) {
+            return Ok(());
+        }
+        let since = state.unserved_since_ms.unwrap_or(now);
+        let mut commit = Commit::new(
+            format!("model-ladder-out:{}:{since}", state.delivery.key),
+            json!({"model_ladder_out": state.delivery.key, "since_ms": since}),
+            &snapshot,
+        );
+        commit
+            .rows
+            .push(put("allowances", state.delivery.key.clone(), json!(state)));
+        if let Some(operations) = &self.bootstrap.operations {
+            let node = state.delivery.node();
+            let request = crate::request(&snapshot, node)?;
+            let role = crate::adapters::workers::protocol::delivery_role(&state.delivery)
+                .unwrap_or("worker");
+            let out: Vec<&str> = snapshot
+                .rows
+                .iter()
+                .filter(|row| {
+                    row.table == "model_quotas"
+                        && row.value["reset_ms"].as_u64().is_some_and(|r| r > now)
+                })
+                .map(|row| row.id.as_str())
+                .collect();
+            let until = chrono::DateTime::from_timestamp_millis(resume as i64)
+                .map(|at| at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "an unknown time".into());
+            let line = format!(
+                "Operations notice ({LADDER_OUT_REASON}): every {role} model has been unavailable or out of quota for {} minutes. {}/{}#{} waits for the earliest probe or reset, at {until}. Models out now: {}. If every model is out, check CLIProxyAPI.",
+                LADDER_OUT_MS / 60_000,
+                request.repo.owner,
+                request.repo.name,
+                request.issue,
+                out.join(", "),
+            );
+            let delivery = Delivery {
+                key: format!("model-ladder-out:{}:{since}", state.delivery.key),
+                epoch: snapshot.epoch.get(),
+                output: Out::Comment {
+                    node,
+                    kind: crate::executor::CommentKind::OperationsNote,
+                },
+                generation: state.delivery.generation,
+                head_sha: None,
+                repository: crate::Repository {
+                    owner: operations.owner.clone(),
+                    name: operations.name.clone(),
+                    installation: operations.installation_id,
+                },
+                issue: operations.number,
+                pull_request: None,
+                proposed: None,
+                paths: vec![],
+                attempt: state.delivery.attempt,
+                round: state.delivery.round,
+                replanned: state.delivery.replanned,
+                checks: None,
+                job_generation: None,
+                question: None,
+                note: Some(line.clone()),
+                scope_removals: None,
+                marker_key: None,
+                question_context: None,
+                steering: Some(crate::steering::Task::ConsoleNote { text: line }),
+                request_text: None,
+                evidence: None,
+            };
+            commit.rows.push(self.allowance_row(delivery.clone()));
+            commit.effects.push(delivery.into_effect());
+        }
+        self.store.commit(&commit)?;
+        Ok(())
+    }
+
+    pub(crate) fn defer_quota(&mut self, key: &str, retry_after: Duration) -> Result<()> {
+        let snapshot = self.store.load()?;
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            let reset = self
+                .now_ms()
+                .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
+            state.quota_ms = Some(reset);
+            state.due_ms = Some(reset.max(self.now_ms()));
+            self.save_allowance(&state)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn attach_incident(
+        &self,
+        snapshot: &Snapshot,
+        node: NodeId,
+        id: &str,
+        commit: &mut Commit,
+    ) -> Result<AttachedIncident> {
+        let cause = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "allowances")
+            .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|s| {
+                s.delivery.node() == node && matches!(s.delivery.output, Out::Effect { .. })
+            })
+            .max_by_key(|s| {
+                let seq = match s.delivery.output {
+                    Out::Effect { seq, .. } => seq,
+                    Out::Notice { .. } | Out::Comment { .. } => unreachable!(),
+                };
+                (s.delivery.generation, seq)
+            });
+        if let Some(mut state) = cause {
+            if let Some(value) = commit.rows.iter().rev().find_map(|row| match row {
+                RowChange::Put { table, id, value }
+                    if table == "allowances" && id == &state.delivery.key =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            }) {
+                state = crate::decode_stored(value.clone())?;
+            }
+            state.incident = Some(id.into());
+            state.healthy = false;
+            state.due_ms = Some(
+                self.now_ms()
+                    .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000),
+            );
+            let upstream = upstream(state.delivery.output);
+            let diagnostic =
+                crate::publication_failure::retained(snapshot, commit, &state.delivery.key)?;
+            let input_failure =
+                crate::worker_inputs::retained(snapshot, commit, &state.delivery.key)?;
+            commit
+                .rows
+                .push(put("allowances", state.delivery.key.clone(), json!(state)));
+            Ok(AttachedIncident {
+                upstream,
+                class: state.failure.unwrap_or_else(|| "operation_failed".into()),
+                diagnostic,
+                input_failure,
+            })
+        } else {
+            Ok(AttachedIncident {
+                upstream: Upstream::GitHub,
+                class: "operation_failed".into(),
+                diagnostic: None,
+                input_failure: None,
+            })
+        }
+    }
+
+    pub(crate) fn prune_allowances(&mut self, snapshot: &Snapshot) -> Result<bool> {
+        let world = snapshot::decode(snapshot)?;
+        let mut commit = Commit::new(
+            format!("allowance-retire:{}", snapshot.revision.get()),
+            json!({"retire_allowances":true}),
+            snapshot,
+        );
+        // Repair snapshots from before closed requests retired recovery incidents.
+        self.resolve_closed_effect_incidents(snapshot, &world, &mut commit)?;
+        self.retire_ended_effect_looks(snapshot, &world, &mut commit)?;
+        for row in snapshot.rows.iter().filter(|r| r.table == "allowances") {
+            let state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            if ended_effect_look(snapshot, &world, &state.delivery) {
+                continue;
+            }
+            let incident_open = state.incident.as_ref().is_some_and(|id| {
+                snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
+            });
+            let pending = snapshot.pending_effects.iter().any(|e| e.key == row.id);
+            let watched = snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "watches" && r.id == row.id);
+            let maintenance_pending = state.maintenance
+                && snapshot.rows.iter().any(|r| {
+                    (r.table == crate::approval_delivery::REPAIRS
+                        && state.delivery.key == format!("approval-repair:{}", r.id))
+                        || (r.table == "github_message_reconciliations"
+                            && state.delivery.key == format!("github-cleanup:{}", r.id))
+                });
+            if !pending && !watched && !incident_open && !maintenance_pending {
+                if state.external_wait.is_some()
+                    && !self.retire_wait(snapshot, &state.delivery, &mut commit)?
+                {
+                    continue;
+                }
+                commit.rows.push(RowChange::Delete {
+                    table: "allowances".into(),
+                    id: row.id.clone(),
+                });
+            }
+        }
+        // Backfill allowances once for a snapshot written before this feature.
+        for effect in &snapshot.pending_effects {
+            let delivery = hydrate(effect, snapshot)?;
+            if ended_effect_look(snapshot, &world, &delivery) {
+                continue;
+            }
+            if !snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "allowances" && r.id == effect.key)
+            {
+                commit.rows.push(self.allowance_row(delivery));
+            }
+        }
+        for row in snapshot.rows.iter().filter(|r| r.table == "watches") {
+            let delivery: Delivery = crate::decode_stored(row.value.clone())?;
+            let node = &world.nodes[delivery.node().0 as usize];
+            if let Out::Effect { kind, .. } = delivery.output
+                && !ended_effect_look(snapshot, &world, &delivery)
+                && node.operation_pending(kind, delivery.generation)
+                && !snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "allowances" && r.id == row.id)
+                && !snapshot.pending_effects.iter().any(|e| e.key == row.id)
+            {
+                commit.rows.push(self.allowance_row(delivery));
+            }
+        }
+        if commit.rows.is_empty() {
+            return Ok(false);
+        }
+        self.store.commit(&commit)?;
+        Ok(true)
+    }
+}
+
+fn ended_effect_look(snapshot: &Snapshot, world: &World, delivery: &Delivery) -> bool {
+    // Summaries and correction notices still have to finish delivery.
+    let Out::Effect { node, .. } = delivery.output else {
+        return false;
+    };
+    let node = &world.nodes[node.0 as usize];
+    matches!(node.phase, Phase::Closed(_))
+        || (matches!(node.phase, Phase::Stopping(_))
+            && delivery.generation < node.generation
+            // Pending cancellation still needs its quota and reconciliation evidence.
+            && !snapshot.pending_effects.iter().any(|effect| effect.key == delivery.key))
+}
+
+pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result<bool> {
+    let state = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "allowances" && r.id == key)
+        .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
+        .transpose()?;
+    Ok(state.is_some_and(|s| s.quota_ms.is_some()))
+}
+
+/// The hold class of an enqueue that is waiting for required checks.
+pub(crate) const CHECKS_PENDING: &str = "checks_pending";
+
+pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
+    match error {
+        crate::Error::CounterExhausted(_) => crate::input_errors::COUNTER_HEADROOM,
+        crate::Error::WorkerInputs(_) => crate::worker_inputs::CLASS,
+        crate::Error::WorkerDispatchMissing => crate::dispatch_liveness::MISSING,
+        crate::Error::PrerequisiteNumber => "prerequisite_number",
+        crate::Error::ChecksPending => CHECKS_PENDING,
+        crate::Error::ApprovalAmbiguous => crate::approval_delivery::AMBIGUOUS,
+        crate::Error::RedactionInfra(_) => "redaction_infra",
+        crate::Error::Quota { .. } => "quota",
+        crate::Error::Permanent { class, .. } => class,
+        crate::Error::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            "permission"
+        }
+        crate::Error::Io(_) => "transport",
+        // Mergify's own read errors aren't GitHub errors or outages (#373).
+        crate::Error::Adapter(error) if error.is::<tl3_mergify::Error>() => {
+            match error.downcast_ref::<tl3_mergify::Error>() {
+                Some(tl3_mergify::Error::ChangedDuringRead) => "inconsistent_read",
+                Some(tl3_mergify::Error::MergeabilityPending) => "mergeability_pending",
+                Some(tl3_mergify::Error::HeadChanged) => "head_changed",
+                Some(tl3_mergify::Error::PullRequestClosed) => "pull_request_closed",
+                Some(tl3_mergify::Error::GitHub(error)) => error.failure_class().as_str(),
+                None => "transport",
+            }
+        }
+        crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
+            // Git's own message showed a network or remote cause.
+            Some(tl3_worktrees::Error::Network { .. }) => "git_remote",
+            _ => error
+                .downcast_ref::<tl3_github::Error>()
+                .map_or("transport", |error| error.failure_class().as_str()),
+        },
+        crate::Error::MessageRejected => "message_rejected",
+        _ => "setup",
+    }
+}
+
+pub(crate) fn outage_waiting(snapshot: &Snapshot, key: &str) -> bool {
+    snapshot.rows.iter().any(|r| {
+        r.table == "incidents"
+            && r.value["open"] == true
+            && r.value["effect"].as_str() == Some(key)
+            && r.value["signature"]["class"] != crate::approval_delivery::AMBIGUOUS
+    })
+}
+
+pub(crate) fn incident_summary(
+    title: &str,
+    signature: &IncidentSignature,
+    needs_rob: bool,
+    app_login: Option<&str>,
+) -> String {
+    let source = match signature.upstream {
+        _ if signature.class == crate::worker_inputs::CLASS => "TL3's worker input builder",
+        _ if matches!(
+            signature.class.as_str(),
+            "pr_evidence" | "pr_obligation" | "pr_policy"
+        ) =>
+        {
+            "TL3's publication validation"
+        }
+        _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
+        Upstream::Workers => "the agent worker",
+        Upstream::Worktrees => "the Git worktree",
+        Upstream::PrismaBuild => "PrismaBuild",
+        Upstream::Mergify => "Mergify",
+        Upstream::GitHub => "GitHub",
+    };
+    let reason = match signature.class.as_str() {
+        "worker_input_schema" => {
+            "could not start because TL3 built inputs that violate the role schema"
+        }
+        "pr_evidence" => "refused publication because required independent evidence is missing",
+        "pr_obligation" => "refused publication because a branch or body obligation is unmet",
+        "pr_policy" => "refused publication because the body breaks repository policy",
+        "no_progress" => "stopped making progress",
+        "queue_unfinished" => "has not finished its queue check",
+        "queue_requeue" => "has left this change awaiting Mergify re-queue",
+        "permission" => "refused access",
+        "queue_command_permission" => {
+            "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
+        }
+        "queue_command_refused" => "refused the queue command",
+        "queue_command_rejected" => "could not post the queue command because GitHub refused it",
+        "actions_write_required" => {
+            "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
+        }
+        "actions_run_expired" => "cannot rerun a workflow run older than 30 days",
+        "actions_refused" => {
+            "refused the workflow request. Check the workflow and repository restrictions"
+        }
+        "not_found" => "could not find the requested resource",
+        "invalid_request" => "rejected the request",
+        // Incidents stored before Q46 retain this class. Publication now reports Conflict.
+        "unrebased_head" => {
+            "refused to publish because the checked head conflicts with current main"
+        }
+        "dirty_worktree" => "has uncommitted or untracked files",
+        "invalid_branch" => "rejected an invalid branch name",
+        "invalid_commit" => "rejected an invalid commit id",
+        "invalid_remote" => "rejected an invalid remote",
+        "invalid_worktree_path" => "rejected a path outside its configured root",
+        "invalid_token" => "rejected its installation token",
+        "missing_branch" => "could not find the branch or base",
+        "reserved_branch" => "refused to change the reserved main branch",
+        "worktree_occupied" => "found a path or branch owned by another checkout",
+        "worktree_recovery" => "needs recovery after an interrupted rebase",
+        "transport" => "could not be reached",
+        "inconsistent_read" => "kept changing while TL3 read it",
+        "mergeability_pending" => "has not yet worked out whether the pull request can merge",
+        "head_changed" => "shows a different head from the approved one",
+        "pull_request_closed" => "shows the pull request closed or merged",
+        "upstream_server" => "reported a service error",
+        "invalid_response" => "returned an unreadable response",
+        "quota" => "reached its usage allowance",
+        "message_rejected" => "could not prepare a readable message",
+        "prerequisite_number" => {
+            "sent a merge prerequisite update missing its issue or pull request number"
+        }
+        "setup" => "could not complete its setup",
+        "worker_dispatch_missing" => {
+            "has no tracked worker run. Comment restart on the request's issue to start it again"
+        }
+        "environment_blocked" => "reported that TL3's environment blocked the work",
+        "git_remote" => "could not reach the Git remote",
+        "harness" => "rejected TL3's own check input inside the PrismaBuild action",
+        crate::postmortems::PAUSED => {
+            "failed postmortem runs, so claims are paused until the incident is cleared or recovered"
+        }
+        _ => "could not finish the operation",
+    };
+    let next = if needs_rob {
+        "Rob must clear this problem."
+    } else {
+        "Work is waiting for recovery."
+    };
+    let setup = if signature.class == "queue_command_refused" {
+        format!(
+            " In the served repo's .mergify.yml, allow {} in commands_restrictions for queue and requeue, then clear this incident.",
+            app_login.unwrap_or("TL3's App bot login")
+        )
+    } else {
+        String::new()
+    };
+    format!("For \"{title}\", {source} {reason}.{setup} {next}")
+}
+
+pub(crate) fn queue_command_detail(delivery: &Delivery, class: &str) -> Option<String> {
+    let reason = match class {
+        "queue_command_refused" => "command refused by Mergify after posting",
+        "queue_command_permission" | "queue_command_rejected" => {
+            "command refused by GitHub; no command sent"
+        }
+        _ => return None,
+    };
+    Some(format!(
+        "PR https://github.com/{}/{}/pull/{}, head {}: awaiting Mergify re-queue; {reason}.",
+        delivery.repository.owner,
+        delivery.repository.name,
+        delivery.pull_request?,
+        delivery.head_sha.as_deref()?
+    ))
+}
+
+pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Result<Option<String>> {
+    use crate::executor::{ProgressToken, WatchProgress};
+    let mut progress = None;
+    for row in snapshot.rows.iter().filter(|r| r.table == "watches") {
+        let delivery: Delivery = crate::decode_stored(row.value.clone())?;
+        if delivery.node() == node
+            && let Some(value) = row.value.get("progress")
+        {
+            progress = Some(crate::decode_stored::<WatchProgress>(value.clone())?);
+            break;
+        }
+    }
+    let Some(progress) = progress else {
+        return Ok(None);
+    };
+    let ProgressToken::Mergify(progress) = progress.current;
+    let Some(check) = progress.queue_check else {
+        return Ok(None);
+    };
+    let title = check.title.as_deref().unwrap_or("Merge queue");
+    let status = match check.status.as_str() {
+        "in_progress" => "still in progress",
+        "queued" => "still queued",
+        "completed" => "completed",
+        _ => "unfinished",
+    };
+    Ok(Some(match progress.merged_at {
+        Some(time) => format!(
+            "GitHub merged the change at {time}, but Mergify's check \"{title}\" is {status}."
+        ),
+        None => format!("Mergify's check \"{title}\" is {status}."),
+    }))
+}
+
+#[cfg(test)]
+mod git_failure_tests {
+    use super::*;
+    #[test]
+    fn deterministic_git_failures_are_permanent_incidents() {
+        use tl3_worktrees::Error as W;
+        for (error, expected) in [
+            (W::BranchName, "invalid_branch"),
+            (W::CommitId, "invalid_commit"),
+            (W::Remote, "invalid_remote"),
+            (W::WorktreePath, "invalid_worktree_path"),
+            (W::Token, "invalid_token"),
+            (W::Response, "invalid_response"),
+            (W::MissingBranch, "missing_branch"),
+            (W::MainBranch, "reserved_branch"),
+            (W::WorktreeOccupied, "worktree_occupied"),
+            (W::DirtyWorktree, "dirty_worktree"),
+            (W::Recovery, "worktree_recovery"),
+        ] {
+            assert_eq!(error.permanent_class(), Some(expected));
+            let error = crate::Error::from(error);
+            let crate::Error::Permanent { class, source } = &error else {
+                panic!("retain the permanent Git error and its class");
+            };
+            assert_eq!(*class, expected);
+            assert!(source.downcast_ref::<W>().is_some());
+            assert_eq!(failure_class(&error), expected, "{error}");
+            if expected == "dirty_worktree" {
+                assert!(
+                    incident_summary(
+                        "request",
+                        &IncidentSignature {
+                            upstream: Upstream::Worktrees,
+                            class: failure_class(&error).into()
+                        },
+                        false,
+                        None
+                    )
+                    .contains("has uncommitted or untracked files")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_git_failures_remain_transport() {
+        use tl3_worktrees::Error as W;
+        for error in [
+            W::Io,
+            W::Spawn,
+            W::Poisoned,
+            W::Git {
+                operation: "fetch",
+                code: Some(128),
+            },
+        ] {
+            assert_eq!(failure_class(&error.into()), "transport");
+        }
+    }
+}
+
+#[cfg(test)]
+mod incident_tests {
+    use super::*;
+
+    #[test]
+    fn a_blocked_queue_names_its_conditions_and_failed_checks() {
+        let summary = queue_blocked_summary(
+            &["scopes-available: waiting for pull request scopes to be reported".into()],
+            &["Bazel".into(), "pr-gate".into()],
+        );
+        for expected in [
+            "`scopes-available`",
+            "waiting for pull request scopes to be reported",
+            "`pr-gate`",
+            "`Bazel`",
+            "no credit",
+        ] {
+            assert!(summary.contains(expected), "{expected}: {summary}");
+        }
+    }
+
+    #[test]
+    fn git_remote_failures_in_worktrees_are_upstream() {
+        // The operation names crates/worktrees gives its network calls.
+        for operation in [
+            "fetch base",
+            "fetch pull head",
+            "fetch pinned pull commit",
+            "publish head",
+            "read remote branch",
+            "delete recorded remote branch",
+        ] {
+            let network: crate::Error = tl3_worktrees::Error::Network {
+                operation,
+                code: Some(128),
+            }
+            .into();
+            assert_eq!(failure_class(&network), "git_remote", "{operation}");
+            // Without a clear network message, the failure stays TL3-side (#309).
+            let ambiguous: crate::Error = tl3_worktrees::Error::Git {
+                operation,
+                code: Some(128),
+            }
+            .into();
+            assert_eq!(failure_class(&ambiguous), "transport", "{operation}");
+        }
+        let local: crate::Error = tl3_worktrees::Error::Git {
+            operation: "abort superseded merge",
+            code: Some(1),
+        }
+        .into();
+        assert_ne!(failure_class(&local), "git_remote");
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, "git_remote"),
+            Cause::Upstream
+        );
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, "invalid_token"),
+            Cause::Upstream
+        );
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, failure_class(&local)),
+            Cause::Tl3
+        );
+        assert_eq!(Cause::of(Upstream::Workers, "transport"), Cause::Tl3);
+        assert_eq!(Cause::of(Upstream::PrismaBuild, "setup"), Cause::Upstream);
+        // #326: TL3's trusted harness rejecting TL3's own check input is TL3-side.
+        assert_eq!(Cause::of(Upstream::PrismaBuild, "harness"), Cause::Tl3);
+        let summary = incident_summary(
+            "request",
+            &IncidentSignature {
+                upstream: Upstream::PrismaBuild,
+                class: "harness".into(),
+            },
+            false,
+            None,
+        );
+        assert!(summary.contains("TL3's check harness"), "{summary}");
+    }
+
+    #[test]
+    fn legacy_incident_signature_remains_readable() {
+        let signature: IncidentSignature =
+            serde_json::from_value(json!("Workers:transport")).unwrap();
+        assert_eq!(signature.upstream, Upstream::Workers);
+        assert_eq!(signature.class, "transport");
+        assert_eq!(
+            json!(signature),
+            json!({"upstream":"Workers", "class":"transport"})
+        );
+        assert!(
+            incident_summary("Greeting", &signature, false, None)
+                .contains("the agent worker could not be reached")
+        );
+    }
+
+    #[test]
+    fn escalation_preserves_each_cause() {
+        for needs_rob in [false, true] {
+            assert_eq!(
+                incident_needs_rob(IncidentCause::Kernel { needs_rob }),
+                needs_rob
+            );
+        }
+        for incidents in [1, 2, 3] {
+            assert_eq!(
+                incident_needs_rob(IncidentCause::ReadFailure { incidents }),
+                incidents > 1
+            );
+            assert_eq!(
+                incident_needs_rob(IncidentCause::NoticeFailure { incidents }),
+                incidents > 1
+            );
+        }
+    }
+}
+
+pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
+    format!("required-checks:{}:{gap}", node.0)
+}
+
+/// #447: what Rob reads when Mergify waits on conditions nothing running can meet.
+pub(crate) fn queue_blocked_summary(conditions: &[String], failed: &[String]) -> String {
+    let quote = |text: &String| match text.split_once(": ") {
+        Some((condition, note)) => format!("`{condition}` ({note})"),
+        None => format!("`{text}`"),
+    };
+    let conditions = conditions.iter().map(quote).collect::<Vec<_>>().join(", ");
+    let failed = if failed.is_empty() {
+        "No check on the head failed".to_owned()
+    } else {
+        format!(
+            "These checks on the head failed and are outside TL3's required set: {}",
+            failed
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "Mergify is waiting for queue conditions that no running check can meet: {conditions}. Every check suite on the head has completed. {failed}. The enqueue waits; no credit is charged. This ends with the head."
+    )
+}
+
+/// One blocked-queue incident per head and set of unmet conditions (#447).
+pub(crate) fn queue_blocked_incident_id(node: NodeId, head: &str, conditions: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = serde_json::to_string(&(head, conditions)).expect("serializable conditions");
+    format!(
+        "queue-blocked:{}:{:x}",
+        node.0,
+        Sha256::digest(gap.as_bytes())
+    )
+}
+
+/// One missing-check incident per head, context and expected app (Q52).
+pub(crate) fn missing_check_incident_id(
+    node: NodeId,
+    head: &str,
+    required: &crate::adapters::mergify::RequiredCheck,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = serde_json::to_string(&(head, required)).expect("serializable check");
+    format!(
+        "missing-check:{}:{:x}",
+        node.0,
+        Sha256::digest(gap.as_bytes())
+    )
+}
+
+impl Controller {
+    pub(crate) fn check_setup_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        permissions: &[String],
+    ) -> Result<()> {
+        for permission in permissions
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            self.check_setup_gap(snapshot, commit, node, permission)?;
+        }
+        Ok(())
+    }
+
+    fn check_setup_gap(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        permission: &str,
+    ) -> Result<()> {
+        let summary = format!(
+            "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
+            permission
+        );
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            check_setup_incident_id(node, permission),
+            summary,
+        )
+    }
+
+    /// Q52: a nonblocking repo setup incident; the enqueue stays pending and nothing is charged.
+    pub(crate) fn missing_check_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        head: &str,
+        required: &crate::adapters::mergify::RequiredCheck,
+    ) -> Result<()> {
+        let app = required
+            .app
+            .map_or_else(|| "any app".to_owned(), |app| format!("app {app}"));
+        let summary = format!(
+            "Required check `{}` from {app} has not reported on head {head}, and every check suite on that head has completed. A workflow path filter may skip it, or the requirement may name the wrong app. The enqueue waits without charging credit; this clears when the check reports.",
+            required.context
+        );
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            missing_check_incident_id(node, head, required),
+            summary,
+        )
+    }
+
+    /// #447: a nonblocking repo setup incident, as Q52's; the enqueue waits and
+    /// nothing is charged. TL3-side PR-policy gaps are healed before this.
+    pub(crate) fn queue_blocked_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        head: &str,
+        conditions: &[String],
+        failed: &[String],
+    ) -> Result<()> {
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            queue_blocked_incident_id(node, head, conditions),
+            queue_blocked_summary(conditions, failed),
+        )
+    }
+
+    /// A missing-check incident ends with its head: when the node closes, or
+    /// the head is no longer its current or approved head.
+    pub(crate) fn resolve_stale_missing_checks(
+        &self,
+        snapshot: &Snapshot,
+        world: &tl3_kernel::World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        use crate::adapters::mergify::{Evidence, QueueFact};
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
+            let Ok(fact) = serde_json::from_value::<QueueFact>(row.value.clone()) else {
+                continue;
+            };
+            let (head, id) = match &fact.evidence {
+                Evidence::CheckMissing { head, required } => {
+                    let Some(node) = fact.node(snapshot)? else {
+                        continue;
+                    };
+                    (head, missing_check_incident_id(node, head, required))
+                }
+                // #447: a blocked-queue incident also ends with its head.
+                Evidence::QueueBlocked {
+                    head, conditions, ..
+                } => {
+                    let Some(node) = fact.node(snapshot)? else {
+                        continue;
+                    };
+                    (head, queue_blocked_incident_id(node, head, conditions))
+                }
+                _ => continue,
+            };
+            let Some(node) = fact.node(snapshot)? else {
+                continue;
+            };
+            let Some(incident) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
+            else {
+                continue;
+            };
+            let current = &world.nodes[node
+                .index()
+                .ok_or(crate::Error::Invalid("node index overflow"))?];
+            let interned = snapshot.interned.iter().find(|item| {
+                item.kind == tl3_store::InternKind::Commit
+                    && item.scope == node.0.to_string()
+                    && item.value == *head
+            });
+            let still_head = interned.is_some_and(|item| {
+                let id = Some(tl3_kernel::HeadId(item.id as u64));
+                current.head == id && current.approved == id
+            });
+            if matches!(current.phase, tl3_kernel::Phase::Closed(_)) || !still_head {
+                let mut incident: Incident = crate::decode_stored(incident.value.clone())?;
+                incident.open = false;
+                commit.rows.push(put("incidents", id, json!(incident)));
+            }
+        }
+        Ok(())
+    }
+
+    fn setup_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        id: String,
+        summary: String,
+    ) -> Result<()> {
+        if snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
+        {
+            return Ok(());
+        }
+        // Reopening keeps the incident ID but needs a new notice delivery.
+        let key = format!("incident:{id}:{}", snapshot.revision.get());
+        let request = crate::request(snapshot, node)?;
+        let signature = IncidentSignature {
+            upstream: Upstream::Mergify,
+            class: "setup".into(),
+        };
+        commit.rows.push(put(
+            "incidents",
+            id.clone(),
+            json!(Incident {
+                id: id.clone(),
+                node: Some(node),
+                input_failure: None,
+                open: true,
+                needs_rob: false,
+                blocking: false,
+                summary: summary.clone(),
+                signature: signature.clone(),
+                effect: None,
+                post_key: Some(key.clone()),
+                cause: Some(Cause::Upstream),
+            }),
+        ));
+        let world = snapshot::decode(snapshot)?;
+        let current = &world.nodes[node
+            .index()
+            .ok_or(crate::Error::Invalid("node index overflow"))?];
+        let mut delivery = Delivery {
+            key,
+            epoch: snapshot.epoch.get(),
+            output: Out::Notice {
+                node,
+                notice: tl3_kernel::Notice::Incident { needs_rob: false },
+            },
+            generation: current.generation,
+            head_sha: crate::commit_sha(snapshot, current.head).map(str::to_owned),
+            repository: request.repo.clone(),
+            issue: request.issue,
+            pull_request: None,
+            proposed: None,
+            paths: vec![],
+            attempt: current.attempt,
+            round: current.round,
+            replanned: false,
+            checks: None,
+            job_generation: None,
+            question: None,
+            note: Some(incident_note(&request.repo, request.issue, &summary)),
+            scope_removals: None,
+            marker_key: None,
+            steering: None,
+            request_text: None,
+            evidence: None,
+            question_context: Some(
+                json!({"issue_title":request.title, "signature":signature,"incident_id":id}),
+            ),
+        };
+        if let Some(operations) = &self.bootstrap.operations {
+            delivery.repository = crate::Repository {
+                owner: operations.owner.clone(),
+                name: operations.name.clone(),
+                installation: operations.installation_id,
+            };
+            delivery.issue = operations.number;
+        }
+        commit.rows.push(self.allowance_row(delivery.clone()));
+        commit.effects.push(delivery.into_effect());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod summary_wording {
+    use super::*;
+
+    fn summary(class: &str) -> String {
+        incident_summary(
+            "Fix the value",
+            &IncidentSignature {
+                upstream: Upstream::Mergify,
+                class: class.into(),
+            },
+            false,
+            None,
+        )
+    }
+
+    /// #373: Mergify's own read errors aren't GitHub errors, so each needs its
+    /// own class instead of reading "could not be reached".
+    #[test]
+    fn mergify_read_errors_carry_their_own_class_and_wording() {
+        for (error, class, wording) in [
+            (
+                tl3_mergify::Error::ChangedDuringRead,
+                "inconsistent_read",
+                "kept changing while TL3 read it",
+            ),
+            (
+                tl3_mergify::Error::MergeabilityPending,
+                "mergeability_pending",
+                "has not yet worked out whether the pull request can merge",
+            ),
+            (
+                tl3_mergify::Error::HeadChanged,
+                "head_changed",
+                "shows a different head from the approved one",
+            ),
+            (
+                tl3_mergify::Error::PullRequestClosed,
+                "pull_request_closed",
+                "shows the pull request closed or merged",
+            ),
+        ] {
+            let error = crate::Error::Adapter(Box::new(error));
+            assert_eq!(failure_class(&error), class);
+            let text = summary(class);
+            assert!(text.contains(wording), "{class}: {text}");
+            assert!(!text.contains("could not be reached"), "{class}: {text}");
+        }
+    }
+}
