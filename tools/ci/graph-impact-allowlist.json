@@ -1,1 +1,6 @@
-{}
+{
+  "crate:tl3-harness-core": {
+    "reason": "Wave B harness decision crate for #730 (#824).",
+    "sources": 10
+  }
+}
