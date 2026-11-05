@@ -30,7 +30,7 @@ pub(super) fn verify_waiting(mut world: World, blocker: usize) -> (result: World
         world_checked_definition(world);
         assert(dependencies::dependency_checked(world, world.dependencies@[blocker as int]));
         dependencies::prerequisite_definition(world, NodeId(0));
-        reveal(node_checked); assert(node_checked(world, world.nodes@[0]));
+        reveal(node_checked); reveal(dependencies::zero_credit); assert(node_checked(world, world.nodes@[0]));
         potential_member(world.nodes@, 0, world.nodes@.len(), |n: Node| ticket_capacity(n));
     }
     let delivered = world.dependencies_delivered(NodeId(0));

@@ -120,6 +120,7 @@ pub(super) fn cover_world(case: u8, count: usize) -> (world: World)
         }
         assert forall|a: int, b: int| 0 <= a < b < world.dependencies@.len()
             implies !dependencies::same_declaration(world.dependencies@[a], world.dependencies@[b]) by {}
+        reveal(dependencies::zero_credit);
         assert(fixture_edges(world));
         assert(original_domain(world));
         reveal(world_checked); dependencies::indexable_definition(world);

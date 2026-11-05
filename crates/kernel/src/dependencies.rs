@@ -23,6 +23,12 @@ pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> boo
         ==> !dependencies[i].rejected && dependencies[i].status == DependencyStatus::Delivered
 }
 
+/// #693 / #806: blocked credit is unavailable or has zero ledger balance.
+#[verifier::opaque]
+pub(super) open spec fn zero_credit(credit: Credit) -> bool {
+    credit.withheld || credit.start as int + credit.earned as int + credit.added as int == credit.spent as int
+}
+
 /// #693 / #806: expose the existing universal delivery predicate to ported proofs.
 pub(super) proof fn delivered_definition(edges: Seq<Dependency>, node: NodeId)
     ensures delivered(edges, node) == (forall|i: int| 0 <= i < edges.len() && edges[i].node == node
@@ -86,11 +92,7 @@ pub(super) open spec fn dependency_checked(world: World, dependency: Dependency)
                 !world.nodes@[dependency.node.0 as int].holds && !world.nodes@[dependency.node.0 as int].pool
                     && world.nodes@[dependency.node.0 as int].ticket.is_none()
                     && world.nodes@[dependency.node.0 as int].run.is_none()
-                    && (world.nodes@[dependency.node.0 as int].credit.withheld
-                        || world.nodes@[dependency.node.0 as int].credit.start as int
-                            + world.nodes@[dependency.node.0 as int].credit.earned as int
-                            + world.nodes@[dependency.node.0 as int].credit.added as int
-                            == world.nodes@[dependency.node.0 as int].credit.spent as int))
+                    && zero_credit(world.nodes@[dependency.node.0 as int].credit))
 }
 
 /// #693 / #771: executable prerequisite checks imply this progress projection.
@@ -427,7 +429,7 @@ impl World {
             (self.dependencies@.len() == 0
                 && forall|j: int| 0 <= j < self.nodes@.len() ==> !self.nodes@[j].credit.withheld)
                 ==> result.is_ok(),
-    ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges);] {
+    ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges); reveal(zero_credit);] {
         let mut node_index = 0usize;
         kernel_while! { (node_index < self.nodes.len()) [
             invariant node_index <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
@@ -536,6 +538,7 @@ impl World {
             {
                 return Err(Broken::Dependencies);
             }
+            kernel_proof! { reveal(zero_credit); }
             if !self.dependencies_delivered(dependency.node)
                 && matches!(
                     self.nodes[owner].phase,
