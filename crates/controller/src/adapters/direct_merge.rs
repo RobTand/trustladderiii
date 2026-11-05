@@ -14,6 +14,7 @@ use crate::{
 };
 use decide::{Checks, Facts, Head, Outcome, Plan, Step};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -133,16 +134,15 @@ impl Adapter {
             ))
     }
     fn receipt_path(&self, d: &Delivery) -> Result<PathBuf> {
-        Ok(self
-            .records
-            .path(&format!(
-                "direct:{}:{}/{}#{}",
-                d.repository.installation,
-                d.repository.owner.to_ascii_lowercase(),
-                d.repository.name.to_ascii_lowercase(),
-                number(d)?
-            ))
-            .with_extension("merged"))
+        let identity = format!(
+            "{}:{}/{}#{}",
+            d.repository.installation,
+            d.repository.owner.to_ascii_lowercase(),
+            d.repository.name.to_ascii_lowercase(),
+            number(d)?
+        );
+        let key = format!("direct:{:x}", Sha256::digest(identity.as_bytes()));
+        Ok(self.records.path(&key).with_extension("merged"))
     }
     fn recorded(&self, d: &Delivery) -> Result<Option<Merged>> {
         read_file(&self.receipt_path(d)?)
@@ -160,7 +160,16 @@ impl Adapter {
             .nodes
             .get(d.node().0 as usize)
             .ok_or(Error::Invalid("missing direct delivery node"))?;
-        if n.generation != d.generation
+        if !repository_config::direct(&snapshot, &d.repository)?
+            || crate::commit_sha(&snapshot, n.approved) != d.head_sha.as_deref()
+            || n.checked.is_none()
+            || n.checked != n.approved
+            || snapshot.rows.iter().any(|row| {
+                row.table == "incidents"
+                    && row.value["open"] == true
+                    && row.value["node"].as_u64() == Some(d.node().0)
+            })
+            || n.generation != d.generation
             || n.paused
             || n.waiting_incident
             || !matches!(n.phase, Phase::Publishing | Phase::Queued)
