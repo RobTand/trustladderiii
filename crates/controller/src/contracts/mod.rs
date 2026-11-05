@@ -7,6 +7,7 @@
 
 pub mod bounded;
 pub mod checks;
+pub mod inputs;
 pub mod report;
 
 pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, ProofDeclaration};
