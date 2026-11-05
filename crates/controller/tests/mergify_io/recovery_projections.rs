@@ -190,12 +190,10 @@ fn item<'a>(source: &'a str, needle: &str) -> &'a str {
     let start = source[..at].rfind('\n').map_or(0, |i| i + 1);
     let body = source[start..].find('{').unwrap() + start;
     let mut depth = 1;
-    let mut end = body + 1;
-    for byte in source[body + 1..].bytes() {
+    for (offset, byte) in source[body + 1..].bytes().enumerate() {
         depth += i32::from(byte == b'{') - i32::from(byte == b'}');
-        end += 1;
         if depth == 0 {
-            return &source[start..end];
+            return &source[start..body + offset + 2];
         }
     }
     panic!("unclosed source {needle}")
