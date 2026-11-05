@@ -147,8 +147,16 @@ fn mandatory_progress_upstreams_and_saturating_deadline() {
         s.rows[0].2["last_quota_ms"] = json!(100);
         s.rows[0].2["last_quota_model"] = json!("model-a");
         let r = compare(&s);
-        assert_eq!(stored(&r, "allowances/step")["quota_ms"], reset);
-        assert_eq!(ops(&r).iter().filter(|op| **op == "clock").count(), 2);
+        let changed = reset > 100;
+        assert_eq!(
+            stored(&r, "allowances/step")["quota_ms"],
+            if changed { json!(reset) } else { Value::Null }
+        );
+        assert_eq!(
+            ops(&r).iter().filter(|op| **op == "clock").count(),
+            if changed { 2 } else { 0 }
+        );
+        assert_eq!(stored(&r, "model_quotas/model-a")["reset_ms"], reset);
     }
 }
 /// Preserved existing behavior: missing/malformed rows and transaction errors, no kernel fact.
