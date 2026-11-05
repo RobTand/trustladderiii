@@ -1,4 +1,4 @@
-"""Generate #749 parity data by calling the current Python harness, never a mirror."""
+"""Generate #749 parity data from the harness and frozen identity-match oracle."""
 import argparse
 import ast
 from contextlib import nullcontext
