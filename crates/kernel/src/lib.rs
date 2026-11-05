@@ -1612,6 +1612,10 @@ impl World {
                     decreases i - j,
                 ] {
                     let other = self.nodes[j];
+                    kernel_proof! {
+                        assert(node_checked(*self, n));
+                        assert(node_checked(*self, other));
+                    }
                     if other.holds
                         && other.repo == n.repo
                         && !self.footprints_disjoint(other.footprint, n.footprint)
@@ -2629,19 +2633,14 @@ fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].next_seq < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
-        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
-        final(w).nodes@.len() == old(w).nodes@.len(),
-        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
-            ==> final(w).nodes@[j] == old(w).nodes@[j],
-        final(w).nodes@[i as int].next_seq as int == old(w).nodes@[i as int].next_seq as int + 1,
-        final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation,
-        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
-        final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
-        final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase,
-        final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos,
-        final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures,
-        final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents,
+    ensures final(w).nodes@ == old(w).nodes@.update(i as int, Node {
+        next_seq: (old(w).nodes@[i as int].next_seq + 1) as u64,
+        effect: Some(InFlight { seq: old(w).nodes@[i as int].next_seq, kind, cancelling: false }),
+        worktree: old(w).nodes@[i as int].worktree || kind == EffectKind::PrepareWorktree,
+        pr_open: old(w).nodes@[i as int].pr_open || kind == EffectKind::OpenPr,
+        had_pr: old(w).nodes@[i as int].had_pr || kind == EffectKind::OpenPr,
+        ..old(w).nodes@[i as int]
+    }),
         final(w).next_ticket == old(w).next_ticket,
         final(w).next_question == old(w).next_question,
         final(w).gates@ == old(w).gates@,
@@ -2868,7 +2867,8 @@ fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
+] proof [reveal(retry_bounds); reveal(footprint::ordered_table);
+    reveal(footprint::valid_footprint);] {
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         let m = &mut w.nodes[i];

@@ -100,7 +100,7 @@ CASES = [
     ('dependency_removal_frame', 'dependencies.rs', 'self.dependencies.truncate(write);',
      'self.dependencies.truncate(write); self.next_ticket += 1;', 'remove_dependency'),
     ('dependency_fact_frame', 'dependencies.rs', 'self.withhold_dependency_credit(i);',
-     'self.withhold_dependency_credit(i); self.next_question += 1;', 'dependency_fact'),
+     'self.withhold_dependency_credit(i); self.next_question += 1;', 'record_dependency'),
 ]
 
 
@@ -120,6 +120,7 @@ def verify(binary, sysroot, root, selected=None):
             'dependency_path': 'World',
             'remove_dependency': 'World',
             'dependency_fact': 'World',
+            'record_dependency': 'World',
         }.get(function)
         target = f'{owner}::{function}' if owner else function
         command.extend(['--verify-only-module', module, '--verify-function', target])
@@ -148,8 +149,11 @@ def main():
         if args.case and name not in args.case:
             continue
         with tempfile.TemporaryDirectory(prefix=f't771-{name}-') as scratch:
-            copy = Path(scratch) / 'kernel'
+            copy = Path(scratch) / 'crates/kernel'
             shutil.copytree(kernel, copy)
+            boundary = copy.parent / 'controller/src'
+            boundary.mkdir(parents=True)
+            shutil.copy2(kernel.parent / 'controller/src/kernel_boundary.rs', boundary)
             source = copy / 'src' / filename
             before = source.read_text()
             start = before.index(f'fn {scope[0]}(') if scope else 0

@@ -1,13 +1,28 @@
 # Progress scope and counter exhaustion
 
 Ticket #771 uses the lead's enforced-scope decision. No state-table rule changes.
-The progress preconditions are consistency, settledness, an open request,
-`World::headroom_ok()`, and `last_cmd < u64::MAX` for every node. The complete progress theorem and the per-step counter bounds remain proof
-obligations. The rank functions, credit operations and every local settle case
-now have verified contracts over their actual executable bodies. Existing Kani
-harnesses and tests stay. The executable headroom predicate itself now verifies
-against its mathematical scope. That equivalence does not establish the complete
-step's counter bound.
+The safety contract on the real `step` takes the production checker's invariant,
+normalized file storage, and `World::headroom_ok()`. It states the complete
+per-step counter budgets and nondecreasing command IDs. Verus also checks each
+callee body, including apply, settle and the actual event handlers. It checks
+all arithmetic in those bodies against the real integer widths. The controller
+checks headroom before an event, dependency reconciliation step, or startup
+settle. A step may consume its reserve; the next boundary check then stops it.
+Headroom is a precondition for safe arithmetic, not an invariant that reserves
+remain untouched after every step.
+
+Global progress is separate. Its intended scope additionally requires
+settledness, an open request, and `last_cmd < u64::MAX` for every node. No Kani
+harness or test is replaced. The source-connected progress draft is preserved
+on `t771-progress-draft-20261104`, head `2668baf75a`.
+
+The remaining progress composition is stuck in `World::dependency_fact` and
+`on_fact`. At rlimit 90, focused runs took 168.15 s and 176.21 s and exhausted
+the solver limit. Separating key lookup from guards, hiding whole-world
+predicates, lifting the exact dependency update separately, and explicitly
+instantiating its strict summand proved supporting lemmas but did not discharge
+those compositions. This branch delivers the safety scope requested in the
+lead's checkpoint; it does not assert the global outside-witness theorem.
 
 The controller now allocates command IDs through `Node::next_command_id`, using
 `checked_add`. Exhaustion raises `command ids exhausted for request N` without
@@ -97,16 +112,16 @@ The driver exited zero with receipt
 Further allocation, scope and local-transition mutants are separate qualification
 work; this core run does not qualify those later contracts.
 
-## Counter audit and proposed step reserves
+## Counter audit and step reserves
 
 The apply boundary checks the pure headroom helper before every event. The same
 mechanism covers dependency reconciliation's individual `step` calls and startup
 capacity reconciliation's `settle_world`. Failed checks raise
 `kernel counter headroom exhausted: <counter>` without applying that transition.
-The bounds below still need their whole-step proof; passing helper tests alone
-does not discharge it.
+The contracts on `step_with_passes`, `apply`, `settle`, and their actual
+handlers establish the bounds below. Helper equivalence alone would not do so.
 
-| Counter | Width | Proposed K per step | Event count needed from a fresh ledger |
+| Counter | Width | K per step | Event count needed from a fresh ledger |
 | --- | --- | --- | --- |
 | `last_cmd` | u64 | 1 per accepted controller command | About 1.84e19 accepted commands on one request. Checked separately at command construction. |
 | `generation` | u64 | 3 | At least about 6.15e18 events affecting one request. Apply can increment twice; settle adds at most one phase change. |
@@ -115,7 +130,7 @@ does not discharge it.
 | `next_ticket` | u64 | `2 * (nodes.len() + 1)` | At least about 4.61e18 events before the conservative headroom check can fail from an empty world. See the charging argument below. |
 | `credit.start` | u32 | 258 | Initialized once to at most `u8::MAX + RESERVE`; fresh requests cannot exhaust it. |
 | `credit.earned` | u32 | 1 | Merge credit applies once per request; fresh requests cannot exhaust it. |
-| `credit.added` | u32 | 255 | About 16.8 million maximal AddCredit answers. This includes automatic top-ups, which add at most one for a continuation. |
+| `credit.added` | u32 | 255 | 16,843,009 maximal AddCredit answers. This includes automatic top-ups, which add at most one for a continuation. |
 | `credit.spent` | u32 | 1 | About 4.29 billion paid events on one request. |
 
 Credit's derived arithmetic uses i64, which contains the sum and difference of
@@ -123,8 +138,8 @@ all four u32 entries. A consistent ledger is nonnegative. Withheld credit allows
 only zero-cost question continuations. For an AddCredit answer, the deposit
 covers the one-unit continuation unless the deposit is zero; that case tops up
 by one. Thus deposit plus automatic top-up is at most 255, not 256. The local
-credit operations have source-level Verus contracts; their callers and the
-complete step still need composition proofs.
+credit operations and their callers share source-level Verus contracts. The
+full-step contract composes those bounds with settle.
 
 No remaining raw observation assigns a monotone counter. Reply generation and
 acknowledgement sequence numbers are compared with existing values. Ingest's
@@ -144,8 +159,7 @@ Production raw observation sources inspected:
   rejects raw Commands as well as raw Ack/NewRequest/NewAdoption.
 
 The u8 attempt, round, retry and incident fields are bounded by consistency or
-saturating operations. Their apply-side arithmetic still needs composition
-proofs. The helper also scopes the u32 scratch scans and settle-pass counter.
+saturating operations. Their arithmetic is checked in the actual apply-side handlers. The helper also scopes the u32 scratch scans and settle-pass counter.
 It reserves `open_nodes + 1` scan entries and `6 * (open_nodes + 1)` moves,
 including one possible new root. This admits at most 715,827,881 open nodes.
 Closed nodes may be arbitrarily numerous within the checked ticket reserve.
@@ -157,9 +171,9 @@ Each local settle case proves a decreasing height at most six and allocation
 potentials at most one generation, one effect, two tickets and one merge credit.
 These statements quantify over every scheduling decision, with no world-size
 bound. Both normal Rust and Verus compile those same case bodies. The read-only
-pool occupancy, planning-admission count and prerequisite query now verify
-against exact predicates. The slot/file query, scheduler wrapper and complete
-apply/settle composition remain to verify.
+pool occupancy, planning-admission, slot/file and prerequisite queries verify
+against exact predicates. The actual scheduler and settle loop compose the
+local potentials into the whole-step counter budgets.
 
 For global tickets, the per-step reserve scales with node count, but the lifetime
 count still needs about 2^64 events. Charge an allocation against the local ticket
@@ -175,17 +189,16 @@ some progress event, with no per-request fairness claim.
 
 ## Proof migration status
 
-No Kani harness is replaced or weakened. There is no gated Verus replacement
-in this PR yet. The mapping below separates the delivered foundation from the
+No Kani harness is replaced or weakened. The safety proof does not replace any progress harness. The mapping below separates the delivered foundation from the
 remaining progress obligations.
 
-| Verified foundation | Executable connection | Remaining composition |
+| Safety foundation | Executable connection | Progress still required |
 | --- | --- | --- |
-| `world_headroom`, `node_headroom`, `open_prefix` | `headroom_ok`, `counter_exhaustion`, checked scan/settle/ticket budgets | Prove the reserves cover every full `step`. |
-| `internal_height`, allocation capacities, `advance_post` | Every executable `advance_node` case and its dispatcher | Verify the scheduler wrapper and complete settle loop. |
-| `potential_update`, `potential_bound`, `settle_reserve_totals` | Potentials over sequences of the real `Node` type | Connect each actual world update and pass to these sums. |
+| `world_headroom`, `node_headroom`, `open_prefix` | `headroom_ok`, `counter_exhaustion`, checked scan/settle/ticket budgets | None for counter safety; progress also needs fresh commands. |
+| `internal_height`, allocation capacities, `advance_post` | Every executable `advance_node` case and its dispatcher | Outside-event witness decrease. |
+| `potential_update`, `potential_bound`, `settle_reserve_totals` | Potentials over sequences of the real `Node` type | Strict global outside-witness decrease. |
 | `pool_users`, `slot_waiters`, `prerequisites_delivered` | Actual pool, admission and prerequisite queries | Prove slot/file obstruction and global witness existence. |
-| Allocation and credit contracts | Actual `set_phase`, `emit_node`, `take_ticket_node`, `ask_rob`, `raise_incident`, retry and credit bodies | Finish apply handlers, frame bounds and full-step overflow safety. |
+| Allocation and credit contracts | Actual `set_phase`, `emit_node`, `take_ticket_node`, `ask_rob`, `raise_incident`, retry and credit bodies | Connect successful outside witnesses to strict rank decrease. |
 
 | Existing Kani harnesses | Required Verus result, not yet delivered |
 | --- | --- |
