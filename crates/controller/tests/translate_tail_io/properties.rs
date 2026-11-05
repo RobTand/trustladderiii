@@ -276,7 +276,7 @@ fn pinned_real_old_and_current_tail_and_helpers() {
     let helper = include_str!("findings.rs");
     assert_eq!(format!("{:x}", Sha256::digest(helper.as_bytes())), pins[2]);
     assert_eq!(
-        helper,
+        include_str!("findings-current.rs"),
         include_str!("../../src/findings.rs")
             .split("pub(crate) struct CurrentReview")
             .next()

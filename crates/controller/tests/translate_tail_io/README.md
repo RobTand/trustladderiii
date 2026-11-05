@@ -1,8 +1,11 @@
 # Post-match translate tail
 
 The reference is the complete tail from f5b0ba2fb16a686232c08fe5cee907f1d43c5258.
-`pins.txt` pins its exact bytes and the unchanged finding/report helper bodies.
-The current copy is checked against production. Both compile against the same
+`pins.txt` pins its exact bytes and the frozen finding/report helper bodies in
+`findings.rs`. The current tail shadows that helper with `findings-current.rs`,
+which is checked byte-for-byte against the production prefix. Each side builds
+its own finding/report input types from the same schedule. The current tail is
+also checked against production. Both compile against the same
 recorded leaf I/O methods. No changed production body is a shared shim.
 
 The boundary records worker-material/document reads, their results, diagnostics,
