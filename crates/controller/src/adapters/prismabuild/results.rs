@@ -170,7 +170,7 @@ pub(super) async fn ending(
 pub(crate) const HARNESS: &str = "harness";
 
 /// Q51/#822: disagreement between TL3's producer and judge is a TL3-side defect.
-const JUDGE_MISMATCH_CLASS: Option<&str> = Some(HARNESS);
+const JUDGE_MISMATCH_CLASS: Option<&str> = None; // Red: seed a missing Q51 classification.
 
 /// The harness's `SELECTED_CHECK`: existing tests that import the change (#359).
 const SELECTED_CHECK: &str = "Existing tests that import the change";

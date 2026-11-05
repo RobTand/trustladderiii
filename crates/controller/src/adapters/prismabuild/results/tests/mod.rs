@@ -60,6 +60,61 @@ fn disagreement_uses_one_harness_class_with_injectable_none_policy() {
     assert_eq!(JUDGE_MISMATCH_CLASS, Some(HARNESS));
 }
 
+async fn mismatch_completion(base: &str, python_passed: bool) {
+    let (mut job, report) = fixture(base, "passed", python_passed, false);
+    job.delivery.checks = Some(job.run.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("stdout");
+    let bytes = raw(&report);
+    std::fs::write(&log, &bytes).unwrap();
+    let response = json!({"schema":"prismabuild.endings.v1","complete":true,
+        "endings":[{"action_key":job.action,"status":"executed","succeeded":true,"exit_code":0,
+            "result":{"verified":true,"receipt_sha256":"c".repeat(64),"stdout":{
+                "path":log,"bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes))}}}]});
+    let path = directory.path().join("endings.json");
+    std::fs::write(&path, serde_json::to_vec(&response).unwrap()).unwrap();
+    let tool = Tool {
+        program: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            "cat \"$1\"".into(),
+            "pbwait-fixture".into(),
+            path.into_os_string(),
+        ],
+    };
+    let completion = super::ending(&tool, &job, false, &tl3_prismabuild::RecordRead::Absent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(completion.ack, tl3_kernel::Ack::Confirmed));
+    assert_eq!(completion.failure_class.as_deref(), Some(HARNESS));
+    let [
+        Observation::Checks {
+            report,
+            pass,
+            results,
+            failed_tests,
+            ..
+        },
+    ] = completion.observations.as_slice()
+    else {
+        panic!("mismatch must produce exactly the confirmed Checks observation")
+    };
+    assert!(!report && !pass && results.is_empty() && failed_tests.is_empty());
+}
+
+/// Q51/#822: neither a rejected Python pass nor its findings may become request failure.
+#[tokio::test]
+async fn mismatch_completion_rust_rejects_python_pass() {
+    mismatch_completion("skipped", true).await;
+}
+
+/// Q51/#822: neither a rejected Python failure nor the Rust pass may escape the mismatch.
+#[tokio::test]
+async fn mismatch_completion_rust_accepts_python_fail() {
+    mismatch_completion("passed", false).await;
+}
+
 #[test]
 fn controller_rejects_false_negative_and_wrong_pre_existing() {
     let (job, false_negative) = fixture("passed", "passed", false, false);
