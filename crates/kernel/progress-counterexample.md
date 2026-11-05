@@ -100,13 +100,19 @@ projection would not repair this failed correspondence.
 
 The pinned Verus toolchain and spike sources remain at the locations recorded in
 `/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. `verus/run.sh` is the
-PrismaBuild exploratory runner. The required Rust targets are the 17
+PrismaBuild exploratory runner. The required Rust targets are the 20
 `//crates/kernel:verus_*` groups declared in `tools/bazel/verus.bzl`. Their exact
 positive inventory totals 256 verified obligations, including generated type
 obligations. Every actual callee of `step` is covered by one group. The runner
 rejects missing, zero, duplicate or changed counts, nonzero exits and timeouts.
 No `assume`, `admit`, external body or alternative transition model supplies
 these contracts.
+
+Command dispatch, question answers, command helpers and continuations run in
+separate required groups. The five unchanged contracts are split by function
+to keep fresh solver runs below the existing 45-second watchdog. Qualification
+disables remote action acceptance and test-result caching for each baseline
+and mutant; a cached baseline cannot qualify a seeded rejection.
 
 `tools/safety_qualification.py CASE` runs on a disposable BuildBuddy runner. It
 first requires the normal target to pass, changes one expression in the real

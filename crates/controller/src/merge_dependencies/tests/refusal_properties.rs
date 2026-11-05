@@ -839,7 +839,20 @@ fn assert_handler_reached(case: InputCase, before: &Snapshot, after: &Snapshot) 
         InputCase::Classified => "comment_jobs",
         InputCase::Postmortem => "postmortem_jobs",
         InputCase::LinkedRequest => "request_links",
-        InputCase::Queue => "queue_facts",
+        InputCase::Queue => {
+            // A closed merge prunes its receipt within this same input. Witness
+            // the accepted merge and both deliveries, not the transient receipt.
+            let world = crate::snapshot::decode(after).unwrap();
+            assert!(world.nodes[0].merged.is_some());
+            assert_eq!(world.dependencies().len(), 2);
+            assert!(
+                world
+                    .dependencies()
+                    .iter()
+                    .all(|d| d.status == DependencyStatus::Delivered)
+            );
+            "nodes"
+        }
         InputCase::GitHubComment => "unclassified_comments",
         InputCase::WorkerFailed => "worker_failures",
         InputCase::WorktreePrepared | InputCase::CheckPlan => "check_plans",

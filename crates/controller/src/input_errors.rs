@@ -263,6 +263,14 @@ impl Controller {
             self.held_effects = holds;
             self.postmortem_since = postmortem_since;
         }
+        // A committed concurrent arrival can advance the shared allocator after
+        // this repeatable-read snapshot. Rollback has retained the input; the
+        // controller's next pass retries on that new evidence, without an incident.
+        if let Err(Error::Store(tl3_store::Error::Database(error))) = &result
+            && error.code().is_some_and(|code| code.code() == "40001")
+        {
+            return Ok(false);
+        }
         let (accepted, attempted) = result?;
         if !accepted {
             let current = self.store.load()?;

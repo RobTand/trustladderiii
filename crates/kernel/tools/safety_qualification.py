@@ -49,7 +49,7 @@ CASES = {
 
 def run(workspace, target, name):
     statuses = workspace.test([target], 'remote', {'ROLE': 'KERNEL_SAFETY_QUALIFICATION'},
-                              name, extra=['--jobs=16', '--nocache_test_results'])
+                              name, extra=['--jobs=16', '--nocache_test_results', '--noremote_accept_cached'])
     log = workspace.root / ('bazel-testlogs/' + target[2:].replace(':', '/') + '/test.log')
     text = log.read_text() if log.is_file() else ''
     print(text, flush=True)
