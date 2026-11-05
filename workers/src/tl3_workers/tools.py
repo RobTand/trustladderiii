@@ -301,6 +301,13 @@ class Evidence:
         else:
             result["tool_error"] = self.tool_error("run_tests", "test_submission", selectors)
 
+    def spend(self):
+        """A delivered reply ended the run that recorded these failures; a retry observes its own (Q50)."""
+        with self._lock:
+            self.infrastructure_keys.clear()
+            for error in self.tool_errors.values():
+                error["retired"] = True
+
     # A resumed maker visit keeps its evidence. JSON turns selector tuples into lists.
     def state(self):
         with self._lock:
