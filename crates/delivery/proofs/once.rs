@@ -1,6 +1,8 @@
 //! State-table Once. Conditional on the external original-key deduplication law.
 #[path = "../src/upstream.rs"] mod upstream;
 use upstream::*;
+#[path = "../src/step.rs"] mod delivery;
+use delivery::{State,Ack,completion};
 use vstd::prelude::*;
 verus! {
 /// State-table Once: induction step for arbitrary schedules and restarts.
@@ -30,5 +32,16 @@ fn once_late_landing_witness() {
     assert(zombie.copies == 1);
     assert(zombie.outstanding == 0);
 }
+/// State-table Once: an upstream Found enters the REAL completion plan.
+/// In the per-key model, confirmation implies at least one upstream copy.
+fn receipt_uses_real_completion(before: Upstream) -> (out: State)
+    requires before.incorrect <= before.copies,
+    ensures (out == State::Confirmed) == (before.copies > 0),
+{
+    let observed=read(before,Class::Once);
+    if observed.found {completion(State::Uncertain,Ack::Confirmed).to}
+    else {State::Uncertain}
+}
+
 }
 fn main() {}

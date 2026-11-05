@@ -1,6 +1,8 @@
 //! State-table messages: at least once, then delete extra matching copies.
 #[path = "../src/upstream.rs"] mod upstream;
 use upstream::*;
+#[path = "../src/step.rs"] mod delivery;
+use delivery::{State,Ack,completion};
 use vstd::prelude::*;
 verus! {
 /// State-table messages: one complete successful reconciliation after quiescence
@@ -35,5 +37,16 @@ fn dedup_late_witness() {
     let fixed = deduplicate_after_quiescence(zombie);
     assert(fixed.copies == 1);
 }
+/// State-table Deduplicated: an upstream Found enters the REAL completion plan.
+/// In the per-key model, confirmation implies at least one upstream copy.
+fn receipt_uses_real_completion(before: Upstream) -> (out: State)
+    requires before.incorrect <= before.copies,
+    ensures (out == State::Confirmed) == (before.copies > 0),
+{
+    let observed=read(before,Class::Deduplicated);
+    if observed.found {completion(State::Uncertain,Ack::Confirmed).to}
+    else {State::Uncertain}
+}
+
 }
 fn main() {}
