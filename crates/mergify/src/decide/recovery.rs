@@ -8,6 +8,7 @@ use super::enqueue::{
 use vstd::prelude::*;
 
 /// The shell must consume `first` before `second`, including a Sending save before POST.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Transition {
     pub recovery: Option<Recovery>,

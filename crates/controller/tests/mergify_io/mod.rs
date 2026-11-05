@@ -729,6 +729,7 @@ mod properties {
                     "queue_command",
                     "recovery_decide",
                     "recovery_now_ms",
+                    "human_hold_in_events",
                 ],
             ),
         ] {

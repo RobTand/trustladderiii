@@ -18,7 +18,7 @@ def declaration(source, name):
     while depth:
         depth += (source[end] == '{') - (source[end] == '}')
         end += 1
-    return '#[derive(Clone, Copy, Debug, PartialEq, Eq)]\n' + source[start:end] + '\n'
+    return '#[vstd::prelude::verus_verify]\n#[derive(Clone, Copy, Debug, PartialEq, Eq)]\n' + source[start:end] + '\n'
 
 
 def main():
