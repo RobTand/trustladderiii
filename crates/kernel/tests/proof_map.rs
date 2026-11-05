@@ -145,3 +145,6 @@ fn every_event_and_phase_has_a_proof() {
         proven.len()
     );
 }
+
+#[path = "proof_map/inventory.rs"]
+mod inventory;

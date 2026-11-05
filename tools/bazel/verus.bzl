@@ -77,6 +77,16 @@ def verus_proofs():
     if native.package_name() == "crates/kernel":
         # Every body called by step is checked in one of these groups. Module
         # filters bound solver context; exact counts refuse empty selections.
+        # #806: the required proof_map test rejects missing, duplicate and stale entries.
+        unverified_functions = {
+            "kernel::tests::scan_budget_checks_the_actual_u32_width": "Rust unit test; absent from the Verus cfg.",
+            "kernel::tests::settle_budget_reserves_all_six_internal_moves_per_open_node": "Rust unit test; absent from the Verus cfg.",
+            "kernel::footprint::Footprint::any": "Frozen Kani-only constructor; absent from the Verus cfg.",
+            "root::main": "Verifier executable entry point; no kernel decision.",
+            "kernel::queries::Node::waiting_on": "Read-only presentation API outside the scoped kernel proof.",
+            "kernel::queries::Node::operation_pending": "Read-only presentation API outside the scoped kernel proof.",
+            "kernel::queries::Node::effect_cancelling": "Read-only presentation API outside the scoped kernel proof.",
+        }
         groups = {
             "kernel": ("kernel", 91),
             "events": ("kernel::events", 1),

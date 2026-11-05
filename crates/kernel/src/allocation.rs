@@ -372,3 +372,8 @@ kernel_fn! {
         });
     }
 }
+
+// #806 seeded selector-inventory RED. Removed after the required check rejects it.
+kernel_fn! {
+fn selector_inventory_unlisted() -> (result: bool) [ ensures result, ] { true }
+}

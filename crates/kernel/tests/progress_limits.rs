@@ -134,7 +134,13 @@ fn exhausted_command_witness_returns_none_without_overflow() {
 fn witness_uses_the_first_node_and_first_available_branch() {
     let mut world = World::new(&[2], 2);
     for _ in 0..2 {
-        world = send(world, Event::NewRequest { repo: RepoId(0), priority: Priority::Unranked });
+        world = send(
+            world,
+            Event::NewRequest {
+                repo: RepoId(0),
+                priority: Priority::Unranked,
+            },
+        );
     }
     let seq = world.nodes[0].effect.unwrap().seq;
     world.nodes[0].effect.as_mut().unwrap().cancelling = true;
@@ -143,19 +149,40 @@ fn witness_uses_the_first_node_and_first_available_branch() {
     assert!(world.valid());
     // Node 1 also has a confirmable effect. Node 0 simultaneously offers resume,
     // cancellation acknowledgement, incident clearing, and its Await item.
-    assert_eq!(world.witness(), Some(Event::Command {
-        node: NodeId(0), id: 1, command: Command::Resume,
-    }));
+    assert_eq!(
+        world.witness(),
+        Some(Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Command::Resume,
+        })
+    );
     world.nodes[0].paused = false;
     assert!(world.valid());
-    assert_eq!(world.witness(), Some(Event::Ack { node: NodeId(0), seq, ack: Ack::Confirmed }));
+    assert_eq!(
+        world.witness(),
+        Some(Event::Ack {
+            node: NodeId(0),
+            seq,
+            ack: Ack::Confirmed
+        })
+    );
     world.nodes[0].effect = None;
     assert!(world.valid());
-    assert_eq!(world.witness(), Some(Event::Fact {
-        node: NodeId(0), fact: Fact::IncidentCleared { by_rob: true },
-    }));
+    assert_eq!(
+        world.witness(),
+        Some(Event::Fact {
+            node: NodeId(0),
+            fact: Fact::IncidentCleared { by_rob: true },
+        })
+    );
     world.nodes[0].waiting_incident = false;
-    assert_eq!(world.witness(), Some(Event::Reply {
-        node: NodeId(0), generation: world.nodes[0].generation, reply: Reply::IngestDone { size: 1 },
-    }));
+    assert_eq!(
+        world.witness(),
+        Some(Event::Reply {
+            node: NodeId(0),
+            generation: world.nodes[0].generation,
+            reply: Reply::IngestDone { size: 1 },
+        })
+    );
 }
