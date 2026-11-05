@@ -699,6 +699,9 @@ def verus_proofs():
             "cleanup_resource_distance": ("kernel::cleanup_lemmas#resource_distance", 1),
             "timing3_ingest_deposit_bound": ("kernel::timing3_lemmas#ingest_deposit_bound", 1),
             "timing3_pause_resume": ("kernel::timing3_lemmas#pause_resume", 1),
+            "facts_merge_late_result": ("kernel::facts_merge_lemmas#late_result", 1),
+            "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
+            "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

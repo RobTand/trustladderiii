@@ -198,6 +198,10 @@ CASES = {
                              'm.holds = true;\n                set_phase(m, Phase::Ready(r));',
                              '//crates/kernel:verus_kernel_pause_node'),
 
+    'facts_merge_unapproved': ('crates/kernel/src/facts.rs',
+                               '    if !approved {',
+                               '    if approved {',
+                               '//crates/kernel:verus_facts_merge'),
 }
 
 

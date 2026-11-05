@@ -233,6 +233,7 @@ pub(super) fn merge_open(m: &mut Node, head: HeadId) -> (result: ()) [
 
 kernel_fn! {
 /// State-table merge rows / #805 and #806: compose progress and complete safety.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
@@ -274,26 +275,35 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
             && !(old(w).nodes@[i as int].phase is Closed)
             && !(old(w).nodes@[i as int].approved == Some(head) && checks_passed)
             ==> retirement::unapproved_note(*final(out), i),
-] proof [reveal(retirement::fact_node); reveal(retirement::unapproved_note);] {
+] proof [reveal(retirement::unapproved_note);] {
+    kernel_snapshot! { before_merge = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     if !m.had_pr || m.merged.is_some() {
+        kernel_proof! { facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed); }
         return;
     }
     let approved = m.approved == Some(head) && checks_passed;
     match m.phase {
         Phase::Closed(o) => {
             if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
+                kernel_proof! { facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed); }
                 return;
             }
             // A late merge corrects the record and earns its credit once.
             m.merged = Some(head);
             m.phase = Phase::Closed(Outcome::Merged);
             merge_credit(m);
+            kernel_proof! {
+                facts_merge_lemmas::late_result(before_merge@, *m, head, checks_passed);
+            }
             notice(out, i, Notice::Note(NoteKind::LateMerge));
             notice(out, i, Notice::Incident { needs_rob: false });
         }
         _ => {
             merge_open(m, head);
+            kernel_proof! {
+                facts_merge_lemmas::open_result(before_merge@, *m, head, checks_passed);
+            }
         }
     }
     if !approved {

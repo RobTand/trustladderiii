@@ -2069,3 +2069,6 @@ mod facts_transition_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_ci_failed_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod facts_merge_lemmas;
