@@ -605,7 +605,7 @@ def verus_proofs():
             "command_helpers_allowed": ("kernel::command_helpers#allowed", 1),
             "command_helpers_mark_handled": ("kernel::command_helpers#mark_handled", 1),
             "continuations": ("kernel::continuations", 1),
-            "checking": ("kernel::checking#World::check", 10),
+            "checking": ("kernel::checking#*World::check", 10),
             "checking_check_node": ("kernel::checking#World::check_node", 1),
             "checking_check_ready": ("kernel::checking#World::check_ready", 1),
             "checking_consistent": ("kernel::checking#World::consistent", 1),
