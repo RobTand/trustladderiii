@@ -1,4 +1,5 @@
 //! Q53 / #828: durable quota holds must be visible and wake on evidence.
+#[path = "../../store/tests/support/mod.rs"]
 mod support;
 
 use serde_json::json;
@@ -16,7 +17,7 @@ use tl3_controller::{
         workers::{Supervisor, WorkerOutputSource},
     },
     cli::Input,
-    executor::{Completion, Delivery, Executor, Observation, Output, Reconciliation, Upstream},
+    executor::{Completion, Delivery, Executor, Output, Reconciliation, Upstream},
     status,
 };
 use tl3_kernel::{EffectKind, Phase, Role};
