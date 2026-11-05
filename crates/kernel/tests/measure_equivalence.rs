@@ -95,3 +95,153 @@ fn index_measure_matches_the_original_iterator_over_generated_worlds() {
     assert_eq!(comparisons, 2560);
     println!("measure equivalence: {comparisons} generated worlds, all status/owner combinations");
 }
+
+fn roots() -> World {
+    let mut w = World::new(&[3], 2);
+    for _ in 0..2 {
+        w = step(
+            w,
+            Event::NewRequest {
+                repo: RepoId(0),
+                priority: Priority::Unranked,
+            },
+        )
+        .0;
+    }
+    w
+}
+
+fn dependency(w: World, owner: u64, request: Option<NodeId>, status: DependencyStatus) -> World {
+    step(
+        w,
+        Event::Fact {
+            node: NodeId(owner),
+            fact: Fact::Dependency {
+                target: DependencyTarget {
+                    kind: PrerequisiteKind::Issue,
+                    number: owner + 1,
+                    request,
+                },
+                status,
+            },
+        },
+    )
+    .0
+}
+
+/// #806 review r1: retain rejected cycle declarations in diagnostic comparisons.
+#[test]
+fn rejected_cycles_match_the_iterator() {
+    let mut w = dependency(roots(), 0, Some(NodeId(1)), DependencyStatus::Pending);
+    w = dependency(w, 1, Some(NodeId(0)), DependencyStatus::Pending);
+    assert_eq!(w.dependencies().len(), 2);
+    assert!(w.dependencies().iter().all(|d| d.target.request.is_some()));
+    assert!(w.dependencies().iter().any(|d| d.rejected));
+    for closed in [false, true] {
+        w.nodes[1].phase = if closed {
+            Phase::Closed(Outcome::Stopped)
+        } else {
+            Phase::Unplanned
+        };
+        compare(&w);
+        assert!(reference::compare_outcome(&w).is_some());
+    }
+}
+
+/// #806 review r1: Delivered must short-circuit even with an invalid owner.
+#[test]
+fn truncated_owners_have_the_same_panic_or_value() {
+    for status in [
+        DependencyStatus::Pending,
+        DependencyStatus::Abandoned,
+        DependencyStatus::Delivered,
+    ] {
+        let mut w = dependency(roots(), 1, Some(NodeId(0)), status);
+        assert_eq!(w.dependencies().len(), 1);
+        w.nodes.truncate(1);
+        assert!(w.dependencies()[0].node.0 as usize >= w.nodes.len());
+        let outcome = reference::compare_outcome(&w);
+        if status == DependencyStatus::Delivered {
+            assert_eq!(outcome, Some(w.nodes[0].distance()));
+        } else {
+            assert_eq!(outcome, None);
+        }
+    }
+}
+
+/// #806 review r1: a real world near u64::MAX would need quadrillions of
+/// nodes (distance <= 4096). Seed the two accumulation shapes instead, using
+/// real world contributions. The original reference above remains verbatim.
+#[test]
+fn accumulator_boundary_has_the_same_panic_or_value() {
+    let mut w = dependency(roots(), 0, Some(NodeId(1)), DependencyStatus::Pending);
+    w = dependency(w, 1, Some(NodeId(0)), DependencyStatus::Pending);
+    for n in &mut w.nodes {
+        n.phase = Phase::Ingesting;
+        n.paused = true;
+        n.waiting_incident = true;
+        n.credit.start = u64::MAX;
+        n.credit.earned = u64::MAX;
+        n.credit.added = u64::MAX;
+    }
+    assert!(reference::compare_outcome(&w).is_some());
+    let node_sum: u64 = w.nodes.iter().map(Node::distance).sum();
+    let edge_count = w.dependencies().len() as u64;
+    assert!(node_sum > 0 && edge_count > 0);
+    let mut successful = 0;
+    let mut panicked = 0;
+    // Exact fit, overflow only at the final edge addition, and overflow in
+    // the node scan. Ordinary additions retain the build's overflow policy.
+    for seed in [
+        u64::MAX - node_sum - edge_count,
+        u64::MAX - node_sum,
+        u64::MAX,
+    ] {
+        let old = std::panic::catch_unwind(|| {
+            let mut total = seed;
+            for n in &w.nodes {
+                total += n.distance();
+            }
+            total += w
+                .dependencies()
+                .iter()
+                .filter(|d| {
+                    d.status != DependencyStatus::Delivered
+                        && !w.nodes[d.node.0 as usize].phase.is_closed()
+                })
+                .count() as u64;
+            total
+        })
+        .ok();
+        let new = std::panic::catch_unwind(|| {
+            let mut total = seed;
+            let mut i = 0;
+            while i < w.nodes.len() {
+                total += w.nodes[i].distance();
+                i += 1;
+            }
+            let mut count = 0usize;
+            let mut i = 0;
+            while i < w.dependencies().len() {
+                let d = &w.dependencies()[i];
+                if d.status != DependencyStatus::Delivered
+                    && !w.nodes[d.node.0 as usize].phase.is_closed()
+                {
+                    count += 1;
+                }
+                i += 1;
+            }
+            total += count as u64;
+            total
+        })
+        .ok();
+        assert_eq!(old, new, "initial total: {seed}");
+        successful += usize::from(new.is_some());
+        panicked += usize::from(new.is_none());
+    }
+    assert!(successful > 0);
+    if cfg!(debug_assertions) {
+        assert_eq!((successful, panicked), (1, 2));
+    }
+    println!("accumulator boundary: {successful} values, {panicked} panics");
+}

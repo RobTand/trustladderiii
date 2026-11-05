@@ -26,9 +26,20 @@ impl ReferenceWorld {
 }
 
 pub(super) fn compare(w: &World) {
+    assert!(
+        compare_outcome(w).is_some(),
+        "unexpected measure panic: {w:#?}"
+    );
+}
+
+/// Compare the observable value or panic without depending on panic payload text.
+pub(super) fn compare_outcome(w: &World) -> Option<u64> {
     let reference = ReferenceWorld {
         nodes: w.nodes.clone(),
         dependencies: w.dependencies().to_vec(),
     };
-    assert_eq!(w.measure(), reference.measure(), "world: {w:#?}");
+    let actual = std::panic::catch_unwind(|| w.measure()).ok();
+    let expected = std::panic::catch_unwind(|| reference.measure()).ok();
+    assert_eq!(actual, expected, "world: {w:#?}");
+    actual
 }
