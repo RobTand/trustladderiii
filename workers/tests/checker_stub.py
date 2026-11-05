@@ -42,7 +42,15 @@ def replay(case, cursor, command, document):
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
         cursor.write_text(str(position + 1))
-        return deepcopy(row["response"])
+        response = deepcopy(row["response"])
+        # Rust records the verdict and check list. These three identity fields
+        # are sampled Git facts, so bind them to this replay's request instead
+        # of returning commit timestamps from the recording checkout.
+        if command == ["check-reply", "maker"] and document.get("operation") == "handoff":
+            if response["handoff"] is not None:
+                response["handoff"].update(base_sha=document["inputs"]["check_base_sha"],
+                                           head_sha=document["head"], head_tree=document["tree"])
+        return response
 
 
 def record(case, temporary, monkeypatch):
