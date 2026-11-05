@@ -119,7 +119,6 @@ impl Controller {
                 row.table == "model_attempts" && row.id == id && row.value["model"] == model
             })
             .and_then(|row| row.value["family"].as_str().map(str::to_owned))
-            .or_else(|| self.quota_family(model))
     }
 
     /// Imported completion facts are authoritative even for a reply whose node moved on.
@@ -279,7 +278,7 @@ impl Controller {
         Ok(())
     }
 
-    /// Q53 / #828: immutable endings retain dispatch family before transient rows retire.
+    /// Q53 / #828: endings retain family; terminal unclaimed deliveries cannot use metadata.
     pub(crate) fn retire_completed_model_attempts(
         &mut self,
         snapshot: &Snapshot,
@@ -292,7 +291,9 @@ impl Controller {
         {
             let (key, attempt): (String, i64) =
                 crate::decode_stored(serde_json::from_str(&row.id)?)?;
-            if self.store.worker_facts_recorded(&key, attempt)? {
+            if self.store.worker_facts_recorded(&key, attempt)?
+                || self.store.worker_identity_abandoned(&key)?
+            {
                 commit.rows.push(RowChange::Delete {
                     table: row.table.clone(),
                     id: row.id.clone(),

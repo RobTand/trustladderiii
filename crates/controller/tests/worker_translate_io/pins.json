@@ -110,5 +110,9 @@
         "fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {\n    Ok(serde_json::to_string(value)?\n        .chars()\n        .map(|ch| if ch.is_ascii() { 1 } else { 6 * ch.len_utf16() })\n        .sum())\n}\n"
       ]
     }
+  },
+  "legacy_quota_clear": {
+    "commit": "683829169d577b921a1bc93e446b49399886a092",
+    "sha256": "170f88b710fc700d93ed7574faf636b89401a4d40d3709e3945d8282aecc3591"
   }
 }

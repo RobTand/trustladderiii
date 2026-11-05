@@ -47,9 +47,12 @@ It feeds those exact rows into a maker reply and replays both sides of its inter
 write. Mandatory shell witnesses assert RunFailed and the expected call/row
 trace for invalid maker paths and known request-scope citations without a quote.
 
-#828 retains the current WorkerReply arm verbatim after ordering quota success
-evidence before ingress. These differential schedules contain legacy quota rows
-without ending timestamps, so their original unconditional consumption and the
-new legacy-only consumption agree. `quota_hold` covers ordered quota rows and
-successes through real immutable worker endings, including delayed success and
-equal reset hints. No reference arm, generated schedule or assertion is removed.
+#828 keeps the reviewed historical WorkerReply arm from
+683829169d577b921a1bc93e446b49399886a092 for extraction conformance. The only
+intentional difference from production is the legacy model-only quota clear,
+which is now forbidden. Its exact bytes and SHA256 are pinned separately in
+legacy-quota-clear.rs.txt and pins.json. The source check strips only that block
+and its now-unused model binding before comparing all remaining code to
+production. Original differential schedules, I/O assertions and references stay
+unchanged. The real-store quota_hold upgrade regression proves that an older or
+other-family success preserves unknown legacy quota after restart.
