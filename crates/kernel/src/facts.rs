@@ -332,9 +332,14 @@ pub(super) fn incident_cleared(w: &mut World, i: usize, by_rob: bool, _out: &mut
         old(w).next_question < u64::MAX,
     ensures retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
         final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::IncidentCleared { by_rob }),
+        by_rob && old(w).nodes@[i as int].waiting_incident
+            && old(w).nodes@[i as int].effect.is_none()
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && !(old(w).nodes@[i as int].phase is Closed)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int]),
         final(w).next_question == old(w).next_question,
         retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
-] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);] {
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds); reveal(distance);] {
     let m = &mut w.nodes[i];
     if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
         m.waiting_incident = false;

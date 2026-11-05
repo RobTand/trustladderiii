@@ -274,15 +274,14 @@ fn collect(directory: &Path, prefix: &str, result: &mut Vec<Function>) {
     for entry in std::fs::read_dir(directory).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            collect(&path, prefix, result);
+            let child = format!("{prefix}::{}", path.file_name().unwrap().to_str().unwrap());
+            collect(&path, &child, result);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
             let name = path.file_stem().unwrap().to_str().unwrap();
-            if matches!(name, "proofs" | "verification")
-                || (name == "progress" && directory.ends_with("verus"))
-            {
+            if matches!(name, "proofs") || (name == "progress" && directory.ends_with("verus")) {
                 continue;
             }
-            let module = if matches!(name, "lib" | "headroom" | "progress_specs") {
+            let module = if matches!(name, "lib" | "mod" | "headroom" | "progress_specs") {
                 prefix.into()
             } else {
                 format!("{prefix}::{name}")
@@ -333,6 +332,8 @@ fn unlisted_duplicate_stale_and_reasonless_entries_are_rejected() {
     let mut duplicate = all.clone();
     duplicate.extend(one);
     assert!(check(&fs, &duplicate, &BTreeMap::new()).is_err());
+    let no_reason = "        unverified_functions = {\n            \"kernel::facts::extracted\": \"  \",\n        }";
+    assert!(std::panic::catch_unwind(|| exemptions(no_reason)).is_err());
     let stale = BTreeMap::from([("kernel::facts::missing".into(), "not verified".into())]);
     assert!(check(&fs, &all, &stale).is_err());
 }

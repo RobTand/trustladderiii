@@ -302,6 +302,7 @@ pub(super) fn verify_selected_apply(mut w: World, fact: Fact) -> (result: (World
         assert forall|j: int| 0 <= j < w.nodes@.len() implies node_headroom(w.nodes@[j]) by {}
         assert(world_headroom(w));
     }
+    kernel_proof! { dependencies::indexable_definition(w); }
     let checked_before = w.check();
     assert!(checked_before.is_ok());
     let mut out = Outbox::new();

@@ -144,11 +144,14 @@ fn witness_uses_the_first_node_and_first_available_branch() {
     }
     let seq = world.nodes[0].effect.unwrap().seq;
     world.nodes[0].effect.as_mut().unwrap().cancelling = true;
+    world.nodes[0].pos = 0;
+    world.nodes[0].run = None;
+    world.nodes[0].pool = false;
     world.nodes[0].waiting_incident = true;
     world.nodes[0].paused = true;
     assert!(world.valid());
     // Node 1 also has a confirmable effect. Node 0 simultaneously offers resume,
-    // cancellation acknowledgement, incident clearing, and its Await item.
+    // cancellation acknowledgement and incident clearing.
     assert_eq!(
         world.witness(),
         Some(Event::Command {
@@ -177,6 +180,10 @@ fn witness_uses_the_first_node_and_first_available_branch() {
         })
     );
     world.nodes[0].waiting_incident = false;
+    world.nodes[0].pos = 1;
+    world.nodes[0].run = Some(world.nodes[0].generation);
+    world.nodes[0].pool = true;
+    assert!(world.valid());
     assert_eq!(
         world.witness(),
         Some(Event::Reply {
