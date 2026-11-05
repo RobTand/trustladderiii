@@ -56,8 +56,9 @@ class BazelGraphTests(unittest.TestCase):
         graph['crate_packages'] = {'tl3-controller-core': '//crates/controller-core'} if count else {}
         return graph
 
-    def crate_entry(self, count=1):
-        return {'crate:tl3-controller-core': {'reason': 'Decision crate for #744.', 'sources': count}}
+    def crate_entry(self, count=1, max_fanout=1):
+        return {'crate:tl3-controller-core': {'reason': 'Decision crate for #744.', 'sources': count,
+                                                'max_fanout': max_fanout}}
 
     def check_crate(self, head, entries=None, base=None, previous=None):
         base = self.crate_graph(0) if base is None else base
@@ -144,20 +145,92 @@ class BazelGraphTests(unittest.TestCase):
         self.assertTrue(any('crate:tl3-controller-core' in error and 'package' in error
                             for error in result['errors']), result['errors'])
 
-    def test_crate_exception_preserves_existing_source_fanout_checks(self):
-        base = self.crate_graph()
-        head = self.crate_graph()
-        other = '//crates/controller:test_other'
-        old = '//crates/controller:src/lib.rs'
+    def fanout_pair(self, *, outside=False, new_test=False):
         source = '//crates/controller-core:src/core0.rs'
-        base['reach'][other], head['reach'][other] = [old], [old, source]
+        old = '//crates/controller:src/lib.rs'
+        first, second = '//crates/controller:first', '//crates/controller:second'
+        sources = [source, old]
+        deps = {first: [source], second: [old]}
+        base = adapter.from_deps({**dict.fromkeys(sources, []), **deps}, deps, sources)
+        target = old if outside else source
+        deps[second] = [old, target]
+        if new_test:
+            deps['//crates/controller:new'] = [source]
+        head = adapter.from_deps({**dict.fromkeys(sources, []), **deps}, deps, sources)
         for graph in (base, head):
-            graph['edges'].append([other, old])
-            graph['test_packages'][other] = '//crates/controller'
-            graph['node_types'][other] = 'Rule'
-        head['edges'].append([other, source])
-        result = self.check_crate(head, base=base, previous=self.crate_entry())
+            graph['crate_packages'] = {'tl3-controller-core': '//crates/controller-core'}
+        if outside:
+            # Grow an existing outside source while leaving the crate exact.
+            head = adapter.from_deps({**dict.fromkeys(sources, []), **deps,
+                                      first: [source, old]}, deps, sources)
+            head['crate_packages'] = base['crate_packages']
+        return base, head
+
+    def test_crate_fanout_credit_excludes_outside_package(self):
+        base, head = self.fanout_pair(outside=True)
+        result = self.check_crate(head, base=base)
+        self.assertTrue(any('existing source fanout grew: //crates/controller:src/lib.rs +1'
+                            in error for error in result['errors']), result['errors'])
+
+    def test_crate_exact_fanout_excuses_existing_package_source_growth(self):
+        base, head = self.fanout_pair()
+        result = self.check_crate(head, self.crate_entry(max_fanout=2), base)
+        self.assertEqual(result['errors'], [])
+
+    def test_crate_fanout_beyond_bound_preserves_growth_error(self):
+        base, head = self.fanout_pair()
+        result = self.check_crate(head, base=base)
         self.assertTrue(any('existing source fanout grew' in error for error in result['errors']))
+        self.assertTrue(any('head graph has max_fanout=2' in error for error in result['errors']),
+                        result['errors'])
+
+    def test_crate_stale_fanout_fails_without_growth_in_both_directions(self):
+        base, head = self.fanout_pair()
+        for limit in (1, 3):
+            with self.subTest(limit=limit):
+                entries = self.crate_entry(max_fanout=limit)
+                result = self.check_crate(head, entries, head, entries)
+                self.assertTrue(any('head graph has max_fanout=2' in error
+                                    and 'update max_fanout in the same change' in error
+                                    for error in result['errors']), result['errors'])
+
+    def test_crate_fanout_requires_nonnegative_integer_with_measured_value(self):
+        base, head = self.fanout_pair()
+        for value in (None, -1, True, 2.0, '2'):
+            with self.subTest(value=value):
+                entries = self.crate_entry(max_fanout=value)
+                if value is None:
+                    del entries['crate:tl3-controller-core']['max_fanout']
+                self.assertTrue(any('max_fanout' in error for error in
+                                    adapter.allowlist_errors(entries, {})))
+                result = self.check_crate(head, entries, base)
+                self.assertTrue(any('head graph has max_fanout=2' in error
+                                    and 'update max_fanout in the same change' in error
+                                    for error in result['errors']), result['errors'])
+                self.assertTrue(any('existing source fanout grew' in error
+                                    for error in result['errors']), result['errors'])
+
+    def test_crate_absolute_fanout_includes_new_tests_and_is_stable_next_slice(self):
+        base, head = self.fanout_pair(new_test=True)
+        entries = self.crate_entry(max_fanout=3)
+        self.assertEqual(self.check_crate(head, entries, base)['errors'], [])
+        self.assertEqual(self.check_crate(head, entries, head, entries)['errors'], [])
+        stale = self.crate_entry(max_fanout=2)
+        self.assertTrue(any('head graph has max_fanout=3' in error for error in
+                            self.check_crate(head, stale, base)['errors']))
+
+    def test_crate_fanout_uses_maximum_including_unused_sources(self):
+        base, head = self.fanout_pair()
+        unused = '//crates/controller-core:src/unused.rs'
+        head['loc'][unused] = 1
+        head['dependents'][unused] = 0
+        entries = self.crate_entry(count=2, max_fanout=2)
+        self.assertEqual(self.check_crate(head, entries, base)['errors'], [])
+        for test in head['reach']:
+            head['reach'][test] = [source for source in head['reach'][test]
+                                   if 'controller-core:' not in source]
+        entries = self.crate_entry(count=2, max_fanout=0)
+        self.assertEqual(self.check_crate(head, entries, base)['errors'], [])
 
     def test_crate_does_not_double_discount_moved_sources(self):
         base, head = self.crate_graph(0), self.crate_graph(other=True)
