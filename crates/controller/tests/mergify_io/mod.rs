@@ -954,3 +954,6 @@ mod recovery_reachability {
         io::require_no_op(&s, Entry::Command, "file.exists");
     }
 }
+
+// Group B1 r1: real snapshot projection bodies, independently source-pinned.
+mod recovery_projections;
