@@ -60,8 +60,6 @@ _WAVE_B_ENTRIES = {
     "summary-bound": _WAVE_B_STUB,
     # selector-identity (#823)
     "selector-identity": _WAVE_B_STUB,
-    # node-id (#824)
-    "node-id": _WAVE_B_STUB,
     # limits (S4)
     "limits": _WAVE_B_STUB,
     # red-match (S4)
