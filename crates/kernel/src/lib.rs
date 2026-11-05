@@ -2048,3 +2048,7 @@ mod progress_gate_leaf_sequence;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_gate_leaf_witness.rs"]
 mod progress_gate_leaf_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_ranks.rs"]
+mod progress_gate_leaf_ranks;

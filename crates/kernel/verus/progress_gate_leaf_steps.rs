@@ -106,6 +106,8 @@ pub(super) proof fn teardown_item(n: Node, kind: EffectKind)
         (n.pos == 2 ==> kind == EffectKind::ClosePr),
         (n.pos == 4 ==> kind == EffectKind::RemoveWorktree),
         n.pos != 3,
+        !n.waiting_incident && n.effect.is_none() ==> forall|context: AdvanceContext|
+            #[trigger] advance_enabled(n, context) == n.question.is_none(),
 {
 }
 
@@ -163,6 +165,24 @@ pub(super) proof fn emitted_details(n: Node, after: Node, kind: EffectKind, tick
     ensures advance_details(n, after, ticket, ticket),
 {
     reveal(advance_details);
+}
+
+/// Stop row / #806: fold both unchanged local transition contracts together.
+pub(super) proof fn teardown_result(n: Node, after: Node, kind: EffectKind, ticket: u64)
+    requires !n.waiting_incident, n.effect.is_none(), n.question.is_none(),
+        current_item(n) == Some(Item::Teardown(kind)), n.next_seq < u64::MAX,
+        after == if gone(n, kind) {
+            Node { pos: (n.pos + 1) as u8, pool: n.pool && kind != EffectKind::StopRun, ..n }
+        } else { emitted(n, kind) },
+    ensures advance_post(n, after, ticket, ticket, true), advance_details(n, after, ticket, ticket),
+{
+    if gone(n, kind) {
+        skipped_rank(n, after, kind, ticket);
+        skipped_details(n, after, kind, ticket);
+    } else {
+        emitted_rank(n, after, kind, ticket);
+        emitted_details(n, after, kind, ticket);
+    }
 }
 
 /// #806: five cleanup agenda entries; each advance plus confirmation consumes
