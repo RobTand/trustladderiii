@@ -109,6 +109,13 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
+    kernel_proof! {
+        if successful_reply_input(*n, reply) {
+            if let Reply::PlanLeaf { footprint, .. } = reply {
+                if footprint::footprint_empty(n.footprint) { footprint::inline_is_valid(*w, 1); }
+            }
+        }
+    }
     if !accepts(w, n, &reply) {
         run_failed(w, i, out);
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }

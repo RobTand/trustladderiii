@@ -15,6 +15,22 @@ import bazel_gate  # noqa: E402
 
 
 CASES = {
+    'witness_skipped': ('crates/kernel/src/witness.rs',
+                        'kernel_while! { (i < self.nodes.len()) [',
+                        'kernel_while! { (false) [',
+                        '//crates/kernel:verus_witness'),
+    'resume_stalled': ('crates/kernel/src/commands.rs',
+                       'Command::Resume => w.nodes[i].paused = false,',
+                       'Command::Resume => w.nodes[i].paused = true,',
+                       '//crates/kernel:verus_commands'),
+    'reply_stalled': ('crates/kernel/src/work_replies.rs',
+                      'set_phase(m, Phase::Checking);',
+                      'set_phase(m, Phase::Making);',
+                      '//crates/kernel:verus_work_replies'),
+    'ack_retained': ('crates/kernel/src/acknowledgements.rs',
+                     '    w.nodes[i].effect = None;',
+                     '    w.nodes[i].effect = Some(e);',
+                     '//crates/kernel:verus_acknowledgements'),
     'delivery_retained': ('crates/kernel/src/dependencies.rs',
                           'Some(index) => self.dependencies[index] = dependency,',
                           'Some(index) => self.dependencies[index] = Dependency { '

@@ -1,52 +1,13 @@
 // #805 exact selector inputs and the public theorem over real step.
 #[cfg(verus_keep_ghost)]
 verus! {
-/// State-table prerequisite wait / #805: a real constructor supplies a settled
-/// open world in scope, whose selected event is prerequisite delivery. This is
-/// a reachability witness, not a finite bound on the universal theorem.
-fn progress_scope_witness() -> (world: World)
-    ensures progress_scope(world),
-        dependencies::delivery_input(world, 0, DependencyTarget {
-            kind: PrerequisiteKind::Issue, number: 1, request: None }),
-{
-    let mut node = Node::new(RepoId(0));
-    node.phase = Phase::Unplanned;
-    node.credit.ready = true;
-    node.credit.start = 3;
-    node.credit.withheld = true;
-    node.planning_started = false;
-    let mut nodes = Vec::new();
-    nodes.push(node);
-    let mut gates = Vec::new();
-    gates.push(Gate { w: 1 });
-    let target = DependencyTarget { kind: PrerequisiteKind::Issue, number: 1, request: None };
-    let mut dependencies = Vec::new();
-    dependencies.push(Dependency { node: NodeId(0), target, status: DependencyStatus::Pending, rejected: false });
-    let world = World { nodes, gates, dependencies, pool_capacity: 1,
-        next_ticket: 0, next_question: 0, file_sets: Vec::new(), fail_fast: false };
-    proof {
-        reveal(initial_node);
-        reveal(progress_scope);
-        reveal(world_checked);
-        reveal(settled_world);
-        reveal(storage_ordered);
-        reveal(world_headroom);
-        reveal(open_prefix);
-        reveal(fresh_commands);
-        reveal(dependencies::delivery_input);
-        reveal(footprint::ordered_table);
-        dependencies::indexable_definition(world);
-        dependencies::pending_blocks(world, 0);
-        footprint::inline_is_valid(world, 0);
-    }
-    world
-}
-
+/// State-table counter headroom: each selected steering command has a fresh ID.
 pub closed spec fn fresh_commands(w: World) -> bool {
     w.nodes@.len() <= u64::MAX as int
         && forall|j: int| 0 <= j < w.nodes@.len() ==> w.nodes@[j].last_cmd < u64::MAX
 }
 
+/// Q30/Q39: an actual selector result identifies an available outside branch.
 pub closed spec fn witness_selection(w: World, result: Option<Event>) -> bool {
     match result {
         Some(event) => exists|j: int| 0 <= j < w.nodes@.len() && chosen_for_node(w, j, event),
@@ -54,6 +15,7 @@ pub closed spec fn witness_selection(w: World, result: Option<Event>) -> bool {
     }
 }
 
+/// Q30/Q39: outside inputs for phases blocked on replies, facts, or Rob.
 spec fn outside_available(w: World, i: int) -> bool {
     let n = w.nodes@[i];
     !(n.phase is Closed) && (
@@ -63,12 +25,16 @@ spec fn outside_available(w: World, i: int) -> bool {
             || matches!(current_item(n), Some(Item::Await | Item::Merge)))
 }
 
+/// Q39: a non-Ready ticket waits for the agent pool.
 spec fn pool_line(n: Node) -> bool { !(n.phase is Ready) && n.ticket.is_some() }
 
+/// Q39: priority then ticket, encoded without machine arithmetic overflow.
+#[verifier::opaque]
 spec fn pool_order(n: Node) -> nat {
     priority_number(n.priority) * (u64::MAX as nat + 1) + n.ticket.unwrap() as nat
 }
 
+/// State-table question rows: the successful answer for each question kind.
 spec fn successful_answer(kind: QKind) -> Answer {
     match kind {
         QKind::AuditDisagreement | QKind::EffectFailed => Answer::Continue,
@@ -79,6 +45,7 @@ spec fn successful_answer(kind: QKind) -> Answer {
     }
 }
 
+/// State-table reply rows: exact successful payload chosen by World::witness.
 spec fn successful_reply(n: Node) -> Option<Reply> {
     let head = match n.head { Some(h) => h, None => HeadId(0) };
     match n.phase {
@@ -96,6 +63,7 @@ spec fn successful_reply(n: Node) -> Option<Reply> {
     }
 }
 
+/// Q30/Q39: exact ordered branches and event keys of World::witness.
 spec fn chosen_for_node(w: World, i: int, event: Event) -> bool {
     let n = w.nodes@[i];
     let node = NodeId(i as u64);
@@ -131,15 +99,18 @@ spec fn chosen_for_node(w: World, i: int, event: Event) -> bool {
     } }
 }
 
+/// State-table reply rows: an unpaused, unobstructed Await agenda item.
 spec fn ordinary_await(n: Node) -> bool {
     current_item(n) == Some(Item::Await) && !n.paused && n.effect.is_none()
         && !n.waiting_incident && n.question.is_none()
 }
 
+/// State-table reply rows: the selector payload at an unobstructed Await.
 spec fn successful_reply_input(n: Node, reply: Reply) -> bool {
     ordinary_await(n) && successful_reply(n) == Some(reply)
 }
 
+/// State-table question rows: a current successful answer has no prior obstruction.
 spec fn answer_progress_input(n: Node, id: u64, answer: Answer) -> bool {
     (!n.paused || n.phase is Stopping) && !n.waiting_incident && n.effect.is_none()
         && match n.question {
@@ -148,6 +119,7 @@ spec fn answer_progress_input(n: Node, id: u64, answer: Answer) -> bool {
         }
 }
 
+/// State-table steering rows: resume, answer, or replace the blocked request.
 spec fn command_progress_input(n: Node, command: Command) -> bool {
     (n.paused && !(n.phase is Stopping || n.phase is Closed) && command == Command::Resume)
         || ((!n.paused || n.phase is Stopping) && !n.waiting_incident && n.effect.is_none() && match command {
@@ -157,37 +129,25 @@ spec fn command_progress_input(n: Node, command: Command) -> bool {
         })
 }
 
+/// Q30/Q39 and counter headroom: exact selected input to the real step.
 pub closed spec fn progress_input(w: World, event: Event) -> bool {
     world_checked(w) && fresh_commands(w) && witness_event(w, event)
 }
 
+/// Q30/Q39: one actual open node supplies the selected event.
 spec fn witness_event(w: World, event: Event) -> bool {
     exists|j: int| 0 <= j < w.nodes@.len() && chosen_for_node(w, j, event)
 }
 
+/// Q30/Q39 and counter headroom: a consistent, settled open world in enforced scope.
 pub closed spec fn progress_scope(w: World) -> bool {
     world_checked(w) && settled_world(w) && world_headroom(w) && fresh_commands(w)
         && storage_ordered(w)
         && exists|i: int| 0 <= i < w.nodes@.len() && !(w.nodes@[i].phase is Closed)
 }
 
-fn kernel_progress(world: World) -> (result: (World, Vec<Out>))
-    requires progress_scope(world),
-    ensures progress_measure(result.0) < progress_measure(world),
-        step_budget(world, result.0),
-{
-    proof {
-        reveal(progress_scope);
-        reveal(progress_input);
-        reveal(storage_ordered);
-        checked_reserves(world);
-        outside_branch_exists(world);
-    }
-    let event = world.witness();
-    proof { reveal(witness_selection); }
-    step(world, event.unwrap())
-}
-
+/// State-table prerequisite, merge, and incident rows: the exact selected fact.
+#[verifier::opaque]
 spec fn fact_progress_input(w: World, i: int, fact: Fact) -> bool {
     world_checked(w) && chosen_for_node(w, i, Event::Fact { node: NodeId(i as u64), fact })
 }

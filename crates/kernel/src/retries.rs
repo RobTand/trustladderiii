@@ -225,7 +225,7 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal(retry_bounds);] {
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
     kernel_snapshot! { before_recheck = *w }
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);

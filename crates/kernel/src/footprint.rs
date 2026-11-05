@@ -47,9 +47,11 @@ pub closed spec fn valid_footprint(world: World, footprint: Footprint) -> bool {
 /// #771: every inline footprint is a valid handle in every world.
 pub(super) proof fn inline_is_valid(world: World, bits: u64)
     ensures valid_footprint(world, inline_footprint(bits)),
+        footprint_empty(inline_footprint(bits)) == (bits == 0),
 {
     reveal(valid_footprint);
     reveal(inline_footprint);
+    reveal(footprint_empty);
 }
 
 /// #771: appending immutable file sets preserves every existing handle.

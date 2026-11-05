@@ -39,11 +39,12 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance);] {
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
     if id <= w.nodes[i].last_cmd {
         return; // a repeated command
     }
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
+    kernel_snapshot! { before_command_world = *w }
     kernel_proof! {
         if command == Command::Resume && command_progress_input(w.nodes@[i as int], command)
             && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
@@ -59,7 +60,19 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             }
         }
         Command::Resume => w.nodes[i].paused = false,
-        Command::Answer { question, answer } => on_answer(w, i, question, answer, out),
+        Command::Answer { question, answer } => {
+            kernel_proof! {
+                if node_checked(before_command_world@, before_command_node@)
+                    && command_progress_input(before_command_node@, command) {
+                    footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
+                    assert(node_checked(*w, w.nodes@[i as int]));
+                    assert(answer_progress_input(w.nodes@[i as int], question, answer));
+                    assert(distance(w.nodes@[i as int]) == distance(before_command_node@));
+                }
+            }
+            on_answer(w, i, question, answer, out);
+        },
     }
+
 }
 }
