@@ -902,7 +902,7 @@ impl JsonSchema for JsonObject {
 
 // P1b keeps JSON numbers as written: the existing schemas accept integral floats and
 // unbounded integers, while forecast() intentionally diagnoses them after validation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Eq, Serialize)]
 #[serde(transparent)]
 pub struct ReplyNumber<
     const MIN: i64,
@@ -911,6 +911,34 @@ pub struct ReplyNumber<
     const UPPER: bool,
     const INTEGRAL: bool,
 >(serde_json::Number);
+
+impl<const MIN: i64, const MAX: u64, const LOWER: bool, const UPPER: bool, const INTEGRAL: bool>
+    PartialEq for ReplyNumber<MIN, MAX, LOWER, UPPER, INTEGRAL>
+{
+    fn eq(&self, other: &Self) -> bool {
+        // uniqueItems uses numeric equality: 1 and 1.0 are duplicates. Compare
+        // integers exactly before crossing representations so adjacent large
+        // integers do not collapse through f64. Serialization keeps the token.
+        fn integer(number: &serde_json::Number) -> Option<i128> {
+            number
+                .as_u64()
+                .map(i128::from)
+                .or_else(|| number.as_i64().map(i128::from))
+        }
+        match (integer(&self.0), integer(&other.0)) {
+            (Some(left), Some(right)) => left == right,
+            (Some(integer), None) => other
+                .0
+                .as_f64()
+                .is_some_and(|float| float.fract() == 0.0 && float as i128 == integer),
+            (None, Some(integer)) => self
+                .0
+                .as_f64()
+                .is_some_and(|float| float.fract() == 0.0 && float as i128 == integer),
+            (None, None) => self.0 == other.0,
+        }
+    }
+}
 
 impl<
     'de,

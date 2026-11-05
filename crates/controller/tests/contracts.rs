@@ -2029,3 +2029,78 @@ fn reply_leaf_parsers_follow_existing_schema_patterns() {
         compare::<GenerationReceipt>("maker", Some("generation_receipt"), receipt);
     }
 }
+
+/// #819: uniqueness must follow the existing JSON Schema's numeric equality.
+#[test]
+fn reply_numeric_uniqueness_matches_existing_schema() {
+    use contracts::bounded::{List, UNBOUNDED};
+    use contracts::roles::ingest_reply::IngestReplyBriefMergePrerequisitesItem;
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../workers/src/tl3_workers/schemas/ingest-reply.json"
+    ))
+    .unwrap();
+    let schema = &schema["oneOf"][0]["properties"]["merge_prerequisites"];
+    let validator = jsonschema::validator_for(schema).unwrap();
+    for (left, right) in [
+        (json!(1), json!(1.0)),
+        (json!(9007199254740992u64), json!(9007199254740993u64)),
+        (json!(9007199254740993u64), json!(9007199254740992.0)),
+        (json!(u64::MAX), json!(18446744073709551616.0)),
+        (json!(1), json!(2.0)),
+    ] {
+        let value = json!([
+            {"kind":"issue","number":left,"source_quote":"x"},
+            {"kind":"issue","number":right,"source_quote":"x"}
+        ]);
+        let accepted = serde_json::from_value::<
+            List<IngestReplyBriefMergePrerequisitesItem, 0, UNBOUNDED, true>,
+        >(value.clone())
+        .is_ok();
+        assert_eq!(
+            accepted,
+            validator.is_valid(&value),
+            "numeric uniqueness mismatch: {value}"
+        );
+        let first: IngestReplyBriefMergePrerequisitesItem =
+            serde_json::from_value(value[0].clone()).unwrap();
+        assert_eq!(serde_json::to_value(first).unwrap(), value[0]);
+    }
+}
+
+/// #819: numeric equality must match schema equality without losing wire tokens.
+#[test]
+fn reply_number_equality_matches_schema_across_representations() {
+    use contracts::bounded::ReplyNumber;
+    type Number = ReplyNumber<0, 0, false, false, false>;
+    let values = [
+        json!(0),
+        json!(-0.0),
+        json!(1),
+        json!(1.0),
+        json!(-1),
+        json!(-1.0),
+        json!(0.5),
+        json!(i64::MIN),
+        json!(-9223372036854775808.0),
+        json!(u64::MAX),
+        json!(18446744073709551616.0),
+        json!(9007199254740992u64),
+        json!(9007199254740993u64),
+        json!(9007199254740992.0),
+        json!(f64::MAX),
+        json!(-f64::MAX),
+    ];
+    for left in &values {
+        let validator = jsonschema::validator_for(&json!({"const":left})).unwrap();
+        let typed_left: Number = serde_json::from_value(left.clone()).unwrap();
+        for right in &values {
+            let typed_right: Number = serde_json::from_value(right.clone()).unwrap();
+            assert_eq!(
+                typed_left == typed_right,
+                validator.is_valid(right),
+                "{left} vs {right}"
+            );
+        }
+        assert_eq!(serde_json::to_value(typed_left).unwrap(), *left);
+    }
+}
