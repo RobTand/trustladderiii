@@ -1193,6 +1193,7 @@ py_library(
     srcs = ["pb_evidence_reference.py"],
     data = glob(["pb-evidence-reference/*.py"]),  # keep: loaded verbatim by importlib
     visibility = ["//visibility:public"],
+    deps = ["//workers/src"],
 )
 
 py_library(
