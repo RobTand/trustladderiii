@@ -292,6 +292,29 @@ pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<Blocki
 mod tests {
     use super::*;
 
+    // Every successful producer fixture uses the typed wire contract as well as
+    // the live schema. Keep direct serialization distinct from the sorted Value path.
+    fn inputs(
+        delivery: &Delivery,
+        store: &mut Store,
+        snapshot: &Snapshot,
+        session: Option<&Value>,
+    ) -> Result<Value> {
+        let value = super::inputs(delivery, store, snapshot, session)?;
+        let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
+            serde_json::from_value(value.clone()).unwrap();
+        let sorted = serde_json::to_value(&typed).unwrap();
+        assert_eq!(
+            serde_json::to_string(&sorted).unwrap(),
+            serde_json::to_string(&value).unwrap()
+        );
+        assert_ne!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&value).unwrap()
+        );
+        Ok(value)
+    }
+
     #[test]
     fn exhaustion_has_no_blocking_findings() {
         assert!(

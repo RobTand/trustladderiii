@@ -1789,6 +1789,7 @@ fn shared_reply_validator(role: &str, definition: Option<&str>) -> &'static json
             ("writer", None),
             ("maker", Some("generation_receipt")),
             ("maker", Some("test_run")),
+            ("reviewer", None),
             ("writer", Some("text")),
             ("writer", Some("options")),
         ]
@@ -1798,10 +1799,11 @@ fn shared_reply_validator(role: &str, definition: Option<&str>) -> &'static json
                 .map(|name| format!("#/$defs/{name}"))
                 .unwrap_or_default();
             let key = format!("{role}{suffix}");
+            let direction = if role == "reviewer" { "input" } else { "reply" };
             let validator = jsonschema::options()
                 .with_registry(&registry)
                 .build(
-                    &json!({"$ref":format!("{}{role}-reply.json{suffix}",contracts::SCHEMA_BASE)}),
+                    &json!({"$ref":format!("{}{role}-{direction}.json{suffix}",contracts::SCHEMA_BASE)}),
                 )
                 .unwrap();
             (key, validator)
@@ -2110,3 +2112,6 @@ fn reply_number_equality_matches_schema_across_representations() {
         assert_eq!(serde_json::to_value(typed_left).unwrap(), *left);
     }
 }
+
+#[path = "contracts/reviewer.rs"]
+mod reviewer_contract;

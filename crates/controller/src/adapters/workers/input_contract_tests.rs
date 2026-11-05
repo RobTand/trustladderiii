@@ -359,6 +359,21 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         .unwrap_or_else(|error| panic!("{role} {:?}: {error}", n.phase));
                     protocol::validate_inputs(role, &request["inputs"]).unwrap();
                     typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
+                    if role == "reviewer" {
+                        typed_round_trip::<tl3_contracts::roles::reviewer_input::ReviewerInput>(
+                            &request["inputs"],
+                        );
+                        let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
+                            serde_json::from_value(request["inputs"].clone()).unwrap();
+                        assert_eq!(
+                            serde_json::to_string(&serde_json::to_value(&typed).unwrap()).unwrap(),
+                            serde_json::to_string(&request["inputs"]).unwrap()
+                        );
+                        assert_ne!(
+                            serde_json::to_string(&typed).unwrap(),
+                            serde_json::to_string(&request["inputs"]).unwrap()
+                        );
+                    }
                     if matches!(role, "ingest" | "audit") {
                         assert_eq!(
                             request["inputs"]["issue"]["title"],
