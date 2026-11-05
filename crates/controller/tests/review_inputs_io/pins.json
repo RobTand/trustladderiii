@@ -1,4 +1,17 @@
 {
   "base": "f5b0ba2fb16a686232c08fe5cee907f1d43c5258",
-  "sha256": "6146e752b96b19b46f36da3e7a7050f1b7fa91ec38bd3205cf96e9bb71350ce9"
+  "sha256": "6146e752b96b19b46f36da3e7a7050f1b7fa91ec38bd3205cf96e9bb71350ce9",
+  "harness_report_sha256": "d308be8fd60aecbcd4dcd54ba27de27140ea3f3b7d2651245585555c67a3d222",
+  "shared": [
+    {
+      "production": "src/goals.rs",
+      "compiled": "goals.rs",
+      "sha256": "463dd2368d0bd7429d77f3afa8240281594c862e614ceb0740c916bd5a33f0e6"
+    },
+    {
+      "production": "src/findings.rs",
+      "compiled": "clipped.rs",
+      "sha256": "2efdeda2f946415e5c83474a76c48e7749b5222615160e70a12fd5804f475f26"
+    }
+  ]
 }

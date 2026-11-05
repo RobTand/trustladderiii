@@ -33,10 +33,9 @@ mod tl3_store {
     }
 }
 mod findings {
-    pub fn clipped(text: &str, cap: usize) -> String {
-        text.chars().take(cap).collect()
-    }
+    include!("clipped.rs");
 }
+
 mod protocol {
     use super::*;
     // Unchanged validator is a recorded leaf. Retained worker targets run its real schema.

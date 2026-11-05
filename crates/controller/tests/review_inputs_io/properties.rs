@@ -63,6 +63,37 @@ fn frozen_and_current_sources() {
         format!("{:x}", Sha256::digest(base)),
         pins["sha256"].as_str().unwrap()
     );
+    for leaf in pins["shared"].as_array().unwrap() {
+        let compiled = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/review_inputs_io")
+                .join(leaf["compiled"].as_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&compiled)),
+            leaf["sha256"].as_str().unwrap()
+        );
+        let production = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(leaf["production"].as_str().unwrap()),
+        )
+        .unwrap();
+        assert!(
+            production.contains(
+                compiled
+                    .strip_prefix("use super::*;\n")
+                    .unwrap_or(&compiled)
+                    .trim_end()
+            )
+        );
+    }
+    assert_eq!(
+        format!(
+            "{:x}",
+            Sha256::digest(include_bytes!("base-harness-report.json"))
+        ),
+        pins["harness_report_sha256"].as_str().unwrap()
+    );
     let part = |s: &str| {
         s[s.find("pub(super) fn inputs(").unwrap()..s.find("pub(crate) fn criteria(").unwrap()]
             .trim_end()
@@ -524,7 +555,7 @@ fn mandatory_separate_reply_reads_and_opaque_receipt_shapes() {
     for n in [0, 1, 20, 21, 101] {
         let mut s = fixture();
         let mut v = expected();
-        let evidence:Vec<_>=(0..n).map(|i|json!({"base":i%2==0,"tree":if i%2==0 {BASE} else {HEAD},"tests_identity":{"sha256":"digest","count":1001,"prefix":["test"]},"red_message_matches":true,"groups":[{"totals":{"passed":25,"failed":1,"errors":267}}]})).collect();
+        let evidence:Vec<_>=(0..n).map(|i|json!({"base":i%2==0,"tree":if i%2==0 {BASE} else {HEAD},"tests_identity":{"sha256":"digest","count":1001,"prefix":["test"]},"red_message_matches":{"test.py::test_case":"message"},"groups":[{"totals":{"passed":25,"failed":1,"errors":267}}]})).collect();
         s.tapes.insert("worker_document".into(),vec![Read::Value(json!({"head_sha":HEAD,"fixes":["fix"]})),Read::Value(json!({"head":HEAD,"test_evidence":evidence})),Read::Value(json!({"head":HEAD,"generation_evidence":{"output_tree":HEAD,"receipt":"second read"}}))]);
         v["review_fixes"] = json!({"fixes":["fix"]});
         if n > 0 {
@@ -748,6 +779,8 @@ proptest! {
         if bits&1 != 0 {s.delivery.round=1;s.session=Some(if bits&2!=0 {json!({"head_sha":REVIEWED})} else {json!({})});}
         if bits&4 != 0 {s.delivery.checks.as_mut().unwrap().reviewed_sha=Some(CommitId::new(REVIEWED).unwrap());}
         s.tapes.get_mut("merge_base").unwrap()[0]=Read::Value(json!(if bits&8 != 0 {REVIEWED} else {BASE}));
+        s.tapes.get_mut("merge_base").unwrap()[1]=Read::Value(json!(if bits&2048 != 0 {HEAD} else {BASE}));
+        s.tapes.get_mut("tree").unwrap()[2]=Read::Value(json!(if bits&4096 != 0 {REVIEWED} else {HEAD}));
         let key=["absent","forcing","proof","declared_symptom"][bound];
         s.snapshot.rows[1].value["results"].as_array_mut().unwrap().push(json!({key:null}));
         s.tapes.get_mut("worker_materials").unwrap()[1]=Read::Value(if bits&16!=0 {json!({"issue":{"title":"é".repeat(chars),"body":"界".repeat(chars)}})} else {json!({})});
@@ -773,4 +806,77 @@ fn mandatory_invalid_commit_ids_before_any_read() {
     let r = compare(&s);
     assert!(r.result.unwrap_err().contains("invalid_commit"));
     assert!(r.trace.is_empty());
+}
+
+#[test]
+fn mandatory_real_harness_report_wire_preserves_red_message_matches() {
+    for kind in ["source-assertion", "message"] {
+        let report: Value = serde_json::from_str(include_str!("base-harness-report.json")).unwrap();
+        let mut results = report["results"].clone();
+        results[0]["proof"]["red_message_matches"]["tests/test_holds.py::test_hold"] = json!(kind);
+        let mut s = fixture();
+        s.snapshot.rows[1].value["results"] = results.clone();
+        let mut v = expected();
+        v["checks"] = results;
+        assert_wire(
+            &s,
+            v,
+            &[
+                "open",
+                "merge_base",
+                "worker_materials",
+                "diff",
+                "worker_materials",
+                "worker_document",
+                "worker_document",
+                "worker_document",
+                "validate_inputs",
+            ],
+        );
+    }
+}
+
+#[test]
+fn mandatory_head_tree_changes_between_the_two_reply_reads() {
+    let mut s = fixture();
+    let mut v = expected();
+    let evidence = json!([{"base":false,"tree":HEAD},{"base":true,"tree":BASE}]);
+    s.tapes.insert(
+        "worker_document".into(),
+        vec![
+            Read::Value(Value::Null),
+            Read::Value(json!({"head":HEAD,"test_evidence":evidence})),
+            Read::Value(json!({"head":HEAD,"generation_evidence":{"output_tree":REVIEWED}})),
+        ],
+    );
+    s.tapes.insert(
+        "tree".into(),
+        vec![
+            Read::Value(json!(HEAD)),
+            Read::Value(json!(BASE)),
+            Read::Value(json!(REVIEWED)),
+        ],
+    );
+    v["test_evidence"] = evidence;
+    v["generation_evidence"] = json!({"output_tree":REVIEWED});
+    let r = assert_wire(
+        &s,
+        v,
+        &[
+            "open",
+            "merge_base",
+            "worker_materials",
+            "diff",
+            "worker_document",
+            "worker_document",
+            "tree",
+            "tree",
+            "worker_document",
+            "tree",
+            "validate_inputs",
+        ],
+    );
+    assert_eq!(r.trace[6]["args"], r.trace[9]["args"]);
+    assert_eq!(r.trace[6]["outcome"], json!({"ok":HEAD}));
+    assert_eq!(r.trace[9]["outcome"], json!({"ok":REVIEWED}));
 }
