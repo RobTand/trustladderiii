@@ -1407,9 +1407,6 @@ impl World {
         total
     }
 
-    /// True when settle has nothing left to do.
-
-
     /// One outside event that moves the world closer to done: a successful
     /// reply, a confirmation, a fact, or one of Rob's answers. Kani proves it
     /// always exists while a node is open, and that it lowers `measure`.
@@ -1536,18 +1533,6 @@ impl World {
     pub fn valid(&self) -> bool {
         self.consistent() && self.is_settled()
     }
-
-    /// What holds between any two transitions, including inside settle. Kani
-    /// proves that applying an event and every internal transition keep it.
-
-
-    /// `consistent`, naming the first rule a world breaks.
-
-
-
-
-    /// What a leaf needs before it may resume into a holding phase.
-
 }
 
 /// The rule a world breaks, from `World::check`.
