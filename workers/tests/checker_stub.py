@@ -6,14 +6,10 @@ from the real Rust functions. Unexpected commands and extra calls fail closed.
 """
 from copy import deepcopy
 from functools import cache
-import gzip
 import json
-import hashlib
-import lzma
 import os
 import tempfile
 from pathlib import Path
-import subprocess
 import sys
 from threading import Lock
 
@@ -24,6 +20,8 @@ _LOCK = Lock()
 
 @cache
 def cases():
+    import gzip
+
     with gzip.open(VECTORS, "rt", encoding="utf-8") as source:
         return json.load(source)
 
@@ -32,22 +30,51 @@ def vectors():
     return [row for rows in cases().values() for row in rows]
 
 
+def prepare_replay(case, cursor):
+    """Decode the corpus in the fixture process, never in each checker child."""
+    script = [{"command": row["command"], "document": {"kind": row["document"].get("kind")},
+               "response": row["response"]} for row in cases().get(case, [])]
+    cursor.with_name(cursor.name + ".script.json").write_text(
+        json.dumps({"case": case, "script": script}, ensure_ascii=False), encoding="utf-8")
+
+
 def replay(case, cursor, command, document):
     """A unit fake follows its script; Rust checks the original facts elsewhere."""
     with _LOCK:
         position = int(cursor.read_text()) if cursor.exists() else 0
-        script = cases().get(case, [])
+        prepared = cursor.with_name(cursor.name + ".script.json")
+        if prepared.exists():
+            recording = json.loads(prepared.read_text(encoding="utf-8"))
+            if recording["case"] != case:
+                raise RuntimeError(f"wrong Rust checker recording for {case}")
+            script = recording["script"]
+        else:
+            script = cases().get(case, [])
         if position >= len(script):
             raise RuntimeError(f"unrecorded Rust checker call in {case}: {command}")
         row = script[position]
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
-        cursor.write_text(str(position + 1))
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=cursor.parent,
+                                             prefix=cursor.name + ".", delete=False) as target:
+                temporary = Path(target.name)
+                target.write(str(position + 1))
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, cursor)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return deepcopy(row["response"])
 
 
 def record(case, temporary, monkeypatch):
     """Capture a unit scenario, including its child workers, with an explicit oracle."""
+    import hashlib
+    import subprocess
+
     binary = os.environ["TL3_BINARY"]
     rows = temporary / "rust-verdicts.jsonl"
     checker = temporary / "record-rust-checker"
@@ -88,6 +115,9 @@ def main():
     if sys.argv[1:2] in (["--p5-route"], ["--p5-check"], ["--p5-vectors"]):
         return p5_main()
     if len(sys.argv) >= 4 and sys.argv[1] == "--record":
+        import gzip
+        import subprocess
+
         with tempfile.TemporaryDirectory(prefix="tl3-checker-recordings-") as directory:
             environment = {**os.environ, "TL3_BINARY": str(Path(sys.argv[2]).resolve()),
                            "TEST_REAL_CHECKER": "1", "TEST_RECORD_CHECKER_DIR": directory}
@@ -102,6 +132,9 @@ def main():
         json.dump(vectors(), sys.stdout, ensure_ascii=False)
         return
     if len(sys.argv) == 3 and sys.argv[1] in {"--check", "--generate"}:
+        import gzip
+        import subprocess
+
         requests = [{"command": row["command"], "document": row["document"]} for row in vectors()]
         result = subprocess.run([sys.argv[2]], input=json.dumps(requests, ensure_ascii=False),
                                 capture_output=True, text=True, check=True)
@@ -129,6 +162,8 @@ P5_COMMANDS = {"check-inputs", "check-quota"}
 
 @cache
 def p5_cases():
+    import lzma
+
     if not P5_VECTORS.exists():
         return {}
     with lzma.open(P5_VECTORS, "rt", encoding="utf-8") as handle:
@@ -136,18 +171,36 @@ def p5_cases():
 
 
 def p5_replay(case, cursor, command, document):
-    script = p5_cases().get(case, [])
-    index = int(cursor.read_text()) if cursor.exists() else 0
-    if index >= len(script) or script[index]["command"] != command:
-        raise RuntimeError(f"unrecorded P5 checker call in {case}: {command}")
-    row = script[index]
-    if row["document"].get("kind") != document.get("kind"):
-        raise RuntimeError(f"out-of-order P5 operation in {case}")
-    cursor.write_text(str(index + 1))
-    return deepcopy(row["response"])
+    prepared = cursor.with_name(cursor.name + ".script.json")
+    with _LOCK:
+        recording = json.loads(prepared.read_text(encoding="utf-8"))
+        if recording["case"] != case:
+            raise RuntimeError(f"wrong P5 checker recording for {case}")
+        script = recording["script"]
+        index = int(cursor.read_text()) if cursor.exists() else 0
+        if index >= len(script) or script[index]["command"] != command:
+            raise RuntimeError(f"unrecorded P5 checker call in {case}: {command}")
+        row = script[index]
+        if row["document"].get("kind") != document.get("kind"):
+            raise RuntimeError(f"out-of-order P5 operation in {case}")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=cursor.parent,
+                                             prefix=cursor.name + ".", delete=False) as target:
+                temporary = Path(target.name)
+                target.write(str(index + 1))
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, cursor)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        return deepcopy(row["response"])
 
 
 def p5_install(request, temporary, monkeypatch):
+    import subprocess
+
     real = os.environ.get("TEST_REAL_CHECKER") == "1"
     recording = os.environ.get("TEST_RECORD_P5_DIR")
     if real and not recording:
@@ -156,11 +209,17 @@ def p5_install(request, temporary, monkeypatch):
     delegate = os.environ["TL3_BINARY"]
     oracle = os.environ.get("TEST_P5_BINARY", delegate)
     case = request.node.nodeid
-    cursor = temporary / "p5-cursor"
+    cursor = request.getfixturevalue("checker_state_directory") / "p5-cursor"
+    if not recording:
+        script = [{"command": row["command"],
+                   "document": {"kind": row["document"].get("kind")},
+                   "response": row["response"]} for row in p5_cases().get(case, [])]
+        cursor.with_name(cursor.name + ".script.json").write_text(
+            json.dumps({"case": case, "script": script}, ensure_ascii=False), encoding="utf-8")
     capture = temporary / "p5-records.jsonl"
     router = temporary / "p5-checker"
     router.write_text(
-        f"#!{sys.executable}\nimport runpy, sys\n"
+        f"#!{sys.executable} -IS\nimport runpy, sys\n"
         f"sys.argv[1:1] = ['--p5-route', {case!r}, {str(cursor)!r}, {delegate!r}, {oracle!r}, {str(capture) if recording else ''!r}]\n"
         f"runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')\n")
     router.chmod(0o755)
@@ -203,6 +262,8 @@ def p5_install(request, temporary, monkeypatch):
 
 
 def p5_main():
+    import subprocess
+
     if sys.argv[1:2] == ["--p5-route"]:
         case, cursor, delegate, oracle, capture, *command = sys.argv[2:]
         data = sys.stdin.buffer.read()

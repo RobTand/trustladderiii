@@ -14,10 +14,10 @@ pub fn repeated_witness() {
 /// Q52/#447; docs/state-table.md:542-545, cdacce8f. Four setup kinds
 /// witness every successful incident action, without a kernel fact.
 pub fn setup_witness() {
-    let setup = dispatch(Route::Incident, EvidenceKind::Setup);
-    let missing = dispatch(Route::Incident, EvidenceKind::Missing);
-    let blocked = dispatch(Route::Incident, EvidenceKind::Blocked);
-    let clear = dispatch(Route::Incident, EvidenceKind::Reported);
+    let setup = dispatch(begin(false).unwrap(), Route::Incident, EvidenceKind::Setup);
+    let missing = dispatch(begin(false).unwrap(), Route::Incident, EvidenceKind::Missing);
+    let blocked = dispatch(begin(false).unwrap(), Route::Incident, EvidenceKind::Blocked);
+    let clear = dispatch(begin(false).unwrap(), Route::Incident, EvidenceKind::Reported);
     assert(setup == Decision::Incident(IncidentAction::Setup));
     assert(missing == Decision::Incident(IncidentAction::Missing));
     assert(blocked == Decision::Incident(IncidentAction::Blocked));
@@ -56,10 +56,10 @@ pub fn carry_witness() {
 /// reach invalid kernel pairings directly, independently of the shell's routing.
 pub fn setup_rejects_kernel_witness() {
     let route = Route::Kernel(KernelKind::CiFailed {infra:false});
-    let setup = dispatch(route, EvidenceKind::Setup);
-    let missing = dispatch(route, EvidenceKind::Missing);
-    let blocked = dispatch(route, EvidenceKind::Blocked);
-    let reported = dispatch(route, EvidenceKind::Reported);
+    let setup = dispatch(begin(false).unwrap(), route, EvidenceKind::Setup);
+    let missing = dispatch(begin(false).unwrap(), route, EvidenceKind::Missing);
+    let blocked = dispatch(begin(false).unwrap(), route, EvidenceKind::Blocked);
+    let reported = dispatch(begin(false).unwrap(), route, EvidenceKind::Reported);
     assert(setup == Decision::InvalidKernel);
     assert(missing == Decision::InvalidKernel);
     assert(blocked == Decision::InvalidKernel);

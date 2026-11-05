@@ -4,6 +4,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use tl3_harness_core::node_id::{Mode, NodeId};
 
 pub(crate) struct Fixes {
     pub checks: Vec<Check>,
@@ -46,10 +47,9 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
                     let test = test
                         .as_str()
                         .ok_or(Error::Invalid("invalid reproducing test"))?;
-                    if !exact_pytest_node_id(test) {
-                        return Err(Error::Invalid("expected an exact pytest node id"));
-                    }
-                    Ok(test.to_owned())
+                    let test = NodeId::parse(test, Mode::Exact)
+                        .map_err(|_| Error::Invalid("expected an exact pytest node id"))?;
+                    Ok(test.as_str().to_owned())
                 })
                 .collect::<Result<Vec<_>>>()?;
             if tests.is_empty() || tests.iter().collect::<BTreeSet<_>>().len() != tests.len() {
@@ -84,19 +84,6 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
         checks,
         evidence: json!({"reviewed_sha": reviewed, "findings": evidence}),
     })
-}
-
-fn exact_pytest_node_id(test: &str) -> bool {
-    let mut parts = test.split("::");
-    let path = parts.next().unwrap_or_default();
-    let names = parts.collect::<Vec<_>>();
-    !names.is_empty()
-        && names.iter().all(|name| !name.is_empty())
-        && path.ends_with(".py")
-        && !path.starts_with(['/', '-'])
-        && !path.split('/').any(|part| part == "..")
-        && !path.contains('\\')
-        && !test.contains('\0')
 }
 
 #[cfg(test)]
@@ -161,7 +148,7 @@ mod reply_defects {
             }
             let node = case["input"]["node_id"].as_str().unwrap();
             assert_eq!(
-                exact_pytest_node_id(node),
+                NodeId::parse(node, Mode::Exact).is_ok(),
                 case["expected"]["exact"].as_bool().unwrap(),
                 "node-id/{}: {node:?}",
                 case["id"]

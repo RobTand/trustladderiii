@@ -811,3 +811,532 @@ impl<K: Ord + JsonSchema, V: JsonSchema, const MAX: usize> JsonSchema for Object
         schema
     }
 }
+
+/// A JSON integer at least `MIN`, with no schema-imposed upper bound. Keep the original
+/// number so JSON's integral floating-point spelling also round-trips (#819).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Natural<const MIN: u64>(serde_json::Number);
+
+impl<const MIN: u64> Natural<MIN> {
+    pub fn new(value: u64) -> Result<Self, String> {
+        Self::from_number(value.into())
+    }
+
+    fn from_number(number: serde_json::Number) -> Result<Self, String> {
+        let in_range = integral(&number).is_some_and(|value| value >= i128::from(MIN))
+            || number
+                .as_f64()
+                .is_some_and(|value| value.fract() == 0.0 && value >= 18_446_744_073_709_551_616.0);
+        if in_range {
+            Ok(Self(number))
+        } else {
+            Err(format!("expected an integer at least {MIN}"))
+        }
+    }
+}
+
+impl<'de, const MIN: u64> Deserialize<'de> for Natural<MIN> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_number(serde_json::Number::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+impl<const MIN: u64> JsonSchema for Natural<MIN> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("Natural_{MIN}").into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "integer", "minimum": MIN})
+    }
+}
+
+/// Schema-only marker for a required nullable string, using the JSON Schema type union.
+/// Pair with `required_nullable` on an `Option<String>` so absence is still an error.
+pub struct NullableString;
+
+impl JsonSchema for NullableString {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "NullableString".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        Option::<String>::json_schema(generator)
+    }
+}
+
+/// An unconstrained JSON object, distinct from arbitrary JSON values.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct JsonObject(pub serde_json::Map<String, serde_json::Value>);
+
+impl JsonSchema for JsonObject {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "JsonObject".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema = <serde_json::Map<String, serde_json::Value>>::json_schema(generator);
+        // Unconstrained maps already allow every additional property. Preserve the
+        // published spelling by omitting only the redundant true keyword.
+        if schema.get("additionalProperties") == Some(&serde_json::Value::Bool(true)) {
+            schema
+                .as_object_mut()
+                .unwrap()
+                .remove("additionalProperties");
+        }
+        schema
+    }
+}
+
+/// Schema-only required nullable field; serde's required_nullable enforces presence.
+pub struct NullableType<T>(PhantomData<T>);
+impl<T: JsonSchema> JsonSchema for NullableType<T> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("NullableType_{}", T::schema_name()).into()
+    }
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        Option::<T>::json_schema(generator)
+    }
+}
+impl<T: super::render::SchemaOrder> super::render::SchemaOrder for NullableType<T> {
+    fn order() -> super::render::TypeOrder<'static> {
+        super::render::TypeOrder::of::<Self>(T::order().objects)
+    }
+}
+patterned_text!(
+    /// An absolute worker path, matching only the contract's leading-slash rule.
+    AbsolutePath, r"^/", |s: &str| s.starts_with('/')
+);
+pattern_schema!(AbsolutePath, no_extra);
+patterned_text!(
+    /// A worker role name.
+    WireRole, r"^[a-z][a-z0-9_]*$", |s: &str| {
+        s.as_bytes().first().is_some_and(|c| c.is_ascii_lowercase()) &&
+        s.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c==b'_')
+    }
+);
+pattern_schema!(WireRole, no_extra);
+patterned_text!(
+    /// A model endpoint, using the existing wire pattern rather than URL normalization.
+    ModelUrl, r"^https?://[^/\s]+(?:/[^\s]*)?$", |s: &str| {
+        let Some(rest)=s.strip_prefix("http://").or_else(||s.strip_prefix("https://")) else { return false; };
+        let host=rest.split('/').next().unwrap_or("");
+        !host.is_empty() && !rest.chars().any(ecma_whitespace)
+    }
+);
+pattern_schema!(ModelUrl, no_extra);
+impl super::render::SchemaOrder for AbsolutePath {
+    fn order() -> super::render::TypeOrder<'static> {
+        super::render::TypeOrder::of::<Self>(&[("", &["type", "pattern"])])
+    }
+}
+impl super::render::SchemaOrder for WireRole {
+    fn order() -> super::render::TypeOrder<'static> {
+        super::render::TypeOrder::of::<Self>(&[("", &["type", "pattern"])])
+    }
+}
+impl super::render::SchemaOrder for ModelUrl {
+    fn order() -> super::render::TypeOrder<'static> {
+        super::render::TypeOrder::of::<Self>(&[("", &["type", "pattern"])])
+    }
+}
+
+// The locked jsonschema-regex 0.46.10 translator expands \s to this set.
+// Match the controller's current acceptance; do not silently broaden this table
+// to Rust's Unicode whitespace or a different ECMA revision.
+fn ecma_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '\t'
+            | '\n'
+            | '\r'
+            | '\u{000b}'
+            | '\u{000c}'
+            | '\u{00a0}'
+            | '\u{feff}'
+            | '\u{2003}'
+            | '\u{2029}'
+    )
+}
+
+/// Any JSON value, spelled as the legacy unconstrained object schema.
+pub struct AnyJson;
+impl JsonSchema for AnyJson {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        "AnyJson".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({})
+    }
+}
+
+/// An unconstrained JSON array.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct JsonArray(pub Vec<serde_json::Value>);
+impl JsonSchema for JsonArray {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        "JsonArray".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type":"array"})
+    }
+}
+
+patterned_text!(
+    /// Decimal digits, accepted exactly as the controller's JSON Schema validator does.
+    DecimalText, r"^[0-9]+$", |s: &str| {
+        !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit())
+    }
+);
+pattern_schema!(DecimalText, no_extra);
+patterned_text!(
+    /// An owner and repository, separated by one slash.
+    RepositoryName, r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", |s: &str| {
+        s.split_once('/').is_some_and(|(owner,repo)| {
+            let part=|p: &str| !p.is_empty() && p.bytes().all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c));
+            part(owner) && part(repo)
+        })
+    }
+);
+pattern_schema!(RepositoryName, no_extra);
+
+impl super::render::SchemaOrder for DecimalText {
+    fn order() -> super::render::TypeOrder<'static> {
+        super::render::TypeOrder::of::<Self>(&[("", &["type", "pattern"])])
+    }
+}
+impl super::render::SchemaOrder for RepositoryName {
+    fn order() -> super::render::TypeOrder<'static> {
+        super::render::TypeOrder::of::<Self>(&[("", &["type", "pattern"])])
+    }
+}
+
+// P1b keeps JSON numbers as written: the existing schemas accept integral floats and
+// unbounded integers, while forecast() intentionally diagnoses them after validation.
+#[derive(Clone, Debug, Eq, Serialize)]
+#[serde(transparent)]
+pub struct ReplyNumber<
+    const MIN: i64,
+    const MAX: u64,
+    const LOWER: bool,
+    const UPPER: bool,
+    const INTEGRAL: bool,
+>(serde_json::Number);
+
+impl<const MIN: i64, const MAX: u64, const LOWER: bool, const UPPER: bool, const INTEGRAL: bool>
+    PartialEq for ReplyNumber<MIN, MAX, LOWER, UPPER, INTEGRAL>
+{
+    fn eq(&self, other: &Self) -> bool {
+        // uniqueItems uses numeric equality: 1 and 1.0 are duplicates. Compare
+        // integers exactly before crossing representations so adjacent large
+        // integers do not collapse through f64. Serialization keeps the token.
+        fn integer(number: &serde_json::Number) -> Option<i128> {
+            number
+                .as_u64()
+                .map(i128::from)
+                .or_else(|| number.as_i64().map(i128::from))
+        }
+        match (integer(&self.0), integer(&other.0)) {
+            (Some(left), Some(right)) => left == right,
+            (Some(integer), None) => other
+                .0
+                .as_f64()
+                .is_some_and(|float| float.fract() == 0.0 && float as i128 == integer),
+            (None, Some(integer)) => self
+                .0
+                .as_f64()
+                .is_some_and(|float| float.fract() == 0.0 && float as i128 == integer),
+            (None, None) => self.0 == other.0,
+        }
+    }
+}
+
+impl<
+    'de,
+    const MIN: i64,
+    const MAX: u64,
+    const LOWER: bool,
+    const UPPER: bool,
+    const INTEGRAL: bool,
+> Deserialize<'de> for ReplyNumber<MIN, MAX, LOWER, UPPER, INTEGRAL>
+{
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let number = serde_json::Number::deserialize(deserializer)?;
+        let value = number
+            .as_f64()
+            .ok_or_else(|| D::Error::custom("expected a finite number"))?;
+        if (INTEGRAL && value.fract() != 0.0)
+            || (LOWER && value < MIN as f64)
+            || (UPPER && value > MAX as f64)
+        {
+            return Err(D::Error::custom("reply number outside its contract"));
+        }
+        Ok(Self(number))
+    }
+}
+
+impl<const MIN: i64, const MAX: u64, const LOWER: bool, const UPPER: bool, const INTEGRAL: bool>
+    JsonSchema for ReplyNumber<MIN, MAX, LOWER, UPPER, INTEGRAL>
+{
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("ReplyNumber_{MIN}_{MAX}_{LOWER}_{UPPER}_{INTEGRAL}").into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let mut schema = json_schema!({"type": if INTEGRAL { "integer" } else { "number" }});
+        if LOWER {
+            schema.insert("minimum".into(), MIN.into());
+        }
+        if UPPER {
+            schema.insert("maximum".into(), MAX.into());
+        }
+        schema
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct ReplyZero(serde_json::Number);
+impl<'de> Deserialize<'de> for ReplyZero {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let number = serde_json::Number::deserialize(deserializer)?;
+        if number.as_f64() == Some(0.0) {
+            Ok(Self(number))
+        } else {
+            Err(D::Error::custom("expected zero"))
+        }
+    }
+}
+impl JsonSchema for ReplyZero {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        "ReplyZero".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({"const": 0})
+    }
+}
+
+// The pattern is also the parser's policy. These are the patterns already shipped in
+// reply schemas; no regex dependency enters the bottom contracts crate.
+// Match jsonschema-regex 0.46.10's translation of the published `\S`, including its
+// limited Unicode set. Rust's is_whitespace and the engine's optimized whitespace
+// path both use different sets; substituting either would change accepted replies.
+pub fn schema_pattern_whitespace(c: char) -> bool {
+    ecma_whitespace(c)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct ReplyText<const PATTERN: u8, const MIN: usize, const MAX: usize>(Text<MIN, MAX>);
+impl<const PATTERN: u8, const MIN: usize, const MAX: usize> ReplyText<PATTERN, MIN, MAX> {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+    fn pattern() -> &'static str {
+        match PATTERN {
+            0 | 1 => r"\S",
+            2 => r"^[^\r\n]+$",
+            3 => r"^tool-error-[1-9][0-9]*$",
+            4 => UnitPath::PATTERN,
+            5 => Sha256Hex::PATTERN,
+            6 => CommitSha::PATTERN,
+            _ => panic!("unknown reply text policy"),
+        }
+    }
+}
+impl<'de, const PATTERN: u8, const MIN: usize, const MAX: usize> Deserialize<'de>
+    for ReplyText<PATTERN, MIN, MAX>
+{
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = Text::<MIN, MAX>::deserialize(deserializer)?;
+        let s = text.as_str();
+        let valid = match PATTERN {
+            0 => s.chars().any(|c| !schema_pattern_whitespace(c)),
+            1 => {
+                s.chars().any(|c| !schema_pattern_whitespace(c))
+                    && !s.contains(['\r', '\n', '\u{85}', '\u{2028}', '\u{2029}'])
+            }
+            2 => !s.is_empty() && !s.contains(['\r', '\n']),
+            3 => s.strip_prefix("tool-error-").is_some_and(|n| {
+                !n.is_empty() && !n.starts_with('0') && n.bytes().all(|c| c.is_ascii_digit())
+            }),
+            4 => unit_path(s),
+            5 => s.len() == 64 && lower_hex(s),
+            6 => matches!(s.len(), 40 | 64) && lower_hex(s),
+            _ => false,
+        };
+        if valid {
+            Ok(Self(text))
+        } else {
+            Err(D::Error::custom("reply text does not match its pattern"))
+        }
+    }
+}
+impl<const PATTERN: u8, const MIN: usize, const MAX: usize> JsonSchema
+    for ReplyText<PATTERN, MIN, MAX>
+{
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("ReplyText_{PATTERN}_{MIN}_{MAX}").into()
+    }
+    fn json_schema(g: &mut SchemaGenerator) -> Schema {
+        let mut schema = Text::<MIN, MAX>::json_schema(g);
+        schema.insert("pattern".into(), Self::pattern().into());
+        if PATTERN == 1 {
+            schema.insert(
+                "not".into(),
+                serde_json::json!({"pattern": r"[\r\n\u0085\u2028\u2029]"}),
+            );
+        }
+        schema
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ReplyNullable<T>(pub Option<T>);
+impl<T: JsonSchema> JsonSchema for ReplyNullable<T> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("ReplyNullable_{}", T::schema_name()).into()
+    }
+    fn json_schema(g: &mut SchemaGenerator) -> Schema {
+        let mut schema = T::json_schema(g);
+        if let Some(values) = schema
+            .get_mut("enum")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            values.insert(0, serde_json::Value::Null);
+        } else if let Some(kind) = schema
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        {
+            schema.insert("type".into(), serde_json::json!([kind, "null"]));
+        } else {
+            panic!("nullable reply leaf must have a type or enum");
+        }
+        schema
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ReplyNullChoice<T>(pub Option<T>);
+impl<T: JsonSchema> JsonSchema for ReplyNullChoice<T> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("ReplyNullChoice_{}", T::schema_name()).into()
+    }
+    fn json_schema(g: &mut SchemaGenerator) -> Schema {
+        json_schema!({"oneOf": [T::json_schema(g), {"type":"null"}]})
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct ReplyMaxText<T, const MAX: usize>(T);
+impl<'de, T: Deserialize<'de> + Serialize, const MAX: usize> Deserialize<'de>
+    for ReplyMaxText<T, MAX>
+{
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = T::deserialize(deserializer)?;
+        let json = serde_json::to_value(&text).map_err(D::Error::custom)?;
+        if json.as_str().is_some_and(|s| s.chars().count() <= MAX) {
+            Ok(Self(text))
+        } else {
+            Err(D::Error::custom("reply text exceeds field bound"))
+        }
+    }
+}
+impl<T: JsonSchema, const MAX: usize> JsonSchema for ReplyMaxText<T, MAX> {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> Cow<'static, str> {
+        format!("ReplyMaxText_{}_{MAX}", T::schema_name()).into()
+    }
+    fn json_schema(g: &mut SchemaGenerator) -> Schema {
+        let mut s = g.subschema_for::<T>();
+        s.insert("maxLength".into(), MAX.into());
+        s
+    }
+}
+
+pub fn reply_enum_schema(schema: &mut Schema) {
+    schema.remove("type");
+}
+pub fn reply_constant_schema(schema: &mut Schema) {
+    schema.remove("type");
+    if let Some(serde_json::Value::Array(mut values)) = schema.remove("enum") {
+        schema.insert("const".into(), values.remove(0));
+    }
+}
+pub fn reply_one_of(schema: &mut Schema) {
+    if let Some(variants) = schema.remove("anyOf") {
+        schema.insert("oneOf".into(), variants);
+    }
+}
+
+/// Obtain validation rules from the reply types, before the shared order-only renderer.
+pub fn reply_schema_value<T: JsonSchema>(
+    role: &str,
+    prepare: fn(&mut SchemaGenerator),
+) -> serde_json::Value {
+    let mut generator = schemars::generate::SchemaSettings::draft2020_12().into_generator();
+    prepare(&mut generator);
+    let mut schema = generator.into_root_schema_for::<T>().to_value();
+    fn strip(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(obj) => {
+                obj.remove("title");
+                obj.remove("default");
+                obj.remove("format");
+                for child in obj.values_mut() {
+                    strip(child);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    strip(&mut schema);
+    schema.as_object_mut().expect("reply root schema").insert(
+        "$id".into(),
+        format!("{}{}-reply.json", super::SCHEMA_BASE, role).into(),
+    );
+    schema
+}

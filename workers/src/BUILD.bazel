@@ -95,6 +95,7 @@ py_library(
         "tl3_workers/pb_generators.py",
         "tl3_workers/pb_tests.py",
         "tl3_workers/prerequisites.py",
+        "tl3_workers/prompt_render.py",
         "tl3_workers/quota.py",
         "tl3_workers/recall.py",
         "tl3_workers/reply_check.py",

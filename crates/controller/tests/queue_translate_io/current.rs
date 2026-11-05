@@ -7,9 +7,11 @@ impl Shell<'_> {
         let event = match observation {
             Observation::Queue(mut fact) => {
                 let identity = fact.identity();
-                if fact.recorded(snapshot)? {
+                let Some(translation) =
+                    tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
+                else {
                     return Ok(None);
-                }
+                };
                 let Some(node) = fact.node(snapshot)? else {
                     return Ok(None);
                 };
@@ -125,7 +127,7 @@ impl Shell<'_> {
                     Evidence::PushByOther { .. } => core::EvidenceKind::PushByOther,
                     _ => core::EvidenceKind::Other,
                 };
-                let kernel = match core::dispatch(route, kind) {
+                let kernel = match core::dispatch(translation, route, kind) {
                     Decision::Record => {
                         commit.rows.push(put("queue_facts", identity, value));
                         return Ok(None);
