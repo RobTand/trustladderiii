@@ -6,7 +6,7 @@ from pathlib import Path
 
 from jsonschema import ValidationError
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import pytest
 
 from tl3_workers import runtime
@@ -181,3 +181,94 @@ def test_a_walk_too_deep_is_a_plain_tool_error(tmp_path: Path, monkeypatch):
         assert message.status == "error"
         assert "tool-error" not in message.text
         assert not worktree.evidence.tool_errors
+
+
+class Killed(BaseException):
+    """Stands in for SIGKILL: no handler in the worker can catch it."""
+
+
+def visit_runs(maker_request, monkeypatch, tmp_path, runs):  # noqa: F811
+    """Run one maker visit several times. Each run is a list of model steps; a step
+    is a reply dict, a list of selectors for one run_tests call, or an exception."""
+    maker_request["inputs"]["context_size"] = 150_000
+    maker_request["session_file"] = str(tmp_path / "sessions/1/plan-0/attempt-1.json")
+    maker_request["resume_session"] = False
+    results, seen, replies = [], [], []
+
+    def factory(worktree):
+        def run_tests(tests: list[str] | None = None, base: bool = False) -> dict:
+            return dict(results.pop(0))
+        return run_tests
+
+    class Model(FakeMessagesListChatModel):
+        steps: list
+
+        def _generate(self, messages, **kwargs):
+            seen[-1].append(list(messages))
+            step = self.steps.pop(0)
+            if isinstance(step, BaseException):
+                raise step
+            self.responses, self.i = [step], 0
+            return super()._generate(messages, **kwargs)
+
+    monkeypatch.setitem(TOOL_FACTORIES, "run_tests", factory)
+    for number, (steps, outcomes) in enumerate(runs):
+        results[:] = outcomes
+        seen.append([])
+        messages = [AIMessage(**turn(step)) if isinstance(step, dict)
+                    else AIMessage(**turn(calls=[{**call(step), "id": f"tests-{number}-{index}"}]))
+                    if isinstance(step, list) else step
+                    for index, step in enumerate(steps)]
+        model = Model(responses=[AIMessage(content="")], steps=messages)
+        monkeypatch.setattr(runtime, "create_model", lambda request, model=model: model)
+        events = []
+        try:
+            runtime.run(maker_request, events.append)
+            replies.append(events[-1]["reply"])
+        except Killed:
+            replies.append(None)
+        # RunFailed advances the generation; no reply was accepted, so the visit continues.
+        maker_request["operation"]["generation"] += 1
+    return replies, seen
+
+
+STALE = {"kind": "blocked", "evidence": {"tool_error": "tool-error-1"},
+         "report": "The full-file base run returned infrastructure_error."}
+
+
+def test_a_retry_after_a_blocked_reply_cannot_cite_the_spent_failure(maker_request, monkeypatch, tmp_path):  # noqa: F811
+    # PB #2710: a run_tests failure recorded at 01:16Z under an older worker stayed citable.
+    # Each retry resumed the visit and replied blocked on it again, six times.
+    replies, _ = visit_runs(maker_request, monkeypatch, tmp_path, [
+        ([HELLO, STALE], [INFRASTRUCTURE]),
+        ([STALE], []),
+    ])
+    assert replies[0]["kind"] == "blocked"
+    assert replies[1]["kind"] == "cant_meet", "a delivered blocked reply spent its evidence"
+
+
+def test_a_retry_after_a_blocked_reply_asks_for_a_new_observation(maker_request, monkeypatch, tmp_path):  # noqa: F811
+    fresh = {"kind": "blocked", "evidence": {"tool_error": "tool-error-2"},
+             "report": "PrismaBuild still could not run the tests."}
+    replies, seen = visit_runs(maker_request, monkeypatch, tmp_path, [
+        ([HELLO, STALE], [INFRASTRUCTURE]),
+        ([HELLO, fresh], [INFRASTRUCTURE]),
+    ])
+    first = seen[1][0]
+    assert any(isinstance(message, HumanMessage) and "run the affected tests again" in message.text
+               for message in first), "the resumed maker learns why it must test again"
+    # The environment can still be broken; the new run's own failure is citable.
+    assert replies[1] == {**fresh, "evidence": {"tool_error": "tool-error-2", "tool": "run_tests",
+                                                 "class": "test_submission"}}
+
+
+def test_a_visit_resumed_after_a_crash_keeps_its_unspent_evidence(maker_request, monkeypatch, tmp_path):  # noqa: F811
+    # Guard: a worker killed before it replied delivered nothing, so its failure stays citable.
+    replies, seen = visit_runs(maker_request, monkeypatch, tmp_path, [
+        ([HELLO, Killed()], [INFRASTRUCTURE]),
+        ([STALE], []),
+    ])
+    assert replies[0] is None
+    assert replies[1]["kind"] == "blocked"
+    assert not any(isinstance(message, HumanMessage) and "run the affected tests again" in message.text
+                   for message in seen[1][0])
