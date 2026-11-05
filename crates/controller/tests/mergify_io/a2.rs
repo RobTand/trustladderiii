@@ -1,6 +1,6 @@
 use tl3_mergify::decide::{heal as h, plan as p};
 
-/// #608/#751: old epochs refuse before execute reads or writes upstream state.
+/// Preserved existing behaviour (no rule): old epochs refuse before execute reads or writes upstream state.
 #[test]
 fn mandatory_a2_fence() {
     for (incoming, current) in [(0, 1), (1, 1), (2, 1), (i64::MIN, i64::MAX)] {
@@ -21,7 +21,7 @@ fn mandatory_a2_heal_scope() {
         }
     }
 }
-/// #447: choose newest eligible run first, including a newer successful run.
+/// Preserved existing behaviour (no rule): choose newest eligible run first, including a newer successful run.
 #[test]
 fn mandatory_a2_rerun_selection() {
     let run = |id, failed| h::Run {
@@ -101,7 +101,7 @@ fn mandatory_a2_shell_fence_refusal() {
     assert_eq!(r["result"]["error"], "Mergify effect epoch is fenced");
     assert_eq!(r["calls"], json!([]));
 }
-/// #447: edit writes pending before PATCH, reruns then marks complete; failures retain pending.
+/// #447 body self-heal; write/rerun ordering and pending retry preserve existing behaviour (no rule).
 #[test]
 fn mandatory_a2_shell_heal_edit_and_failed_rerun() {
     for failed in [false, true] {
