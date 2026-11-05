@@ -22,6 +22,26 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/postmortem-input.json",
         include_str!("../../../workers/src/tl3_workers/schemas/postmortem-input.json"),
     ),
+    (
+        "workers/src/tl3_workers/schemas/ingest-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/ingest-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/classifier-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/classifier-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/maker-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/maker-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/writer-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/writer-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/reviewer-input.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
+    ),
 ];
 
 #[test]

@@ -422,6 +422,16 @@ coverage, swap forced non-base selections for base nodes, or drop an uncovered
 unnecessary edit. An appended demonstrating check may carry no forcing or
 reuse a draft forcing unchanged. It may honestly return can't meet.
 
+Under [Rob's Q27/Q54 approval on #809, 2026-11-05](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239),
+missing citations of existing required maker or checking goals may also enter
+this correction. Review-verified goals still require check coverage. For this
+defect, the correction may only add the named uncovered goal ids to existing
+checks, preserving every existing citation and every other declaration.
+It shares the single correction allowance with format repair and the existing
+defects. The full uncovered goal ids and descriptions remain in stop evidence,
+with the correction attempt count. A bounded repair message may clip only
+descriptions. If even the ids and instructions do not fit, correction is terminal.
+
 Added files, a wider footprint, unrelated checks or edits, changed forcings
 and new goals remain plan violations and therefore PlanCantMeet. Substantive
 plan failures, unsupported requirements, protected-path conflicts, out-of-room

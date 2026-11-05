@@ -126,8 +126,13 @@ pub struct TestResult {
     pub head: Outcome,
     pub pre_existing: bool,
     pub passed: bool,
-    #[serde(default)]
-    pub message: ClippedText<MESSAGE_CHARS>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ClippedText<MESSAGE_CHARS>", transform = message_schema)]
+    pub message: Option<ClippedText<MESSAGE_CHARS>>,
     #[serde(
         default,
         deserialize_with = "present",
@@ -142,6 +147,19 @@ pub struct TestResult {
     )]
     #[schemars(with = "PhaseEvidence")]
     pub phases: Option<PhaseEvidence>,
+}
+
+impl TestResult {
+    /// The harness diagnostic text. Older reports may omit the field entirely.
+    pub fn message(&self) -> &str {
+        self.message.as_ref().map_or("", ClippedText::as_str)
+    }
+}
+
+// The schema's historical default is an annotation. Serde preserves omission so
+// parsing and reserializing a schema-valid report cannot invent a message field.
+fn message_schema(schema: &mut schemars::Schema) {
+    schema.insert("default".into(), "".into());
 }
 
 // Phase facts per side; at least one side is present.
