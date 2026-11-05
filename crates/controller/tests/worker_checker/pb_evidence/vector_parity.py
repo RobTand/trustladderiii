@@ -20,11 +20,14 @@ repo = root.parents[4]
 sys.path.insert(0, str(repo / 'workers/tests'))
 import pb_evidence_vectors as oracle
 import pb_evidence_reference as reference
+invocations = 0
 new = oracle.pb_tests, oracle.pb_generators, oracle.rehearsal
 old = reference.pb_tests, reference.pb_generators, reference.forcing_rehearsal
 
 
 def checker(command, document, **kwargs):
+    global invocations
+    invocations += 1
     print(json.dumps({'request': {'operation': command[1], **document}}), flush=True)
     return json.loads(sys.stdin.readline())
 
@@ -38,7 +41,11 @@ for kind in (sys.argv[2],):
             continue
         for label, modules in [('original', old), ('Rust worker', new)]:
             oracle.pb_tests, oracle.pb_generators, oracle.rehearsal = modules
+            before = invocations
             actual = oracle.observe(kind, case['input'])
+            if label == 'Rust worker' and not case['input'].get('default_bound'):
+                assert invocations > before, ('ported case bypasses Rust', kind, case['case'])
             assert oracle.encoded(actual) == oracle.encoded(case['output']), (kind, case['case'], label, str(case['output'])[:1600], str(actual)[:1600])
         count += 1
+print('PB_CORPUS_COVERAGE ' + json.dumps({'kind': kind, 'cases': count, 'checker_calls': invocations}), file=sys.stderr)
 print(json.dumps({'done': count}), flush=True)

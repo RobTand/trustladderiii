@@ -255,3 +255,28 @@ def test_unrecorded_calls_fail_closed_in_process_and_in_child(tmp_path):
     assert "unrecorded Rust checker call" in stderr
     with pytest.raises(ReplyCheckInfrastructureError, match="process failed"):
         reply_check.run_check(["check-budget"], request)
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize("change", ["bytes", "status", "added", "removed", "array"])
+def test_pb_replay_rejects_changed_decision_facts_without_advancing(tmp_path, monkeypatch, prepared, change):
+    old = {"ending": {"status": "executed", "result": {"stdout": {"path": "/recorded/action.log", "bytes": 123}}}, "items": [1]}
+    current = json.loads(json.dumps(old))
+    if change == "bytes":
+        current["ending"]["result"]["stdout"]["bytes"] = 1048577
+    elif change == "status":
+        current["ending"]["status"] = "failed"
+    elif change == "added":
+        current["ending"]["extra"] = True
+    elif change == "removed":
+        del current["ending"]["status"]
+    else:
+        current["items"].append(2)
+    row = {"command": ["check-pb", "summary-start"], "document": old, "response": {"return": old["ending"]["result"]["stdout"]}}
+    monkeypatch.setattr(checker_stub, "cases", lambda: {"review-r1": [row]})
+    cursor = tmp_path / "cursor"
+    if prepared:
+        checker_stub.prepare_replay("review-r1", cursor)
+    with pytest.raises(RuntimeError, match="changed PB fixture fact"):
+        checker_stub.replay("review-r1", cursor, row["command"], current)
+    assert not cursor.exists()

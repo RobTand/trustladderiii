@@ -227,3 +227,89 @@ print(json.dumps({'done': 2}))
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     assert_eq!(drive(script, &[root.display().to_string()]), 2);
 }
+
+// Review r1: CPython supplies the expected results, including chained exception text.
+fn review_parity(script: &str) {
+    let setup = r#"
+import json,sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'workers/tests'))
+import pb_evidence_vectors as oracle
+import pb_evidence_reference as reference
+from tl3_workers import pb_tests
+current = oracle.pb_tests
+calls = 0
+def unique(pairs):
+    result = dict(pairs)
+    assert len(result) == len(pairs), 'duplicate response key'
+    return result
+def checker(command, document, **kwargs):
+    global calls
+    calls += 1
+    print(json.dumps({'request': {'operation': command[1], **document}}), flush=True)
+    return json.loads(sys.stdin.readline(), object_pairs_hook=unique)
+pb_tests.run_check = checker
+def compare(data):
+    oracle.pb_tests = reference.pb_tests
+    wanted = oracle.observe('ending-summary', data)
+    oracle.pb_tests = current
+    actual = oracle.observe('ending-summary', data)
+    assert actual == wanted, (data, wanted, actual)
+"#;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert!(
+        drive(
+            &format!("{setup}\n{script}\nprint(json.dumps({{'done': calls}}))"),
+            &[root.display().to_string()]
+        ) > 0
+    );
+}
+
+#[test]
+fn review_symptom_run_containers_match_python() {
+    review_parity(
+        r#"
+for value in [None, True, 1, 1.0, '', 'x', {}, {'run': 1}, [], [None]]:
+    compare(oracle.log_input({**oracle.completed(), 'declared_symptom': oracle.SYMPTOM, 'symptom_runs': value}))
+"#,
+    );
+}
+
+#[test]
+fn review_duplicate_keys_keep_first_position_and_last_value() {
+    review_parity(
+        r#"
+raw = oracle.PREFIX + '{"status":"completed","note":"first","totals":{"passed":0,"failed":0,"error":0,"skipped":0},"note":"last","tests":[],"extra":{"a":1,"b":0,"a":2}}\n'
+compare({'ending': oracle.ending(raw.encode()), 'log': raw})
+"#,
+    );
+}
+
+#[test]
+fn review_json_decode_errors_match_real_python_json() {
+    review_parity(
+        r#"
+seeds = ['', ' ', 'x', 'tru', 'falsex', '[', '[1', '[1,', '[1,]', '{', '{"x"', '{"x":', '{"x":1', '{"x":1,', '{"x":1,}', '{x:1}', '"', ' "abc', '["abc', '"a\\q"', '"\\uZZZZ"', '"\\u12"', '"a\t"', '0 1', '-x', '1e', '1.', '\ufeff{}']
+for raw in seeds:
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError:
+        text = oracle.PREFIX + raw
+        compare({'ending': oracle.ending(text.encode()), 'log': text})
+"#,
+    );
+}
+
+#[test]
+fn review_arbitrary_integer_counts_and_identities_match_python() {
+    review_parity(
+        r#"
+for integer in [2**64, 2**128, 10**200, 10**1000 + 123]:
+    summary = oracle.completed()
+    summary['totals']['passed'] = integer
+    compare(oracle.log_input(summary))
+    value = {'large': integer, 'negative': -integer, 'float': 1.0}
+    assert pb_tests._check_pb('canonical', value=value) == json.dumps(value, sort_keys=True, separators=(',', ':'))
+"#,
+    );
+}
