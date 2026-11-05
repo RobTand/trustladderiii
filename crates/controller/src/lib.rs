@@ -19,7 +19,7 @@ pub mod classifier;
 pub mod cli;
 pub mod clock;
 pub mod console;
-pub mod contracts;
+pub use tl3_contracts as contracts;
 mod decisions;
 mod dispatch_liveness;
 pub mod evidence;
