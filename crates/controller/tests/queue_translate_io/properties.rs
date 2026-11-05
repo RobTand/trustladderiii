@@ -135,6 +135,52 @@ fn add_incidents(s: &mut Schedule, open: bool) {
             .push(row("incidents", &id, incident(&id, open, "existing")));
     }
 }
+
+/// S-once / #751/#760: the receipt guard runs before node decoding, CI reads
+/// and intern writes. Exercise the actual old/new Queue bodies in every cell.
+#[test]
+fn mandatory_recorded_open_closed_matrix() {
+    let mut cells = 0;
+    for phase in 0..4 {
+        for merged in [false, true] {
+            for recorded in [false, true] {
+                for tag in [4, 5, 10] {
+                    let mut s = stable(evidence(tag, NEW_HEAD, 0));
+                    s.phase = phase;
+                    s.merged = merged;
+                    if recorded {
+                        s.snapshot.rows.push(row(
+                            "queue_facts",
+                            &s.fact.identity(),
+                            json!(&s.fact),
+                        ));
+                    }
+                    let run = compare(&s);
+                    let kernel = phase != 2 || (tag == 4 && !merged);
+                    assert_eq!(!run.result["event"].is_null(), !recorded && kernel);
+                    if recorded {
+                        assert!(run.rows.is_empty());
+                        assert!(run.effects.is_empty());
+                        assert_eq!(run.writes, 0);
+                        assert_eq!(run.calls, [json!({"op":"transaction.commit","args":null})]);
+                        // Each failure would be reached if the guard moved later.
+                        s.snapshot.rows.iter_mut().find(|r| r.table == "pull_requests").unwrap().id = "malformed".into();
+                        s.plans = vec![Err("recorded facts must not read plans")];
+                        s.intern_failures = vec![true];
+                        let skipped = compare(&s);
+                        assert!(skipped.result["event"].is_null());
+                        assert!(skipped.rows.is_empty());
+                        assert_eq!(skipped.calls, run.calls);
+                    }
+                    cells += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(cells, 48);
+    eprintln!("S-once guard: 48 recorded/unrecorded x phase x merged x evidence cells, plus 24 poisoned-binding schedules and crash replay");
+}
+
 #[test]
 fn mandatory_closed_and_stale_head() {
     for tag in 0..11 {
@@ -366,7 +412,7 @@ fn arm(source: &str) -> &str {
 fn pinned_reference_and_current_source() {
     assert_eq!(
         format!("{:x}", Sha256::digest(include_bytes!("base-queue.rs.txt"))),
-        "2812c0b500274973e4c7367c18d37c0d39517dfaa202c80f3b59d751b6a5601c"
+        "c616896562116b10a862ab3150a83c54cbd8e3b6a37f0fb9c6e9c042d82e6337"
     );
     assert_eq!(
         arm(include_str!("reference.rs")),
@@ -376,6 +422,11 @@ fn pinned_reference_and_current_source() {
         arm(include_str!("current.rs")),
         arm(include_str!("../../src/lib.rs"))
     );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(include_bytes!("reference_core.rs"))),
+        "e32a5550cf68f4228b28fc931d09a3c07fe81171e368f49bac93eb9ea0576f46"
+    );
+    assert!(include_str!("reference.rs").starts_with("use crate::reference_core as tl3_controller_core;\n"));
     for (bytes, expected) in [
         (
             include_bytes!("base-adapter.rs.txt").as_slice(),
@@ -883,7 +934,7 @@ fn mandatory_setup_evidence_cannot_reach_kernel_in_shell_or_frozen_route() {
 
 #[test]
 fn mandatory_dispatch_rejects_impossible_setup_kernel_pairs() {
-    use tl3_controller_core::translate::{Decision, EvidenceKind, KernelKind, Route, dispatch};
+    use tl3_controller_core::translate::{Decision, EvidenceKind, KernelKind, Route, begin, dispatch};
     for evidence in [
         EvidenceKind::Setup,
         EvidenceKind::Missing,
@@ -901,7 +952,7 @@ fn mandatory_dispatch_rejects_impossible_setup_kernel_pairs() {
             KernelKind::PushByOther,
         ] {
             assert_eq!(
-                dispatch(Route::Kernel(kernel), evidence),
+                dispatch(begin(false).unwrap(), Route::Kernel(kernel), evidence),
                 Decision::InvalidKernel
             );
         }
