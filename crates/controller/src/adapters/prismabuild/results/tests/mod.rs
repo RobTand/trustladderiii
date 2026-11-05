@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 #[path = "before.rs"]
 mod before;
 
+mod campaign_case;
 mod producer_cases;
 
 fn fixture(base: &str, head: &str, passed: bool, pre_existing: bool) -> (Job, Value) {
@@ -350,4 +351,32 @@ proptest! {
         prop_assert_eq!(old, new);
         prop_assert_eq!(old_calls, recorded_io::calls());
     }
+}
+
+/// #822/#626: a planned proof still requires its ordinary head to pass in a campaign.
+#[test]
+fn campaign_planned_proof_requires_positive_ordinary_head() {
+    let vector: Value = serde_json::from_str(campaign_case::CASE).unwrap();
+    let request = &vector["request"];
+    let (mut job, mut report) = fixture("passed", "passed", true, false);
+    job.delivery.key = request["effect_key"].as_str().unwrap().into();
+    job.delivery.head_sha = Some(request["head"].as_str().unwrap().into());
+    job.run.base_sha = serde_json::from_value(request["base"].clone()).unwrap();
+    job.run.plan = serde_json::from_value(request["plan"].clone()).unwrap();
+    report["effect_key"] = request["effect_key"].clone();
+    report["base"] = request["base"].clone();
+    report["head"] = request["head"].clone();
+    report["results"] = vector["results"].clone();
+    // Prove the receipt and campaign are accepted when the ordinary head is positive.
+    report["results"][0]["tests"][0]["head"] = json!("passed");
+    assert!(parse(&raw(&report), &job).is_some());
+    assert!(evaluate(&job, &report).1);
+    report["results"][0]["tests"][0]["head"] = json!("error");
+    let bytes = raw(&report);
+    recorded_io::reset(bytes.clone(), 0);
+    let old = normalized(before::run(ending(&bytes), &job));
+    assert_eq!(normalized(Ok(evaluate(&job, &report))), old);
+    assert!(parse(&bytes, &job).is_none());
+    assert_eq!(old["class"], Value::Null);
+    assert_eq!(old["pass"], false);
 }
