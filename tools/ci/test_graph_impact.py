@@ -345,6 +345,18 @@ class GraphImpactTests(unittest.TestCase):
                 result = impact.check(base, head, set(), impact.baseline(base))
                 self.assertEqual(result.get('source_moves'), {})
 
+    def test_crate_fanout_credit_keeps_cycles_and_forbidden_edges(self):
+        base = graph()
+        head = graph({'//tests:small': ['//pkg:a.py', '//tests:other'],
+                      '//tests:other': ['//pkg:b.py', '//tests:small']})
+        head['crate_packages'] = {'example': '//pkg'}
+        entries = {'crate:example': {'reason': 'Verified core for #837.',
+                                     'sources': 2, 'max_fanout': 2}}
+        result = impact.check(base, head, set(), impact.baseline(base), entries, {})
+        self.assertFalse(any('fanout grew' in error for error in result['errors']), result['errors'])
+        for message in ('SCC grew or merged', 'new test_to_test edge'):
+            self.assertTrue(any(message in error for error in result['errors']), result['errors'])
+
     def test_reach_exception_keeps_fanout_cycle_and_edge_checks(self):
         base = graph()
         head = graph({'//tests:small': ['//pkg:a.py', '//tests:other'],
