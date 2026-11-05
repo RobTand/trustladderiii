@@ -11,10 +11,14 @@ use tl3_controller::{
 };
 use tl3_github::{CheckRun, IssueActivity, PullRequest};
 use tl3_kernel::{Ack, EffectKind, NodeId};
+use tl3_mergify::decide::{App, CheckView, Conclusion, Head, Status, Time};
 use tl3_mergify::{
     QUEUE_LABEL, QueueState,
     decide::{enqueue as lifecycle, facts},
 };
+#[rustfmt::skip]
+#[path = "../head_checks_schedule/reference_enqueue.rs"]
+mod reference_budget;
 mod io;
 use io::{Clock, GitHub, Mergify, Path, Runtime, Snapshot};
 use tl3_github::Comment;
@@ -323,6 +327,17 @@ mod reference {
         include!("reference-waiting.rs");
     }
     mod head_checks {
+        use crate::mergify_io::reference_budget as lifecycle;
+        fn lifecycle_head(current: bool) -> tl3_mergify::decide::Head {
+            if current {
+                tl3_mergify::decide::Head::Current
+            } else {
+                tl3_mergify::decide::Head::Other
+            }
+        }
+        fn lifecycle_error(failure: lifecycle::Failure) -> super::Error {
+            super::Error::Invalid(failure.class())
+        }
         include!("reference-head.rs");
     }
     pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
@@ -773,7 +788,7 @@ mod properties {
             ),
             (
                 include_str!("base-head.rs.txt"),
-                "343dad812ad98c865784f98d52a71998b25b6776913158384995a2f744dd53c7",
+                "7257dd8fd960424b50722e8a56158f27fdfded2b9dbd3c28e69efa9588e49807",
             ),
             (
                 include_str!("base-records.rs.txt"),

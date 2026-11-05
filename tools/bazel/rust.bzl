@@ -145,6 +145,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
     "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
+    "tests/mergify_io.rs": ["tests/head_checks_schedule/reference_enqueue.rs"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/crash_safety.rs": ["tests/crash/**"],
     "tests/github.rs": ["tests/support/**", "tests/fixtures/decisions/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],

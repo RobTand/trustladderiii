@@ -260,3 +260,4 @@ pub(super) async fn read_queue(
         .flatten();
     bounded(details)
 }
+

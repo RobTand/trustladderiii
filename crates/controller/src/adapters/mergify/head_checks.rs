@@ -1,5 +1,6 @@
 use super::*;
 use tl3_github::{CheckAnnotation, PullRequest, WorkflowRun};
+use tl3_mergify::decide::required;
 
 enum Failure {
     Tests {
@@ -140,11 +141,13 @@ pub(super) async fn evaluate(
             app: rule.integration_id,
         };
         let reports = !checks.is_empty() || status.is_some();
-        if facts::required_missing(reports, rule.integration_id.is_some(), statuses_available) {
-            ready = false;
-            missing.push(expected);
-        } else if reports {
-            reported.push(expected);
+        match required::presence(reports, rule.integration_id.is_some(), statuses_available) {
+            required::Presence::Missing => {
+                ready = false;
+                missing.push(expected);
+            }
+            required::Presence::Reported => reported.push(expected),
+            required::Presence::Unavailable => {}
         }
         for check in checks {
             let view = tl3_mergify::views(std::slice::from_ref(check), &pull.head.sha, |_| true)[0];
