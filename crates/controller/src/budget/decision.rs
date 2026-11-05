@@ -1,8 +1,6 @@
 //! Arithmetic shared by the CLI and controller. No clocks, I/O or floats.
 
-#[cfg(kani)]
-use std::convert::TryFrom;
-
+#[path = "limits.rs"]
 mod limits;
 pub use limits::{Exhaustion, Run, compacted, exhaustion, finalizing, fits, remaining};
 

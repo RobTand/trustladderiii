@@ -5,7 +5,6 @@ use vstd::prelude::*;
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Kind {
     ChangeRequest,
     Answer,
@@ -22,7 +21,6 @@ pub enum Kind {
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Answer {
     ChangeRequest,
     AddCredit,
@@ -32,7 +30,6 @@ pub enum Answer {
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Classification {
     pub kind: Kind,
     pub answer: Answer,

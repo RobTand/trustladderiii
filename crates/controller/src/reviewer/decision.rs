@@ -4,7 +4,6 @@ use vstd::prelude::*;
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Verdict {
     Approve,
     Changes,
@@ -13,7 +12,6 @@ pub enum Verdict {
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Finding {
     pub known: bool,
     pub scope: bool,

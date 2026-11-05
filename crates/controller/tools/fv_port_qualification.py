@@ -15,46 +15,68 @@ import bazel_gate  # noqa: E402
 import remote_gate  # noqa: E402
 
 
-CASES = {'fit_monotone': ('crates/controller/src/budget/limits.rs',
-                  '    size < limit',
-                  '    size != limit',
-                  '//crates/controller:verus_budget_limits'),
- 'budget_bounds': ('crates/controller/src/budget/limits.rs',
-                   'allowed.saturating_sub(used)',
-                   'allowed.saturating_add(used)',
-                   '//crates/controller:verus_budget_limits'),
- 'cutoff_exact': ('crates/controller/src/budget/cutoff.rs',
-                  '* 100 >=',
-                  '* 100 >',
-                  '//crates/controller:verus_budget_cutoff_witness'),
- 'compaction_reduces': ('crates/controller/src/budget/limits.rs',
-                        'after < before',
-                        'after <= before',
-                        '//crates/controller:verus_budget_limits'),
- 'reserve_preserved': ('crates/controller/src/budget/limits.rs',
-                       '    maker\n        &&',
-                       '    maker\n        ||',
-                       '//crates/controller:verus_budget_limits'),
- 'exhaustion_exact': ('crates/controller/src/budget/limits.rs',
-                      'if turns >= allowed {',
-                      'if turns > allowed {',
-                      '//crates/controller:verus_budget_limits'),
- 'reviewer_total_and_sound': ('crates/controller/src/reviewer/decision.rs',
-                              'if verdict == Verdict::Approve && !matches {\n',
-                              'if verdict == Verdict::Approve && matches {\n',
-                              '//crates/controller:verus_reviewer'),
- 'postmortem_total_and_sound': ('crates/controller/src/postmortem_reply/decision.rs',
-                                'Operation::Add => !item.before_nonempty && item.after_nonempty',
-                                'Operation::Add => item.after_nonempty',
-                                '//crates/controller:verus_postmortem'),
- 'classification_total_and_sound': ('crates/controller/src/classifier/decision.rs',
-                                    '    if !c.selected_matches {',
-                                    '    if c.selected_matches {',
-                                    '//crates/controller:verus_classifier'),
- 'http_status_class_total': ('crates/github/src/status.rs',
-                             '    status == 429 || status == 403 && rate_signal',
-                             '    status == 429 || status == 403',
-                             '//crates/github:verus_status')}
+CASES = {
+    'fit_monotone': (
+        'crates/controller/src/budget/limits.rs',
+        '    size < limit',
+        '    size != limit',
+        '//crates/controller:verus_budget_limits',
+    ),
+    'budget_bounds': (
+        'crates/controller/src/budget/limits.rs',
+        'allowed.saturating_sub(used)',
+        'allowed.saturating_add(used)',
+        '//crates/controller:verus_budget_limits',
+    ),
+    'cutoff_exact': (
+        'crates/controller/src/budget/cutoff.rs',
+        '(tokens as u128) * 100 >= (context as u128) * 85',
+        '(tokens as u128) * 100 > (context as u128) * 85',
+        '//crates/controller:verus_budget_cutoff_witness',
+    ),
+    'compaction_reduces': (
+        'crates/controller/src/budget/limits.rs',
+        'after < before',
+        'after <= before',
+        '//crates/controller:verus_budget_limits',
+    ),
+    'reserve_preserved': (
+        'crates/controller/src/budget/limits.rs',
+        '    maker\n        &&',
+        '    maker\n        ||',
+        '//crates/controller:verus_budget_limits',
+    ),
+    'exhaustion_exact': (
+        'crates/controller/src/budget/limits.rs',
+        'if turns >= allowed {',
+        'if turns > allowed {',
+        '//crates/controller:verus_budget_limits',
+    ),
+    'reviewer_total_and_sound': (
+        'crates/controller/src/reviewer/decision.rs',
+        'if verdict == Verdict::Approve && !matches {\n',
+        'if verdict == Verdict::Approve && matches {\n',
+        '//crates/controller:verus_reviewer',
+    ),
+    'postmortem_total_and_sound': (
+        'crates/controller/src/postmortem_reply/decision.rs',
+        'Operation::Add => !item.before_nonempty && item.after_nonempty',
+        'Operation::Add => item.after_nonempty',
+        '//crates/controller:verus_postmortem',
+    ),
+    'classification_total_and_sound': (
+        'crates/controller/src/classifier/decision.rs',
+        '    if !c.selected_matches {',
+        '    if c.selected_matches {',
+        '//crates/controller:verus_classifier',
+    ),
+    'http_status_class_total': (
+        'crates/github/src/status.rs',
+        '    status == 429 || status == 403 && rate_signal',
+        '    status == 429 || status == 403',
+        '//crates/github:verus_status',
+    ),
+}
 
 
 def run(workspace, target, name):
@@ -95,6 +117,9 @@ def main():
     try:
         statuses, log = run(workspace, target, 'fv-port-baseline-' + args.case)
         assert statuses.get(target) == 'PASSED', statuses
+        report['baseline_receipt'] = json.loads(next(
+            line.removeprefix('VERUS_PROOF ') for line in log.splitlines()
+            if line.startswith('VERUS_PROOF ')))
         proof = ':verus_' in target
         if proof:
             assert 'VERUS_PROOF' in log

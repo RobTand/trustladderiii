@@ -5,7 +5,7 @@ use vstd::prelude::*;
     result == (size < limit),
 ))]
 pub fn fits(size: u64, limit: u64) -> bool {
-    size != limit
+    size < limit
 }
 
 /// #698/#718: counters never wrap and remaining allowance cannot be negative.
@@ -13,7 +13,7 @@ pub fn fits(size: u64, limit: u64) -> bool {
     result <= allowed, result as int == if used <= allowed { allowed as int - used as int } else { 0 },
 ))]
 pub fn remaining(used: u64, allowed: u64) -> u64 {
-    allowed.saturating_add(used)
+    allowed.saturating_sub(used)
 }
 
 /// #698: ineffective compaction must be reported, never counted as freed room.
@@ -45,7 +45,6 @@ pub fn finalizing(
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Exhaustion {
     Backstop,
     ToolTurns,
@@ -57,7 +56,6 @@ pub enum Exhaustion {
 /// State-table execution feasibility (#614/#692): ordered, distinct limits.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Run {
     pub maker: bool,
     pub turns: u64,

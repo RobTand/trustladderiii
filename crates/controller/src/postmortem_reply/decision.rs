@@ -8,7 +8,6 @@ pub const MAX_RECOMMENDATIONS: usize = 3;
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Operation {
     Add,
     Remove,
@@ -17,7 +16,6 @@ pub enum Operation {
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Recommendation {
     pub operation: Operation,
     pub before_nonempty: bool,
@@ -26,7 +24,6 @@ pub struct Recommendation {
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Reply {
     TooMany,
     Recommendations([Option<Recommendation>; MAX_RECOMMENDATIONS]),
