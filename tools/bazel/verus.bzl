@@ -45,6 +45,22 @@ verus_test = rule(
 
 def verus_proofs():
     """Proof inventory in existing crate packages; generated BUILD files stay Cargo-only."""
+    if native.package_name() == "crates/harness-core":
+        for name, count in [("summary_size", 7), ("summary_reduction", 8), ("identity", 2)]:
+            verus_test(
+                name = "verus_" + name,
+                src = "verus/" + name + ".rs",
+                srcs = ["tests/summary_bound/reference.rs" if name == "summary_reduction" else
+                        "src/summary.rs" if name == "summary_size" else "src/identity.rs"],
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/mergify":
         verus_test(
             name = "verus_delivery",
