@@ -1,0 +1,1 @@
+# proptest failure persistence, fixed seed 73019; generated failures are uploaded as test artifacts.

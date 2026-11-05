@@ -47,6 +47,7 @@ impl Executor for Fake {
 }
 
 mod checks;
+mod decide;
 mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
@@ -110,6 +111,15 @@ pub struct Adapter {
 
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
     crate::Error::Adapter(Box::new(error))
+}
+
+fn decision_record(record: &RecordRead) -> decide::Record {
+    match record {
+        RecordRead::Absent => decide::Record::Absent,
+        RecordRead::Moving => decide::Record::Moving,
+        _ if record.is_live() => decide::Record::Live,
+        _ => decide::Record::Ended,
+    }
 }
 
 fn read_wait(
@@ -799,12 +809,12 @@ impl Executor for Adapter {
                 }
                 let job = self.submit(delivery)?;
                 let _ = self.keys.send(delivery.node());
-                if matches!(
-                    self.runtime
+                if decide::publish(decision_record(
+                    &self
+                        .runtime
                         .block_on(self.client.read(&job.action))
                         .map_err(adapter_error)?,
-                    RecordRead::Absent
-                ) {
+                )) {
                     self.runtime
                         .block_on(self.client.publish(&job.action))
                         .map_err(adapter_error)?;
