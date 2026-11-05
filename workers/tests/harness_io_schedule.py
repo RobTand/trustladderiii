@@ -485,11 +485,17 @@ def decide(schedule):
         after = worker(pb_tests, schedule, facts=new[1][1])
         assert before == after
         assert after[1] == vector['worker'], ('complete worker parity vector changed', after)
+    boundaries = 0
+    coverage = set()
     for mode in ('run_current', 'run', 'main'):
-        compare_crashes(action, legacy_action, test_tool, {**schedule, 'mode':mode})
+        observed = compare_crashes(action, legacy_action, test_tool, {**schedule, 'mode':mode})
+        boundaries += observed[3]
+        coverage.update(call[0] for call in observed[0])
     for base in (False, True):
         for reattach in (False, True):
-            compare_crashes(lifecycle, legacy_worker, pb_tests, {**schedule, 'base':base, 'reattach':reattach})
+            observed = compare_crashes(lifecycle, legacy_worker, pb_tests, {**schedule, 'base':base, 'reattach':reattach})
+            boundaries += observed[3]
+            coverage.update(call[0] for call in observed[0])
     before = worker(legacy_worker, schedule)
     after = worker(pb_tests, schedule)
     assert before == after, ('worker log schedule changed', schedule, before, after)
@@ -501,7 +507,7 @@ def decide(schedule):
             for receipt in result.get('receipts', []): receipt.pop('log_sha256')
         assert (old_trace, old_result, old_state) == (new_trace, new_result, new_state), (size, old_result, new_result)
     REFUSALS_CHECKED = True
-    return {'equal':True}
+    return {'equal':True, 'crash_boundaries':boundaries, 'coverage':sorted(coverage)}
 
 
 if __name__ == '__main__':

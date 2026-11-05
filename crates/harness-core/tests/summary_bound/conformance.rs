@@ -443,3 +443,31 @@ fn incident_documents_match_the_verified_reduction() {
         }
     }
 }
+
+/// #823 review: fixed boundaries kill the oversized-success, reversed-priority,
+/// lost-proof and premature-diagnostic production mutants independently of RNG.
+#[test]
+fn production_contract_boundaries_match_the_verified_document_reference() {
+    let input = value(&format!(
+        r#"{{"status":"completed","tests":[{{"test":"RED","outcome":"failed","message":"{}"}},{{"test":"PASS","outcome":"passed","message":"{}"}},{{"test":"ERROR","outcome":"error","message":"{}"}}],"totals":{{"failed":1,"passed":1,"error":1}},"proof":{{"mode":"head-observer","payload":"{}"}},"note":"","origin":"test_run"}}"#,
+        "r".repeat(400),
+        "x".repeat(800),
+        "x".repeat(800),
+        "p".repeat(200)
+    ));
+    let full = size(&input) as usize;
+    let core = size(&mandatory(&input)) as usize;
+    for limit in [
+        0,
+        512,
+        core - 1,
+        core,
+        core + 100,
+        1600,
+        2000,
+        full - 1,
+        full,
+    ] {
+        conform(input.clone(), limit);
+    }
+}

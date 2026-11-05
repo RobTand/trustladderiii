@@ -108,6 +108,8 @@ fn extraction_preserves_recorded_io_schedules_and_crash_state() {
         1usize..4,
         0usize..4,
     );
+    let coverage = std::cell::RefCell::new(std::collections::BTreeSet::new());
+    let boundaries = std::cell::Cell::new(0u64);
     let mut runner = TestRunner::new(Config {
         cases: 8,
         failure_persistence: None,
@@ -125,12 +127,41 @@ fn extraction_preserves_recorded_io_schedules_and_crash_state() {
         prop_assert!(!line.is_empty(), "persistent extraction oracle exited");
         let result: serde_json::Value = serde_json::from_str(&line).unwrap();
         prop_assert_eq!(result["equal"].as_bool(), Some(true));
+        boundaries.set(boundaries.get() + result["crash_boundaries"].as_u64().unwrap());
+        for call in result["coverage"].as_array().unwrap() {
+            coverage.borrow_mut().insert(call.as_str().unwrap().to_owned());
+        }
         Ok(())
     });
     drop(pipes.into_inner().0);
     let status = child.wait().unwrap();
     assert!(status.success(), "extraction oracle failed");
     result.unwrap();
+    for required in [
+        "selector-exists",
+        "proof-is-file",
+        "proof-read",
+        "stdout-write",
+        "stage-write",
+        "trusted-source-read",
+        "source-file",
+        "base-export",
+        "assemble-proof",
+        "upstream-wait",
+        "reattach-read",
+        "checkpoint-write",
+        "progress-emit",
+    ] {
+        assert!(
+            coverage.borrow().contains(required),
+            "unexercised boundary {required}"
+        );
+    }
+    println!(
+        "EXTRACTION_IO_AUDIT boundaries={} coverage={:?}",
+        boundaries.get(),
+        coverage.borrow()
+    );
 }
 
 #[test]
