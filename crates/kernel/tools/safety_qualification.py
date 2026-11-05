@@ -167,6 +167,10 @@ CASES = {
                                  'ci_infrastructure(w, i, out);',
                                  'failed_round(w, i, ReviewStop::CiFailed, out);',
                                  '//crates/kernel:verus_facts_ci_failed'),
+    'kernel_cont_rank_stop': ('crates/kernel/src/lib.rs',
+                              'Cont::Stop(_) | Cont::Nowhere => 2,',
+                              'Cont::Stop(_) | Cont::Nowhere => 3,',
+                              '//crates/kernel:verus_kernel_cont_rank'),
 }
 
 
