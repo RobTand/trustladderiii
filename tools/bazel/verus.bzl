@@ -61,7 +61,7 @@ def verus_proofs():
         )
 
     if native.package_name() == "crates/controller":
-        native.exports_files(["src/kernel_boundary.rs"])
+        native.exports_files(["src/kernel_boundary.rs", "src/dispatch_liveness/decision.rs", "src/dispatch_liveness/model.rs"])
         verus_test(
             name = "verus_budget_cutoff",
             src = "proofs/budget_cutoff.rs",
@@ -156,6 +156,26 @@ def verus_proofs():
             "retirement_merge_waiting_witness": ("kernel::retirement_merge_waiting_witness", 2),
             "retirement_terminal_fact_witness": ("kernel::retirement_terminal_fact_witness", 2),
         }
+        for name, module, count in [
+            ("dispatch_classifier", "decision", 13),
+            ("dispatch_model", "model", 1),
+            ("dispatch_liveness", "dispatch_theorems", 6),
+        ]:
+            verus_test(
+                name = "verus_" + name,
+                src = "verus/controller_dispatch.rs",
+                srcs = native.glob(["src/**/*.rs"], exclude = ["src/proofs.rs"]) + [
+                    "//crates/controller:src/dispatch_liveness/decision.rs",
+                    "//crates/controller:src/dispatch_liveness/model.rs",
+                ],
+                specs = native.glob(["verus/*.rs"]),
+                expected_obligations = count,
+                module = module,
+                tags = ["rust", "verus"], size = "small", timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
         for name, (module, count) in groups.items():
             verus_test(
                 name = "verus_" + name,

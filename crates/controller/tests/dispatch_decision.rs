@@ -11,6 +11,7 @@ fn evidence() -> Evidence {
         process: ProcessEvidence::Unknown,
         ending: false,
         deadline: false,
+        quota_reset: None,
         incident: false,
         paused: false,
         ticket: false,
@@ -18,6 +19,7 @@ fn evidence() -> Evidence {
         question: false,
         external: false,
         closed: false,
+        admission: false,
     }
 }
 

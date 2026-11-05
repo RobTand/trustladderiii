@@ -1,4 +1,6 @@
 pub mod decision;
+pub mod model;
+mod recovery;
 use crate::{
     Controller, Error, Result, decode_stored,
     executor::{Delivery, Output},
@@ -13,6 +15,7 @@ use tl3_kernel::{EffectKind, Node, NodeId, Phase, Role, World};
 use tl3_store::{Commit, EffectState, RowChange, Snapshot};
 
 pub(crate) const MISSING: &str = "worker_dispatch_missing";
+pub(crate) const PARKED: &str = "worker_wait_exhaustion";
 pub(crate) const QUEUED: &str = "worker_wait_recovery";
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -191,6 +194,7 @@ pub(crate) fn queue_pool_changes(
         let id = NodeId(index as u64);
         if acknowledged_wait(node)
             && operation(node).is_some_and(|(pool, _)| pools.contains(&pool))
+            && !quota_held(snapshot, &commit.rows, id, node)?
             && !coverage.covered(id, node, snapshot.epoch.get())?
         {
             pending.push(put(QUEUED, id.0.to_string(), json!(true)));
@@ -210,7 +214,10 @@ impl Controller {
         let mut candidates = Vec::new();
         for (index, node) in world.nodes.iter().enumerate() {
             let id = NodeId(index as u64);
-            if acknowledged_wait(node) && !coverage.covered(id, node, snapshot.epoch.get())? {
+            if acknowledged_wait(node)
+                && !quota_held(&snapshot, &[], id, node)?
+                && !coverage.covered(id, node, snapshot.epoch.get())?
+            {
                 candidates.push(id);
             }
         }
@@ -220,6 +227,14 @@ impl Controller {
                 json!({"worker_wait_deferred": true}),
                 &snapshot,
             );
+            if !crate::input_errors::kernel_backlog(&snapshot) {
+                // The existing #771 halt covers a parked wait even when no
+                // kernel input has arrived yet. Clearance releases the queue.
+                self.kernel_headroom(&snapshot, &world, &mut commit)?;
+                commit
+                    .rows
+                    .push(put(PARKED, "headroom".into(), json!(true)));
+            }
             for id in candidates {
                 if !snapshot
                     .rows
@@ -233,6 +248,19 @@ impl Controller {
                 self.store.commit(&commit)?;
             }
         } else {
+            if snapshot.rows.iter().any(|r| r.table == PARKED) {
+                let mut commit = Commit::new(
+                    format!("worker-wait-unpark:{}", snapshot.revision.get()),
+                    json!({"worker_wait_unpark": true}),
+                    &snapshot,
+                );
+                commit.rows.push(RowChange::Delete {
+                    table: PARKED.into(),
+                    id: "headroom".into(),
+                });
+                self.store.commit(&commit)?;
+                return self.reconcile_worker_waits();
+            }
             self.reconcile_worker_waits_in(&snapshot, &world, &candidates, &mut |_, _| {})?;
         }
         Ok(())
@@ -244,6 +272,11 @@ impl Controller {
         world: &World,
         hook: &mut impl FnMut(crate::Boundary, &str),
     ) -> Result<bool> {
+        // #816 P2: only startup or committed #771 clearance releases this row.
+        // Unrelated drives, allowance wakes and row writes do not scan headroom.
+        if snapshot.rows.iter().any(|r| r.table == PARKED) {
+            return Ok(false);
+        }
         let candidates = snapshot
             .rows
             .iter()
@@ -254,10 +287,45 @@ impl Controller {
                     .map_err(|_| Error::Invalid("invalid worker wait node"))
             })
             .collect::<Result<Vec<_>>>()?;
+        let mut settled = Commit::new(
+            format!("worker-wait-quota:{}", snapshot.revision.get()),
+            json!({"worker_wait_quota": true}),
+            snapshot,
+        );
+        for id in &candidates {
+            if let Some(node) = world.nodes.get(id.0 as usize)
+                && quota_held(snapshot, &[], *id, node)?
+            {
+                settled.rows.push(RowChange::Delete {
+                    table: QUEUED.into(),
+                    id: id.0.to_string(),
+                });
+            }
+        }
+        if !settled.rows.is_empty() {
+            self.store.commit(&settled)?;
+            return Ok(true);
+        }
         if !candidates.is_empty() {
             hook(crate::Boundary::WorkerWaitHeadroom, "headroom");
         }
-        if candidates.is_empty() || blocked(snapshot, world) {
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+        if blocked(snapshot, world) {
+            if !crate::input_errors::kernel_backlog(snapshot) {
+                let mut commit = Commit::new(
+                    format!("worker-wait-park:{}", snapshot.revision.get()),
+                    json!({"worker_wait_park": true}),
+                    snapshot,
+                );
+                self.kernel_headroom(snapshot, world, &mut commit)?;
+                commit
+                    .rows
+                    .push(put(PARKED, "headroom".into(), json!(true)));
+                self.store.commit(&commit)?;
+                return Ok(true);
+            }
             return Ok(false);
         }
         self.reconcile_worker_waits_in(snapshot, world, &candidates, hook)
@@ -270,105 +338,264 @@ impl Controller {
         candidates: &[NodeId],
         hook: &mut impl FnMut(crate::Boundary, &str),
     ) -> Result<bool> {
-        let coverage = Coverage::new(snapshot, &[]);
-        let queued: BTreeSet<_> = snapshot
-            .rows
-            .iter()
-            .filter(|r| r.table == QUEUED)
-            .map(|r| r.id.as_str())
-            .collect();
-        let missing: BTreeSet<_> = snapshot
-            .rows
-            .iter()
-            .filter(|r| {
-                r.table == "incidents"
-                    && r.value["open"] == true
-                    && r.value["signature"]["class"] == MISSING
-            })
-            .filter_map(|r| r.value["node"].as_u64())
-            .collect();
-        let mut commit = Commit::new(
-            format!("worker-wait-recovery:{}", snapshot.revision.get()),
-            json!({"worker_wait_recovery": true}),
-            snapshot,
-        );
-        for &id in candidates {
-            hook(crate::Boundary::WorkerWait, &id.0.to_string());
-            if queued.contains(id.0.to_string().as_str()) {
-                commit.rows.push(RowChange::Delete {
-                    table: QUEUED.into(),
-                    id: id.0.to_string(),
-                });
-            }
-            let node = world
-                .nodes
-                .get(id.0 as usize)
-                .ok_or(Error::Invalid("missing worker wait node"))?;
-            if !acknowledged_wait(node) || coverage.covered(id, node, snapshot.epoch.get())? {
-                continue;
-            }
-            let key = key(id, node);
-            let effect = key
-                .as_deref()
-                .map(|key| self.store.effect(key))
-                .transpose()?
-                .flatten();
-            let delivery = effect
-                .as_ref()
-                .map(|effect| hydrate(effect, snapshot))
-                .transpose()?;
-            // Reconciliation keeps the original epoch after ownership advances.
-            let matching = effect
-                .as_ref()
-                .zip(delivery.as_ref())
-                .filter(|(effect, delivery)| {
-                    matches_dispatch(delivery, id, node, &effect.key, snapshot.epoch.get())
-                        && (effect.state.is_pending() || effect.state == EffectState::Confirmed)
-                });
-            if let Some((effect, delivery)) = matching {
-                if !coverage.tracked(id, node, snapshot.epoch.get())? {
-                    commit
-                        .rows
-                        .push(put("watches", effect.key.clone(), json!(delivery)));
-                }
-                if !coverage.allowances.contains(effect.key.as_str()) {
-                    commit.rows.push(self.allowance_row(delivery.clone()));
-                }
-                continue;
-            }
-            if missing.contains(&id.0) {
-                continue;
-            }
-            let request = request(snapshot, id)?;
-            self.input_failed(
-                snapshot,
-                &format!("worker-wait:{}:{}", id.0, node.generation),
-                Some(IssueTarget {
-                    repository: request.repo,
-                    issue: request.issue,
-                }),
-                &request.title,
-                Some(id),
-                crate::executor::upstream(Output::Effect {
-                    node: id,
-                    seq: 0,
-                    kind: operation(node).expect("acknowledged operation").1,
-                    head: None,
-                }),
-                Error::WorkerDispatchMissing,
-                &mut commit,
-            )?;
+        recovery::Recovery {
+            store: recovery::ControllerIo(self),
         }
-        if commit.rows.is_empty() {
-            return Ok(false);
-        }
-        self.store.commit(&commit)?;
-        Ok(true)
+        .reconcile_worker_waits_in(snapshot, world, candidates, hook)
     }
 }
 
 impl Controller {
-    pub fn dispatch_status(&mut self, _id: NodeId) -> Result<DispatchStatus> {
-        Ok(DispatchStatus::Silent)
+    /// #817: diagnostic classification uses the same snapshot and the current
+    /// operation's immutable key. It never launches, acknowledges or replies.
+    pub fn dispatch_status(&mut self, id: NodeId) -> Result<DispatchStatus> {
+        let snapshot = self.store.load()?;
+        let world = snapshot::decode(&snapshot)?;
+        let mut evidence = self.wait_evidence(&snapshot, &world, id)?;
+        let node = world
+            .nodes
+            .get(id.0 as usize)
+            .ok_or(Error::Invalid("missing dispatch node"))?;
+        if node.waiting_on() == tl3_kernel::Wait::AgentPool {
+            let occupants: Vec<_> = world
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.pool)
+                .map(|(i, _)| NodeId(i as u64))
+                .collect();
+            if occupants.len() >= usize::from(world.pool_capacity) {
+                evidence.obstruction = true;
+                for occupant in occupants {
+                    let e = self.wait_evidence(&snapshot, &world, occupant)?;
+                    let status = classify(world.nodes[occupant.0 as usize].waiting_on(), e);
+                    if !matches!(
+                        status,
+                        DispatchStatus::Dispatched(_)
+                            | DispatchStatus::Ending
+                            | DispatchStatus::Retry(_)
+                            | DispatchStatus::Incident
+                    ) {
+                        evidence.obstruction = false;
+                    }
+                }
+            } else {
+                evidence.obstruction = world.nodes.iter().any(|other| {
+                    !matches!(other.phase, Phase::Ready(_))
+                        && other.ticket.zip(node.ticket).is_some_and(|(theirs, mine)| {
+                            other.priority.rank() < node.priority.rank()
+                                || (other.priority == node.priority && theirs < mine)
+                        })
+                });
+            }
+        }
+        Ok(classify(node.waiting_on(), evidence))
     }
+
+    fn wait_evidence(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &World,
+        id: NodeId,
+    ) -> Result<Evidence> {
+        use decision::{DeliveryClass, delivery_class};
+        use tl3_kernel::Wait;
+        let node = world
+            .nodes
+            .get(id.0 as usize)
+            .ok_or(Error::Invalid("missing dispatch node"))?;
+        let mut e = Evidence {
+            class: DeliveryClass::Worker,
+            intent: false,
+            watch: false,
+            process: ProcessEvidence::Unknown,
+            ending: false,
+            deadline: false,
+            quota_reset: None,
+            incident: snapshot.rows.iter().any(|r| {
+                r.table == "incidents"
+                    && r.value["open"] == true
+                    && (r.value["node"] == json!(id)
+                        || r.value["signature"]["class"] == crate::input_errors::COUNTER_HEADROOM)
+            }),
+            paused: node.paused,
+            ticket: node.ticket.is_some(),
+            obstruction: false,
+            question: node.question.is_some(),
+            external: false,
+            closed: node.phase.is_closed(),
+            admission: false,
+        };
+        let current = node.effect.map(|fx| (fx.seq, fx.kind)).or_else(|| {
+            operation(node).and_then(|(_, kind)| {
+                node.operation_pending(kind, node.generation)
+                    .then(|| node.next_seq.checked_sub(1).map(|seq| (seq, kind)))
+                    .flatten()
+            })
+        });
+        if let Some((seq, kind)) = current {
+            e.class = delivery_class(kind);
+            let key = format!("effect:{}:{seq}", id.0);
+            let matches = |d: &Delivery| {
+                d.key == key
+                    && d.generation == node.generation
+                    && d.epoch <= snapshot.epoch.get()
+                    && matches!(d.output, Output::Effect { node: owner, seq: s, kind: k, .. }
+                    if owner == id && s == seq && k == kind)
+            };
+            if let Some(effect) = self.store.effect(&key)? {
+                let d = hydrate(&effect, snapshot)?;
+                e.intent = matches(&d)
+                    && (effect.state.is_pending() || effect.state == EffectState::Confirmed);
+                if e.intent && e.class == DeliveryClass::Worker {
+                    (e.process, e.ending) = self
+                        .adapters
+                        .get(crate::executor::upstream(d.output))?
+                        .dispatch_evidence(&d)?;
+                }
+            }
+            for row in &snapshot.rows {
+                if row.id != key {
+                    continue;
+                }
+                if row.table == "watches" {
+                    e.watch = matches(&decode_stored::<Delivery>(row.value.clone())?);
+                }
+                if row.table == "allowances" {
+                    let d: Delivery = decode_stored(row.value["delivery"].clone())?;
+                    e.deadline = matches(&d) && row.value["due_ms"].as_u64().is_some();
+                    if matches(&d) {
+                        e.quota_reset = row.value["quota_ms"].as_u64();
+                    }
+                }
+            }
+            for row in snapshot.rows.iter().filter(|r| r.table == "inbox") {
+                if let Ok(observation) =
+                    serde_json::from_value::<crate::executor::Observation>(row.value.clone())
+                {
+                    use crate::executor::Observation;
+                    e.ending |= match observation {
+                        Observation::WorkerFailed {
+                            node: owner,
+                            generation,
+                            ..
+                        }
+                        | Observation::WorkerReply {
+                            node: owner,
+                            generation,
+                            ..
+                        }
+                        | Observation::Kernel(tl3_kernel::Event::Reply {
+                            node: owner,
+                            generation,
+                            ..
+                        }) => owner == id && generation == node.generation,
+                        _ => false,
+                    };
+                }
+            }
+        }
+        match node.waiting_on() {
+            Wait::Incident
+            | Wait::Answer
+            | Wait::Resume
+            | Wait::Effect(_)
+            | Wait::WorkerReply
+            | Wait::CheckResults
+            | Wait::AgentPool
+            | Wait::None => {}
+            Wait::MergeQueue => {
+                e.external = snapshot.rows.iter().any(|r| {
+                    r.table == "pull_requests"
+                        && r.id == id.0.to_string()
+                        && r.value["number"].as_u64().is_some()
+                });
+            }
+            Wait::SlotOrFiles => {
+                let holders = world
+                    .nodes
+                    .iter()
+                    .filter(|n| n.holds && n.repo == node.repo);
+                let count = holders.clone().count();
+                e.obstruction = world
+                    .gates
+                    .get(node.repo.0 as usize)
+                    .is_some_and(|gate| count >= usize::from(gate.w))
+                    || holders
+                        .clone()
+                        .any(|n| !disjoint(world, n.footprint, node.footprint))
+                    || world.nodes.iter().any(|n| {
+                        n.repo == node.repo
+                            && matches!(n.phase, Phase::Ready(_))
+                            && n.ticket.zip(node.ticket).is_some_and(|(a, b)| a < b)
+                            && !disjoint(world, n.footprint, node.footprint)
+                    });
+            }
+            Wait::UpstreamEvent => {
+                e.external = !world.dependencies_delivered(id);
+                e.admission = node.phase == Phase::Unplanned
+                    && world.gates.get(node.repo.0 as usize).is_some_and(|gate| {
+                        world
+                            .nodes
+                            .iter()
+                            .filter(|n| {
+                                n.repo == node.repo
+                                    && matches!(n.phase, Phase::Ready(_))
+                                    && n.ticket.is_some()
+                            })
+                            .count()
+                            >= usize::from(gate.w)
+                    });
+            }
+        }
+        Ok(e)
+    }
+}
+
+fn disjoint(world: &World, a: tl3_kernel::Footprint, b: tl3_kernel::Footprint) -> bool {
+    world.files(a).is_some_and(|mut a| {
+        a.all(|file| {
+            world
+                .files(b)
+                .is_some_and(|mut b| b.all(|other| file != other))
+        })
+    })
+}
+
+/// Q53 / #828: a current quota retry is already covered by its durable reset,
+/// including when its completed worker no longer has a result watch.
+fn quota_held(snapshot: &Snapshot, changes: &[RowChange], id: NodeId, node: &Node) -> Result<bool> {
+    let Some(key) = key(id, node) else {
+        return Ok(false);
+    };
+    let mut value = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "allowances" && r.id == key)
+        .map(|r| &r.value);
+    for change in changes {
+        match change {
+            RowChange::Put {
+                table,
+                id,
+                value: next,
+            } if table == "allowances" && *id == key => value = Some(next),
+            RowChange::Delete { table, id } if table == "allowances" && *id == key => value = None,
+            _ => {}
+        }
+    }
+    let Some(value) = value else {
+        return Ok(false);
+    };
+    if value["quota_ms"].as_u64().is_none() {
+        return Ok(false);
+    }
+    let delivery: Delivery = decode_stored(value["delivery"].clone())?;
+    Ok(matches_dispatch(
+        &delivery,
+        id,
+        node,
+        &key,
+        snapshot.epoch.get(),
+    ))
 }

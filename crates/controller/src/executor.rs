@@ -411,6 +411,14 @@ pub trait Executor {
             "adapter cannot read merge prerequisites",
         ))
     }
+    /// #817: read identity/termination evidence without executing or reconciling.
+    /// Pending alone cannot certify a live process.
+    fn dispatch_evidence(
+        &mut self,
+        _delivery: &Delivery,
+    ) -> Result<(crate::dispatch_liveness::ProcessEvidence, bool)> {
+        Ok((crate::dispatch_liveness::ProcessEvidence::Unknown, false))
+    }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()
     }

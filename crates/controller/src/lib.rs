@@ -2752,6 +2752,12 @@ impl Controller {
             {
                 failure.memory_version = Some(self.store.memory_feed_version()?);
             }
+            if incident.open && incident.signature.class == input_errors::COUNTER_HEADROOM {
+                commit.rows.push(RowChange::Delete {
+                    table: dispatch_liveness::PARKED.into(),
+                    id: "headroom".into(),
+                });
+            }
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);
             }

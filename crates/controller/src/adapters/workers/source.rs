@@ -448,7 +448,8 @@ impl WorkerOutputSource {
         };
         let delivery = &run.delivery;
         // A directory or cancelled claim is not evidence of a run that started.
-        if read(&attempt.join("claim.json"))?.is_none() {
+        let claimed = read(&attempt.join("claim.json"))?.is_some();
+        if !claimed {
             return Ok(true);
         }
         for name in ["claim.json", "process.json"] {
@@ -534,6 +535,10 @@ impl WorkerOutputSource {
         if !matches!(ended, Reconciliation::Pending) {
             self.ended.push(attempt.clone());
         }
+        let action = crate::dispatch_liveness::decision::supervisor_ending(
+            claimed,
+            matches!(&ended, Reconciliation::Absent),
+        );
         match ended {
             Reconciliation::Found(completion) => {
                 for (index, observation) in completion.observations.into_iter().enumerate() {
@@ -547,7 +552,38 @@ impl WorkerOutputSource {
                 }
                 Ok(false)
             }
-            Reconciliation::Absent => Ok(false),
+            Reconciliation::Absent => {
+                // Q53 / #828: a recorded quota ending already owns a durable
+                // retry deadline. Its ended process is not a lost worker.
+                if crate::looks::quota_waiting(&store.load()?, &delivery.key, 0)? {
+                    return Ok(false);
+                }
+                // A new attempt under the same key supersedes this pidfd wake.
+                // ready() normally reattaches it before refresh; recheck the
+                // durable attempt number at the loss boundary as well.
+                if latest(&run.root)?.is_some_and(|(latest, _)| latest != *number) {
+                    run.attempt = None;
+                    run.offset = 0;
+                    run.processes.clear();
+                    return self.refresh(run, store, sender);
+                }
+                if action == crate::dispatch_liveness::decision::Repair::LostWorker {
+                    for (index, observation) in super::lost_worker(delivery)
+                        .observations
+                        .into_iter()
+                        .enumerate()
+                    {
+                        send(
+                            sender,
+                            Input::Observation {
+                                key: format!("{}:worker:{number}:{index}", delivery.key),
+                                observation,
+                            },
+                        )?;
+                    }
+                }
+                Ok(false)
+            }
             Reconciliation::Pending => {
                 self.active.add(delivery, *number);
                 Ok(true)

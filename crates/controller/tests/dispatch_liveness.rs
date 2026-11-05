@@ -391,6 +391,40 @@ fn startup_defers_dispatch_repair_while_counter_headroom_is_exhausted() {
     drain(&mut controller);
     assert_eq!(missing_incidents(&mut controller), 0);
     set_next_seq(&mut controller, &settings, next_seq);
+    // #817 makes the existing #771 halt visible even without a retained input.
+    // Restoring headroom still requires Rob's authorized clearance.
+    let incident = controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| {
+            r.table == "incidents"
+                && r.value["open"] == true
+                && r.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .unwrap();
+    controller
+        .observe(
+            "clear-repair-headroom",
+            Observation::GitHubComment {
+                repository: Repository {
+                    owner: "owner".into(),
+                    name: "repo".into(),
+                    installation: 1,
+                },
+                issue: 1,
+                comment: serde_json::from_value(serde_json::json!({
+                    "id":901,"body":format!("clear incident {}",incident.id),
+                    "user":{"id":42,"login":"rob"},
+                    "created_at":"2026-11-05T00:00:00Z","updated_at":"2026-11-05T00:00:00Z",
+                    "issue_url":"https://api.github.com/repos/owner/repo/issues/1"
+                }))
+                .unwrap(),
+            },
+        )
+        .unwrap();
+    drain(&mut controller);
     close(controller, &settings);
     let mut controller = open(&settings, root.path(), Role::Audit, &runs);
     drain(&mut controller);

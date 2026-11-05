@@ -1,105 +1,67 @@
-# Dispatch liveness: the four outcomes omit permitted waits
+# Controller dispatch liveness (#817)
 
-Issue #817 cannot be proved as written without changing its domain or its
-outcomes. This note stops implementation under the builder's Q27 rule. It does
-not propose changing the state table.
+The lead corrected #817's property on 2026-11-05. The original four outcomes
+omitted legal agent-pool tickets, authorized pauses and non-worker delivery
+contracts. The two real-store counterexamples remain regressions. This was a
+property correction, not a state-table change or an outstanding Q27 decision.
 
-The missing-watch defect from #815 and the intact-watch, dead-process defect
-remain valid bugs to address. A lost worker maps directly to infrastructure
-failure under state-table "Failures", Q7. That mapping is not the blocker.
+The classifier matches every actual `Wait` variant without a wildcard. Its
+successful outcomes have explicit evidence:
 
-## Counterexample
-
-Start a controller with two agent-pool grants. Intake three requests while the
-first two ingest runs remain live. The third node has this state:
-
-| Field | Value |
+| Outcome | Evidence and existing state-table rule |
 |---|---|
-| Phase | Ingesting |
-| `waiting_on()` | AgentPool |
-| Pool ticket | Present |
-| Pool grant | Absent |
-| Run, job, in-flight effect | Absent |
-| Effect sequence | 0; no effect has ever been dispatched for this node |
-| Authoritative reply or failure | Absent; its first operation has not started |
-| Watch and allowance | Absent |
-| Open incident | Absent |
+| Dispatched | Worker: matching current-operation watch and live recorded process identity. Other effects: immutable intent under the delivery-class contract. |
+| Ending | Current-generation authoritative reply, failure or process termination. Q7. |
+| Retry(Allowance) | Current-operation allowance with a durable deadline. Looks and stalls. |
+| Retry(ModelQuota) | Current-operation quota allowance with its durable reset. Q53; #828. |
+| Incident | Open node incident or global counter-headroom halt. Q7; #771. |
+| Paused | Durable authorized pause, without a deadline. Pausing. |
+| PoolWait | Ticket with a current obstruction. A full pool requires all its occupants to have operation coverage; otherwise an earlier/higher-priority ticket obstructs. Q39. |
+| Answer | Durable current question. Asking Rob. |
+| MergeQueue | Queued operation's durable PR binding. Queued phase. |
+| SlotOrFiles | Ticket obstructed by slot width, held files or an older overlapping waiter. Q30. |
+| Prerequisite | Undelivered merge prerequisite. Planning admission; #693. |
+| Admission | Planning admission blocked by the repository's Ready waiters. Q30. |
+| Closed | Final Closed node. Closed is final. |
 
-All four requested outcomes are false. Restarting preserves this state. Idle
-controller steps cannot grant capacity that another run still owns. This is a
-valid settled world under Q39, not missing dispatch evidence.
+`Silent` is an explicit rejection, not successful coverage. Recovery of an
+acknowledged operation reads its original immutable effect, then restores its
+watch and allowance, or records the existing dispatch-missing incident. It
+never executes another start or constructs a successful reply. The reference
+model uses these same executable decisions.
 
-Next, send a genuine console Pause command for the third request. The same
-node now returns Resume from `waiting_on()`. Its first start remains deferred,
-with none of outcomes (a) through (d). Restarting and driving do not change it.
-Even when the other runs finish, this node must remain paused until an
-authorized Resume or another applicable external event arrives. There is no
-bound K at which an ordinary paused node becomes one of the four outcomes.
+A process-ending wake with no exit record imports `WorkerFailed(LostWorker)`
+through ordinary ingress. Q7's existing accounting retries the first failure,
+raises an incident on the second, and spends no credit. A complete-looking
+stdout without an exit record supplies no reply evidence. Cancelled claims,
+late generations and superseded attempts retain their existing fences.
 
-These cases do not rely on corrupt storage, a missing watch, a crashed process,
-or exhaustion. No past reply from another operation can stand in for an
-authoritative ending of the operation this node has never started.
+A recorded quota ending already has its retry deadline. It takes precedence
+over dead-process evidence. Recovery neither reconstructs a missing watch for
+that completed attempt nor turns it into a lost-worker failure. No early quota
+wake, reset cap or new incident rule is introduced. The classifier's integration
+seam is `quota_retry(until: u64) -> RetryPending`, yielding
+`RetryPending::ModelQuota { until }`, where `until` is Unix milliseconds.
+Detailed role/model/family/key metadata belongs to #828's quota facts.
 
-## Binding rules and executable paths
+Exhaustion deferral persists its worklist and a parking row, covered by the
+existing #771 incident. Idle drives, allowance wakes and unrelated row writes
+do not rescan headroom. The authorized clearance transaction removes parking;
+startup also reevaluates current durable evidence. Restoring a test counter
+alone does not clear an open incident.
 
-- `docs/state-table.md`, "Agent pool": a ticket waits for a grant. Higher
-  priority arrivals may hold it back indefinitely; starvation is accepted.
-  Admission is an internal kernel update, not an effect.
-- `docs/state-table.md`, "Facts and commands in every phase" and "Pausing":
-  a pause starts no new operation; a non-leaf stores its pending start.
-  Resume or release of the pause enables it. A normal pause has no deadline.
-- `docs/state-table.md`, "Failures": lost workers are infrastructure failures.
-  A normal ungranted ticket or operator pause is not evidence of worker loss.
-- `crates/kernel/src/queries.rs`, `Node::waiting_on`: paused nodes return Resume;
-  nodes with a ticket and no operation return AgentPool.
-- `crates/kernel/src/scheduler.rs`, `advance`: starting needs `!n.paused`,
-  `pool_free(w)` and `first_in_line(w, i)`.
-- `crates/kernel/src/commands.rs`, `on_command`: Pause sets `paused`; Resume
-  clears it. Neither invents a worker outcome or an incident.
-- `crates/controller/src/dispatch_liveness.rs`, `acknowledged_wait`: repair
-  requires an existing current-generation operation. An ungranted first start
-  is intentionally outside that repair path.
-- `crates/kernel/src/progress_global.rs`, `resume_decreases`, and #805: an
-  external Resume can lower the rank. The theorem does not require the
-  controller to manufacture that external event or guarantee per-node fairness.
+The pure model's bound is one recovery transaction after the original dispatch
+read, or one process-ending ingress transaction. Controller/store conformance
+uses K=32 drives for its fixed one-node backlog. Neither bound is a wall-clock
+timeout, and neither promises ticket fairness. Production wake sources remain
+inotify, pidfds, committed pool changes, startup and existing durable deadlines.
 
-The effect domain also needs an explicit boundary. The table's delivery
-classes include GitHub and worktree effects, which do not have an agent-worker
-supervisor process. Outcome (a)'s supervisor-process requirement cannot be
-applied literally to every `Wait::Effect` variant.
+The test-only pre-extraction method is copied verbatim from cdacce8f into
+`crates/controller/tests/fixtures/dispatch_recovery_original.rs`. Differential
+schedules compare all effect reads, clock samples, incident construction,
+commits, effects and persisted bytes, including precommit loss and a lost reply
+after commit. Store transactions are atomic; the model does not let individual
+rows of a transaction land independently.
 
-## Two designs for the lead to resolve
-
-1. Keep the four outcomes for dispatched operations. Prove controller
-   coverage of each dispatched operation and prove dependency coverage
-   separately for AgentPool and Resume. An intentional pause has its durable
-   owner; a pool waiter has its ticket and current grant obstruction. These
-   are additional outcomes, so this changes #817's stated property.
-2. Keep every listed wait in one classifier. Add typed outcomes for intentional
-   pauses, resource waits and non-worker delivery contracts. Prove bounded
-   reconciliation into that expanded set without promising fairness. This
-   also changes #817's stated property, while preserving the state table.
-
-I prefer the second design because an exhaustive match can reject an omitted
-wait variant. Neither design is authorized by the current instruction to
-prove exactly the four outcomes without weakening the property.
-
-Forcing every normal AgentPool or Resume wait into the existing four outcomes
-would instead need a new failure, incident or timed-retry rule. That requires
-Rob's Q27 approval. A timer must not turn intentional waiting into evidence of
-failure. Counting an unrelated or historical reply would only hide the gap.
-
-## Evidence and handoff
-
-The runnable counterexamples and remote execution records are retained in
-`/home/rob/tmp/tl3-build/rust-fv/t817/`. They append two test-only witnesses to
-the existing real-store dispatch-liveness integration test on a disposable
-BuildBuddy checkout. Each checks the kernel invariant, absence of an operation,
-absence of all relevant durable coverage, repeated idle drives, and restart.
-They change no production code and use only disposable Postgres databases.
-
-No reconcile extraction, Verus theorem, mutant, or conformance claim is made.
-The #816 P2 and lost-process repair remain unimplemented. Existing #815/#816
-regressions remain unchanged. Resume implementation after the lead resolves the
-property's domain and outcomes; do not merge a classifier that claims an
-ungranted ticket or intentional pause is a lost worker.
+Implementation evidence and the final verification inventory are recorded in
+`/home/rob/tmp/tl3-build/rust-fv/t817/`.
