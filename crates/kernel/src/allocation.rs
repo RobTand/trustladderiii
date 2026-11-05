@@ -196,7 +196,10 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
         old(w).nodes@[i as int].generation < u64::MAX, old(out).len < OUTBOX,
     ensures final(w).next_question as int == old(w).next_question as int + 1,
         final(w).next_ticket == old(w).next_ticket,
-        final(w).nodes@ == old(w).nodes@.update(i as int, Node {
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int] == (Node {
             holds: false,
             question: Some(Question { id: old(w).next_question, kind, cont, cost, clarified: false }),
             phase: Phase::AwaitingRob,
@@ -286,7 +289,7 @@ pub(super) fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].next_seq < u64::MAX,
-    ensures final(w).nodes@ == old(w).nodes@.update(i as int, Node {
+    ensures final(w).nodes@[i as int] == (Node {
         next_seq: (old(w).nodes@[i as int].next_seq + 1) as u64,
         effect: Some(InFlight { seq: old(w).nodes@[i as int].next_seq, kind, cancelling: false }),
         worktree: old(w).nodes@[i as int].worktree || kind == EffectKind::PrepareWorktree,
@@ -295,6 +298,9 @@ pub(super) fn emit(w: &mut World, i: usize, kind: EffectKind,
         ..old(w).nodes@[i as int]
     }),
         final(w).next_ticket == old(w).next_ticket,
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
         final(w).next_question == old(w).next_question,
         final(w).gates@ == old(w).gates@,
         final(w).pool_capacity == old(w).pool_capacity,
