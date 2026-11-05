@@ -2031,3 +2031,6 @@ mod allocation_stopping_lemmas;
 mod allocation_incident_lemmas;
 #[cfg(verus_keep_ghost)]
 mod facts_transition_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod facts_ci_failed_lemmas;

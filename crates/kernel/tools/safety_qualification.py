@@ -163,6 +163,10 @@ CASES = {
                                          'if !w.nodes[i].phase.is_closed() {',
                                          'if true {',
                                          '//crates/kernel:verus_facts_transition'),
+    'facts_ci_failed_dispatch': ('crates/kernel/src/facts.rs',
+                                 'ci_infrastructure(w, i, out);',
+                                 'failed_round(w, i, ReviewStop::CiFailed, out);',
+                                 '//crates/kernel:verus_facts_ci_failed'),
 }
 
 
