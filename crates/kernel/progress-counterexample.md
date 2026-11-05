@@ -21,8 +21,8 @@ The remaining progress composition is stuck in `World::dependency_fact` and
 the solver limit. Separating key lookup from guards, hiding whole-world
 predicates, lifting the exact dependency update separately, and explicitly
 instantiating its strict summand proved supporting lemmas but did not discharge
-those compositions. This branch delivers the safety scope requested in the
-lead's checkpoint; it does not assert the global outside-witness theorem.
+those compositions. The safety scope requested in the lead's checkpoint does not assert the global
+outside-witness theorem.
 
 The controller now allocates command IDs through `Node::next_command_id`, using
 `checked_add`. Exhaustion raises `command ids exhausted for request N` without
@@ -92,25 +92,31 @@ Resume. Refinement must discharge that freshness premise against `on_command`.
 At the exhausted ID it cannot. Proving more gate or phase lemmas over that
 projection would not repair this failed correspondence.
 
-The pinned Verus toolchain and spike sources remain at the locations recorded in
-`/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. The source-connected runner is
-`verus/run.sh`. Action
-`c931517caccec85d27937e4d90649eb808323819eef68226775f40d2a4803683`
-verified 130 obligations at `6d3b870d8d`, including the real local settle cases,
-headroom guard, read-only pool/admission queries, prerequisite query and retry
-allocation bounds. It exited zero with receipt
-`bdd4745248037236f5b81a32402b692f81cf596cbd480035aaf3237eb3c2dc2a`.
-The verifier took 34.91 seconds and peaked at 387,428 KiB. That count includes
-generated type obligations. It does not mean that 130 progress theorems have
-been delivered. The whole-world theorem remains open.
+## Verification entry points
 
-Action `1cce0e0f279657317f8d851f0898a10b87898e59ddc42fba3005b5055e81d0b3`
-qualified ten core contracts at `37a0ebc441`. Its baseline verified 88 obligations;
-each command, credit, agenda, rank and sum mutant then failed a proof obligation.
-The driver exited zero with receipt
-`c2a8841a884221977f9838b54840b4c5b15ed846002bf48bb5ed6a7a7eef04c8`.
-Further allocation, scope and local-transition mutants are separate qualification
-work; this core run does not qualify those later contracts.
+The pinned Verus toolchain and spike sources remain at the locations recorded in
+`/home/rob/tmp/tl3-build/rust-fv/verus-spike.md`. `verus/run.sh` is the
+PrismaBuild exploratory runner. The required Rust targets are the 17
+`//crates/kernel:verus_*` groups declared in `tools/bazel/verus.bzl`. Their exact
+positive inventory totals 256 verified obligations, including generated type
+obligations. Every actual callee of `step` is covered by one group. The runner
+rejects missing, zero, duplicate or changed counts, nonzero exits and timeouts.
+No `assume`, `admit`, external body or alternative transition model supplies
+these contracts.
+
+`tools/safety_qualification.py CASE` runs on a disposable BuildBuddy runner. It
+first requires the normal target to pass, changes one expression in the real
+source, and requires that same target to fail an executed assertion or a proof
+obligation. It also checks that the Gate classifies that failure as a failed
+required Rust check. Compiler errors and timeouts do not qualify a mutant.
+
+The cases cover the headroom predicate, actual question increment, command
+allocator, command-order guard, raw-event validator, steering constructor,
+controller apply guard, and actual translate call. The apply and translate
+cases run the controller's database-backed regressions; the other six run the
+required Verus targets. This connects the proved pure guards with their actual
+controller call sites. The hand-off evidence records each BuildBuddy verdict,
+proof count, timing, memory and mutant result.
 
 ## Counter audit and step reserves
 
