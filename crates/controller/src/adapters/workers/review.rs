@@ -297,7 +297,7 @@ mod tests {
     fn inputs(
         delivery: &Delivery,
         store: &mut Store,
-        snapshot: &Snapshot,
+        snapshot: &tl3_store::Snapshot,
         session: Option<&Value>,
     ) -> Result<Value> {
         let value = super::inputs(delivery, store, snapshot, session)?;
