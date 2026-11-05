@@ -33,7 +33,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         final(w).file_sets@ == old(w).file_sets@,
         final(out).len <= old(out).len + 4,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
+] proof [reveal(dependencies::dependency_frame);] {
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),

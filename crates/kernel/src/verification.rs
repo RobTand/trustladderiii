@@ -65,13 +65,13 @@ macro_rules! kernel_fn {
         }
     };
     (impl $self_type:ty { $(#[$attribute:meta])* $visibility:vis fn $name:ident $arguments:tt
-        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(hide [$($hidden:path),*])? $(proof [$($proof:tt)*])? $body:block }) => {
+        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(proof [$($proof:tt)*])? $body:block }) => {
         impl $self_type {
             $(#[$attribute])* $visibility fn $name $arguments -> $return_type $body
         }
     };
     ($(#[$attribute:meta])* $visibility:vis fn $name:ident $arguments:tt
-        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(hide [$($hidden:path),*])? $(proof [$($proof:tt)*])? $body:block) => {
+        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(proof [$($proof:tt)*])? $body:block) => {
         $(#[$attribute])* $visibility fn $name $arguments -> $return_type $body
     };
 }
@@ -89,12 +89,11 @@ macro_rules! kernel_fn {
     };
     // Verus must see the impl when expanding a static associated function.
     (impl $self_type:ty { $(#[$attribute:meta])* $visibility:vis fn $name:ident $arguments:tt
-        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(hide [$($hidden:path),*])? $(proof [$($proof:tt)*])? $body:block }) => {
+        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(proof [$($proof:tt)*])? $body:block }) => {
         vstd::prelude::verus! {
             impl $self_type {
                 $(#[$attribute])* $visibility fn $name $arguments
                     -> ($result: $return_type) $($contract)* {
-                        $($(hide($hidden);)*)?
                         $(proof { $($proof)* })?
                         $body
                     }
@@ -102,11 +101,10 @@ macro_rules! kernel_fn {
         }
     };
     ($(#[$attribute:meta])* $visibility:vis fn $name:ident $arguments:tt
-        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(hide [$($hidden:path),*])? $(proof [$($proof:tt)*])? $body:block) => {
+        -> ($result:ident: $return_type:ty) [$($contract:tt)*] $(proof [$($proof:tt)*])? $body:block) => {
         vstd::prelude::verus! {
             $(#[$attribute])* $visibility fn $name $arguments
                 -> ($result: $return_type) $($contract)* {
-                    $($(hide($hidden);)*)?
                     $(proof { $($proof)* })?
                     $body
                 }

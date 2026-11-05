@@ -132,7 +132,6 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
 }
 }
 
-
 kernel_fn! {
 /// Rebase and outside-push rows / #771: update the observed head before recheck.
 /// This changes no counter or field used by the settlement shape projection.

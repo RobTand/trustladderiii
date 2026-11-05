@@ -85,7 +85,6 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
 }
 }
 
-
 kernel_fn! {
 /// Confirmed-effect rows / #771: after resource cleanup, consume the same
 /// matching agenda item or enter Checking for an adopted worktree.
@@ -160,7 +159,6 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
     }
 }
 }
-
 
 kernel_fn! {
 /// Failed-delivery rows / #771: reset the retry ladder before emitting or

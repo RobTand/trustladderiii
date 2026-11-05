@@ -67,6 +67,41 @@ pub(super) open spec fn dependencies_checked(world: World) -> bool {
         ==> dependency_checked(world, world.dependencies@[j])
 }
 
+/// Prerequisite fact rows / #693 / #771: exact ledger and node frame shared
+/// by declaration composition and its table update. Opacity keeps unrelated
+/// dependency quantifiers out of the wrapper's verification context.
+#[verifier::opaque]
+pub(super) closed spec fn dependency_frame(before: World, after: World, i: int) -> bool {
+    after.nodes@[i] == (Node {
+            waiting_prerequisite: after.nodes@[i].waiting_prerequisite,
+            credit: Credit { withheld: after.nodes@[i].credit.withheld,
+                ..before.nodes@[i].credit },
+            ..before.nodes@[i]
+        })
+            && after.next_ticket == before.next_ticket
+            && after.next_question == before.next_question
+            && after.gates@ == before.gates@
+            && after.pool_capacity == before.pool_capacity
+            && after.fail_fast == before.fail_fast
+            && after.file_sets@ == before.file_sets@
+            && after.nodes@.len() == before.nodes@.len()
+            && (forall|j: int| 0 <= j < before.nodes@.len() && j != i
+                ==> after.nodes@[j] == before.nodes@[j])
+            && after.nodes@[i as int].repo == before.nodes@[i as int].repo
+            && after.nodes@[i as int].footprint == before.nodes@[i as int].footprint
+            && after.nodes@[i as int].phase == before.nodes@[i as int].phase
+            && after.nodes@[i as int].pos == before.nodes@[i as int].pos
+            && after.nodes@[i as int].pool == before.nodes@[i as int].pool
+            && after.nodes@[i as int].holds == before.nodes@[i as int].holds
+            && after.nodes@[i as int].last_cmd == before.nodes@[i as int].last_cmd
+            && after.nodes@[i as int].generation == before.nodes@[i as int].generation
+            && after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq
+            && after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start
+            && after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned
+            && after.nodes@[i as int].credit.added == before.nodes@[i as int].credit.added
+            && after.nodes@[i as int].credit.spent == before.nodes@[i as int].credit.spent
+}
+
 pub closed spec fn unseen_prefix(seen: Seq<bool>, end: nat) -> nat
     recommends end <= seen.len(),
     decreases end,
@@ -531,43 +566,16 @@ impl World {
         status: DependencyStatus, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
             edges_indexable(*old(self)), old(out).len < OUTBOX,
-        ensures final(self).nodes@[i as int] == (Node {
-            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
-            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
-                ..old(self).nodes@[i as int].credit },
-            ..old(self).nodes@[i as int]
-        }),
-            final(self).next_ticket == old(self).next_ticket,
-            final(self).next_question == old(self).next_question,
-            final(self).gates@ == old(self).gates@,
-            final(self).pool_capacity == old(self).pool_capacity,
-            final(self).fail_fast == old(self).fail_fast,
-            final(self).file_sets@ == old(self).file_sets@,
+        ensures dependency_frame(*old(self), *final(self), i as int),
             final(out).len <= old(out).len + 1,
-            final(self).nodes@.len() == old(self).nodes@.len(),
-            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
-                ==> final(self).nodes@[j] == old(self).nodes@[j],
-            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
-            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
-            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
-            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
-            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
-            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
-            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
-            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
-            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
-            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
-            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
-            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
-            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] hide [delivered, prerequisites_delivered, edges_indexable] {
+    ] {
         let Some((existing, dependency)) = self.prepare_dependency(i, target, status) else {
+            kernel_proof! { reveal(dependency_frame); }
             return;
         };
         self.record_dependency(i, existing, dependency, out);
     }
     }
-
 
     kernel_fn! {
     /// #693 / #771: validate the unchanged declaration before mutating its table.
@@ -631,36 +639,9 @@ impl World {
         dependency: Dependency, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
             match existing { None => true, Some(index) => index < old(self).dependencies@.len() },
-        ensures final(self).nodes@[i as int] == (Node {
-            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
-            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
-                ..old(self).nodes@[i as int].credit },
-            ..old(self).nodes@[i as int]
-        }),
-            final(self).next_ticket == old(self).next_ticket,
-            final(self).next_question == old(self).next_question,
-            final(self).gates@ == old(self).gates@,
-            final(self).pool_capacity == old(self).pool_capacity,
-            final(self).fail_fast == old(self).fail_fast,
-            final(self).file_sets@ == old(self).file_sets@,
+        ensures dependency_frame(*old(self), *final(self), i as int),
             final(out).len <= old(out).len + 1,
-            final(self).nodes@.len() == old(self).nodes@.len(),
-            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
-                ==> final(self).nodes@[j] == old(self).nodes@[j],
-            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
-            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
-            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
-            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
-            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
-            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
-            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
-            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
-            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
-            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
-            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
-            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
-            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] {
+    ] proof [reveal(dependency_frame);] {
         let node = NodeId(i as u64);
         match existing {
             Some(index) => self.dependencies[index] = dependency,
