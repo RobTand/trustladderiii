@@ -10,7 +10,7 @@ from tl3_harness.forcing_ownership import ForcingError, preflight_owner
 from tl3_workers.evidence import proof_applicability
 from tl3_workers.pb_tests import TestSettings, make_test_tool, _git
 from tl3_workers.session import save
-from tl3_workers.pb_evidence import check as _check_pb
+from tl3_workers.pb_tests import _check_pb
 
 
 MAX_REHEARSALS = 8

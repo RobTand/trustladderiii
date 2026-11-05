@@ -12,7 +12,7 @@ import tempfile
 from unittest.mock import patch
 
 from tl3_harness import generator
-from tl3_workers import pb_evidence, pb_generators as new
+from tl3_workers import pb_tests as pb_evidence, pb_generators as new
 from tl3_workers.tools import Worktree
 
 

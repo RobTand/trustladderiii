@@ -14,7 +14,7 @@ from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.supervision import ExecutionFailure
 from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
-from tl3_workers.pb_evidence import check as _check_pb, encoded, ending_facts
+from tl3_workers.pb_tests import _check_pb, encoded, ending_facts
 
 
 def _elapsed(ending):

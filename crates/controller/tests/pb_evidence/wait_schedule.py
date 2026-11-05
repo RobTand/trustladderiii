@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tl3_workers import pb_tests as new
-from tl3_workers import pb_evidence
+from tl3_workers import pb_tests as pb_evidence
 
 spec = importlib.util.spec_from_file_location('pb_tests_before', sys.argv[1])
 old = importlib.util.module_from_spec(spec)

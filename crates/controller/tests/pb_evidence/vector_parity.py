@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from tl3_workers import pb_evidence
+from tl3_workers import pb_tests as pb_evidence
 
 
 def load(name, path):
