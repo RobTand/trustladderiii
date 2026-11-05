@@ -17,6 +17,15 @@ struct PendingRecords {
     starts: Rc<RefCell<BTreeMap<String, usize>>>,
     fake: Fake,
 }
+
+struct RecordedClock;
+impl crate::clock::Clock for RecordedClock {
+    fn now(&self) -> std::time::SystemTime {
+        // Request 235's quota ending was recorded on 2026-11-03. The reset
+        // remains days away regardless of when the regression executes.
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_793_712_000_000)
+    }
+}
 fn identity() -> Value {
     let stat = fs::read_to_string("/proc/self/stat").unwrap();
     let start = stat
@@ -87,7 +96,7 @@ fn open(
             fake: Fake::new(&root.join("fakes")),
         },
     );
-    Controller::open(
+    Controller::open_with_clock(
         Store::open(settings).unwrap(),
         registry,
         Bootstrap {
@@ -102,6 +111,7 @@ fn open(
             pool: 2,
             fail_fast: true,
         },
+        RecordedClock,
     )
     .unwrap()
 }
@@ -318,8 +328,7 @@ fn schedule(actions: &[u8], index: usize, database: &mut crate::git_tests::suppo
 
 /// #817 / Q7: fixed witnesses plus generated real-store fault/restart schedules.
 #[test]
-fn reference_model_conforms_to_store_faults_and_restarts() {
-    use proptest::test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner};
+fn reference_model_regressions_conform_to_store_faults_and_restarts() {
     let mut database = crate::git_tests::support::Database::start();
     let regressions: Vec<Vec<u8>> = serde_json::from_str(include_str!(
         "../../../tests/fixtures/dispatch-conformance-regressions.json"
@@ -328,11 +337,15 @@ fn reference_model_conforms_to_store_faults_and_restarts() {
     for (i, actions) in regressions.iter().enumerate() {
         schedule(actions, i, &mut database);
     }
-    let index = std::cell::Cell::new(regressions.len());
-    let database = RefCell::new(database);
+}
+
+fn generated_schedules(seed: u64) {
+    use proptest::test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner};
+    let index = std::cell::Cell::new(0);
+    let database = RefCell::new(crate::git_tests::support::Database::start());
     let mut runner = TestRunner::new(Config {
-        cases: 8,
-        rng_seed: RngSeed::Fixed(817_815),
+        cases: 2,
+        rng_seed: RngSeed::Fixed(seed),
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/dispatch-conformance.proptest-regressions"
@@ -346,6 +359,30 @@ fn reference_model_conforms_to_store_faults_and_restarts() {
             Ok(())
         })
         .unwrap();
+}
+
+/// #817 / Q7: independent generated schedules keep each conformance unit bounded.
+#[test]
+fn reference_model_seed_817815_conforms_to_store_faults_and_restarts() {
+    generated_schedules(817_815);
+}
+
+/// #817 / Q7: independent generated schedules keep each conformance unit bounded.
+#[test]
+fn reference_model_seed_817816_conforms_to_store_faults_and_restarts() {
+    generated_schedules(817_816);
+}
+
+/// #817 / Q7: independent generated schedules keep each conformance unit bounded.
+#[test]
+fn reference_model_seed_817817_conforms_to_store_faults_and_restarts() {
+    generated_schedules(817_817);
+}
+
+/// #817 / Q7: independent generated schedules keep each conformance unit bounded.
+#[test]
+fn reference_model_seed_817818_conforms_to_store_faults_and_restarts() {
+    generated_schedules(817_818);
 }
 
 /// Q53 / #828: request 235's multi-day quota reset is a valid retry deadline.
