@@ -57,9 +57,19 @@ _WAVE_B_ENTRIES = {
     # finish-teardown (#822)
     "finish-teardown": _WAVE_B_STUB,
     # summary-bound (#823)
-    "summary-bound": _WAVE_B_STUB,
+    "summary-bound": {
+        "srcs": ["tests/summary_bound.rs"],
+        "crate_root": "tests/summary_bound.rs",
+        "deps": [":tl3_harness_core"],
+        "tags": ["rust", "wave-b-summary-bound"],
+    },
     # selector-identity (#823)
-    "selector-identity": _WAVE_B_STUB,
+    "selector-identity": {
+        "srcs": ["tests/selector_identity.rs"],
+        "crate_root": "tests/selector_identity.rs",
+        "deps": [":tl3_harness_core"],
+        "tags": ["rust", "wave-b-selector-identity"],
+    },
     # node-id (#824)
     "node-id": _WAVE_B_STUB,
     # limits (S4)

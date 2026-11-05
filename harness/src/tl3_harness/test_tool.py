@@ -19,6 +19,12 @@ OUTCOMES = ("passed", "failed", "error", "skipped")
 # A repeated test reports its worst outcome across runs.
 WORST = ("passed", "skipped", "failed", "error")
 RUN_FAILURES = 20
+ACTION_SUMMARY_BYTES = 786_432
+
+
+def action_summary(result, *, limit=ACTION_SUMMARY_BYTES):
+    """#823: emit full facts, the mandatory core, or the existing diagnostic."""
+    raise NotImplementedError('Red: action summary has no display-entry ordering')
 
 
 def options(repeat, parallel):

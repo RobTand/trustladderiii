@@ -1,4 +1,5 @@
 """Summary bounding must make progress or refuse, with a short hang backstop."""
+from copy import deepcopy
 import json
 from pathlib import Path
 import subprocess
@@ -105,3 +106,54 @@ def test_error_dominated_group_removes_failures_but_keeps_totals_and_proof(note)
     assert sum(test['outcome'] == 'error' for test in kept) < 267
     assert len(json.dumps(observed).encode()) <= limit
     assert 'Truncated' in observed['note']
+
+
+def envelope():
+    return {'status': 'completed',
+            'tests': [{'test': 'test_x.py::test_red', 'outcome': 'failed', 'message': 'RED'}],
+            'totals': {'passed': 0, 'failed': 1, 'error': 0, 'skipped': 0},
+            'proof': {'mode': 'head-observer'}, 'origin': 'test_run', 'note': ''}
+
+
+def test_action_cap_keeps_all_facts_when_the_full_document_fits():
+    result = envelope()
+    original = deepcopy(result)
+    observed = test_tool.action_summary(result, limit=4096)
+    assert observed == original
+    assert result == original
+
+
+def test_action_cap_drops_all_display_entries_together_and_keeps_red():
+    result = envelope()
+    result['tests'] += [{'test': f'test_x.py::test_display_{index}', 'outcome': outcome,
+                         'message': 'x' * 1000}
+                        for index, outcome in enumerate(('passed', 'error', 'passed', 'error'))]
+    result['totals'].update(passed=2, error=2)
+    observed = test_tool.action_summary(result, limit=1000)
+    assert observed['tests'] == result['tests'][:1]
+    assert observed['proof'] == result['proof']
+    assert observed['totals'] == result['totals']
+    assert observed['status'] == result['status']
+    assert observed['origin'] == result['origin']
+    assert len(json.dumps(observed).encode()) <= 1000
+
+
+def test_action_cap_returns_existing_diagnostic_when_the_core_cannot_fit():
+    result = envelope()
+    result['proof']['required'] = 'x' * 20_000
+    observed = test_tool.action_summary(result, limit=16_384)
+    assert observed == test_tool._summary_limit(result)
+    assert observed['origin'] == 'test_run'
+    assert observed['totals'] == result['totals']
+    assert len(json.dumps(observed).encode()) <= 16_384
+
+
+def test_summary_admission_retains_facts_until_the_action_chooses_a_level():
+    summary = test_tool.Summary()
+    for index in range(30):
+        summary.add(f'test_x.py::test_{index}', 'error', 'x' * 1000)
+    summary.add('test_x.py::test_red', 'failed', 'RED')
+    assert len(summary.result['tests']) == 31
+    assert summary.result['totals']['error'] == 30
+    assert summary.result['totals']['failed'] == 1
+    assert summary.result['tests'][-1]['test'] == 'test_x.py::test_red'

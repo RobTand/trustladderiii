@@ -9,6 +9,19 @@ from tl3_workers.reply_check import ReplyCheckInfrastructureError
 import checker_stub
 
 
+@pytest.mark.parametrize('kind', ['summary', 'identity'])
+def test_harness_replay_requires_full_document_equality(tmp_path, monkeypatch, kind):
+    command = ['check-harness', kind]
+    document = {'kind': kind, 'limit': 16_384, 'facts': {'message': 'original'}}
+    row = {'command': command, 'document': document, 'response': {'result': 'recorded'}}
+    monkeypatch.setattr(checker_stub, 'cases', lambda: {'local harness case': [row]})
+    changed = {**document, 'facts': {'message': 'changed'}}
+    with pytest.raises(RuntimeError, match='document'):
+        checker_stub.replay('local harness case', tmp_path / 'cursor', command, changed)
+    assert not (tmp_path / 'cursor').exists()
+    assert checker_stub.replay('local harness case', tmp_path / 'cursor', command, document) == row['response']
+
+
 def test_unrecorded_calls_fail_closed_in_process_and_in_child(tmp_path):
     request = {"kind": "no_such_parity_vector"}
     with pytest.raises(RuntimeError, match="unrecorded Rust checker call"):
