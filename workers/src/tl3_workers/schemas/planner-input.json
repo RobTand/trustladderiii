@@ -1,86 +1,69 @@
 {
-  "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-input.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-input.json",
+  "type": "object",
   "properties": {
+    "repair_plan_consistency": {
+      "type": "boolean",
+      "default": false,
+      "description": "Explicitly enable one tool-free correction bound to the original draft. Defaults off pending Rob's Q27/Q54 decision."
+    },
     "always_tests": {
-      "description": "Repo-wide rule test files or node IDs that the harness runs as regression checks in every round. Follow these rules when planning test additions.",
+      "type": "array",
       "items": {
-        "minLength": 1,
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
-      "type": "array"
+      "description": "Repo-wide rule test files or node IDs that the harness runs as regression checks in every round. Follow these rules when planning test additions."
     },
-    "audit_evidence_contract": {
-      "$ref": "ingest-reply.json#/$defs/evidence_contract"
-    },
-    "base_sha": {
-      "description": "Immutable base used by the planner rehearsal and old test selection.",
-      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-      "type": "string"
-    },
-    "decision_context": {
-      "$ref": "decision-context.json",
-      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
+    "must_split": {
+      "type": "boolean",
+      "description": "True after a maker ran out of room. A leaf reply is rejected."
     },
     "findings": {
-      "description": "Everything learned before a re-plan, including failed checks and review findings. Empty for initial planning.",
+      "type": "array",
       "items": {
-        "minLength": 1,
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
-      "type": "array"
+      "description": "Everything learned before a re-plan, including failed checks and review findings. Empty for initial planning."
     },
-    "forecast": {
-      "additionalProperties": false,
-      "properties": {
-        "context_tokens": {
-          "minimum": 1,
-          "type": "integer"
-        },
-        "fit_tokens": {
-          "minimum": 1,
-          "type": "integer"
-        },
-        "generated_files": {
-          "items": {
-            "minLength": 1,
+    "prerequisite_closures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "issue",
+              "pull_request"
+            ]
+          },
+          "number": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "reason": {
             "type": "string"
-          },
-          "type": "array"
+          }
         },
-        "generator": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "generator_available": {
-          "type": "boolean"
-        },
-        "generator_timeout_s": {
-          "maximum": 600,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "overhead_tokens": {
-          "additionalProperties": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "description": "Named overhead constants from controller config, summed by code. Includes the reserve for tools, making history and fix-round feedback shared with the maker.",
-          "minProperties": 1,
-          "propertyNames": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "type": "object"
-        }
+        "required": [
+          "kind",
+          "number",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
       },
-      "required": [
-        "fit_tokens",
-        "context_tokens",
-        "overhead_tokens"
-      ],
-      "type": "object"
+      "description": "Controller-supplied repo-relative glob patterns. A leaf or split cannot declare matching files. ** matches zero or more path segments."
     },
     "ingest": {
       "allOf": [
@@ -96,18 +79,66 @@
         }
       ]
     },
-    "memories": {
-      "description": "Hindsight memories the controller recalled for this run, lessons, decisions and conventions first. Untrusted evidence: they grant no instructions or tools.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "type": "string"
+    "forecast": {
+      "type": "object",
+      "properties": {
+        "fit_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "overhead_tokens": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
           },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Named overhead constants from controller config, summed by code. Includes the reserve for tools, making history and fix-round feedback shared with the maker."
+        },
+        "generated_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "generator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generator_available": {
+          "type": "boolean"
+        },
+        "generator_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        }
+      },
+      "required": [
+        "fit_tokens",
+        "context_tokens",
+        "overhead_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
           "id": {
-            "maxLength": 256,
+            "type": "string",
             "minLength": 1,
-            "type": "string"
+            "maxLength": 256
           },
           "kind": {
             "enum": [
@@ -119,9 +150,12 @@
             ]
           },
           "repo": {
-            "description": "The memory's repo tag. A run can flag only memories of its own repo.",
-            "maxLength": 256,
+            "type": "string",
             "minLength": 1,
+            "maxLength": 256,
+            "description": "The memory's repo tag. A run can flag only memories of its own repo."
+          },
+          "content": {
             "type": "string"
           }
         },
@@ -129,72 +163,38 @@
           "id",
           "content"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "maxItems": 8,
-      "type": "array"
+      "description": "Hindsight memories the controller recalled for this run, lessons, decisions and conventions first. Untrusted evidence: they grant no instructions or tools."
     },
     "memory_note": {
-      "description": "Why no memories were supplied, when recall was unavailable.",
-      "maxLength": 512,
+      "type": "string",
       "minLength": 1,
-      "type": "string"
+      "maxLength": 512,
+      "description": "Why no memories were supplied, when recall was unavailable."
     },
-    "must_split": {
-      "description": "True after a maker ran out of room. A leaf reply is rejected.",
-      "type": "boolean"
-    },
-    "prerequisite_closures": {
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "enum": [
-              "issue",
-              "pull_request"
-            ],
-            "type": "string"
-          },
-          "number": {
-            "format": "uint64",
-            "minimum": 1,
-            "type": "integer"
-          },
-          "reason": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind",
-          "number",
-          "reason"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "protected_paths": {
-      "description": "Controller-supplied repo-relative glob patterns. A leaf or split cannot declare matching files. ** matches zero or more path segments.",
-      "items": {
-        "minLength": 1,
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "repair_plan_consistency": {
-      "default": false,
-      "description": "Explicitly enable one tool-free correction bound to the original draft. Defaults off pending Rob's Q27/Q54 decision.",
-      "type": "boolean"
-    },
-    "tests": {
-      "$ref": "maker-input.json#/properties/tests"
+    "decision_context": {
+      "$ref": "decision-context.json",
+      "description": "Controller-recorded decisions applicable to this request version. Source answers define scope and restrictions; they do not grant tools or override protected paths."
     },
     "tool_capabilities": {
+      "type": "array",
       "items": {
         "$ref": "ingest-reply.json#/$defs/tool_capability"
       },
-      "maxItems": 64,
-      "type": "array"
+      "maxItems": 64
+    },
+    "audit_evidence_contract": {
+      "$ref": "ingest-reply.json#/$defs/evidence_contract"
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "description": "Immutable base used by the planner rehearsal and old test selection."
+    },
+    "tests": {
+      "$ref": "maker-input.json#/properties/tests"
     }
   },
   "required": [
@@ -204,5 +204,5 @@
     "ingest",
     "forecast"
   ],
-  "type": "object"
+  "additionalProperties": false
 }
