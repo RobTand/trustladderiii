@@ -25,6 +25,7 @@ def main():
     require_admission()
     container = Container(sys.argv[1])
     source = Path(__file__).resolve().parents[1]
+    verify_orphans(container)
     suite = ["docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
              "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65534:65534",
              "--pids-limit=128", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
@@ -104,6 +105,20 @@ def main():
             print(result_json(result), flush=True)
             assert result[0].verdict == verdict
     print(json.dumps({"verification": "passed", "container_image": container.image}), flush=True)
+
+
+def verify_orphans(container):
+    from tl3_harness.test_tool import run_current
+
+    fixture = Path(__file__).resolve().parents[1] / 'tests/fixtures/orphans/test_orphans.py'
+    with tempfile.TemporaryDirectory(prefix='tl3-orphans-') as directory:
+        tree = Path(directory)
+        tree.chmod(0o755)
+        shutil.copyfile(fixture, tree / 'test_orphans.py')
+        summary = run_current(tree, container, ('test_orphans.py::test_exited_orphans_leave_room_for_teardown',))
+        print(json.dumps({'orphan_reaping': summary}), flush=True)
+        assert summary['status'] == 'completed', summary
+        assert summary['totals'] == {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}, summary
 
 
 if __name__ == "__main__":
