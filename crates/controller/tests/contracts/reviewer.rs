@@ -151,3 +151,24 @@ proptest! {
         prop_assert_eq!(serde_json::from_value::<ReviewerInput>(serde_json::to_value(&typed).unwrap()).unwrap(),typed);
     }
 }
+
+// #819: every schema-valid report value retains message presence through typed parsing.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+    #[test]
+    fn shared_reports_preserve_absent_empty_and_nonempty_messages(mut test in super::test_result(), message in ".{1,64}") {
+        use tl3_contracts::{CheckReport, CheckResult, TestResult};
+        static VALIDATORS: std::sync::OnceLock<[jsonschema::Validator;3]>=std::sync::OnceLock::new();
+        let validators=VALIDATORS.get_or_init(||[super::check_report_validator(Some("TestResult")),super::check_report_validator(Some("CheckResult")),super::check_report_validator(None)]);
+        for presence in 0..3 {
+            if presence==0 {test.as_object_mut().unwrap().remove("message");}
+            else {test["message"]=json!(if presence==1 {""} else {&message});}
+            let result=json!({"name":"check","kind":"regression","verdict":"pass","custody":"in-process","tests":[test]});
+            let report=json!({"schema":"tl3.checks.v1","effect_key":"check:0","base":"a".repeat(40),"head":"b".repeat(40),"reviewed":null,"results":[result]});
+            prop_assert!(validators[0].is_valid(&test));prop_assert!(validators[1].is_valid(&result));prop_assert!(validators[2].is_valid(&report));
+            prop_assert_eq!(serde_json::to_value(serde_json::from_value::<TestResult>(test.clone()).unwrap()).unwrap(),test.clone());
+            prop_assert_eq!(serde_json::to_value(serde_json::from_value::<CheckResult>(result.clone()).unwrap()).unwrap(),result);
+            prop_assert_eq!(serde_json::to_value(serde_json::from_value::<CheckReport>(report.clone()).unwrap()).unwrap(),report);
+        }
+    }
+}
