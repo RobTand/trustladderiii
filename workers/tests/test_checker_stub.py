@@ -150,6 +150,8 @@ print('CHECKER_TIMING ' + json.dumps([imported-started, finished-imported]), fil
             command = [sys.executable, "-c", "pass"] if mode == "startup" else [
                 sys.executable, "-c", source, str(Path(checker_stub.__file__).parent),
                 "corpus" if mode == "corpus" else "--replay", case, str(cursor), *row["command"]]
+            if mode == "replay":
+                command.insert(1, "-IS")
             started = time.perf_counter()
             process = subprocess.run(command, input=json.dumps(row["document"]), capture_output=True, text=True)
             measurements[mode] = time.perf_counter() - started

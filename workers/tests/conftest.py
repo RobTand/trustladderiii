@@ -53,7 +53,7 @@ def budget_binary(request, tmp_path_factory, monkeypatch):
     checker_stub.prepare_replay(request.node.nodeid, cursor)
     checker = tmp_path / "recorded-rust-checker"
     checker.write_text(
-        f"#!{sys.executable}\n"
+        f"#!{sys.executable} -IS\n"
         "import runpy, sys\n"
         f"sys.argv[1:1] = ['--replay', {request.node.nodeid!r}, {str(cursor)!r}]\n"
         f"runpy.run_path({str(Path(checker_stub.__file__).resolve())!r}, run_name='__main__')\n")
