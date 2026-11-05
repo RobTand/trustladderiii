@@ -2791,17 +2791,22 @@ fn main() {
         .chain(cases.iter().map(|(name, _)| *name))
         .chain(database_cases.iter().map(|(name, _)| *name))
         .collect();
-    let split_counts = ["repository_image_", "repository_demand_", "tool_errors_"]
-        .map(|prefix| names.iter().filter(|name| name.starts_with(prefix)).count());
+    let split_counts = [
+        "repository_image_",
+        "repository_demand_",
+        "tool_errors_",
+        "always_tests_",
+    ]
+    .map(|prefix| names.iter().filter(|name| name.starts_with(prefix)).count());
     assert_eq!(
         split_counts,
-        [4, 5, 2],
+        [4, 5, 2, 8],
         "independent table rows must be shardable"
     );
     assert_eq!(
         names.len(),
-        61,
-        "preserve the 50 unchanged scenarios and all 11 table rows"
+        68,
+        "preserve the 49 unchanged scenarios and all 19 table rows"
     );
     let weights = scenario_shard::weights_ms(
         &scenario_shard::measured("tl3-controller/prismabuild"),
