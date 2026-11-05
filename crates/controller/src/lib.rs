@@ -38,6 +38,7 @@ pub mod memory;
 pub mod merge_dependencies;
 mod narrowing;
 mod notices;
+pub mod pb_ending;
 pub mod postmortem_reply;
 mod postmortems;
 #[cfg(all(test, loom))]
