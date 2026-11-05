@@ -218,7 +218,7 @@ def test_request162_forced_check_gets_the_same_single_correction(planner_request
 def test_request162_ordinary_missing_regression_still_stops(planner_request, request162, monkeypatch):
     from tl3_workers import runtime
 
-    # Only the forced demonstrating mismatch is locally repairable.
+    #843 gives ordinary base-absent selections the same single repair.
     request162['files'].append('greeting.py')
     request162['checks'][0].pop('forcing')
     request162['checks'][0]['kind'] = 'regression'
@@ -226,7 +226,8 @@ def test_request162_ordinary_missing_regression_still_stops(planner_request, req
     model = planner_model(monkeypatch, request162, LEAF)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
+    assert len(model.calls) == 2
+    assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
     assert all(any(node in v for v in events[-1]['reply']['violations']) for node in INVENTED)
 
 

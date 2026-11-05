@@ -439,6 +439,14 @@ different named objection grants its own exact correction. An honest
 can't-meet report is always permitted. No correction may invent proof,
 weaken a source obligation or authorize protected edits.
 
+The Planning correction exception also covers base-absent regression,
+behavior-preserving and declared_symptom selections
+([#843](https://github.com/RobTand/trustladderiii/issues/843),
+Rob, Q27, 2026-11-05). Only the named check's node_ids may be replaced
+with already-read exact base tests supporting the same goals and kind.
+Kind, goals, proof, forcing, symptom and files stay fixed. If no base test
+fits, return can't-meet; a remaining objection stops for TL3 review.
+
 No third final-reply invocation is allowed. If repair is disabled or
 unavailable within the existing input or message limit, record zero
 attempts and its reason. Otherwise record the one attempt, both named

@@ -537,10 +537,6 @@ def execution_budget_details(execution):
             f"Components: {components}.")
 
 
-# #843 is independently gated by the planner-contracts lead.
-BASE_SELECTION_REPAIR = False
-
-
 COVERAGE_REPAIR = (
     'Only add the named uncovered goal ids to goal_ids of existing checks. '
     'Preserve every existing citation and every other declaration. '
@@ -659,7 +655,6 @@ class PlanConsistencyError(ValueError):
                              if diagnostics and all(item.rule == 'goal.coverage' for item in diagnostics)
                              else message(diagnostics))
         error.unavailable_reason = ('disabled' if not inputs.get('repair_plan_consistency', False)
-                                    else 'disabled' if not BASE_SELECTION_REPAIR and any(item.rule == 'check.base_missing' for item in diagnostics)
                                     else 'message_limit' if error.repair_text is None else None)
         error.args = (error.repair_text or '\n'.join(str(item) for item in diagnostics),)
         return error

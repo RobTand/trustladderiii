@@ -523,6 +523,13 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   the union of named field changes while satisfying every overlapping
   constraint. Existing citations and all source obligations stay fixed;
   coverage repair only adds the named missing IDs to existing checks.
+  [#843](https://github.com/RobTand/trustladderiii/issues/843),
+  Rob, Q27, 2026-11-05, also permits replacement of base-absent regression,
+  behavior-preserving and declared_symptom selections. Only the named
+  check's node_ids may change to already-read exact base controls supporting
+  the same goals and kind. Kind, goals, proof, forcing, symptom and files stay
+  fixed. With no suitable control, return `cant_meet`; a remaining objection
+  stops for TL3 review.
   An honest `cant_meet` is permitted, retaining the original objections.
 
   There is no third final-reply invocation. Repair unavailability records
