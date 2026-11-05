@@ -32,7 +32,7 @@ pub struct NodeView {
 impl NodeView {
     /// Publishing with an enqueue still pending.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
-    ensures result == (self.phase == Phase::Publishing && self.enqueue_pending),
+    ensures result == self.enqueuing_spec(),
 ))]
     fn enqueuing(self) -> bool {
         self.phase == Phase::Publishing && self.enqueue_pending
@@ -70,7 +70,7 @@ impl Kind {
     /// Evidence about a queue attempt on one head, which matters only while
     /// that head is the node's head.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
-    ensures result == matches!(self, Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand),
+    ensures result == self.names_attempt_head_spec(),
 ))]
     pub fn names_attempt_head(self) -> bool {
         matches!(
@@ -84,7 +84,11 @@ impl Kind {
 /// it has not recorded. A head-check failure waits for a node that is queued
 /// or still enqueuing, so a later active enqueue can consume it.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
-    ensures result == (if node.phase == Phase::Closed { matches!(kind, Kind::Merged { .. }) && !node.merged } else if matches!(kind, Kind::CiFailed { head_check: true, .. }) { node.phase == Phase::Queued || node.phase == Phase::Publishing && node.enqueue_pending } else { true }),
+    ensures result == (
+        !(node.phase == Phase::Closed && (!matches!(kind, Kind::Merged { .. }) || node.merged))
+        && (!matches!(kind, Kind::CiFailed { head_check: true, .. })
+            || node.phase == Phase::Queued || node.enqueuing_spec())
+    ),
 ))]
 pub fn admit(kind: Kind, node: NodeView) -> bool {
     if node.phase == Phase::Closed && (!matches!(kind, Kind::Merged { .. }) || node.merged) {
@@ -181,7 +185,19 @@ pub enum Route {
 /// `head_current`: an attempt's head is the node's head. `approved_head`: a
 /// Q52 or #447 fact names the node's approved head.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
-    ensures result == route_result(kind, node, head_current, approved_head),
+    ensures
+        result == route_spec(kind, node, head_current, approved_head),
+        kind.names_attempt_head_spec() && !head_current ==> result == Route::Record,
+        kind == Kind::ChecksUnavailable ==> result == Route::SetupIncident,
+        kind == Kind::CheckMissing ==> result ==
+            if node.enqueuing_spec() && approved_head { Route::MissingIncident } else { Route::Skip },
+        kind == Kind::QueueBlocked ==> result ==
+            if (node.phase == Phase::Queued || node.enqueuing_spec()) && approved_head {
+                Route::BlockedIncident
+            } else { Route::Skip },
+        kind == Kind::CheckReported ==> result == Route::ClearIncident,
+        matches!(kind, Kind::ChecksUnavailable | Kind::CheckMissing | Kind::QueueBlocked | Kind::CheckReported)
+            ==> !matches!(result, Route::Kernel(_)),
 ))]
 pub fn route(kind: Kind, node: NodeView, head_current: bool, approved_head: bool) -> Route {
     if kind.names_attempt_head() && !head_current {
@@ -210,22 +226,33 @@ pub fn route(kind: Kind, node: NodeView, head_current: bool, approved_head: bool
 
 #[cfg(verus_keep_ghost)]
 verus! {
-/// #743/K-translate-route and Q52: independent exact routing oracle.
-pub open spec fn route_result(kind: Kind, node: NodeView, current: bool, approved: bool) -> Route {
-    let attempt = matches!(kind, Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand);
-    if attempt && !current { Route::Record } else {
-        match kind {
-            Kind::ChecksUnavailable => Route::SetupIncident,
-            Kind::CheckMissing => if node.phase == Phase::Publishing && node.enqueue_pending && approved { Route::MissingIncident } else { Route::Skip },
-            Kind::QueueBlocked => if (node.phase == Phase::Queued || node.phase == Phase::Publishing && node.enqueue_pending) && approved { Route::BlockedIncident } else { Route::Skip },
-            Kind::CheckReported => Route::ClearIncident,
-            Kind::Merged { checks_passed } => Route::Kernel(KernelFact::PrMerged { checks_passed }),
-            Kind::CiFailed { infra, .. } => Route::Kernel(KernelFact::CiFailed { infra }),
-            Kind::Conflict => Route::Kernel(KernelFact::Conflict),
-            Kind::DequeuedByPerson | Kind::DequeuedByCommand => Route::Kernel(KernelFact::PrDequeuedByPerson),
-            Kind::ClosedByPerson => Route::Kernel(KernelFact::PrClosedByPerson),
-            Kind::PushByOther => Route::Kernel(KernelFact::PushByOther),
-        }
+impl NodeView {
+    /// #743/Q52: the production enqueuing predicate, open for composition.
+    pub open spec fn enqueuing_spec(self) -> bool {
+        self.phase == Phase::Publishing && self.enqueue_pending
+    }
+}
+impl Kind {
+    /// #743/K-translate-route: exactly these kinds name an attempt head.
+    pub open spec fn names_attempt_head_spec(self) -> bool {
+        matches!(self, Kind::CiFailed { .. } | Kind::Conflict | Kind::DequeuedByCommand)
+    }
+}
+/// #743/K-translate-route and Q52: the full production routing relation.
+pub open spec fn route_spec(kind: Kind, node: NodeView, head_current: bool, approved_head: bool) -> Route {
+    if kind.names_attempt_head_spec() && !head_current { return Route::Record; }
+    match kind {
+        Kind::ChecksUnavailable => Route::SetupIncident,
+        Kind::CheckMissing if node.enqueuing_spec() && approved_head => Route::MissingIncident,
+        Kind::QueueBlocked if (node.phase == Phase::Queued || node.enqueuing_spec()) && approved_head => Route::BlockedIncident,
+        Kind::CheckMissing | Kind::QueueBlocked => Route::Skip,
+        Kind::CheckReported => Route::ClearIncident,
+        Kind::Merged { checks_passed } => Route::Kernel(KernelFact::PrMerged { checks_passed }),
+        Kind::CiFailed { infra, .. } => Route::Kernel(KernelFact::CiFailed { infra }),
+        Kind::Conflict => Route::Kernel(KernelFact::Conflict),
+        Kind::DequeuedByPerson | Kind::DequeuedByCommand => Route::Kernel(KernelFact::PrDequeuedByPerson),
+        Kind::ClosedByPerson => Route::Kernel(KernelFact::PrClosedByPerson),
+        Kind::PushByOther => Route::Kernel(KernelFact::PushByOther),
     }
 }
 }
