@@ -27,10 +27,11 @@ def test_discovered_roles_have_prompts_and_schemas_without_orphans():
     assert set(ROLES) == modules
     # check-report.json is generated from the controller's Rust contract types (#741).
     expected_schemas = {"request.json", "decision-context.json", "check-report.json",
-                        "budget-wire.json"}
+                        "budget-wire.json", "harness-wire.json"}
     Draft202012Validator.check_schema(schema("check-report"))
     Draft202012Validator.check_schema(schema("decision-context"))
     Draft202012Validator.check_schema(schema("budget-wire"))
+    Draft202012Validator.check_schema(schema("harness-wire"))
     role_pattern = schema("request")["properties"]["role"]
     assert "enum" not in role_pattern
     for name, role in ROLES.items():

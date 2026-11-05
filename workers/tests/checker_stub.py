@@ -41,7 +41,9 @@ def replay(case, cursor, command, document):
         row = script[position]
         if row["command"] != command or row["document"].get("kind") != document.get("kind"):
             raise RuntimeError(f"out-of-order Rust checker call in {case} at {position}: {command}")
-        if command[:1] == ['check-harness'] and row['document'] != document:
+        if command[:1] == ['check-harness'] and (
+                json.dumps(row['document'], sort_keys=True, allow_nan=False)
+                != json.dumps(document, sort_keys=True, allow_nan=False)):
             raise RuntimeError(f"Rust harness document changed in {case} at {position}: {command}")
         cursor.write_text(str(position + 1))
         return deepcopy(row["response"])

@@ -37,6 +37,7 @@ struct SummaryResult {
 
 pub fn wire_schema() -> serde_json::Value {
     serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "requests": { "summary": schemars::schema_for!(SummaryRequest), "identity": schemars::schema_for!(IdentityRequest) },
         "responses": {
             "bounded": schemars::schema_for!(SummaryResult),

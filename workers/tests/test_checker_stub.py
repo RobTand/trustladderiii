@@ -18,6 +18,8 @@ def test_harness_replay_requires_full_document_equality(tmp_path, monkeypatch, k
     changed = {**document, 'facts': {'message': 'changed'}}
     with pytest.raises(RuntimeError, match='document'):
         checker_stub.replay('local harness case', tmp_path / 'cursor', command, changed)
+    with pytest.raises(RuntimeError, match='document'):
+        checker_stub.replay('local harness case', tmp_path / 'cursor', command, {**document, 'limit': 16_384.0})
     assert not (tmp_path / 'cursor').exists()
     assert checker_stub.replay('local harness case', tmp_path / 'cursor', command, document) == row['response']
 
