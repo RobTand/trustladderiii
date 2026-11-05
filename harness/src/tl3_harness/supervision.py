@@ -24,9 +24,11 @@ _stderr_log_bytes = 0
 _redactor = Redactor(None)
 
 
-def safe_stderr(text):
+def safe_stderr(text, *, incomplete=False):
     # Match on all retained context, before sanitizing or removing any characters.
     text = _redactor.window(text, 0, len(text))
+    if incomplete:
+        text = text.partition('\n')[2]
     text = ''.join(c if c == '\n' or c.isprintable() else '?' for c in text)
     return '\n'.join(line[-MAX_STDERR_LINE_CHARS:] for line in text.split('\n'))[-MAX_STDERR_CHARS:]
 
@@ -130,9 +132,9 @@ class Supervised:
     def capture_stderr(self, chunk):
         context = self.stderr_tail + chunk
         # A prior byte cut may have removed a credential's label or token prefix.
-        # Omit that entire incomplete line until its newline, even if it looks harmless.
-        visible = context.partition(b'\n')[2] if self.stderr_boundary else context
-        self.stderr_diagnostic = safe_stderr(visible.decode('utf-8', errors='replace'))
+        # Redact with that line's remaining context before omitting it conservatively.
+        self.stderr_diagnostic = safe_stderr(context.decode('utf-8', errors='replace'),
+                                             incomplete=self.stderr_boundary)
         if self.stderr_boundary and not self.stderr_diagnostic:
             self.stderr_diagnostic = '[stderr omitted: incomplete capture boundary]'
         # The shared redactor saw the complete retained context before this byte cut.

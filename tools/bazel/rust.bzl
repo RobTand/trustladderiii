@@ -67,6 +67,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/direct_merge": 8,
     "tl3-controller/quota_hold": 16,
     "tl3-controller/input_resources": 10,
+    "tl3-controller/stderr_incidents": 5,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/p5_checker": 14,
