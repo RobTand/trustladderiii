@@ -11,7 +11,9 @@ SCHEMAS = files("tl3_workers").joinpath("schemas")
 
 
 def test_schema_inventory():
-    assert sorted(path.name for path in SCHEMAS.iterdir() if path.name.endswith(".json")) == sorted(BASE["schemas"])
+    # #832 adds a separate worker event contract, outside every model prompt.
+    expected = set(BASE["schemas"]) | {"plan-check-provenance.json"}
+    assert {path.name for path in SCHEMAS.iterdir() if path.name.endswith(".json")} == expected
 
 
 @pytest.mark.parametrize("name", BASE["schemas"])
