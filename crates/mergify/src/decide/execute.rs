@@ -2,6 +2,8 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Receipt {
     Confirmed,
@@ -10,12 +12,16 @@ pub enum Receipt {
     Absent,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReceiptStage {
     Initial,
     Final,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReceiptAction {
     ReadRecord,
@@ -53,6 +59,8 @@ pub fn receipt(stage: ReceiptStage, read: Receipt, recorded: Option<bool>) -> Re
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionQueue {
     Merged,
@@ -61,6 +69,8 @@ pub enum AdmissionQueue {
     Other,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AckRead {
     pub current: bool,
@@ -73,6 +83,8 @@ pub struct AckRead {
     pub check_changed: bool,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AckDecision {
     Retryable,
@@ -118,6 +130,8 @@ pub fn acknowledgement(read: AckRead) -> AckDecision {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DequeueProbe {
     Clear,
@@ -173,6 +187,8 @@ pub fn dequeue_fresh(
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PersonProbe {
     RepairedHead,
@@ -220,6 +236,8 @@ pub fn latest_event(previous: u64, event: u64) -> u64 {
     if event > previous { event } else { previous }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntentBoundary {
     Save,
@@ -235,6 +253,8 @@ pub fn intent_boundaries() -> [IntentBoundary; 2] {
     [IntentBoundary::Save, IntentBoundary::Fence]
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LabelDecision {
     IntentMissing,
@@ -260,5 +280,27 @@ pub fn label(intent: bool, current: bool, open: bool, merged: bool) -> LabelDeci
         LabelDecision::Closed
     } else {
         LabelDecision::Write
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BaselineIntent {
+    Label,
+    Requeue,
+}
+
+/// H2 / #608: the original issue-label sample chooses a fresh intent's mode.
+/// Full Boolean domain; an existing intent bypasses construction entirely.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    (out == BaselineIntent::Requeue) == queue_label,
+    (out == BaselineIntent::Label) == !queue_label,
+))]
+pub fn baseline_intent(queue_label: bool) -> BaselineIntent {
+    if queue_label {
+        BaselineIntent::Requeue
+    } else {
+        BaselineIntent::Label
     }
 }

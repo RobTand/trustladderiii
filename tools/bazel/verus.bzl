@@ -177,7 +177,7 @@ def verus_proofs():
         native.exports_files(["src/decide/execute.rs"])
     if native.package_name() == "crates/controller":
         for name, module, count in [
-            ("core", "execute", 9),
+            ("core", "execute", 10),
             ("witnesses", "witnesses", 5),
         ]:
             verus_test(

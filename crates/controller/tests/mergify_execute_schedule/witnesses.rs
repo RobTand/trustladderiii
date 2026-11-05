@@ -88,6 +88,10 @@ fn person_and_baseline_are_reachable() {
     assert(fresh);
     let stale = person_fresh(Some(2), 2);
     assert(!stale);
+    let label = baseline_intent(false);
+    assert(label == BaselineIntent::Label);
+    let requeue = baseline_intent(true);
+    assert(requeue == BaselineIntent::Requeue);
     let first = latest_event(0, 7);
     let next = latest_event(first, 3);
     assert(next == 7);

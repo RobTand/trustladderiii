@@ -1119,11 +1119,12 @@ impl Executor for Adapter {
                     .iter()
                     .map(|event| event.id)
                     .fold(0, tl3_mergify::decide::execute::latest_event),
-                requeue: issue
-                    .labels
-                    .iter()
-                    .any(|label| label.name == QUEUE_LABEL)
-                    .then_some(Requeue::Ready),
+                requeue: match tl3_mergify::decide::execute::baseline_intent(
+                    issue.labels.iter().any(|label| label.name == QUEUE_LABEL),
+                ) {
+                    tl3_mergify::decide::execute::BaselineIntent::Label => None,
+                    tl3_mergify::decide::execute::BaselineIntent::Requeue => Some(Requeue::Ready),
+                },
             },
         };
         let (prepared, effects) = lifecycle::decide(
