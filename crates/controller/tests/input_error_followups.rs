@@ -969,3 +969,120 @@ fn stored_repository_in_translator_has_fatal_decode_error() {
         "stored repository decoding inside a translator must use a fatal error"
     );
 }
+
+/// #838 / Q7: corrupt request-local evidence must not kill the controller.
+fn malformed_review_fixes(mut record: serde_json::Value) {
+    let mut db = support::Database::start();
+    let settings = db.create("malformed_review_fixes");
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("hold-merges"), "").unwrap();
+    let mut c = open(&settings, root.path());
+    c.intake(issue()).unwrap();
+    for _ in 0..200 {
+        if c.world().unwrap().nodes[0].phase == tl3_kernel::Phase::Queued {
+            break;
+        }
+        assert!(c.drive_once().unwrap());
+    }
+    assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::Queued);
+    c.observe(
+        "rebase",
+        Observation::Kernel(Event::Fact {
+            node: NodeId(0),
+            fact: tl3_kernel::Fact::Conflict,
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes[0].phase,
+        tl3_kernel::Phase::Rebasing
+    );
+    let mut other = issue();
+    other.delivery = "other-label".into();
+    other.number = 13;
+    c.intake(other).unwrap();
+    let snapshot = c.snapshot().unwrap();
+    let head = c.world().unwrap().nodes[0].head.unwrap();
+    record["head_sha"] = json!(
+        snapshot
+            .interned
+            .iter()
+            .find(|i| i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64)
+            .unwrap()
+            .value
+    );
+    let mut commit = Commit::new("seed-review-fixes", json!(null), &snapshot);
+    commit.rows.push(RowChange::Put {
+        table: "review_fixes".into(),
+        id: "0".into(),
+        value: record.clone(),
+    });
+    Store::open(&settings).unwrap().commit(&commit).unwrap();
+    let observation = Observation::CheckPlan {
+        node: NodeId(0),
+        sha: "a".repeat(40),
+        run: serde_json::from_value(json!({"repository":"/served", "base_sha":"b".repeat(40),
+            "plan":[], "reproducing_unavailable":"original tree unavailable"}))
+        .unwrap(),
+    };
+    c.observe("corrupt-plan", observation.clone()).unwrap();
+    assert!(c.drive_once().unwrap());
+    let incidents = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.table == "incidents")
+            .collect::<Vec<_>>()
+    };
+    let first = incidents(&mut c);
+    assert_eq!(first.len(), 1, "malformed evidence needs one incident");
+    assert_eq!(first[0].value["node"], 0);
+    assert_eq!(first[0].value["open"], true);
+    assert_eq!(first[0].value["blocking"], false);
+    assert_eq!(first[0].value["signature"]["class"], "setup");
+    assert_eq!(
+        Store::open(&settings)
+            .unwrap()
+            .worker_document("0", "review_fixes")
+            .unwrap(),
+        Some(record)
+    );
+    // Let the existing adapter record its single posting attempt.
+    assert!(c.drive_once().unwrap());
+    c.observe("same-corrupt-plan", observation).unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        incidents(&mut c).len(),
+        1,
+        "identical evidence must deduplicate"
+    );
+    c.observe(
+        "other-progress",
+        Observation::Kernel(Event::Fact {
+            node: NodeId(1),
+            fact: tl3_kernel::Fact::Priority(tl3_kernel::Priority::P1),
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(
+        c.world().unwrap().nodes[1].priority,
+        tl3_kernel::Priority::P1
+    );
+    assert_eq!(incidents(&mut c).len(), 1);
+}
+
+#[test]
+fn missing_review_fix_findings_is_a_request_incident() {
+    malformed_review_fixes(json!({"head_sha":null,"reviewed_sha":null}));
+}
+#[test]
+fn non_array_review_fix_findings_is_a_request_incident() {
+    malformed_review_fixes(json!({"head_sha":null,"reviewed_sha":null,"findings":{}}));
+}
+#[test]
+fn non_object_review_fix_finding_is_a_request_incident() {
+    malformed_review_fixes(json!({"head_sha":null,"reviewed_sha":null,"findings":[42]}));
+}
