@@ -62,9 +62,11 @@ pub struct ChecksDecision {
     pub pass: bool,
 }
 
-/// Q41, docs/state-machine.md:132; docs/state-table.md:509-510,584 on 751c00ac.
-/// Checks on a stale head cannot pass. The generation/job evidence-write guard is
-/// preserved existing behaviour (no rule). Equalities cover all u64 generations.
+/// Reply rule, docs/state-table.md:139; Q41, docs/state-machine.md:132 on 751c00ac.
+/// Checking rows :509-510 and rebase row :584 give outcome context. Checks on
+/// a stale head cannot pass; only the current job/generation records evidence.
+/// The precise persistence guard preserves existing behaviour (no rule).
+/// Equalities cover all u64 generations.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
     result.record == (job == Some(observed) && current == observed && exact_head),
     result.pass == (passed && exact_head),
