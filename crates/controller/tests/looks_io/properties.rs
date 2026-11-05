@@ -150,6 +150,7 @@ fn differential_schedules() {
         .run(&strategy, |(bits, frames, writes, steps)| {
             let s = Schedule {
                 frames,
+                overrides: vec![],
                 writes,
                 entries: steps
                     .into_iter()
@@ -200,6 +201,14 @@ fn source_pins_and_production_copies() {
         format!("{:x}", Sha256::digest(base.as_bytes())),
         "2ad7e468cb0a8d3d22cfe5511b0aa6193cb8236dbca7f8fd7f10a7784b315bee"
     );
+    assert_eq!(
+        function(include_str!("../../src/looks.rs"), "stall_upstream", false),
+        function(include_str!("current.rs"), "stall_upstream", false)
+    );
+    assert_eq!(
+        function(include_str!("../../src/looks.rs"), "incident_view", false),
+        function(include_str!("current.rs"), "incident_view", false)
+    );
     for (source, copy) in [
         (base, include_str!("reference.rs")),
         (
@@ -239,5 +248,62 @@ fn source_pins_and_production_copies() {
                 "{name}"
             );
         }
+    }
+}
+
+/// Q7, state-table.md:272-275 / #356: the late probe uses a fresh store load.
+#[test]
+fn mandatory_reprobe_and_probe_outcomes() {
+    for probe in [0, 1, 240, 241, 248] {
+        let r = io::compare(&Schedule {
+            failures: 1,
+            entries: vec![Entry::State],
+            overrides: vec![("probe".into(), 0, probe)],
+            ..Schedule::default()
+        });
+        assert!(r.trace.iter().any(|(op, _)| op == "look"));
+        assert!(r.trace.iter().any(|(op, _)| op == "probe"));
+        if probe == 0 {
+            assert_eq!(state(&r)["healthy"], true);
+            let incident: Value = serde_json::from_slice(
+                r.files
+                    .iter()
+                    .find(|(k, _)| k.starts_with("incidents/"))
+                    .unwrap()
+                    .1,
+            )
+            .unwrap();
+            assert_eq!(incident["open"], false);
+        }
+        // Maintenance absorbs a probe error and rearms; own-effect probing calls look_failed.
+        for maintenance in [true, false] {
+            io::compare(&Schedule {
+                incident: true,
+                maintenance,
+                entries: vec![Entry::State],
+                overrides: vec![("probe".into(), 0, probe)],
+                ..Schedule::default()
+            });
+        }
+    }
+}
+
+/// State-table.md:577 / #356: a worker stops; upstream queue stalls keep distinct classes.
+#[test]
+fn mandatory_worker_and_queue_stalls() {
+    for (worker, progress, expected) in [
+        (true, false, "no_progress"),
+        (false, false, "queue_unfinished"),
+        (false, true, "queue_requeue"),
+    ] {
+        let r = io::compare(&Schedule {
+            worker,
+            progress,
+            entries: vec![Entry::Alive(false)],
+            ..Schedule::default()
+        });
+        assert_eq!(state(&r)["failure"], expected);
+        assert_eq!(r.trace.iter().any(|(op, _)| op == "stop_stalled"), worker);
+        assert_eq!(r.trace.iter().any(|(op, _)| op == "observe"), !worker);
     }
 }

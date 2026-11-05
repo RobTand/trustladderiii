@@ -14,6 +14,7 @@ pub(super) enum Entry {
 #[derive(Clone, Debug, Default)]
 pub(super) struct Schedule {
     pub frames: Vec<(u8, u32)>,
+    pub overrides: Vec<(String, usize, u8)>,
     pub writes: Vec<u8>,
     pub entries: Vec<Entry>,
     pub failures: u8,
@@ -59,6 +60,13 @@ pub(super) fn record(op: &str, value: Value) {
 pub(super) fn read(op: &str, args: Value) -> Result<u8> {
     let word = with(|r| {
         let (word, delta) = r.schedule.frames.get(r.reads).copied().unwrap_or((0, 1000));
+        let nth = r.trace.iter().filter(|(name, _)| name == op).count();
+        let word = r
+            .schedule
+            .overrides
+            .iter()
+            .find(|(name, n, _)| name == op && *n == nth)
+            .map_or(word, |(_, _, word)| *word);
         r.reads += 1;
         r.now = r.now.saturating_add(u64::from(delta));
         r.trace.push((op.into(), json!([args, word, r.now])));
@@ -156,9 +164,8 @@ impl Store {
     }
     pub fn effect(&self, key: &str) -> Result<Option<Effect>> {
         let word = read("store.effect", json!(key))?;
-        if word & 8 != 0 {
-            return Ok(None);
-        }
+        // An allowance's delivery always has an effect. Vary state and errors,
+        // while preserving that store invariant required by look_state's expects.
         Ok(Some(Effect {
             key: key.into(),
             epoch: tl3_store::Epoch::try_from(1).unwrap(),
@@ -352,7 +359,7 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
         for &entry in &s.entries {
             let snap = snapshot();
             let result = if new {
-                panic!("D1 new shell is stubbed for RED")
+                super::current::run(entry, &mut state, &snap)
             } else {
                 super::reference::run(entry, &mut state, &snap)
             };

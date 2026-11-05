@@ -1,1 +1,2 @@
 # Seeds persisted by proptest. Fixed primary seed: 0x00d1_0760_2026.
+cc 0000000000000000000000000000000000000000000000000000000000000001 # deterministic replay alongside the primary seed
