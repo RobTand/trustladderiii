@@ -421,40 +421,45 @@ impl Shell {
     }
 }
 
-macro_rules! frozen_boundary {
-    (reference) => {
-        mod tl3_mergify {
-            pub mod decide {
-                pub use crate::schedule::base_core as translate;
-            }
+mod reference {
+    use super::*;
+    pub(super) struct Shell(pub(super) super::Shell);
+    impl std::ops::Deref for Shell {
+        type Target = super::Shell;
+        fn deref(&self) -> &Self::Target {
+            &self.0
         }
-        include!("reference-evidence.rs");
-    };
-    (current) => {};
-}
-macro_rules! shell {
-    ($module:ident, $file:literal) => {
-        mod $module {
-            use super::*;
-            pub(super) struct Shell(pub(super) super::Shell);
-            impl std::ops::Deref for Shell {
-                type Target = super::Shell;
-                fn deref(&self) -> &Self::Target {
-                    &self.0
-                }
-            }
-            impl std::ops::DerefMut for Shell {
-                fn deref_mut(&mut self) -> &mut Self::Target {
-                    &mut self.0
-                }
-            }
-            frozen_boundary!($module);
-            include!($file);
+    }
+    impl std::ops::DerefMut for Shell {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
         }
-    };
+    }
+    mod tl3_mergify {
+        pub mod decide {
+            pub use crate::schedule::base_core as translate;
+        }
+    }
+    include!("reference-evidence.rs");
+    include!("reference.rs");
 }
-shell!(reference, "reference.rs");
-shell!(current, "current.rs");
+
+mod current {
+    use super::*;
+    pub(super) struct Shell(pub(super) super::Shell);
+    impl std::ops::Deref for Shell {
+        type Target = super::Shell;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl std::ops::DerefMut for Shell {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+    include!("current.rs");
+}
 
 fn base_snapshot() -> Snapshot {
     let row = |table: &str, id: &str, value| tl3_store::WorldRow {

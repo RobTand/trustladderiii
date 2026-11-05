@@ -1,5 +1,5 @@
 //! CC-T: the base and current Queue shells share one scripted store boundary.
-#![allow(dead_code, unused_imports)] // Checked verbatim copies retain unrelated match arms.
+#![allow(dead_code, unused_imports, unused_mut)] // Checked verbatim copies retain unrelated match arms.
 #[path = "queue_translate_schedule/mod.rs"]
 mod schedule;
 pub use schedule::{Error, Result, adapters, decode_stored, findings, looks, request};
