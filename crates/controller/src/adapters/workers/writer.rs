@@ -131,6 +131,8 @@ impl Writer for ProcessWriter {
             }
             return Err(error);
         }
+        #[cfg(test)]
+        super::input_contract_tests::assert_typed_input("writer", &serde_json::to_value(input)?);
         let mut request = json!({"protocol":1,"operation":operation,"trace":trace,
             "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
             "inputs":input,"worktree":root});
