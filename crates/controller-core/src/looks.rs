@@ -2,6 +2,8 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IncidentCause {
     Kernel { needs_rob: bool },
@@ -33,6 +35,8 @@ pub fn probe_allowed(open: bool, needs_rob: bool) -> bool {
     open && !needs_rob
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IncidentView {
     pub needs_rob: bool,
@@ -40,6 +44,8 @@ pub struct IncidentView {
     pub own_effect: bool,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IncidentAction {
     Continue,
@@ -101,6 +107,8 @@ pub fn count_failure(last: Option<u64>, now: u64, period: u64) -> bool {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FailureCount {
     pub failures: u8,
@@ -148,6 +156,8 @@ pub fn stalled(now: u64, progress: u64, allowance: u64) -> bool {
     now.saturating_sub(progress) >= allowance
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StallUpstream {
     Workers,
@@ -157,6 +167,8 @@ pub enum StallUpstream {
     Worktrees,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StallAction {
     StopWorker,
