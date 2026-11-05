@@ -1,6 +1,6 @@
 # G2a2 recorded translate boundary
 
-The old WorktreePrepared and Checks arms are verbatim from 751c00acfcfce94f6cebf62447776e0a44b3e520. The old CheckPlan arm is pinned to the pre-#838 production arm at aa391e4933, recorded in pins.json.
+The three old Observation arms are verbatim from 751c00acfcfce94f6cebf62447776e0a44b3e520.
 Current copies are compared byte-for-byte with production by the pinned test.
 Each side independently compiles its complete arm plus the unchanged head,
 request, commit_sha and decode_stored functions. Unchanged maker-input, goal,
