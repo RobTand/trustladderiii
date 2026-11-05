@@ -3298,11 +3298,13 @@ impl Controller {
                 failure_class,
                 failure_message,
             } => {
+                use tl3_controller_core::translate_worker as worker;
                 let n = world
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if n.run != Some(generation) || n.generation != generation {
+                if worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                {
                     return Ok(None);
                 }
                 commit.rows.push(put(
@@ -3326,22 +3328,36 @@ impl Controller {
                 mut reply,
                 model,
             } => {
+                use tl3_controller_core::translate_worker as worker;
                 let n = world
                     .nodes
                     .get(node.0 as usize)
                     .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if n.run != Some(generation) || n.generation != generation {
+                if worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                {
                     return Ok(None);
                 }
-                let valid_role = matches!(
-                    (n.phase, role.as_str()),
-                    (tl3_kernel::Phase::Ingesting, "ingest")
-                        | (tl3_kernel::Phase::Auditing, "audit")
-                        | (tl3_kernel::Phase::Making, "maker")
-                        | (tl3_kernel::Phase::Planning { .. }, "planner")
-                        | (tl3_kernel::Phase::Reviewing, "reviewer")
-                );
+                let phase = match n.phase {
+                    tl3_kernel::Phase::Ingesting => worker::Phase::Ingesting,
+                    tl3_kernel::Phase::Auditing => worker::Phase::Auditing,
+                    tl3_kernel::Phase::Planning { .. } => worker::Phase::Planning,
+                    tl3_kernel::Phase::Making => worker::Phase::Making,
+                    tl3_kernel::Phase::Reviewing => worker::Phase::Reviewing,
+                    _ => worker::Phase::Other,
+                };
+                let worker_role = match role.as_str() {
+                    "ingest" => worker::Role::Ingest,
+                    "audit" => worker::Role::Audit,
+                    "planner" => worker::Role::Planner,
+                    "maker" => worker::Role::Maker,
+                    "reviewer" => worker::Role::Reviewer,
+                    "writer" => worker::Role::Writer,
+                    "classifier" => worker::Role::Classifier,
+                    "postmortem" => worker::Role::Postmortem,
+                    _ => worker::Role::Unknown,
+                };
+                let valid_role = worker::valid_role(phase, worker_role);
                 let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
                     Ok(reply) if valid_role => reply,
                     _ => {
@@ -3426,13 +3442,25 @@ impl Controller {
                             "blocking_findings":reply["blocking_findings"]}),
                         ),
                     ));
-                    if reply["verdict"] == "approve" {
-                        mapped =
-                            adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
-                                head: n.head.ok_or(Error::Invalid("review has no head"))?,
-                            });
+                    let verdict = match reply["verdict"].as_str() {
+                        Some("approve") => worker::ReviewVerdict::Approve,
+                        Some("changes") => worker::ReviewVerdict::Changes,
+                        _ => worker::ReviewVerdict::Other,
+                    };
+                    let route = worker::review_route(verdict, n.head.map(|head| head.0));
+                    match route {
+                        worker::ReviewRoute::Approve(head) => {
+                            mapped =
+                                adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
+                                    head: HeadId(head),
+                                });
+                        }
+                        worker::ReviewRoute::MissingHead => {
+                            return Err(Error::Invalid("review has no head"));
+                        }
+                        _ => {}
                     }
-                    if reply["verdict"] == "changes" {
+                    if route == worker::ReviewRoute::Changes {
                         let mut feedback = self
                             .store
                             .worker_document(&node.0.to_string(), "maker_findings")?
@@ -3440,22 +3468,35 @@ impl Controller {
                         let reports = feedback
                             .as_array_mut()
                             .ok_or(Error::Invalid("invalid maker findings"))?;
-                        let mut remaining = findings::MAX_REPORT_CHARS;
-                        for (index, finding) in blockers
+                        let formatted: Vec<_> = blockers
                             .iter()
                             .take(findings::MAX_REVIEW_FINDINGS)
-                            .enumerate()
+                            .map(|finding| {
+                                format!(
+                                    "{}: {}",
+                                    findings::clipped(
+                                        &finding.problem,
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                    findings::clipped(
+                                        &finding.evidence,
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                )
+                            })
+                            .collect();
+                        let lengths: Vec<_> = formatted
+                            .iter()
+                            .map(|report| report.chars().count())
+                            .collect();
+                        let count = worker::findings_prefix(
+                            &lengths,
+                            findings::MAX_REVIEW_FINDINGS,
+                            findings::MAX_REPORT_CHARS,
+                        );
+                        for (index, (finding, report)) in
+                            blockers.iter().zip(formatted).take(count).enumerate()
                         {
-                            let report = format!(
-                                "{}: {}",
-                                findings::clipped(&finding.problem, findings::MAX_MESSAGE_CHARS),
-                                findings::clipped(&finding.evidence, findings::MAX_MESSAGE_CHARS),
-                            );
-                            let length = report.chars().count();
-                            if length > remaining {
-                                break;
-                            }
-                            remaining -= length;
                             let goal_ids = if finding.citation.kind
                                 == adapters::workers::review::CitationKind::Goal
                             {
@@ -3488,13 +3529,12 @@ impl Controller {
                         detailed_review = true;
                     }
                 }
-                let document = match role.as_str() {
-                    "ingest" => Some("briefs"),
-                    "audit" => Some("audits"),
-                    "reviewer" => None,
-                    "maker" => Some("maker_replies"),
-                    _ => Some("plans"),
-                };
+                let document = worker::document(worker_role).map(|document| match document {
+                    worker::Document::Briefs => "briefs",
+                    worker::Document::Audits => "audits",
+                    worker::Document::MakerReplies => "maker_replies",
+                    worker::Document::Plans => "plans",
+                });
                 if role == "planner" {
                     let mut findings = self
                         .store
@@ -3576,10 +3616,12 @@ impl Controller {
                         let current = findings::current_review(&feedback, n.round, previous);
                         let reviewed = current.head;
                         let fixes = adapters::workers::reproducing::check(&reply, current);
-                        if expected != checked
-                            || checks.len() != goals.len()
-                            || crate::goals::handover(goals, &checks).is_err()
-                        {
+                        let same_goals = expected == checked;
+                        let same_count = checks.len() == goals.len();
+                        let handover_valid = same_goals
+                            && same_count
+                            && crate::goals::handover(goals, &checks).is_ok();
+                        if !worker::maker_self_check(same_goals, same_count, handover_valid) {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
                             if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
