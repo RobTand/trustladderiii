@@ -486,6 +486,59 @@ fn base_snapshot() -> Snapshot {
         }],
     }
 }
+// Snapshot histories exercise recorded identities, pending aliases, and incident clears.
+fn history_snapshot(observations: &[(u8, u8)], history: u8) -> Snapshot {
+    let mut snapshot = base_snapshot();
+    for (index, (kind, salt)) in observations.iter().enumerate() {
+        let observation = observation(*kind, *salt);
+        let Observation::Queue(fact) = &observation else {
+            unreachable!()
+        };
+        let incident = match &fact.evidence {
+            adapters::mergify::Evidence::ChecksUnavailable { permissions } => {
+                Some(looks::check_setup_incident_id(NodeId(0), &permissions[0]))
+            }
+            adapters::mergify::Evidence::CheckMissing { head, required }
+            | adapters::mergify::Evidence::CheckReported { head, required } => {
+                Some(looks::missing_check_incident_id(NodeId(0), head, required))
+            }
+            adapters::mergify::Evidence::QueueBlocked {
+                head, conditions, ..
+            } => Some(looks::queue_blocked_incident_id(
+                NodeId(0),
+                head,
+                conditions,
+            )),
+            _ => None,
+        };
+        let row = match history % 7 {
+            1 => Some(("inbox", format!("pending:{index}"), json!(observation))),
+            2 => Some(("queue_facts", fact.identity(), json!(fact))),
+            3 | 4 => incident.map(|id| ("incidents", id, json!({"open":history % 7 == 3}))),
+            5 => Some((
+                "inbox",
+                inbox_key("look", index, &observation).unwrap(),
+                json!(observation),
+            )),
+            6 => Some((
+                "inbox",
+                format!("malformed:{index}"),
+                json!({"invalid":true}),
+            )),
+            _ => None,
+        };
+        if let Some((table, id, value)) = row {
+            snapshot.rows.push(tl3_store::WorldRow {
+                table: table.into(),
+                id,
+                value,
+                version: tl3_store::Revision::ZERO,
+                arrival: 0,
+            });
+        }
+    }
+    snapshot
+}
 fn repository() -> Repository {
     Repository {
         owner: "owner".into(),
@@ -693,13 +746,14 @@ fn changing_reads_and_every_write_crash_match() {
                 proptest::collection::vec(any::<bool>(), 0..24),
                 proptest::collection::vec((0u8..11, any::<u8>()), 1..5),
                 any::<u8>(),
+                any::<u8>(),
             ),
-            |(reads, errors, observations, mode)| {
+            |(reads, errors, observations, mode, history)| {
                 compare(
                     Tape {
                         reads,
                         errors,
-                        snapshot: base_snapshot(),
+                        snapshot: history_snapshot(&observations, history),
                     },
                     &observations,
                     mode,
@@ -720,6 +774,24 @@ fn every_queue_kind_is_exercised() {
                 },
                 &[(kind, 0)],
                 mode,
+            )
+            .unwrap();
+        }
+    }
+}
+#[test]
+fn recorded_inboxed_and_cleared_histories_match() {
+    for kind in 0..11 {
+        for history in 0..7 {
+            let observations = [(kind, 0), (kind, 0)];
+            compare(
+                Tape {
+                    reads: vec![0; 64],
+                    errors: vec![],
+                    snapshot: history_snapshot(&observations, history),
+                },
+                &observations,
+                4,
             )
             .unwrap();
         }
@@ -748,12 +820,11 @@ fn compiled_shells_match_their_sources() {
     let end = "            Observation::GitHubComment {";
     let arm = |source: &str| {
         let start = source.find(start).unwrap();
-        let end = source[start..].find(end).map_or(
+        let end = source[start..].find(end).unwrap_or_else(|| {
             source[start..]
                 .find("            _ => return Ok(None),")
-                .unwrap_or(0),
-            |n| n,
-        );
+                .unwrap_or(0)
+        });
         source[start..start + end].to_owned()
     };
     assert_eq!(arm(current), arm(compiled));
