@@ -866,17 +866,17 @@ pub fn schema() -> Value {
 
 pub fn schema_text() -> String {
     use super::super::render::{Layout, render};
-    let entries: BTreeMap<String, Vec<String>> =
+    let entries: Vec<(String, Vec<String>)> =
         serde_json::from_str(include_str!("planner_reply_order.json"))
             .expect("planner key order metadata");
     let keys: Vec<Vec<&str>> = entries
-        .values()
-        .map(|keys| keys.iter().map(String::as_str).collect())
+        .iter()
+        .map(|(_, keys)| keys.iter().map(String::as_str).collect())
         .collect();
     let inline: Vec<_> = entries
-        .keys()
+        .iter()
         .zip(&keys)
-        .map(|(path, keys)| (path.as_str(), keys.as_slice()))
+        .map(|((path, _), keys)| (path.as_str(), keys.as_slice()))
         .collect();
     render(
         "planner-reply.json",
