@@ -61,16 +61,38 @@ pub fn stored_reply(settings: &tl3_config::Store) {
     let mut reply = case["reply"].clone();
     reply["files"] = json!([]);
     reply["evidence_contract"] = json!([]);
+    reply["forecast"] = tl3_controller::budget::decide(tl3_controller::budget::Request::Forecast {
+        brief_tokens: 1_000,
+        file_tokens: Default::default(),
+        overhead_tokens: 0,
+        fit_tokens: 100_000,
+        context_tokens: 150_000,
+        problems: 0,
+    })
+    .unwrap();
     let stdout = format!(
         "{}\n",
         json!({"event":"reply","role":"ingest","reply":reply})
     );
     fs::write(attempt.join("stdout.jsonl"), &stdout).unwrap();
     for capabilities in [None, Some(json!([]))] {
-        let mut inputs = json!({"issue":case["issue"]});
+        let mut inputs = json!({"issue":case["issue"], "forecast":{
+            "fit_tokens":100_000,"context_tokens":150_000,"overhead_tokens":{}
+        }});
         if let Some(capabilities) = capabilities {
             inputs["tool_capabilities"] = capabilities;
         }
+        let mut control = inputs.clone();
+        control["issue"]["body"] = json!("Return hello.");
+        fs::write(
+            attempt.join("request.json"),
+            json!({"role":"ingest","inputs":control}).to_string(),
+        )
+        .unwrap();
+        assert!(
+            !failed(&terminal(&mut supervisor, &run)),
+            "schema-valid stored control reply was rejected"
+        );
         fs::write(
             attempt.join("request.json"),
             json!({"role":"ingest","inputs":inputs}).to_string(),
@@ -89,6 +111,7 @@ pub fn stored_reply(settings: &tl3_config::Store) {
             checked["brief"], reply["brief"],
             "stored draft and forecast stay intact"
         );
+        assert_eq!(checked["forecast"], reply["forecast"]);
         assert_eq!(
             fs::read_to_string(attempt.join("stdout.jsonl")).unwrap(),
             stdout
