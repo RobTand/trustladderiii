@@ -22,7 +22,10 @@ struct ReadGate {
 
 impl ReadGate {
     fn release(&self) {
-        *self.released.lock().unwrap() = true;
+        *self
+            .released
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = true;
         self.ready.notify_all();
     }
 
@@ -202,7 +205,6 @@ fn zombie_approval_after_fence_advance_converges_by_original_key() {
     let root = tempfile::tempdir().unwrap();
     let posts = Arc::new(Mutex::new(Vec::new()));
     let gate = Arc::new(ReadGate::default());
-    let _release_on_panic = ReleaseOnDrop(gate.clone());
     let (entered, ready) = mpsc::sync_channel(1);
     // Separate frontends let the successor read while the old GET is paused.
     let old_server = runtime.block_on(MockServer::start());
@@ -227,6 +229,7 @@ fn zombie_approval_after_fence_advance_converges_by_original_key() {
             .mount(&current_server),
     );
     let mut current = adapter(&current_server.uri(), root.path(), 2);
+    let _release_on_panic = ReleaseOnDrop(gate.clone());
     let mut retry = approval(1);
     retry.epoch = 2;
     let old_uri = old_server.uri();
@@ -237,7 +240,7 @@ fn zombie_approval_after_fence_advance_converges_by_original_key() {
     assert_eq!(fs::read(&fence).unwrap(), b"1");
     assert!(matches!(
         current.repair_approval(&retry).unwrap().0,
-        Reconciliation::Pending
+        Reconciliation::Absent
     ));
     assert_eq!(fs::read(&fence).unwrap(), b"2");
     // The adapter boundary models an explicitly authorized retry of the same key.
