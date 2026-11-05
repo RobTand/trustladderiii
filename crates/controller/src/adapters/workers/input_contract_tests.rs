@@ -488,3 +488,52 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             .any(|v| v.starts_with("reviewer:Reviewing:1"))
     );
 }
+
+#[path = "../../../tests/support/input_resource_world.rs"]
+mod resource_world;
+
+/// Q7/Q51/#833: the retry sees the rejected declaration before producing its next reply.
+#[test]
+fn ingest_validation_retry_receives_the_safe_kind_diagnostic() {
+    let mut w = resource_world::World::new();
+    w.reply("pull_request", 2713);
+    let retry = w.launches.lock().unwrap().last().unwrap().clone();
+    assert_eq!(retry.generation, 1);
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = w.settings.clone();
+    config.workers.runs = w.root.path().join("runs");
+    config.models.key_file = w.root.path().join("fixture-key");
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &w.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
+    let mut store = Store::open(&w.settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let request = supervisor
+        .request(&retry, "ingest", &mut store, &snapshot)
+        .unwrap();
+    assert_eq!(
+        request["inputs"]["audit_objections"],
+        json!([
+            "Requested GitHub pull request owner/sandbox#2713; observed GitHub issue owner/sandbox#2713. The prerequisite declaration must be corrected."
+        ]),
+        "the actual next ingest input must explain its rejected kind"
+    );
+    // No corrected reply exists until the input above has been inspected.
+    w.reply("issue", 2713);
+    assert_eq!(
+        w.controller.world().unwrap().nodes[0].phase,
+        Phase::Auditing
+    );
+    let accepted = w.controller.snapshot().unwrap();
+    assert!(
+        !accepted
+            .rows
+            .iter()
+            .any(|row| row.table == "input_resource_contexts")
+    );
+}
