@@ -139,25 +139,29 @@ pub open spec fn stop_trace(witness: (Phase, Option<ReviewStop>, Seq<ReportEntry
 
 /// Excludes exactly the report behavior owned by the fact path: its stop
 /// entries and CiFailed failed-round entry. Neither exclusion covers replies,
-/// commands, acknowledgements, or settlement.
+/// commands, acknowledgements, or settlement. A Fact event retains the length,
+/// new-node, and other-node phase frames. Its unconstrained post-fact report
+/// is the boundary input to the same proven settlement relation used elsewhere.
 #[verifier::opaque]
 pub closed spec fn agrees_except_fact_stops_and_ci_failed(event: Event,
     before: Seq<Phase>, after: Seq<Phase>, input: ReplyInput,
     r0: Seq<ReportEntry>, r1: Seq<ReportEntry>) -> bool {
-    if event is Fact { true } else {
-        before.len() <= after.len() <= before.len() + 1
+    before.len() <= after.len() <= before.len() + 1
         && (forall|j: int| 0 <= j < before.len()
             && event_target(event) != Some(NodeId(j as u64))
             ==> terminal_phase_frame(before[j], after[j]))
         && (forall|j: int| before.len() <= j < after.len()
             ==> !(after[j] is Stopping || after[j] is Closed))
-        && match event_target(event) {
+        && if event is Fact {
+            exists|fact_result: (Seq<Phase>, Seq<ReportEntry>)|
+                fact_result.0.len() == before.len()
+                && settled_forwards(fact_result.0, after, fact_result.1, r1)
+        } else { match event_target(event) {
             Some(node) if node.0 < before.len() =>
                 exists|witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>)|
                     stop_trace(witness, event, node, before[node.0 as int], after[node.0 as int], input, r0, r1),
             _ => forwards(r0, r1, Seq::empty()),
-        }
-    }
+        } }
 }
 
 #[verifier::opaque]
@@ -206,17 +210,6 @@ match phase {
         }
 }
 
-/// The CiFailed failed-round prefix is unproven, owner K3 #907.
-/// Stop entries remain required, including when the failed-round prefix is excluded.
-#[verifier::opaque]
-pub(super) closed spec fn agrees_except_ci_failed(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
-    node: NodeId, before: Phase, after: Phase, cause: StopCause,
-    entries: Seq<ReportEntry>, ci_gap: bool) -> bool {
-    exists|middle: Seq<ReportEntry>| (ci_gap || forwards(r0, middle, entries))
-        && #[trigger] stop_cause(middle, r1, node, before, after, cause)
-}
-
-
 #[verifier::opaque]
 pub(super) closed spec fn round_entries(node: NodeId, cause: Option<FailedRoundCause>) -> Seq<ReportEntry> {
     match cause {
@@ -247,20 +240,6 @@ pub(super) closed spec fn work_failure(reply: Reply) -> Option<FailedRoundCause>
     }
 }
 
-#[verifier::opaque]
-pub(super) closed spec fn ci_failure(phase: Phase, current: Option<Item>, infra: bool)
-    -> Option<FailedRoundCause> {
-    if !infra && (phase == Phase::Queued
-        || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue))) {
-        Some(FailedRoundCause::CiFailed)
-    } else { None }
-}
-
-#[verifier::opaque]
-pub(super) closed spec fn fact_failure(phase: Phase, current: Option<Item>, fact: Fact)
-    -> Option<FailedRoundCause> {
-    match fact { Fact::CiFailed { infra } => ci_failure(phase, current, infra), _ => None }
-}
 #[verifier::opaque]
 pub closed spec fn reply_kind(reply: Reply) -> ReplyKind {
 match reply {

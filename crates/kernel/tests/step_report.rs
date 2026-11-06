@@ -170,6 +170,61 @@ fn ci_failure_reports_only_a_work_failure() {
 }
 
 #[test]
+fn ci_failure_before_enqueue_reports_exactly_one_failed_round() {
+    let mut run = Run::new();
+    run.reviewing();
+    run.reply(Reply::Approved { head: HEAD });
+    for _ in 0..64 {
+        let effect = run.world.nodes[0].effect.expect("publishing effect");
+        if effect.kind == EffectKind::Enqueue {
+            assert_eq!(run.world.nodes[0].phase, Phase::Publishing);
+            run.fact(Fact::CiFailed { infra: false });
+            assert_eq!(
+                run.report.entries,
+                vec![ReportEntry::FailedRound {
+                    node: NodeId(0),
+                    cause: FailedRoundCause::CiFailed,
+                }]
+            );
+            return;
+        }
+        run.send(Event::Ack {
+            node: NodeId(0),
+            seq: effect.seq,
+            ack: Ack::Confirmed,
+        });
+    }
+    panic!("publishing never reached Enqueue");
+}
+
+#[test]
+fn ci_failure_reports_its_fact_path_review_stop() {
+    let mut run = Run::new();
+    run.queued();
+    run.fact(Fact::CiFailed { infra: false });
+    run.reply(Reply::MakerDone { head: HEAD });
+    run.reply(PASS);
+    run.reply(Reply::Approved { head: HEAD });
+    run.confirm();
+    assert_eq!(run.world.nodes[0].phase, Phase::Queued);
+    run.world.fail_fast = true;
+    run.fact(Fact::CiFailed { infra: false });
+    assert_eq!(
+        run.report.entries,
+        vec![
+            ReportEntry::FailedRound {
+                node: NodeId(0),
+                cause: FailedRoundCause::CiFailed,
+            },
+            ReportEntry::Stopped {
+                node: NodeId(0),
+                cause: StopCause::ReviewStop(ReviewStop::CiFailed),
+            },
+        ]
+    );
+}
+
+#[test]
 fn ci_failure_outside_the_failed_round_phases_has_no_entry() {
     let mut run = Run::new();
     run.making();

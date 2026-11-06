@@ -176,7 +176,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             if let Some(i) = w.index(node) {
                 let after = w.nodes[i].phase;
                 let cause = StopCause::from_phase(after, w.nodes[i].review_stop,
-                    matches!(event, Event::Fact { fact: Fact::PrClosedByPerson, .. }),
+                    false,
                     matches!(event, Event::Command { command: Command::Stop, .. }
                         | Event::Command { command: Command::Answer { answer: Answer::Stop, .. }, .. }));
                 report.record_stop(node, before, after, cause);
@@ -188,13 +188,13 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
         _ => None,
     } }
     kernel_proof! {
-        if !(event is Fact) {
+        {
             assert forall|j: int| 0 <= j < before_apply@.nodes@.len()
                 && report::event_target(event) != Some(NodeId(j as u64))
                 implies report::terminal_phase_frame(before_apply@.nodes@[j].phase, w.nodes@[j].phase) by {
                 report::lemmas::phase_refl(before_apply@.nodes@[j].phase);
             }
-            if !(event is Reply) { report::lemmas::unchanged(report_before@); }
+            if !(event is Fact) && !(event is Reply) { report::lemmas::unchanged(report_before@); }
             if match report::event_target(event) { Some(node) => node.0 >= before_apply@.nodes@.len(), _ => true } {
                 report::lemmas::unchanged(report_before@);
             }
