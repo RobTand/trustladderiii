@@ -350,11 +350,15 @@ impl Flux {
         terminal: &Terminal,
     ) -> Result<WorkerPayload> {
         let report = self.verified_report(owner, terminal)?;
-        if !matches!(report.suite, Suite::WorkerTests { .. } | Suite::Generator { .. })
-            || report.outcome != ReportOutcome::WorkerPayloadCompleted
+        if !matches!(
+            report.suite,
+            Suite::WorkerTests { .. } | Suite::Generator { .. }
+        ) || report.outcome != ReportOutcome::WorkerPayloadCompleted
         {
             return Err(invalid());
         }
-        report.worker_payload.ok_or_else(|| BackendError::invalid("verified worker payload absent"))
+        report
+            .worker_payload
+            .ok_or_else(|| BackendError::invalid("verified worker payload absent"))
     }
 }
