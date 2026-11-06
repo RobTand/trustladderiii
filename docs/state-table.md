@@ -323,8 +323,8 @@ a completed, code-owned plan-check rejection stops for TL3 review under both
 `fail_fast` settings. A size or execution-fit result records that decomposition
 is required and uses the same question-free stop in part 1; no child executes.
 Both endings retain objection and repair-attempt evidence and spend no credit.
-The worker's one constrained correction remains in its existing run and
-format-repair allowance. Work-failure retries, genuine owner decisions,
+Before completion, every named objection gets the available constrained
+correction in the existing run and shared format-repair allowance. Work-failure retries, genuine owner decisions,
 protected-path handling and Q50 infrastructure recovery retain their paths.
 
 The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
@@ -422,52 +422,63 @@ goals and forecast settings:
   check harness refuses to run changed. `**` matches zero or more path
   segments, including a root `conftest.py`.
 
-Before completing a leaf reply, the planner may use its existing single
-tool-free correction when its only defects are an edited test absent from
-demonstrating checks or a forced demonstrating check naming tests absent from
-the base. This is the Q27/Q54 exception Rob approved on 2026-11-03, linked above.
-The correction stays in the same worker run and accounting limits and uses
-only already-read facts. It stays bound to the original draft's files, goals,
-existing check kinds and forcings. It may only add missing demonstrating
-coverage, swap forced non-base selections for base nodes, or drop an uncovered
-unnecessary edit. An appended demonstrating check may carry no forcing or
-reuse a draft forcing unchanged. It may honestly return can't meet.
+Before completing a plan reply, every plan-check objection is named with its
+rule and exact affected items, including source goal IDs and text, paths,
+sizes, check indices, selectors and proof fields as applicable. Under Rob's
+[#832 Q27 approval](https://github.com/RobTand/trustladderiii/issues/832),
+the planner has one tool-free correction in the same worker run and
+accounting allowance, shared with format repair. The correction uses only
+already-read facts. A constrained recheck compares the original model
+draft and corrected draft and permits only the union of the named
+corrections, satisfying every overlapping constraint. Every other
+declaration and every source obligation remains identical. The complete
+corrected draft is checked again.
 
-Under [Rob's Q27/Q54 approval on #809, 2026-11-05](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239),
-missing citations of existing required maker or checking goals may also enter
-this correction. Review-verified goals still require check coverage. For this
-defect, the correction may only add the named uncovered goal ids to existing
-checks, preserving every existing citation and every other declaration.
-It shares the single correction allowance with format repair and the existing
-defects. The full uncovered goal ids and descriptions remain in stop evidence,
-with the correction attempt count. A bounded repair message may clip only
-descriptions. If even the ids and instructions do not fit, correction is terminal.
+The [#809 coverage correction](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239)
+adds only the named uncovered required goal IDs to existing checks.
+Existing citations and all other declarations remain unchanged unless a
+different named objection grants its own exact correction. An honest
+can't-meet report is always permitted. No correction may invent proof,
+weaken a source obligation or authorize protected edits.
 
-Added files, a wider footprint, unrelated checks or edits, changed forcings
-and new goals remain plan violations and therefore PlanCantMeet. Substantive
-plan failures, unsupported requirements, protected-path conflicts, out-of-room
-conditions and actual work failures do not enter this correction. A second
-inconsistent reply ends correction with both named diagnostics. Existing
-format-validation failure handling is unchanged. The harness and reviewer
-still judge actual Q55 proof.
+The Planning correction exception also covers base-absent regression,
+behavior-preserving and declared_symptom selections
+([#843](https://github.com/RobTand/trustladderiii/issues/843),
+Rob, Q27, 2026-11-05: "Yes."). Only the named check's node_ids may be replaced
+with already-read exact base tests supporting the same goals and kind.
+Kind, goals, proof, forcing, symptom and files stay fixed. If no base test
+fits, return can't-meet; a remaining objection stops for TL3 review.
+
+No third final-reply invocation is allowed. If repair is disabled or
+unavailable within the existing input or message limit, record zero
+attempts and its reason. Otherwise record the one attempt, both named
+objection sets and any constrained-recheck failure. A remaining objection
+about size or execution fit requires a split. Any remaining other
+objection, including a correction outside its named constraints, stops
+for TL3 review regardless of `fail_fast`. A mixed set containing another
+objection stops. A plan-check objection never asks Rob whether to
+continue past it. Rob's own decisions, verified protected-path handling,
+Q27 rule questions and Q50 infrastructure recovery retain their paths.
+The size ending records required decomposition and stops for TL3 review;
+no child executes.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
+| Named plan-check objection (#832) | Repair available and not yet consumed | Planning, same worker run | One tool-free correction, shared with format repair. Apply only its named constraints and recheck the complete draft. |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
 | Named plan-check objection remains, or correction exceeds its footprint (#832) | Code-owned provenance records another-class objection and the repair attempt or its unavailability; either `fail_fast` value | Stop for TL3 review | Record the objections and repair evidence. No question, ladder retry or credit charge. |
 | Only named size/execution-fit objections remain (#832 part 1) | Code-owned provenance records the repair attempt or its unavailability; either `fail_fast` value | Stop for TL3 review, with split required | Retain original obligations, forecasts and any proposed pieces. Record that decomposition is required; no child executes and no question is created. |
-| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a completed plan that breaks a rule as can't meet, so a rule-breaking completed plan arrives here and stops at once. Only the bounded draft correction described above may precede completion. |
+| Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". Applies to outcomes without named plan-check provenance. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
-| Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |
-| Plan breaks a rule | Second time | AwaitingRob(can't meet, continue to Planning) | |
+| Legacy plan breaks a rule, without plan-check provenance | First time | Planning | Re-run with the reason, in a new generation |
+| Legacy plan breaks a rule, without plan-check provenance | Second time | AwaitingRob(can't meet, continue to Planning) | |
 
 The #832 endings apply only to typed provenance emitted by worker code beside
 its reply. With no such provenance, the existing mapping of `violations` to
-PlanCantMeet and all ordinary rows above remain unchanged. Worker emission is
-part 2. The controller's separate late check-plan-size refusal remains an open
+PlanCantMeet and all ordinary rows above remain unchanged. The controller's separate late check-plan-size refusal remains an open
 lead decision and keeps its existing behavior for replies without provenance.
 
 Q57 closes with reason `protected_paths`. Its summary names those paths, says
@@ -556,6 +567,8 @@ Coordinator defaults, for Rob to check: the ladder clamps at its last entry. A c
 
 ### Publishing
 
+Direct delivery variant ([#830](https://github.com/RobTand/trustladderiii/issues/830), Q27 approved by Rob, 2026-11-05): for a repository configured with `delivery = "direct"`, step 4 uses GitHub's SHA-pinned merge API behind the same Enqueue effect. At execution, reread the open PR and its head, TL3's passed Checking and independent approval on that exact head, the own-app approval check, the repository's allowed merge methods, and every still-required protection check. Fence the epoch and durably record the attempt's intent before each upstream write. The adapter adds "delivered directly (CI bypassed by repo config)" to the PR body before merging. A pending protection check waits for check/webhook evidence without a timer or retry charge. A failed protection check follows the existing enqueue CI-failure row below; an observed conflict follows the publication Conflict rule. A permission refusal or otherwise unexplained merge refusal raises an effect incident. The approval check, holds, pause, stop, effect fences and postmortems remain in force. Q52's Mergify missing-check rule and Mergify dequeue handling apply only to queue delivery.
+
 The publishing sequence has four steps:
 
 1. Push the branch.
@@ -599,6 +612,8 @@ These clarify how the controller already applies Q52 and #447 (#735). They add n
 - **Not enough credit for the next step:** release the slot and files, and go to AwaitingRob(out of credit, continue to that step).
 
 ### Queued
+
+With direct delivery ([#830](https://github.com/RobTand/trustladderiii/issues/830)), this phase acknowledges the same Enqueue effect before consuming the existing merged or refused fact; it adds no kernel transition. An already-merged PR converges without another merge write. A moved head or HTTP 409 follows the outside-push row and returns to Checking. A lost response or restart reconciles PR state first. If the PR remains open, a fresh attempt rechecks the exact-head preconditions and records a new fenced intent before retrying the pinned PUT. An HTTP 405 after a racing merge rereads and converges to the merged fact. GitHub's pinned, single-merge operation permits at most one successful merge, including when an old issuer races the retry. An observed or recorded merge suppresses later writes. The status/board says "delivered directly (CI bypassed by repo config)"; default-branch CI still runs and its failures remain visible to the repo leads. The Mergify-specific rows below do not apply to direct delivery.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|

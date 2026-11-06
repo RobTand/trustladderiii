@@ -1,5 +1,7 @@
 """Compare a request's evidence with the installed tools, without substituting proof."""
 
+from tl3_harness.model import named
+
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES, MAX_DELAY_SECONDS, MAX_TOTAL_DELAY_SECONDS
 
 
@@ -7,7 +9,7 @@ class EvidenceContractError(ValueError):
     """A fixed, safe diagnostic for the existing reply-format repair path."""
 
     def __init__(self):
-        super().__init__('Return evidence_contract with source requirements and separately marked method choices.')
+        super().__init__(named('evidence.contract_missing', 'Return evidence_contract with source requirements and separately marked method choices.', dict(field="evidence_contract")))
 
 
 def forcing_capabilities(cpus=1):
@@ -67,7 +69,7 @@ def proof_applicability(goals, checks, defined=None, *, campaign=False, missing_
         if (not isinstance(cited, list) or not cited
                 or any(type(index) is not int or not 0 <= index < len(goals) for index in cited)
                 or len(set(cited)) != len(cited)):
-            errors.append('Proof applicability requires nonempty goal_ids naming the source goals.')
+            errors.append(named('proof.goal_ids', 'Proof applicability requires nonempty goal_ids naming the source goals.', dict(check=check_index, goal_ids=cited)))
             continue
         for index in cited:
             obligation = goals[index].get('proof_obligation')
@@ -77,23 +79,23 @@ def proof_applicability(goals, checks, defined=None, *, campaign=False, missing_
             proof = check.get('proof', {})
             if (check['kind'] not in ('demonstrating', 'reproducing') or 'declared_symptom' in check
                     or campaign and obligation['observer'] == 'new'):
-                errors.append(prefix + ' requires an assertion observer; an old-node symptom campaign cannot discharge it.')
+                errors.append(named('proof.observer_kind', prefix + ' requires an assertion observer; an old-node symptom campaign cannot discharge it.', dict(check=check_index, goal=index, description=goals[index]["description"], obligation=obligation)))
             elif campaign:
                 # Rehearsal establishes old-test assertion RED. The completed plan
                 # must still bind subjects and the reason before maker handoff.
                 continue
             elif not proof.get('red_message', '').strip():
-                errors.append(prefix + ' requires proof.red_message binding the deterministic assertion.')
+                errors.append(named('proof.red_missing', f'check-{check_index + 1} ' + prefix + ' requires proof.red_message binding the deterministic assertion.', dict(check=check_index, goal=index, description=goals[index]["description"], obligation=obligation, field="proof.red_message")))
             else:
                 missing = {subject for subject in obligation['subjects']
                            if not any(subject_covers(chosen, subject) for chosen in proof.get('subjects', []))}
                 if missing:
                     if missing_subjects is None:
-                        errors.append(prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']))
+                        errors.append(named('proof.subject_identify', prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']), dict(check=check_index, goal=index, description=goals[index]["description"], subjects=obligation["subjects"])))
                     else:
                         missing_subjects.setdefault(check_index, set()).update(missing)
                 if obligation['observer'] == 'new' and any(defined(node) for node in check['node_ids']):
-                    errors.append(prefix + ' requires a new deterministic observer; an existing base test is insufficient.')
+                    errors.append(named('proof.new_observer', prefix + ' requires a new deterministic observer; an existing base test is insufficient.', dict(check=check_index, goal=index, description=goals[index]["description"], nodes=check["node_ids"])))
     return errors
 
 
@@ -143,14 +145,14 @@ def branch_objections(inputs, goals):
             branch = context['branch']
             satisfied = branch_satisfies(required, branch, context, prefix=field == 'branch_prefix')
             if not satisfied:
-                errors.append(
+                errors.append(named('evidence.branch_conflict',
                     f'Request-scope branch conflict: {field} requires {label(required)}; '
                     f'configured template {label(context["template"])} generates {label(branch)}. '
-                    'Preserve the explicit requirement and its source. Change the request scope or repository convention before planning.')
+                    'Preserve the explicit requirement and its source. Change the request scope or repository convention before planning.', dict(field=field, required=required, branch=branch)))
     return errors
 
 
-def preflight(inputs, reply, *, planning=False):
+def preflight(inputs, reply, *, planning=False, objections=None):
     goals = inputs.get('ingest', {}).get('goals', []) if 'verdict' in reply else reply.get('goals', [])
     branch_errors = branch_objections(inputs, goals)
     if 'verdict' in reply and branch_errors:
@@ -160,7 +162,10 @@ def preflight(inputs, reply, *, planning=False):
     if 'tool_capabilities' not in inputs:
         return
     if 'evidence_contract' not in reply:
-        raise EvidenceContractError()
+        if objections is None:
+            raise EvidenceContractError()
+        objections.append(named('evidence.contract_missing', str(EvidenceContractError()), {'field': 'evidence_contract'}))
+        reply['evidence_contract'] = []
     source_subjects = (reply.get('kind') == 'leaf' and any(
         goal.get('proof_obligation', {}).get('subjects') for goal in inputs.get('ingest', {}).get('goals', [])))
     if planning and (source_subjects or any(check.get('proof', {}).get('subjects') for check in reply.get('checks', []))):
@@ -193,8 +198,8 @@ def preflight(inputs, reply, *, planning=False):
     for requirement in contract:
         for method in requirement['methods']:
             if method in ('helper_target_observer', 'helper_target_observer.setup_function'):
-                errors.append(f'Unsupported evidence requirement: {requirement["requirement"]} '
-                              f'(removed proof encoding {method}; source obligation retained).')
+                errors.append(named('evidence.removed_method', f'Unsupported evidence requirement: {requirement["requirement"]} '
+                              f'(removed proof encoding {method}; source obligation retained).', dict(requirement=requirement, method=method)))
         candidates = []
         for capability in inputs['tool_capabilities']:
             missing = [f'{key}={requirement[key]}' for key in ('tool', 'executor')
@@ -206,16 +211,24 @@ def preflight(inputs, reply, *, planning=False):
         if not candidates or all(candidates):
             missing = min(candidates, key=len) if candidates else [
                 f'tool={requirement["tool"]}', f'executor={requirement["executor"]}']
-            errors.append(f'Unsupported evidence requirement: {requirement["requirement"]} '
-                          f'({", ".join(missing)}).')
+            errors.append(named('evidence.unsupported', f'Unsupported evidence requirement: {requirement["requirement"]} '
+                          f'({", ".join(missing)}).', dict(requirement=requirement, missing=missing)))
     reply['evidence_contract'] = contract
     reply['evidence_errors'] = list(dict.fromkeys(errors))
-    if planning and errors:
-        if reply.get('kind') == 'split':
-            reply['files'] = list(dict.fromkeys(path for piece in reply['pieces'] for path in piece['files']))
-        kept = {key: value for key, value in reply.items()
-                if key in {'files', 'forecast', 'violations', 'evidence_contract',
-                           'evidence_errors', 'protected_paths', 'memory_ids', 'memory_flags'}}
-        reply.clear()
-        reply.update(kept, kind='cant_meet', files=kept.get('files', []),
-                     report='\n'.join(dict.fromkeys(errors)))
+    if planning and errors and objections is not None:
+        objections.extend(errors)
+    if planning and errors and objections is None:
+        planning_refusal(reply, errors)
+
+
+def planning_refusal(reply, errors):
+    """Project a completed refusal only after the planner collected all objections."""
+    if reply.get('kind') == 'split':
+        reply['files'] = list(dict.fromkeys(path for piece in reply['pieces'] for path in piece['files']))
+    kept = {key: value for key, value in reply.items()
+            if key in {'files', 'forecast', 'violations', 'evidence_contract',
+                       'evidence_errors', 'protected_paths', 'memory_ids', 'memory_flags',
+                       'execution', 'forcing_rehearsals', 'decision_context'}}
+    reply.clear()
+    reply.update(kept, kind='cant_meet', files=kept.get('files', []),
+                 report='\n'.join(dict.fromkeys(errors)))

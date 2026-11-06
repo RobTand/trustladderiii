@@ -38,7 +38,9 @@ def test_proof_omissions_get_one_tool_free_correction(planner_request, proof_pla
     history, tools = model.calls[-1]
     assert not tools and 'Tools are unavailable' in history[-1].text
     assert 'proof' in history[-1].text and 'check-1' in history[-1].text
-    assert events[-1]['reply']['violations'] == []
+    assert bool(events[-1]['reply']['violations']) == (missing in {'proof', 'red_message'})
+    if missing in {'proof', 'red_message'}:
+        assert any(item['rule'] == 'guard.fields_changed' for item in events[-1]['plan_check']['objections'])
     assert events[-1]['reply']['checks'] == fixed['checks']
 
 
@@ -74,7 +76,8 @@ def test_proof_omission_with_substantive_failure_stops(planner_request, proof_pl
     model = planner_model(monkeypatch, proof_plan, LEAF)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1, 'a missing proof field cannot conceal a substantive refusal'
+    assert len(model.calls) == 2
+    assert events[-1]['plan_check']
     assert events[-1]['reply']['violations']
 
 
@@ -82,6 +85,9 @@ def test_invalid_proof_value_stays_a_substantive_refusal(planner_request, proof_
     proof_plan['checks'][0]['proof']['red_message'] = ''
     # Exercise semantic validation, not the transport's pre-existing format repair.
     from tl3_workers.roles.planner import check_reply
-    check_reply(planner_request['inputs'], proof_plan)
+    from tl3_workers.roles.planner import PlanConsistencyError
+    with pytest.raises(PlanConsistencyError) as error:
+        check_reply(planner_request['inputs'], proof_plan)
+    assert any(item.rule == 'proof.red_missing' for item in error.value.objections)
     assert proof_plan['violations']
-    assert not any('missing' in error.lower() for error in proof_plan['violations'])
+    assert 'proof.red_message' in '\n'.join(proof_plan['violations'])

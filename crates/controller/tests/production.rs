@@ -92,7 +92,10 @@ fn production_registers_every_real_adapter_and_source() {
     assert_eq!(registered.adapters.registered_types(), expected);
     assert!(std::any::type_name_of_val(&registered.workers).ends_with("WorkerOutputSource"));
     assert!(std::any::type_name_of_val(&registered.bell).contains("prismabuild::source::Source"));
-    assert!(std::any::type_name_of_val(&registered.mergify).ends_with("mergify::Translator"));
+    assert!(
+        std::any::type_name_of_val(&registered.mergify)
+            .ends_with("direct_merge::events::Translator")
+    );
     assert!(registered.webhooks.address().ip().is_loopback());
     drop(registered);
     database.stop();

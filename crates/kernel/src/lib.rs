@@ -69,6 +69,24 @@ pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
 /// #806: complete acceptance predicate, equivalent to the real checker in this domain.
 pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
 }
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_apply.rs"]
+mod port_acks_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_commands.rs"]
+mod port_acks_commands;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_frames.rs"]
+mod port_acks_frames;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_safety.rs"]
+mod port_acks_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_specs.rs"]
+mod port_acks_specs;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_witness.rs"]
+mod port_acks_witness;
 use events::*;
 mod allocation;
 use allocation::*;
@@ -545,7 +563,8 @@ impl Credit {
         /// State-table credit ledger: one unit per paid retry or continuation.
         fn spend(&mut self, cost: u64) -> (result: ()) [
             requires old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures final(self).spent as int == old(self).spent as int + cost as int,
+            ensures *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
+                final(self).spent as int == old(self).spent as int + cost as int,
                 final(self).start == old(self).start,
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
@@ -2239,6 +2258,22 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_retry.rs"]
+mod port_review_retry;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_reply.rs"]
+mod port_review_reply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_output.rs"]
+mod port_review_output;
+
+#[cfg(test)]
+#[path = "../tests/mark_handled_equivalence/cases.rs"]
+mod mark_handled_equivalence;
 
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_answers_model.rs"]
