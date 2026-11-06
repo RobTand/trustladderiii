@@ -87,6 +87,50 @@ def _downstream_status(facts):
     return _status(facts, False)
 
 
+# This is Check's reproducing-selector grammar, expressed as membership data.
+# Parameter labels stay opaque; proof contents are outside this edit's pointer.
+_REPRODUCTION_TESTS = Allowed('schema', {
+    'type': 'array', 'minItems': 1, 'uniqueItems': True,
+    'items': {'type': 'string', 'pattern': (
+        r'^(?![/-])(?!\.\./)(?!(?:(?!::)[\s\S])*/\.\./)'
+        r'(?:(?!::)[^\\\u0000])*\.py::'
+        r'(?:(?!::)[^\u0000])+(?:::(?:(?!::)[^\u0000])+)*(?![\s\S])')}})
+
+
+def _captured_assertions(history):
+    messages = []
+    def collect(result):
+        if result.get('status') != 'completed' or not result.get('receipts'):
+            return
+        if 'Truncated:' in result.get('note', ''):
+            return  # A shortened diagnostic cannot authorize new evidence text.
+        for item in result.get('tests', []):
+            message = item.get('message')
+            if (item.get('outcome') == 'failed' and isinstance(message, str)
+                    and 1 <= len(message) <= 160):
+                messages.append(message)
+        for group in result.get('groups', []):
+            collect(group)
+    for message in history:
+        if not isinstance(message, ToolMessage) or message.name != 'run_tests' or message.status != 'success':
+            continue
+        try:
+            result = json.loads(message.content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(result, dict):
+            collect(result)
+    return tuple(dict.fromkeys(messages))
+
+
+def _captured_proof(facts):
+    captured = facts.get('captured_assertions', ())
+    if not captured:
+        return None
+    proof = model_facing(schema('planner-reply')['$defs']['proof'])
+    return {**proof, 'properties': {**proof['properties'], 'red_message': {'enum': list(captured)}}}
+
+
 def _finding_coverage(facts):
     reply, inputs = facts['reply'], facts['inputs']
     if reply['kind'] != 'done':
@@ -96,12 +140,20 @@ def _finding_coverage(facts):
     if len(mapped) != len(findings) or set(mapped) != set(findings):
         document = _done_property('reproductions')
         captured = [item for item in reply.get('reproductions', []) if item['finding_id'] in findings]
+        additions = [{'not': {'required': ['tests']}}]
+        proof = _captured_proof(facts)
+        if proof is not None:
+            additions.append({'required': ['tests', 'proof'], 'properties': {
+                'tests': _REPRODUCTION_TESTS.value, 'proof': proof}})
         yield {'pointer': '/reproductions', 'op': 'replace' if 'reproductions' in reply else 'add',
                'allowed': Allowed('schema', {**document, 'minItems': len(findings), 'maxItems': len(findings),
                    'items': {'allOf': [document['items'], {'properties': {'finding_id': {'enum': findings}}},
-                                       {'anyOf': [{'not': {'required': ['tests']}}, {'enum': captured}]}]},
-                   'allOf': [{'contains': {'properties': {'finding_id': {'const': finding}}},
-                              'minContains': 1, 'maxContains': 1} for finding in findings]})}
+                                       {'anyOf': [*additions, {'enum': captured}]}]},
+                   'allOf': [*[{'contains': {'properties': {'finding_id': {'const': finding}}},
+                               'minContains': 1, 'maxContains': 1} for finding in findings],
+                             *[{'items': {'if': {'properties': {'finding_id': {'const': item['finding_id']}}},
+                                          'then': {'enum': [old for old in captured if old['finding_id'] == item['finding_id']]}}}
+                               for item in captured]]})}
 
 
 def _reproduction_proof(facts):
@@ -112,12 +164,18 @@ def _reproduction_proof(facts):
             continue
         pointer = f'/reproductions/{index}'
         if 'proof' not in item:
-            yield {'pointer': pointer + '/proof', 'harness_rule': 'proof.red_missing'}
+            proof = _captured_proof(facts)
+            yield {'pointer': pointer + '/proof', 'harness_rule': 'proof.red_missing',
+                   **({'allowed': Allowed('schema', proof), 'op': 'add'} if proof is not None else {})}
             continue
         try:
             Check(item['finding_id'], Kind.REPRODUCING, tuple(item['tests']), proof=Proof.parse(item['proof']))
         except HarnessInputError as error:
-            yield {'pointer': pointer, 'harness_rule': error.args[0].rule}
+            rule = error.args[0].rule
+            if rule in ('check.node_grammar', 'check.duplicate', 'check.shape'):
+                yield {'pointer': pointer + '/tests', 'harness_rule': rule, 'allowed': _REPRODUCTION_TESTS}
+            else:
+                yield {'pointer': pointer, 'harness_rule': rule}
 
 
 def _requested_path(facts):
@@ -183,8 +241,9 @@ class MakerReplyError(HarnessInputError):
         super().__init__(render_all(violations, role=self.rule_role))
 
 
-def _check_reply(inputs, reply):
-    violations = evaluate(MAKER_ROWS, {'inputs': inputs, 'reply': reply}, role='maker')
+def _check_reply(inputs, reply, *, captured_assertions=()):
+    violations = evaluate(MAKER_ROWS, {'inputs': inputs, 'reply': reply,
+                                       'captured_assertions': captured_assertions}, role='maker')
     if violations:
         order = {'maker.goals': 0, 'maker.maker_status': 1, 'maker.downstream_status': 1,
                  'maker.reproductions': 2, 'maker.reproduction_proof': 3, 'maker.requested_path': 4}
@@ -634,7 +693,7 @@ def run(model, request, worktree, emit):
                          "recorded in this run: " + reply["report"]}
             else:
                 reply["evidence"] = {**reply["evidence"], **detail}
-        _check_reply(inputs, reply)
+        _check_reply(inputs, reply, captured_assertions=_captured_assertions(history))
         json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
         return reply
 

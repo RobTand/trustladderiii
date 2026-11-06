@@ -180,7 +180,7 @@ def test_review662_reproduction_contract_carries_assertion_reason(review_fix):
     ('downstream_status', '/self_check/0', 'Edit'),
     ('finding_coverage', '/reproductions', 'Edit'),
     ('proof', '/reproductions/0/proof', 'CantMeet'),
-    ('selector', '/reproductions/0', 'CantMeet'),
+    ('selector', '/reproductions/0/tests', 'Edit'),
     ('requested_path', '/files/0/path', 'CantMeet'),
 ])
 def test_maker_refusals_render_and_guard_the_same_repair(review_fix, case, pointer, kind):
@@ -222,10 +222,11 @@ def test_maker_refusals_render_and_guard_the_same_repair(review_fix, case, point
         assert violation.allowed.value == []
         assert not permits(violations, before, original, role='maker')
     else:
-        value = original['self_check'] if case == 'goals' else (
+        value = original['reproductions'][0]['tests'] if case == 'selector' else (
+            original['self_check'] if case == 'goals' else (
             original['self_check'][0] if case in ('maker_status', 'downstream_status') else [
                 {'finding_id': item['id'], 'reason': 'Review manually without inventing assertion evidence.'}
-                for item in inputs['current_review_findings']])
+                for item in inputs['current_review_findings']]))
         assert isinstance(violation.repair, Edit)
         after = apply_edit(before, violation.repair, value)
         assert violation.allowed.accepts(value)
@@ -352,3 +353,71 @@ def test_maker_missing_proof_without_captured_run_stays_cant_meet(review_fix):
     assert len(rows) == 1 and isinstance(rows[0].repair, CantMeet)
     assert not permits(rows, before, good, role='maker')
     assert permits(rows, before, {'kind': 'cant_meet', 'report': 'No captured assertion.'}, role='maker')
+
+
+@pytest.mark.parametrize('case', ['missing_proof', 'selector', 'missing_finding'])
+def test_maker_runtime_repair_can_reuse_actual_test_output(review_fix, maker_request, monkeypatch, case):
+    from copy import deepcopy
+    from tl3_workers.tools import TOOL_FACTORIES
+    from message_invariants import RECEIPT
+
+    inputs, supplied = review_fix
+    maker_request['inputs'] = inputs
+    inputs['context_size'] = 150000
+    good = deepcopy(supplied)
+    good['reproductions'][0]['proof']['red_message'] = _captured_assertion()
+    before = deepcopy(good)
+    if case == 'missing_proof':
+        before['reproductions'][0].pop('proof')
+    elif case == 'selector':
+        before['reproductions'][0]['tests'] = ['test_greeting.py']
+    else:
+        before['reproductions'].pop(0)
+    def factory(worktree):
+        def run_tests(tests: list[str]) -> dict:
+            return {'status': 'completed', 'tests': [{'test': tests[0], 'outcome': 'failed',
+                     'message': _captured_assertion()}], 'note': '', 'receipts': [RECEIPT],
+                    'tree': git(Path(maker_request['worktree']), 'write-tree'),
+                    'totals': {'passed': 0, 'failed': 1, 'error': 0, 'skipped': 0}}
+        return run_tests
+    monkeypatch.setitem(TOOL_FACTORIES, 'run_tests', factory)
+    test_turn = {'content': '', 'tool_calls': [{'id': 'captured-red', 'name': 'run_tests',
+                  'args': {'tests': good['reproductions'][0]['tests']}, 'type': 'tool_call'}]}
+    model = ToolModel(responses=[AIMessage(**message) for message in
+                                [write_turn(), test_turn, turn(before), turn(good)]])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]['reply']['reproductions'] == good['reproductions']
+
+
+def test_maker_captured_evidence_comes_from_completed_tool_results_only():
+    from langchain_core.messages import ToolMessage
+    from message_invariants import RECEIPT
+
+    result = {'status': 'completed', 'receipts': [RECEIPT], 'note': '',
+              'tests': [{'test': 'test_x.py::test_x', 'outcome': 'failed', 'message': _captured_assertion()}]}
+    def tool(value, **kw):
+        return ToolMessage(content=json.dumps(value), name='run_tests', tool_call_id='run', **kw)
+    assert maker._captured_assertions([tool(result)]) == (_captured_assertion(),)
+    for value in [{**result, 'status': 'infrastructure_error'}, {**result, 'receipts': []},
+                  {**result, 'note': 'Truncated: test entries or failure messages were cut.'},
+                  {**result, 'tests': [{'outcome': 'error', 'message': 'model invented evidence'}]}]:
+        assert not maker._captured_assertions([tool(value)])
+    assert not maker._captured_assertions([AIMessage(content=json.dumps(result)), tool(result, status='error')])
+
+
+@pytest.mark.parametrize('selector', [
+    'test_x.py::test_x', 'tests/test_x.py::Case::test_x[param::value]',
+    'test_x.py', '/test_x.py::test_x', '-x.py::test_x', '../test_x.py::test_x',
+    'tests/../test_x.py::test_x', 'test_x.py::', 'test_x.py::::test_x',
+    'test_x.py::test_x[\\opaque]', 'test_x.py::test_x\n', 'test_x.py::test_x\x00',
+])
+def test_maker_selector_membership_matches_existing_harness_check(selector):
+    from tl3_harness import Check, HarnessInputError, Kind
+    try:
+        Check('reproducing', Kind.REPRODUCING, (selector,))
+        accepted = True
+    except HarnessInputError:
+        accepted = False
+    assert maker._REPRODUCTION_TESTS.accepts([selector]) is accepted

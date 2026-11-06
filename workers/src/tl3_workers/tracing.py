@@ -645,6 +645,7 @@ def failure_tags(error):
         return {"failure_class": "worker_input_schema", "failure_message": error.message}
     from tl3_workers.prerequisites import MergePrerequisiteError
     from tl3_workers.generated_scope import GeneratedOutputProhibition
+    from tl3_workers.roles.ingest import IngestReplyError
     from tl3_workers.roles.planner import PlanConsistencyError
     from tl3_workers.evidence import EvidenceContractError
     from tl3_workers.forcing_rehearsal import ForcingInfrastructureError
@@ -662,6 +663,13 @@ def failure_tags(error):
     if type(error) is GeneratedOutputProhibition:
         return {"failure_class": "GeneratedOutputProhibition",
                 "failure_message": GeneratedOutputProhibition.message}
+
+    if isinstance(error, IngestReplyError):
+        fixed = {'ingest.forecast_owned': 'only code may supply a forecast',
+                 'ingest.sized_files': 'sized briefs must declare their root files'}
+        messages = list(dict.fromkeys(fixed[row.rule.id] for row in error.rule_violations if row.rule.id in fixed))
+        return {'failure_class': 'IngestReplyError',
+                'failure_message': '; '.join(messages) if messages else 'invalid worker data'}
 
     if isinstance(error, EvidenceContractError):
         return {"failure_class": "EvidenceContractError", "failure_message": str(error)}
