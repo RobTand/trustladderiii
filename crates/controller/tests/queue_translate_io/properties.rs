@@ -965,7 +965,7 @@ fn attribution_helpers_are_real_current_source() {
         assert_eq!(function(include_str!("../../src/adapters/mergify.rs"), name, "    "), function(include_str!("queue-fact-current.rs"), name, "    "));
     }
     assert_eq!(function(include_str!("base-adapter.rs.txt"), "identity", "    "), function(include_str!("queue-fact.rs"), "identity", "    "));
-    for name in ["queue_gate", "queue_failure_cause"] {
+    for name in ["queue_gate", "queue_hold_witness", "queue_failure_cause"] {
         assert_eq!(function(include_str!("../../src/queue_cause.rs"), name, "    "), function(include_str!("cause-methods-current.rs"), name, "    "));
     }
     assert_eq!(function(include_str!("../../src/adapters/mergify/ci_evidence.rs"), "bounded", ""), function(include_str!("ci-evidence-current.rs"), "bounded", ""));

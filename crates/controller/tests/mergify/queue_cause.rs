@@ -459,7 +459,7 @@ fn batch_health(controller: &mut Controller, api: &Server, config: &Bootstrap, n
     controller.drive_once().unwrap();
 }
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow", "retargeted", "terminal-hold", "gate-retention"];
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow", "retargeted", "terminal-hold", "gate-retention", "retry-no-time-restart"];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -468,7 +468,7 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
     let mut config = bootstrap();
     config.fail_fast = true;
     let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now())));
-    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), Some(clock));
+    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), Some(clock.clone()));
     let snapshot = controller.snapshot().unwrap();
     let row = snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == "0").unwrap();
     let mut value = row.value.clone();
@@ -493,12 +493,12 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             failure(&mut controller,&api,&config);
             let snap = controller.snapshot().unwrap();
             let hold = snap.rows.iter().find(|r| r.table == "queue_holds").expect("hold");
-            assert!(!hold.value["witness"].is_null(), "stored gates: {:?}, hold: {}", snap.rows.iter().filter(|r| r.table == "queue_gates").collect::<Vec<_>>(), hold.value);
+            assert!(!hold.value["witness"].is_null(), "stored T2 gate must witness the delayed T1 failure");
             controller.look_now().unwrap();
             controller.look_now().unwrap();
-            assert_eq!(api.state.lock().unwrap().requeues,1,"r1.1: journaled T2 witness must recover delayed T1 failure; node {:?}; rows {:?}", controller.world().unwrap().nodes[0], controller.snapshot().unwrap().rows.iter().filter(|r| ["queue_holds","allowances"].contains(&r.table.as_str())).collect::<Vec<_>>());
+            assert_eq!(api.state.lock().unwrap().requeues,1,"r1.1: journaled T2 witness must recover delayed T1 failure");
         }
-        "before-post" | "paused-before-post" | "retry-no-time" => {
+        "before-post" | "paused-before-post" | "retry-no-time" | "retry-no-time-restart" => {
             failure(&mut controller, &api, &config);
             assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
             if mode == "paused-before-post" {
@@ -507,9 +507,17 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
                 assert!(controller.world().unwrap().nodes[0].paused);
             }
             health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
-            if mode == "retry-no-time" {
+            if mode.starts_with("retry-no-time") {
                 controller.look_now().unwrap(); controller.look_now().unwrap();
                 assert_eq!(api.state.lock().unwrap().requeues,1,"test requires an actual POST");
+                let snap=controller.snapshot().unwrap();
+                assert!(snap.rows.iter().any(|r|r.table=="queue_holds"&&!r.value["retry"].is_null()),"Sent receipt must publish the retry transition");
+                if mode == "retry-no-time-restart" {
+                    drop(controller);
+                    let mut registry=adapters::simulation(root.path()).unwrap();
+                    registry.register(Upstream::Mergify,api.adapter(&root.path().join("mergify"),0).with_store(settings.clone()).with_clock(clock.clone()));
+                    controller=Controller::open_with_clock(Store::open(settings).unwrap(),registry,config.clone(),clock.clone()).unwrap();
+                }
                 let mut state = api.state.lock().unwrap();
                 let head = state.pull["head"]["sha"].clone();
                 let captured:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json")).unwrap();
@@ -524,11 +532,11 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
                 state.queue_check_mut()["completed_at"]=json!("2026-11-06T04:00:00Z");
             }
             failure(&mut controller,&api,&config);
-            if mode == "retry-no-time" { drain(&mut controller); }
+            if mode.starts_with("retry-no-time") { drain(&mut controller); }
             assert_eq!(controller.world().unwrap().nodes[0].phase,
-                if mode=="retry-no-time" {Phase::Closed(Outcome::Stopped)} else {Phase::Queued},
+                if mode.starts_with("retry-no-time") {Phase::Closed(Outcome::Stopped)} else {Phase::Queued},
                 "r1.2: only a failure bound to our dispatched retry is Change, regardless of timestamps");
-            if mode != "retry-no-time" {
+            if !mode.starts_with("retry-no-time") {
                 assert_eq!(api.state.lock().unwrap().requeues,0);
                 assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
             }
