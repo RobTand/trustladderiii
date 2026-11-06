@@ -1,6 +1,6 @@
 //! #806: per-answer consistency and shared Kani assertion frames.
-use super::*;
 use super::port_answers_model::*;
+use super::*;
 
 verus! {
 /// State-table continue answer row / #806: exact real-handler frame.

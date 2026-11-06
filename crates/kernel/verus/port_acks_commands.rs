@@ -101,3 +101,31 @@ pub(super) fn verify_command_apply(mut w: World, id: u64, c: Command) -> (result
     (w, out)
 }
 }
+
+verus! {
+/// #805 / #806: assigning an Answer command ID preserves every progress-checker field.
+pub(super) proof fn answer_command_frame(before: World, after: World, n: Node, id: u64)
+    requires after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
+        after.next_ticket == before.next_ticket, after.next_question == before.next_question,
+    ensures node_checked(before, n) == node_checked(after, Node { last_cmd: id, ..n }),
+{
+    reveal(node_checked);
+    footprint::storage_frame(before, after, n.footprint, n.footprint);
+}
+}
+
+verus! {
+/// #805 / #806: compose the existing Resume frame and metric outside the dispatcher.
+pub(super) proof fn resume_progress_result(w: World, before: Node, after: Node, id: u64)
+    requires progress_gate_apply::resume_post(before, after, id, Command::Resume),
+    ensures node_checked(w, before) && id > before.last_cmd
+        && command_progress_input(before, Command::Resume) ==> distance(after) < distance(before),
+{
+    reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed);
+    if node_checked(w, before) && id > before.last_cmd
+        && command_progress_input(before, Command::Resume) {
+        resume_decreases(w, before);
+        cleanup_lemmas::resource_distance(Node { paused: false, ..before }, after);
+    }
+}
+}

@@ -5,6 +5,7 @@ kernel_fn! {
 /// Command rows / #771: repeated IDs stutter; accepted IDs are assigned verbatim.
 /// Freshness is enforced by controller constructors, not by this raw kernel API.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -41,18 +42,34 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(out).len <= old(out).len + 1,
         command == Command::Resume ==> final(w).next_question == old(w).next_question,
         progress_gate_apply::resume_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+        // #806: forward the delegated Answer contract after assigning its command ID.
+        match command {
+            Command::Answer { question, answer } =>
+                (id > old(w).nodes@[i as int].last_cmd && answers::answer_supported(answer))
+                ==> answers::answer_post(
+                    Node { last_cmd: id, ..old(w).nodes@[i as int] },
+                    final(w).nodes@[i as int], question, answer,
+                    old(w).next_question, final(w).next_question),
+            _ => true,
+        },
+        match command {
+            Command::Answer { answer, .. } =>
+                (answers::answer_supported(answer) && retirement::notices_only(*old(out)))
+                ==> retirement::notices_only(*final(out)),
+            _ => true,
+        },
+        (id <= old(w).nodes@[i as int].last_cmd
+            ==> *final(w) == *old(w) && *final(out) == *old(out)),
+
+] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         return; // a repeated command
     }
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
     kernel_snapshot! { before_command_world = *w }
-    kernel_proof! {
-        if command == Command::Resume && command_progress_input(w.nodes@[i as int], command)
-            && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
-    }
     w.nodes[i].last_cmd = id;
+    kernel_proof! { cleanup_lemmas::resource_distance(before_command_node@, w.nodes@[i as int]); }
     match command {
         Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
         Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
@@ -67,13 +84,14 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             kernel_proof! {
                 reveal(progress_gate_apply::resumed); reveal(progress_gate_apply::resume_post);
                 assert(progress_gate_apply::resume_post(before_command_node@, w.nodes@[i as int], id, command));
+                port_acks_commands::resume_progress_result(before_command_world@, before_command_node@, w.nodes@[i as int], id);
             }
         },
         Command::Answer { question, answer } => {
             kernel_proof! {
                 if node_checked(before_command_world@, before_command_node@)
                     && command_progress_input(before_command_node@, command) {
-                    footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
+                    port_acks_commands::answer_command_frame(before_command_world@, *w, before_command_node@, id);
                     assert(node_checked(*w, w.nodes@[i as int]));
                     assert(answer_progress_input(w.nodes@[i as int], question, answer));
                     assert(distance(w.nodes@[i as int]) == distance(before_command_node@));

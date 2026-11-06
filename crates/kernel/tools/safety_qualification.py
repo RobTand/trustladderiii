@@ -340,6 +340,11 @@ CASES = {
         '//crates/kernel:verus_answers'),
 
 
+    'command_answer_dispatch': ('crates/kernel/src/commands.rs',
+        '            on_answer(w, i, question, answer, out);',
+        '            let _ = (question, answer);',
+        '//crates/kernel:verus_commands'),
+
 }
 
 

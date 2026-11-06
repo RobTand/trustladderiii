@@ -930,6 +930,8 @@ def verus_proofs():
             "port_answers_handler_post_stopping": ("kernel::port_answers_handler#post_stopping", 1),
             "port_answers_handler_cleanup_input": ("kernel::port_answers_handler#cleanup_input", 1),
             "port_answers_handler_stopping_question": ("kernel::port_answers_handler#stopping_question", 1),
+            "port_acks_answer_command_frame": ("kernel::port_acks_commands#answer_command_frame", 1),
+            "port_acks_resume_progress_result": ("kernel::port_acks_commands#resume_progress_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
