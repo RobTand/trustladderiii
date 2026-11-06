@@ -34,6 +34,8 @@ struct Intent {
     attempt: u64,
     action: String,
     method: MergeMethod,
+    #[serde(default)]
+    consumed_through: Option<u64>,
 }
 #[derive(Serialize, Deserialize)]
 struct Merged {
@@ -48,13 +50,14 @@ struct Read {
 }
 
 /// Sleeping effects are invalidated only by relevant webhook/catch-up events.
-/// A new adapter after restart starts awake and reconciles from GitHub.
+/// Recovery reads may observe outcomes, but cannot reuse an earlier authorization.
 #[derive(Clone, Default)]
 pub struct Wakes(Arc<Mutex<WakeState>>);
 #[derive(Default)]
 struct WakeState {
     sleeping: BTreeSet<String>,
-    events: BTreeSet<String>,
+    events: BTreeMap<String, u64>,
+    journal: Option<Journal>,
 }
 impl Wakes {
     fn sleeping(&self, key: &str) -> bool {
@@ -66,13 +69,19 @@ impl Wakes {
         // Events preceding this attempt cannot authorize a later retry.
         state.events.remove(key);
     }
-    fn wake(&self, key: &str) {
+    fn wake(&self, key: &str, sequence: u64) {
         let mut state = self.0.lock().unwrap();
         state.sleeping.remove(key);
-        state.events.insert(key.to_owned());
+        state.events.insert(key.to_owned(), sequence);
     }
-    fn take_event(&self, key: &str) -> bool {
-        self.0.lock().unwrap().events.remove(key)
+    fn event(&self, key: &str) -> Option<u64> {
+        self.0.lock().unwrap().events.get(key).copied()
+    }
+    fn journal(&self) -> Option<Journal> {
+        self.0.lock().unwrap().journal.clone()
+    }
+    fn bind(&self, journal: Journal) {
+        self.0.lock().unwrap().journal = Some(journal);
     }
     fn forget(&self, key: &str) {
         let mut state = self.0.lock().unwrap();
@@ -98,7 +107,79 @@ pub struct WriteBoundary {
     pub after: bool,
 }
 
+#[derive(Clone)]
+struct Journal {
+    epoch: i64,
+    records_root: PathBuf,
+    store: tl3_config::Store,
+}
+impl Journal {
+    fn remember_delivery(&self, d: &Delivery, merged: &Merged, boundary: impl Fn(bool)) -> Result<()> {
+        let records = Records::new(&self.records_root);
+        let intent: Option<Intent> =
+            read_file(&records.path(&d.key).with_extension("intent"))?;
+        if !intent.is_some_and(|intent| intent.action == "Merge" && intent.head == merged.head) {
+            return Ok(());
+        }
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        let id = d.node().0.to_string();
+        let value = serde_json::json!({"delivery":d.key,"head":merged.head,"mode":"direct","number":number(d)?});
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "delivery_history" && r.id == id && r.value == value)
+        {
+            return Ok(());
+        }
+        if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
+            return Err(Error::Invalid("direct history epoch is fenced"));
+        }
+        records.fence(self.epoch)?;
+        let mut commit = tl3_store::Commit::new(
+            format!("direct-history:{}:{}", d.key, snapshot.revision.get()),
+            serde_json::json!({"direct_delivery":d.key}),
+            &snapshot,
+        );
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "delivery_history".into(),
+            id,
+            value,
+        });
+        boundary(false);
+        store.commit(&commit)?;
+        boundary(true);
+        Ok(())
+    }
+}
+
+// The ingress writer serializes sequence allocation/commit. Include consumer
+// positions because fully consumed rows may already have been reclaimed.
+fn ingress_highwater(settings: &tl3_config::Store) -> Result<u64> {
+    let mut reader = tl3_store::Reader::open(settings)?;
+    let mut tx = reader.transaction()?;
+    let row = tx.query_one("SELECT GREATEST(COALESCE((SELECT MAX(sequence) FROM tl3_ingress), 0), COALESCE((SELECT MAX(sequence) FROM tl3_ingress_consumers), 0))", &[])
+        .map_err(tl3_store::Error::from)?;
+    let sequence: i64 = row.get(0);
+    u64::try_from(sequence).map_err(|_| Error::Invalid("negative direct ingress sequence"))
+}
+impl Journal {
+    fn event_sequence(&self, delivery: &crate::ingress::GitHubDelivery) -> Result<Option<u64>> {
+        let mut reader = tl3_store::Reader::open(&self.store)?;
+        let mut tx = reader.transaction()?;
+        let row = match delivery {
+            crate::ingress::GitHubDelivery::Webhook(webhook) => tx.query_opt(
+                "SELECT sequence FROM tl3_ingress WHERE source = 'github-webhook' AND delivery_key = $1", &[&webhook.id]),
+            crate::ingress::GitHubDelivery::CatchUp { .. } => tx.query_opt(
+                "SELECT sequence FROM tl3_ingress WHERE event_name = 'catch-up' AND payload = $1 ORDER BY sequence DESC LIMIT 1", &[&serde_json::to_vec(delivery)?]),
+        }.map_err(tl3_store::Error::from)?;
+        row.map(|row| u64::try_from(row.get::<_, i64>(0)).map_err(|_| Error::Invalid("negative direct event sequence"))).transpose()
+    }
+}
+
 pub struct Adapter {
+    recovery_through: u64,
+    records_root: PathBuf,
     boundary: Option<Arc<dyn Fn(WriteBoundary) + Send + Sync>>,
     wakes: Wakes,
     clients: BTreeMap<u64, GitHub>,
@@ -115,9 +196,14 @@ impl Adapter {
         store: tl3_config::Store,
     ) -> Result<Self> {
         fs::create_dir_all(records)?;
+        let recovery_through = ingress_highwater(&store)?;
+        let wakes = Wakes::default();
+        wakes.bind(Journal { epoch, records_root: records.to_owned(), store: store.clone() });
         Ok(Self {
+            recovery_through,
+            records_root: records.to_owned(),
             boundary: None,
-            wakes: Wakes::default(),
+            wakes,
             clients,
             epoch,
             records: Records::new(records),
@@ -126,6 +212,7 @@ impl Adapter {
         })
     }
     pub fn with_wakes(mut self, wakes: Wakes) -> Self {
+        wakes.bind(self.journal());
         self.wakes = wakes;
         self
     }
@@ -457,41 +544,11 @@ impl Adapter {
         };
         Ok(Completion::confirmed(observations))
     }
+    fn journal(&self) -> Journal {
+        Journal { epoch: self.epoch, records_root: self.records_root.clone(), store: self.store.clone() }
+    }
     fn remember_delivery(&self, d: &Delivery, merged: &Merged) -> Result<()> {
-        let intent: Option<Intent> =
-            read_file(&self.records.path(&d.key).with_extension("intent"))?;
-        if !intent.is_some_and(|intent| intent.action == "Merge" && intent.head == merged.head) {
-            return Ok(());
-        }
-        let mut store = Store::open(&self.store)?;
-        let snapshot = store.load()?;
-        let id = d.node().0.to_string();
-        let value = serde_json::json!({"delivery":d.key,"head":merged.head,"mode":"direct","number":number(d)?});
-        if snapshot
-            .rows
-            .iter()
-            .any(|r| r.table == "delivery_history" && r.id == id && r.value == value)
-        {
-            return Ok(());
-        }
-        if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
-            return Err(Error::Invalid("direct history epoch is fenced"));
-        }
-        self.records.fence(self.epoch)?;
-        let mut commit = tl3_store::Commit::new(
-            format!("direct-history:{}:{}", d.key, snapshot.revision.get()),
-            serde_json::json!({"direct_delivery":d.key}),
-            &snapshot,
-        );
-        commit.rows.push(tl3_store::RowChange::Put {
-            table: "delivery_history".into(),
-            id,
-            value,
-        });
-        self.boundary(Write::History, false);
-        store.commit(&commit)?;
-        self.boundary(Write::History, true);
-        Ok(())
+        self.journal().remember_delivery(d, merged, |after| self.boundary(Write::History, after))
     }
     fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
         self.remember_delivery(d, &merged)?;
@@ -591,12 +648,21 @@ impl Adapter {
         if self.wakes.sleeping(&d.key) {
             return Err(Error::ChecksPending);
         }
+        let intent: Option<Intent> = read_file(&self.records.path(&d.key).with_extension("intent"))?;
+        let event = self.wakes.event(&d.key).unwrap_or(0);
+        let attempted = intent.as_ref().is_some_and(|i| i.action == "Merge" || i.consumed_through.is_some());
+        let consumed = intent.as_ref().and_then(|i| i.consumed_through).unwrap_or(0);
+        let authorized = decide::authorized(attempted, event, consumed, self.recovery_through);
         // At most one annotation and one merge per call. A pending check never loops.
         for _ in 0..2 {
-            let read = self.read(d, true)?;
+            let read = self.read(d, authorized)?;
             let plan = decide::decide(read.facts);
             if let Some(completion) = self.result(d, &read, &plan, true)? {
                 return Ok(completion);
+            }
+            if plan.outcome == Outcome::Observe {
+                self.wakes.sleep(&d.key);
+                return Err(Error::ChecksPending);
             }
             let github = self.client(d)?.clone();
             let repo = full_name(&d.repository);
@@ -608,6 +674,11 @@ impl Adapter {
                     Step::Intent => {
                         let path = self.records.path(&d.key).with_extension("intent");
                         let previous: Option<Intent> = read_file(&path)?;
+                        let consumed_through = if plan.third == Step::Merge {
+                            Some(decide::consume(event, ingress_highwater(&self.store)?, consumed))
+                        } else {
+                            previous.as_ref().and_then(|i| i.consumed_through)
+                        };
                         let attempt = previous.map_or(Ok(1), |intent| {
                             intent
                                 .attempt
@@ -621,6 +692,7 @@ impl Adapter {
                                 head: sha.clone(),
                                 attempt,
                                 action: format!("{:?}", plan.third),
+                                consumed_through,
                                 method: read
                                     .method
                                     .ok_or(Error::Invalid("missing merge method"))?,
@@ -644,7 +716,7 @@ impl Adapter {
                     Step::Merge => {
                         self.fence(d)?;
                         // No timer/repeated controller drive may authorize the next PUT.
-                        // An upstream event clears this wait; restart constructs fresh state.
+                        // The intent also consumes all already-received events durably.
                         self.wakes.sleep(&d.key);
                         self.boundary(Write::Merge, false);
                         let result = self.runtime.block_on(github.merge_pull_request(
@@ -723,7 +795,7 @@ impl Executor for Adapter {
         self.attempt(d)
     }
     fn reconcile(&mut self, d: &Delivery) -> Result<Reconciliation> {
-        // Restart/webhook reconciliation is a fresh attempt, including all eligibility reads.
+        // Recovery observes outcomes; a consumed attempt needs a new post-recovery event.
         match self.attempt(d) {
             Ok(completion) => Ok(Reconciliation::Found(Box::new(completion))),
             Err(Error::ChecksPending) => Ok(Reconciliation::Pending),
@@ -756,16 +828,16 @@ impl Executor for Adapter {
     fn look(&mut self, d: &Delivery) -> Result<Look> {
         // Only the authenticated upstream translator grants this capability.
         // Silence/allowance looks without that capability are observation-only.
-        if self.wakes.take_event(&d.key) {
+        if self.wakes.event(&d.key).is_some() {
             return Ok(match self.reconcile(d)? {
                 Reconciliation::Found(c) => Look::Found(c),
                 Reconciliation::Absent => Look::Absent,
-                Reconciliation::Pending => Look::Pending,
+                Reconciliation::Pending => Look::Healthy,
             });
         }
         let observations = self.observations(d)?;
         Ok(if observations.is_empty() {
-            Look::Pending
+            Look::Healthy
         } else {
             Look::Found(Box::new(Completion::confirmed(observations)))
         })
@@ -831,15 +903,10 @@ impl Executor for Adapter {
             if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
                 return Err(Error::Invalid("direct retirement epoch is fenced"));
             }
-            let head = crate::commit_sha(&snapshot, n.merged)
+            crate::commit_sha(&snapshot, n.merged)
                 .ok_or(Error::Invalid("missing consumed merged head"))?;
-            self.remember_delivery(
-                d,
-                &Merged {
-                    head: head.into(),
-                    checks_passed: n.checked == n.merged,
-                },
-            )?;
+            // History is saved before the merged fact, including webhook facts.
+            // Retirement must not advance the caller's store revision.
             self.records.fence(self.epoch)?;
             for path in [
                 self.records.path(&d.key).with_extension("intent"),

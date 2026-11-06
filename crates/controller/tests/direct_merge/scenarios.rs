@@ -332,14 +332,16 @@ fn restart_direct_write_cuts(cuts: std::ops::Range<usize>) {
             }
         }
         drop(issuer);
-        // A restart has no in-memory sleeping effects.
+        // A recovered Merge intent cannot authorize a new write by itself.
+        let puts_before_recovery = fixture.direct.lock().unwrap().puts.len();
         let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
             &fixture.root.path().join("direct"), settings.clone()).unwrap();
-        let completion = match adapter.reconcile(&delivery).unwrap() {
-            Reconciliation::Found(c) => c,
-            _ => panic!("fresh reconciliation must converge at cut {cut}"),
-        };
-        assert_eq!(completion.ack, tl3_kernel::Ack::Confirmed);
+        match adapter.reconcile(&delivery).unwrap() {
+            Reconciliation::Found(c) => assert_eq!(c.ack, tl3_kernel::Ack::Confirmed),
+            Reconciliation::Pending => assert_eq!(fixture.direct.lock().unwrap().puts.len(), puts_before_recovery,
+                "a recovered consumed authorization cannot write at cut {cut}"),
+            Reconciliation::Absent => panic!("recovery cannot lose durable evidence at cut {cut}"),
+        }
         drop(adapter);
         let mut restarted = fixture.open(&settings);
         fixture.check_event(&settings);

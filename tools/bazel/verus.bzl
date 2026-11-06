@@ -225,7 +225,7 @@ def verus_proofs():
             name = "verus_direct_merge",
             src = "proofs/direct_merge.rs",
             srcs = ["src/adapters/direct_merge/decide.rs"],
-            expected_obligations = 8,
+            expected_obligations = 10,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",

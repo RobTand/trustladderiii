@@ -142,3 +142,25 @@ pub fn decide(f: Facts) -> Plan {
         sha: f.approved,
     }
 }
+
+/// #830 r2 review A: a recovered Merge intent needs an event received after both
+/// its durable consumption watermark and this adapter's recovery point.
+/// This is the sub-lead's explicit r2 authorization rule, not a new kernel rule.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (!attempted || (event > consumed && event > recovered)),
+    attempted && (event <= consumed || event <= recovered) ==> !out,
+))]
+pub fn authorized(attempted: bool, event: u64, consumed: u64, recovered: u64) -> bool {
+    !attempted || (event > consumed && event > recovered)
+}
+
+/// #830 r2 review A: the fsynced Merge intent consumes every ingress event
+/// already received before PUT, including older events queued behind its issuer.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out >= event && out >= received && out >= previous,
+    out == event || out == received || out == previous,
+))]
+pub fn consume(event: u64, received: u64, previous: u64) -> u64 {
+    let through = if event > received { event } else { received };
+    if previous > through { previous } else { through }
+}

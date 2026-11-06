@@ -17,6 +17,13 @@ fn witnesses() {
     let visible = decide::Facts { approved: h, write_authorized: true, observed: h, checked: h, checking: true, approval: true,
         open: true, merged: false, recorded_merge: false, held: false, conflict: false,
         checks: decide::Checks::Passed, visible: true };
+    let consumed = decide::consume(4, 8, 2);
+    assert(consumed == 8);
+    assert(!decide::authorized(true, 4, consumed, 0));
+    assert(!decide::authorized(true, 8, consumed, 0));
+    assert(!decide::authorized(true, 9, consumed, 10));
+    assert(decide::authorized(true, 11, consumed, 10));
+    assert(decide::authorized(false, 0, 0, 10));
     let merge = decide::decide(visible);
     assert(merge.third == decide::Step::Merge);
     assert(merge.first == decide::Step::Fence && merge.second == decide::Step::Intent);

@@ -65,6 +65,21 @@ impl Translator {
                 None
             };
             if let Some(evidence) = evidence {
+                if let Evidence::Merged { head, checks_passed } = &evidence
+                    && let Some(journal) = self.wakes.journal()
+                {
+                    let mut deliveries: Vec<Delivery> = snapshot.pending_effects.iter()
+                        .map(|effect| crate::hydrate(effect, snapshot)).collect::<Result<_>>()?;
+                    for row in snapshot.rows.iter().filter(|r| matches!(r.table.as_str(), "watches" | "retiring_effects")) {
+                        deliveries.push(crate::decode_stored(row.value.clone())?);
+                    }
+                    for mut delivery in deliveries {
+                        if delivery.node() == node && matches!(delivery.output, Output::Effect { kind: EffectKind::Enqueue, .. }) {
+                            delivery.pull_request = Some(pull.number);
+                            journal.remember_delivery(&delivery, &Merged { head: head.clone(), checks_passed: *checks_passed }, |_| {})?;
+                        }
+                    }
+                }
                 let fact = QueueFact {
                     repository: repo.clone(),
                     number: pull.number,
@@ -86,7 +101,11 @@ impl Translator {
         repo: &Repository,
         number: Option<u64>,
         sha: Option<&str>,
+        event: &GitHubDelivery,
     ) -> Result<Vec<Input>> {
+        let Some(sequence) = self.wakes.journal().map(|j| j.event_sequence(event)).transpose()?.flatten() else {
+            return Ok(vec![]);
+        };
         let mut inputs = Vec::new();
         for effect in &snapshot.pending_effects {
             let delivery = crate::hydrate(effect, snapshot)?;
@@ -101,7 +120,7 @@ impl Translator {
                     }
                 )
             {
-                self.wakes.wake(&effect.key);
+                self.wakes.wake(&effect.key, sequence);
                 inputs.push(Input::Look {
                     key: effect.key.clone(),
                 });
@@ -134,7 +153,7 @@ impl GitHubTranslator for Translator {
                     installation: status.installation.id,
                 };
                 if repository_config::direct(snapshot, &repo)? {
-                    return self.wakes(snapshot, &repo, None, Some(&status.sha));
+                    return self.wakes(snapshot, &repo, None, Some(&status.sha), delivery);
                 }
             }
         }
@@ -167,31 +186,31 @@ impl GitHubTranslator for Translator {
             return self.queue.translate(delivery, snapshot);
         }
         match delivery {
-            GitHubDelivery::Webhook(delivery) => match delivery.event.as_ref() {
+            GitHubDelivery::Webhook(webhook) => match webhook.event.as_ref() {
                 Some(Event::PullRequestMerged { pull_request, .. }) => {
                     self.input(snapshot, &repo, pull_request, false)
                 }
                 Some(Event::PullRequestSynchronized { pull_request, .. }) => {
                     let mut inputs = self.input(snapshot, &repo, pull_request, true)?;
-                    inputs.extend(self.wakes(snapshot, &repo, Some(pull_request.number), None)?);
+                    inputs.extend(self.wakes(snapshot, &repo, Some(pull_request.number), None, delivery)?);
                     Ok(inputs)
                 }
                 Some(
                     Event::CheckRunCompleted { check_run, .. }
                     | Event::CheckRunUpdated { check_run, .. },
-                ) => self.wakes(snapshot, &repo, None, Some(&check_run.head_sha)),
+                ) => self.wakes(snapshot, &repo, None, Some(&check_run.head_sha), delivery),
                 Some(Event::CheckSuiteCompleted { check_suite, .. }) => {
-                    self.wakes(snapshot, &repo, None, Some(&check_suite.head_sha))
+                    self.wakes(snapshot, &repo, None, Some(&check_suite.head_sha), delivery)
                 }
                 Some(
                     Event::PullRequestClosed { pull_request, .. }
                     | Event::PullRequestUpdated { pull_request, .. },
-                ) => self.wakes(snapshot, &repo, Some(pull_request.number), None),
+                ) => self.wakes(snapshot, &repo, Some(pull_request.number), None, delivery),
                 _ => Ok(vec![]), // No Mergify dequeue, missing-check or merge-group rules in direct mode.
             },
             GitHubDelivery::CatchUp { changes, .. } => {
                 let world = crate::snapshot::decode(snapshot)?;
-                let mut inputs = self.wakes(snapshot, &repo, None, None)?;
+                let mut inputs = self.wakes(snapshot, &repo, None, None, delivery)?;
                 let client = self
                     .clients
                     .get(&repo.installation)
