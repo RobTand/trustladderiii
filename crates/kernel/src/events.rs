@@ -72,9 +72,17 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 },
             _ => true,
         },
+        // W3: owner-command clauses are independent of reply-arm contracts.
+        match event {
+            Event::Command { node, id, command } => node.0 < old(w).nodes@.len()
+                && port_acks_specs::owner_command(command) ==> port_acks_specs::command_post(
+                    *old(w), *final(w), node.0 as usize, id, command, *old(out), *final(out)),
+            _ => true,
+        },
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
+    kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
     match event {
         Event::NewAdoption {
@@ -133,6 +141,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
                 kernel_proof! {
+                    if port_acks_specs::owner_command(command) {
+                        port_acks_commands::finish_command(before_apply@, *w, i, id, command, before_apply_out@, *out);
+                    }
                     if command == Command::Resume {
                         progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
                     }

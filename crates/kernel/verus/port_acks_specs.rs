@@ -70,3 +70,44 @@ pub(super) open spec fn q54(b: Node, a: Node, fail_fast: bool, publication: bool
             && a.phase == Phase::Stopping(Outcome::Stopped) && a.credit == b.credit && a.question.is_none())
 }
 }
+
+verus! {
+/// #806: keep the owner-command equation opaque while proving the pre-existing progress contracts.
+#[verifier::opaque]
+pub(super) open spec fn command_result(b: Node, a: Node, id: u64, c: Command) -> bool {
+    owner_command(c) ==> a == command_node(b, id, c)
+}
+}
+
+verus! {
+/// State-table Pause: direct assignment frame, separate from stopping and Resume.
+#[verifier::opaque]
+pub(super) open spec fn paused_node(n: Node, id: u64) -> Node {
+    if id <= n.last_cmd { n } else { Node { last_cmd: id,
+        paused: n.paused || !(n.phase is Stopping || n.phase is Closed), ..n } }
+}
+}
+
+verus! {
+/// #806: keep the exact Pause assignment opaque in every other command arm.
+#[verifier::opaque]
+pub(super) open spec fn pause_post(b: Node, a: Node, id: u64, c: Command) -> bool {
+    c == Command::Pause ==> a == paused_node(b, id)
+}
+}
+
+verus! {
+/// #806: the command-ID assignment is composed before any handler is called.
+#[verifier::opaque]
+pub(super) open spec fn id_post(b: Node, a: Node, id: u64) -> bool {
+    a == (Node { last_cmd: id, ..b })
+}
+}
+
+verus! {
+/// #806: owner commands preserve the complete output and question counter.
+#[verifier::opaque]
+pub(super) open spec fn command_io(qb: u64, qa: u64, ob: Outbox, oa: Outbox, c: Command) -> bool {
+    owner_command(c) ==> qa == qb && oa == ob
+}
+}
