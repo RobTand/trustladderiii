@@ -189,7 +189,7 @@ CASES = {
     'gate_reply_admission': ('crates/kernel/src/reply_admission.rs',
                              'end_operation(&mut w.nodes[i]);',
                              'end_operation(&mut w.nodes[i]);\n    w.nodes[i].pool = true;',
-                             '//crates/kernel:verus_reply_admission_on_reply'),
+                             '//crates/kernel:verus_review_admission_admitted_reply'),
 
     'gate_apply_merge': ('crates/kernel/src/facts.rs',
                          'm.merged = Some(head);\n    m.pr_open = false;',
