@@ -723,6 +723,15 @@ impl SchemaOrder for Tests {
             ),
             ("/properties/image", &["type", "pattern"]),
             ("/properties/tools_path", &["type", "pattern", "minLength"]),
+            ("/oneOf/0", &["required", "not"]),
+            ("/oneOf/0/not", &["required"]),
+            ("/oneOf/1", &["required", "not"]),
+            ("/oneOf/1/not", &["required"]),
+            ("/properties/execution", &["oneOf"]),
+            ("/properties/execution/oneOf/0", &["type", "properties", "required", "additionalProperties"]),
+            ("/properties/execution/oneOf/0/properties", &["backend", "profile"]),
+            ("/properties/execution/oneOf/0/properties/backend", &["type", "const"]),
+            ("/properties/execution/oneOf/0/properties/profile", &["type", "pattern"]),
         ])
     }
 }
