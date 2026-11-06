@@ -64,6 +64,8 @@ _SCENARIO_SHARDS = {
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
     "tl3-controller/generated_scope": 4,
+    # #830: 62.427 s serial, measured at 34901a132a (da4bea96).
+    "tl3-controller/direct_merge": 8,
     "tl3-controller/quota_hold": 16,
     "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,
@@ -152,6 +154,7 @@ _CONTROLLER_RUNTIME = {
 _CONTROLLER_TEST_SOURCES = {
     "tests/regeneration.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/generated_scope.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
+    "tests/direct_merge.rs": ["tests/mergify.rs", "tests/mergify/**", "tests/support/**", "tests/fixtures/mergify/**"],
     "tests/input_resources.rs": ["tests/support/**"],
     "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs"],
     # CC-P: exact source replay and persistent differential schedules.

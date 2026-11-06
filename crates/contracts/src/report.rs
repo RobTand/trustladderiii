@@ -287,6 +287,8 @@ pub enum ProofMode {
 pub enum RedMessageMatch {
     Message,
     SourceAssertion,
+    /// The base failure did not satisfy the declared RED reason (#848).
+    Mismatch,
 }
 
 // The subject/observer proof receipt of a demonstrating or reproducing check.
