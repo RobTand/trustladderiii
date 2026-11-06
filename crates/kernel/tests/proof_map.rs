@@ -71,6 +71,8 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "dependency_abandoned_never_releases",
         "dependency_retirement_abandoned",
     ),
+    ("gate_leaf_progress_w2", "progress_gate_leaf_sequence"),
+    ("gate_leaf_progress_w3", "progress_gate_leaf_sequence"),
     // #832: new semantic replies are covered by Verus; Kani stays frozen.
     ("apply_plan_check_rejected", "plan_check_witness"),
     ("apply_plan_check_needs_split", "plan_check_witness"),
@@ -221,6 +223,7 @@ fn every_event_and_phase_has_a_proof() {
         "infrastructure_frame",
         "infrastructure_result",
     ] {
+        assert!(RETIREMENT.contains(&format!("fn {function}(")));
         assert!(VERUS_GROUPS.contains(&format!(
             "\"retirement_{function}\": (\"kernel::retirement#{function}\", 1)"
         )));

@@ -39,9 +39,13 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
+        command == Command::Stop && id > old(w).nodes@[i as int].last_cmd
+            && old(w).nodes@[i as int].phase == Phase::Queued ==>
+            progress_gate_leaf_steps::stopped_command(old(w).nodes@[i as int], final(w).nodes@[i as int], id)
+                && final(w).next_question == old(w).next_question,
         command == Command::Resume ==> final(w).next_question == old(w).next_question,
         progress_gate_apply::resume_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         return; // a repeated command
@@ -53,8 +57,14 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
     }
     w.nodes[i].last_cmd = id;
+    kernel_proof! { cleanup_lemmas::resource_distance(before_command_node@, w.nodes@[i as int]); }
     match command {
-        Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
+        Command::Stop => {
+            enter_stopping(&mut w.nodes[i], Outcome::Stopped);
+            kernel_proof! {
+                progress_gate_leaf_steps::stopped_command_result(before_command_node@, w.nodes@[i as int], id);
+            }
+        },
         Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
         Command::Pause => {
             let m = &mut w.nodes[i];
@@ -65,6 +75,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         Command::Resume => {
             w.nodes[i].paused = false;
             kernel_proof! {
+                cleanup_lemmas::resource_distance(Node { paused: false, ..before_command_node@ }, w.nodes@[i as int]);
                 reveal(progress_gate_apply::resumed); reveal(progress_gate_apply::resume_post);
                 assert(progress_gate_apply::resume_post(before_command_node@, w.nodes@[i as int], id, command));
             }

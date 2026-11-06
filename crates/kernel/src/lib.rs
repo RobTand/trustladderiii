@@ -2394,3 +2394,54 @@ mod port_review_failure;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_handler_lemmas.rs"]
 mod retirement_handler_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf.rs"]
+mod progress_gate_leaf;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_steps.rs"]
+mod progress_gate_leaf_steps;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_state.rs"]
+mod progress_gate_leaf_state;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_teardown.rs"]
+mod progress_gate_leaf_teardown;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_sequence.rs"]
+mod progress_gate_leaf_sequence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_witness.rs"]
+mod progress_gate_leaf_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/rank_specs.rs"]
+mod rank_specs;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_advance.rs"]
+mod progress_gate_leaf_advance;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_execute.rs"]
+mod progress_gate_leaf_execute;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_preserve.rs"]
+mod progress_gate_leaf_preserve;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_world.rs"]
+mod progress_gate_leaf_world;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_construct.rs"]
+mod progress_gate_leaf_construct;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_adapter.rs"]
+mod progress_gate_leaf_adapter;

@@ -509,6 +509,11 @@ CASES = {
         '    if reply == Reply::AuditDisagrees && w.nodes[i].phase.is_closed() {\n        w.nodes[i].phase = Phase::Ingesting;\n    }\n    let n = &w.nodes[i];\n    if n.phase.is_stopping() {',
         '//crates/kernel:verus_reply_admission_on_reply',
     ),
+    # Q48 leaf port: preserve the three production mutation obligations.
+    'leaf_bypass_overlap': ('crates/kernel/src/scheduler.rs', '        if !w.footprints_disjoint(waiter.footprint, me.footprint) {', '        if false {', '//crates/kernel:verus_scheduler_first_in_line'),
+    'leaf_grant_ticket': ('crates/kernel/src/allocation.rs', '        m.phase = phase;\n        m.pos = 0;\n        m.ticket = None;', '        m.phase = phase;\n        m.pos = 0;\n        let _ = m.ticket;', '//crates/kernel:verus_allocation_set_phase'),
+    'leaf_slot_release': ('crates/kernel/src/ranks.rs', '        m.holds = false;\n        m.pos += 1;', '        m.holds = true;\n        m.pos += 1;', '//crates/kernel:verus_ranks'),
+
 }
 
 
