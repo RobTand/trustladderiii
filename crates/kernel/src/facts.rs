@@ -417,7 +417,9 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     kernel_snapshot! { prepared_ci = *w }
     kernel_snapshot! { prepared_out = *out }
     kernel_proof! {
-        assert(prepared_ci@.nodes@ =~= ci_world@.nodes@.update(i as int, retirement_runtime::ci_prepared(before_ci@)));
+        assert(prepared_ci@.nodes@ =~= ci_world@.nodes@.update(i as int, retirement_runtime::ci_prepared(before_ci@))) by {
+            reveal(retirement_runtime::ci_prepared);
+        }
         retirement_runtime::ci_inputs(before_ci@);
     }
     if !infra {

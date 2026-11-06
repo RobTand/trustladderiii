@@ -33,6 +33,7 @@ pub(super) proof fn ci_infra(n: Node, fast: bool, id: u64)
         == (retirement::fact_node(n, Fact::CiFailed { infra: true }), false),
 { reveal(retirement_retry::fact_result); }
 /// Q50 / #806: cancellation precedes the actual failed-round call.
+#[verifier::opaque]
 pub(super) open spec fn ci_prepared(n: Node) -> Node {
     if n.phase == Phase::Publishing { Node { effect: match n.effect {
         Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
@@ -49,6 +50,7 @@ pub(super) proof fn ci_retry(n: Node, fast: bool, id: u64, after: Node, next: u6
         next as int == id as int + if retirement_retry::fact_result(n,
             Fact::CiFailed { infra: false }, fast, id).1 { 1int } else { 0int },
 {
+    reveal(ci_prepared);
     retirement_retry_bridge::round(ci_prepared(n), fast, id, ReviewStop::CiFailed);
     reveal(retirement_retry::fact_result);
 }
@@ -83,7 +85,7 @@ pub(super) proof fn ci_frame(before: World, prepared: World, after: World, i: us
         prepared.pool_capacity == before.pool_capacity,
         retirement::fact_frame(prepared, after, i, ob, oa),
     ensures retirement::fact_frame(before, after, i, ob, oa),
-{ reveal(retirement::fact_frame); }
+{ reveal(ci_prepared); reveal(retirement::fact_frame); }
 /// #806: an ignored CI fact preserves the complete world and output frame.
 pub(super) proof fn noop_frame(w: World, i: usize, out: Outbox)
     requires i < w.nodes@.len(),
@@ -94,7 +96,7 @@ pub(super) proof fn noop_frame(w: World, i: usize, out: Outbox)
         && after.next_question == w.next_question && after.fail_fast == w.fail_fast
         && after.pool_capacity == w.pool_capacity
         ==> #[trigger] retirement::fact_frame(w, after, i, out, out),
-{ reveal(retirement::fact_frame); }
+{ reveal(ci_prepared); reveal(retirement::fact_frame); }
 
 /// Q50 / Q54 / #806: the exact CI source and W2 failed-round tuple, for arbitrary flags.
 #[verifier::opaque]
@@ -117,7 +119,8 @@ pub(super) proof fn ci_forward(n: Node, after: Node, infra: bool, fast: bool, id
     reveal(ci_post); reveal(retirement_retry::fact_result);
     if !infra && (n.phase == Phase::Queued || (n.phase == Phase::Publishing
         && current_item(n) == Some(Item::Do(EffectKind::Enqueue)))) {
-        retirement_retry_bridge::round(ci_prepared(n), fast, id, ReviewStop::CiFailed);
+        reveal(ci_prepared);
+    retirement_retry_bridge::round(ci_prepared(n), fast, id, ReviewStop::CiFailed);
     }
 }
 
@@ -126,5 +129,5 @@ pub(super) proof fn ci_inputs(n: Node)
     ensures current_item(ci_prepared(n)) == current_item(n),
         node_headroom(ci_prepared(n)) == node_headroom(n),
         arithmetic_consistent(ci_prepared(n)) == arithmetic_consistent(n),
-{ }
+{ reveal(ci_prepared); }
 }
