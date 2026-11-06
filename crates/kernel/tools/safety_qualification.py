@@ -417,6 +417,14 @@ CASES = {
                                      'notice(out, i, Notice::MeasuresPosted);',
                                      'notice(out, i, Notice::MeasuresPosted);\n            notice(out, i, Notice::MeasuresPosted);',
                                      '//crates/kernel:lib_test_tl3_kernel'),
+    'advance_teardown_missing_position': ('crates/kernel/src/ranks.rs',
+                                         '        m.pos += 1;\n        return true;',
+                                         '        m.pos += 0;\n        return true;',
+                                         '//crates/kernel:verus_ranks_advance_teardown_missing'),
+    'advance_teardown_duplicate_emission': ('crates/kernel/src/ranks.rs',
+                                           '] proof [reveal(advance_post); reveal(distance);] {\n        emit_node(node, context.node, kind, out);',
+                                           '] proof [reveal(advance_post); reveal(distance);] {\n        emit_node(node, context.node, kind, out);\n        emit_node(node, context.node, kind, out);',
+                                           '//crates/kernel:lib_test_tl3_kernel'),
 }
 
 
