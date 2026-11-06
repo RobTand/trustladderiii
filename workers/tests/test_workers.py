@@ -1146,11 +1146,25 @@ def test_ep2_unsupported_wrapper_is_not_blanket_context():
     from tl3_workers.evidence import contract_violations
 
     text = 'Unsupported evidence requirement: ' + EXEC_PROSE[-2]['route']
-    reply = dict(copy.deepcopy(AGREE), verdict='disagree', objections=[text])
+    reply = dict(copy.deepcopy(AGREE), verdict='disagree', objections=[text], evidence_contract=[])
     assert not contract_violations({'tool_capabilities': []}, reply, role='audit')
 
 
-@pytest.mark.parametrize('name,text,is_context', [['source-policy-paragraph', 'Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads. Record exit status, logs, terminal records, CAS receipts, skips and missing tools.', True], ['source-route-sentence', 'Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads.', True], ['source-recording-sentence', 'Record exit status, logs, terminal records, CAS receipts, skips and missing tools.', True], ['policy-skips-isolated', 'Record skips.', True], ['policy-missing-tools-isolated', 'Record missing tools.', True], ['policy-receipts-isolated', 'Verify terminal records, logs and CAS receipts.', True], ['known-priority-positive', 'Run development tests through PrismaBuild at priority -10.', True], ['visible-audit-requirement', 'Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records.', True], ['verification-parse-once', 'A tiny valid immutable wire is parsed once across cached-unit verification and accepted-wire decoding, measured at the real container parser.', False], ['verification-refusal', 'Corrupt wires, receipt or expected-identity mismatches, incomplete planes, wrong recipes, foreign handles and malformed metadata refuse through the real reader.', False], ['verification-cpu-fixtures', 'Self-contained CPU pytest fixtures and targeted PrismaBuild results establish the parse-count and refusal behavior without a model download.', False], ['verification-skips-not-evidence', 'Existing artifact/device-dependent skips are not evidence for those cases; add self-contained tiny-wire regressions.', False], ['verification-checks-unchanged', 'The accepted-wire path returns the same metadata and decoded values as the ordinary bytes-taking reader, with every existing metadata, profile, plane, geometry and reconstruction check.', False]], ids=lambda value: value if isinstance(value, str) and len(value) < 45 else None)
+@pytest.mark.parametrize('name,text,is_context', [
+    ('source-policy-paragraph', 'Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads. Record exit status, logs, terminal records, CAS receipts, skips and missing tools.', True),
+    ('source-route-sentence', 'Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads.', True),
+    ('source-recording-sentence', 'Record exit status, logs, terminal records, CAS receipts, skips and missing tools.', True),
+    ('policy-skips-isolated', 'Record skips.', True),
+    ('policy-missing-tools-isolated', 'Record missing tools.', True),
+    ('policy-receipts-isolated', 'Verify terminal records, logs and CAS receipts.', True),
+    ('known-priority-positive', 'Run development tests through PrismaBuild at priority -10.', True),
+    ('visible-audit-requirement', 'Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records.', True),
+    ('verification-parse-once', 'A tiny valid immutable wire is parsed once across cached-unit verification and accepted-wire decoding, measured at the real container parser.', False),
+    ('verification-refusal', 'Corrupt wires, receipt or expected-identity mismatches, incomplete planes, wrong recipes, foreign handles and malformed metadata refuse through the real reader.', False),
+    ('verification-cpu-fixtures', 'Self-contained CPU pytest fixtures and targeted PrismaBuild results establish the parse-count and refusal behavior without a model download.', False),
+    ('verification-skips-not-evidence', 'Existing artifact/device-dependent skips are not evidence for those cases; add self-contained tiny-wire regressions.', False),
+    ('verification-checks-unchanged', 'The accepted-wire path returns the same metadata and decoded values as the ordinary bytes-taking reader, with every existing metadata, profile, plane, geometry and reconstruction check.', False),
+])
 def test_ep2_parent_thirteen_cases(name, text, is_context):
     from tl3_workers.evidence import contract_violations, preflight
     from tl3_workers.rules import apply_edit
@@ -1217,3 +1231,33 @@ def test_ep2_exact_audit_mixed_goals_and_wrappers_stay_intact():
     goals = copy.deepcopy(EP2_RETAINED['goals_presented_to_final_audit'])
     reply = dict(copy.deepcopy(BRIEF), goals=goals, evidence_contract=[])
     assert not contract_violations({'tool_capabilities': []}, reply)
+
+
+@pytest.mark.parametrize('dimension,value', [('artifacts', 'cas_receipt'), ('runner_features', 'base_head'),
+                                           ('methods', 'red_green'), ('protected_files', 'reader.py')])
+def test_ep2_mixed_projection_keeps_real_capability_gaps(dimension, value):
+    from tl3_workers.evidence import preflight
+
+    entry = route_requirement('Record missing tools. The parser count must be one.')
+    entry[dimension] = [value]
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': [], 'artifacts': [], 'methods': [], 'protected_files': []}
+    reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
+    preflight({'tool_capabilities': [capability]}, reply)
+    assert reply['evidence_contract'] == [entry]
+    assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
+
+
+def test_ep2_categories_compose_as_a_full_paragraph():
+    from tl3_workers.evidence import contract_violations
+    from tl3_workers.rules import apply_edit
+
+    paragraph = ' '.join(row[1] for row in EP2_CATEGORIES)
+    before = dict(copy.deepcopy(BRIEF), evidence_contract=[route_requirement(paragraph)])
+    inputs = {'tool_capabilities': [], 'issue': {'body': paragraph}}
+    rows = contract_violations(inputs, before)
+    assert rows
+    for row in rows:
+        before = apply_edit(before, row.repair, row.repair.allowed.value)
+    assert not before['evidence_contract']
+    assert paragraph in before['brief']
