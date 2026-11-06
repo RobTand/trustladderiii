@@ -52,7 +52,10 @@ def main():
         result, _ = verify(verifier, z3, rustc, source, extra=['--help'])
         print(result.stdout)
         return result.returncode
-    result, seconds = verify(verifier, z3, rustc, source)
+    result, seconds = verify(verifier, z3, rustc, source, extra=['--time', '--output-json'])
+    if mode == 'measure':
+        print(result.stdout, flush=True)
+        return result.returncode
     print(result.stdout, flush=True)
     count = re.search(r'verification results:: (\d+) verified, 0 errors', result.stdout)
     if result.returncode or not count or int(count[1]) != expected:

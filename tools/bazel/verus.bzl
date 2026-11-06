@@ -344,7 +344,7 @@ def verus_proofs():
             src = "proofs/core.rs",
             srcs = ["src/step.rs"],
             expected_obligations = 1,
-            module = "help",
+            module = "measure",
             measured_runner = ":verus_runner",
             tags = ["manual"],
             size = "small",
