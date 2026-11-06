@@ -1,33 +1,12 @@
 from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
 from .red_message import RedMessageMatch
+# Diagnostics live in limits.py, which the in-container runner loads by path (#858).
+from .limits import Diagnostic as Diagnostic, contextual as contextual, named as named
 import builtins
-from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
 import json
 import re
-
-
-class Diagnostic(str):
-    def __new__(cls, text, rule, items):
-        value = super().__new__(cls, text)
-        value.rule = rule
-        value.items = deepcopy(items)
-        return value
-
-    def __reduce__(self):
-        return Diagnostic, (str(self), self.rule, self.items)
-
-
-def named(rule, text, items):
-    return Diagnostic(str(text), rule, items)
-
-
-def contextual(error, **items):
-    text = error.args[0] if isinstance(error, Exception) else error
-    if not isinstance(text, Diagnostic):
-        raise TypeError('A plan diagnostic must name its rule at the emission site.')
-    return named(text.rule, str(error), {**text.items, **items})
 
 
 ALWAYS_CHECK = "Repository always tests"
