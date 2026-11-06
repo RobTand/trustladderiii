@@ -630,10 +630,8 @@ kernel_fn! {
             result == advance_enabled(*old(node), _context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
-    ] proof [reveal(port_advance_contracts::exact);
-        reveal(port_advance_contracts::node_after);
-        reveal(port_advance_contracts::outputs);
-        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
+    ] proof [port_advance_contracts::blocked_frame(*node, *_next_ticket, _context, *_out);
+        reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -842,10 +840,8 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out)),
-    ] proof [reveal(port_advance_contracts::exact);
-        reveal(port_advance_contracts::node_after);
-        reveal(port_advance_contracts::outputs);
-        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
+    ] proof [port_advance_contracts::slot_frame(*node, *next_ticket, context, *_out);
+        reveal(advance_post); reveal(distance);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
