@@ -96,6 +96,7 @@ kernel_fn! {
 /// generation, one question and one paid credit, and emit at most two notices.
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
@@ -362,6 +363,7 @@ kernel_fn! {
 /// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
@@ -374,13 +376,22 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).0,
         final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retirement::fact_frame);reveal(retirement_retry::fact_result);] {
+] proof [reveal(retirement::fact_frame);] {
+    kernel_snapshot! { ci_world = *w }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
     if m.phase != Phase::Queued && !before_enqueue {
         kernel_proof! { reveal(retirement::fact_node); }
+        kernel_proof! {
+        assert(w.nodes@[i as int] == retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).0) by {
+            reveal(retirement_retry::fact_result);
+        }
+        assert(w.next_question as int == ci_world@.next_question as int + if retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).1 { 1int } else { 0int }) by {
+            reveal(retirement_retry::fact_result);
+        }
+    }
         return;
     }
     if before_enqueue {
@@ -395,12 +406,28 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
         }
+        kernel_proof! {
+        assert(w.nodes@[i as int] == retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).0) by {
+            reveal(retirement_retry::fact_result);
+        }
+        assert(w.next_question as int == ci_world@.next_question as int + if retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).1 { 1int } else { 0int }) by {
+            reveal(retirement_retry::fact_result);
+        }
+    }
         return;
     }
     kernel_proof! {
         facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
     }
     ci_infrastructure(w, i, out);
+    kernel_proof! {
+        assert(w.nodes@[i as int] == retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).0) by {
+            reveal(retirement_retry::fact_result);
+        }
+        assert(w.next_question as int == ci_world@.next_question as int + if retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).1 { 1int } else { 0int }) by {
+            reveal(retirement_retry::fact_result);
+        }
+    }
 }
 }
 

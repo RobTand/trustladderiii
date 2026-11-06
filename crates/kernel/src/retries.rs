@@ -96,6 +96,7 @@ kernel_fn! {
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -231,6 +232,7 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
 kernel_fn! {
 /// Recheck rows / #771: a new head or reviewer uses the same free allowance.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     out: &mut Outbox) -> (result: ()) [
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
