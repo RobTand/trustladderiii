@@ -32,7 +32,8 @@ def test_every_role_reports_durable_activity_and_reply(tmp_path, monkeypatch, na
     monkeypatch.setattr(runtime, "create_model", lambda request: object())
     summary = tmp_path / "memory.json"
     events = []
-    runtime.run({"role": name, "worktree": str(tmp_path), "inputs": {"goals": ["Fix greeting"]},
+    runtime.run({"role": name, "worktree": str(tmp_path),
+                 "inputs": {"goals": ["Fix greeting"], "footprint": ["greeting.py"]},
                  "memory": {"summary_file": str(summary)}}, events.append)
     assert summary.exists(), "every role must leave a durable run summary"
     record = json.loads(summary.read_text())

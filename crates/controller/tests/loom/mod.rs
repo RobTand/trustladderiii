@@ -40,7 +40,7 @@ pub(crate) fn delivery() -> Delivery {
         pull_request: None,
         proposed: None,
         scope_removals: None,
-        paths: vec![],
+        paths: Default::default(),
         attempt: 1,
         round: 0,
         replanned: false,
