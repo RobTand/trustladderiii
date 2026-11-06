@@ -1,0 +1,5 @@
+            Observation::Prerequisite(fact) => {
+                self.external_dependency_fact(snapshot, world, fact, commit)?;
+                return Ok(None);
+            }
+            // Older controllers queued ScratchSaved after writing it with completion.

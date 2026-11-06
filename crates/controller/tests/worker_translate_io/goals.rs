@@ -1,0 +1,61 @@
+use super::*;
+pub(crate) fn identified(value: &Value) -> Result<Vec<Value>> {
+    let mut goals = value
+        .as_array()
+        .ok_or(Error::Invalid("goals must be a list"))?
+        .clone();
+    let mut ids = BTreeSet::new();
+    for (index, goal) in goals.iter_mut().enumerate() {
+        let goal = goal
+            .as_object_mut()
+            .ok_or(Error::Invalid("goal must be an object"))?;
+        let id = goal
+            .entry("id")
+            .or_insert_with(|| json!(format!("goal-{}", index + 1)));
+        let id = id
+            .as_str()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or(Error::Invalid("goal needs an id"))?;
+        if !ids.insert(id.to_owned()) {
+            return Err(Error::Invalid("goal ids must be unique"));
+        }
+    }
+    Ok(goals)
+}
+pub(crate) fn load(snapshot: &Snapshot, node: NodeId) -> Result<Option<Vec<Value>>> {
+    snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "goals" && row.id == node.0.to_string())
+        .map(|row| identified(&row.value))
+        .transpose()
+}
+pub(crate) fn handover(goals: &[Value], checks: &[Value]) -> Result<()> {
+    let expected: BTreeSet<_> = goals.iter().map(|goal| goal["id"].as_str()).collect();
+    let supplied: BTreeSet<_> = checks
+        .iter()
+        .map(|check| check["goal_id"].as_str())
+        .collect();
+    if expected != supplied || goals.len() != checks.len() {
+        return Err(Error::Invalid(
+            "maker must account for every obligation exactly once",
+        ));
+    }
+    for goal in goals {
+        let check = checks
+            .iter()
+            .find(|check| check["goal_id"] == goal["id"])
+            .unwrap();
+        let status = match goal["stage"].as_str().unwrap_or("maker") {
+            "maker" => "met",
+            "checking" | "publishing" => "pending",
+            _ => return Err(Error::Invalid("unknown obligation stage")),
+        };
+        if check["status"] != status {
+            return Err(Error::Invalid(
+                "maker reply contradicts accepted stage ownership",
+            ));
+        }
+    }
+    Ok(())
+}

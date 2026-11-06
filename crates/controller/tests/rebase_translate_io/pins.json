@@ -1,0 +1,14 @@
+{
+  "arms": {
+    "conflict": {
+      "current": "6c97ea9adf48f6dbb9af4934a037f0bc356033ed16d4da11fc6a74676b22adab",
+      "reference": "a0dc2253473035a8384faad3d4b6ef81dfd54cca43307339e92c1acb7a6d08cb"
+    },
+    "rebased": {
+      "current": "165483f96a3e164c58183e4bfa43f826e02ff656ad6a8a57c388c1deb46f7c11",
+      "reference": "e57e346066f3e859690411d7d488ac9f693bb497e8902213e93915fd125b57e2"
+    }
+  },
+  "base": "c3e6fbbb3625490d324c487eb1469f6d4794dba2",
+  "head": "777d4c54c803d36f0fa6bb7f701b28f9dea02fadf652ac3bcb47073b1f6fe80c"
+}

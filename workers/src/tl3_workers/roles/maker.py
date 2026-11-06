@@ -15,13 +15,12 @@ from jsonschema import Draft202012Validator
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from tl3_harness.selector_identity import selection_matches
 from tl3_workers.contracts import read_json, read_reply, registry, schema
 from tl3_workers.exploration import BudgetUnavailable, ExplorationBudget
 from tl3_workers.budget_check import check as budget_check, history_facts
 from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
 from tl3_workers.generated_scope import configured_outputs
-from tl3_workers.pb_tests import TestSettings
+from tl3_workers.pb_tests import TestSettings, selection_matches
 from tl3_workers.pb_generators import make_generator_tool
 from tl3_workers import retro
 from tl3_workers.roles.base import Role
@@ -31,19 +30,8 @@ from tl3_workers.turns import TurnControl, repaired
 
 
 def _check_inputs(inputs):
-    goals = [goal["id"] for goal in inputs["goals"]]
-    if len(set(goals)) != len(goals):
-        raise ValueError("goal ids must be unique")
-    for path in inputs["plan"]["files"]:
-        if not _parts(path):
-            raise ValueError("expected a declared file")
-    for item in [*inputs["plan"]["checks"], *inputs.get("feedback", [])]:
-        if not set(item["goal_ids"]) <= set(goals):
-            raise ValueError("unknown goal id")
-    required = {goal["id"] for goal in inputs["goals"] if goal.get("stage", "maker") != "publishing"}
-    covered = {goal for check in inputs["plan"]["checks"] for goal in check["goal_ids"]}
-    if not required <= covered:
-        raise ValueError("checks must cover every maker and checking goal")
+    from tl3_workers.reply_check import check_inputs
+    check_inputs("maker", inputs)
 
 
 def _check_reply(inputs, reply):

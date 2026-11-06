@@ -23,6 +23,9 @@ def validation_message(error):
 
 
 def repair_message(error):
+    from tl3_workers.roles.planner import PlanConsistencyError
+    if isinstance(error, PlanConsistencyError) and error.missing_goals:
+        return error.repair_text
     # A schema message echoes the whole invalid reply. Keep where and why it failed.
     message = validation_message(error)
     if isinstance(error, ValidationError):

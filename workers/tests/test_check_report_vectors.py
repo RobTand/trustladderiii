@@ -37,3 +37,15 @@ def test_raw_numbers_decide_as_the_rust_contract(case):
     validator = Draft202012Validator({'$ref': SCHEMA_BASE + 'check-report.json#/$defs/' + case['definition']},
                                      registry=registry())
     assert validator.is_valid(json.loads(case['document'])) == case['valid'], case
+
+
+PATTERNS = json.loads((Path(__file__).resolve().parents[2] / 'harness/test-vectors/contract-patterns.json')
+                      .read_text())
+
+
+@pytest.mark.parametrize('case', PATTERNS['cases'], ids=lambda case: case['name'])
+def test_preexisting_pattern_divergence_is_preserved(case):
+    """#819: record Python's existing acceptance separately from the Rust expectation."""
+    validator = Draft202012Validator(
+        {'$ref': SCHEMA_BASE + PATTERNS['schema'] + '.json#' + PATTERNS['pointer']}, registry=registry())
+    assert validator.is_valid(case['value']) == case['python_valid'], case

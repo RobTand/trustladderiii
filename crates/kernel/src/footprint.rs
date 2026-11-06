@@ -451,3 +451,13 @@ impl kani::Arbitrary for Footprint {
         Self::inline(bits)
     }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// Q30 / #806: expose the real inline fast path to gate permutation and cover proofs.
+pub(super) proof fn inline_disjoint(world: World, a: u64, b: u64)
+    ensures disjoint(world, inline_footprint(a), inline_footprint(b)) == (a & b == 0),
+{
+    reveal(disjoint); reveal(inline_footprint);
+}
+}

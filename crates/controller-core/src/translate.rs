@@ -106,6 +106,27 @@ pub enum Decision {
     InvalidKernel,
 }
 
+/// Queue translation admitted by the recorded-receipt guard. Dispatch consumes
+/// this value; callers construct it only through `begin` at the receipt read.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+pub struct Translation {
+    receipt: (),
+}
+
+/// S-once: preserve the recorded-receipt early return from the Queue arm on
+/// f5b0ba2f, lib.rs:2846-2850. #751/#760 require its original sampling position.
+/// This is preserved existing dedup behavior, not a new state-table rule.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
+    result.is_some() == !recorded,
+))]
+pub fn begin(recorded: bool) -> Option<Translation> {
+    if recorded {
+        None
+    } else {
+        Some(Translation { receipt: () })
+    }
+}
+
 /// Q52 / #447; docs/state-table.md:542-545,555-557,578 on cdacce8f.
 /// Setup evidence never returns a kernel fact, even with an invalid route pairing.
 /// Frozen Mergify routing never constructs those pairings; valid mappings stay intact.
@@ -131,7 +152,8 @@ pub enum Decision {
     route == Route::Incident ==> !(result is Kernel),
     matches!(evidence, EvidenceKind::Setup | EvidenceKind::Missing | EvidenceKind::Blocked | EvidenceKind::Reported) ==> !(result is Kernel),
 ))]
-pub fn dispatch(route: Route, evidence: EvidenceKind) -> Decision {
+pub fn dispatch(translation: Translation, route: Route, evidence: EvidenceKind) -> Decision {
+    let Translation { receipt: () } = translation;
     match route {
         Route::Record => Decision::Record,
         Route::Skip => Decision::Skip,
