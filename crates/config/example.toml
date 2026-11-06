@@ -65,8 +65,8 @@ installation_id = 1
 # Generated outputs cost a 1,024-token fit allowance; standard leading headers are also detected.
 # Optional admitted generator; outputs require declared scope and protected-path checks.
 # Require CI regeneration/diff on the exact queue tree; see docs/generation.md.
-# generated_files = ["**/BUILD.bazel"]
-# generator = "bash tools/bazel/generate.sh"
+# generated_files = ["gen/**/*.json"]
+# generator = "python3 tools/gen_manifest.py"
 # Optional startup plus command deadline, 1–600 seconds; unset keeps 120.
 # generator_timeout_s = 300
 # Optional: also run up to this many existing tests that import the change as a regression check.

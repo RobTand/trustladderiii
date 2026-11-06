@@ -735,12 +735,26 @@ fn generation_recovery_after_record_install_and_before_observation() {
 }
 
 fn reviewed(f: &mut Controlled, index: u64, sha: &str) {
+    for _ in 0..100 {
+        let n = f.c.world().unwrap().nodes[index as usize];
+        if n.phase == Phase::Reviewing && n.run == Some(n.generation) && n.pos == 1 {
+            break;
+        }
+        assert!(f.c.drive_once().unwrap(), "review did not start: {n:?}");
+    }
+    let n = f.c.world().unwrap().nodes[index as usize];
+    assert_eq!(n.run, Some(n.generation));
+    assert_eq!(n.pos, 1);
     let generation = f.c.world().unwrap().nodes[index as usize].generation;
     f.observe(Observation::Reviewed {
         node: NodeId(index),
         generation,
         sha: sha.into(),
     });
+    assert_eq!(
+        f.c.world().unwrap().nodes[index as usize].phase,
+        Phase::Publishing
+    );
 }
 fn queued(f: &mut Controlled, indices: &[usize]) {
     for _ in 0..250 {
@@ -753,9 +767,8 @@ fn queued(f: &mut Controlled, indices: &[usize]) {
         }
         assert!(
             f.c.drive_once().unwrap(),
-            "publication stopped before queue admission: nodes={:?}, snapshot={:?}",
-            f.c.world().unwrap().nodes,
-            f.c.snapshot().unwrap()
+            "publication stopped before queue admission: nodes={:?}",
+            f.c.world().unwrap().nodes
         );
     }
     panic!("publication did not reach the held queue");
