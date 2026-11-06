@@ -183,7 +183,7 @@ class Violation:
         if self.role != role and (_uses_role(self.rule.allowed) or _uses_role(self.rule.repair)):
             raise ValueError('role-dependent violation must use its evaluation role')
 
-    def render(self, *, role):
+    def render(self, *, role, context="reply"):
         _require_role(self.rule, role)
         self._require_resolution_role(role)
         subjects = self.rule.names(self.facts)
@@ -367,5 +367,5 @@ def register(rule, *, roles: Iterable[str]):
     return row
 
 
-def render_all(violations, *, role):
+def render_all(violations, *, role, context="reply"):
     return '\n'.join(violation.render(role=role) for violation in violations)
