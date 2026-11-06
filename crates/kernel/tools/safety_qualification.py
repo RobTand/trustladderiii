@@ -309,6 +309,28 @@ CASES = {
         'w.next_question += 1;\n                    let next = w.next_question;',
         '//crates/kernel:lib_test_tl3_kernel'),
 
+    'port_answer_change_request': ('crates/kernel/src/answers.rs',
+        'enter_stopping(&mut w.nodes[i], Outcome::Replaced)',
+        'enter_stopping(&mut w.nodes[i], Outcome::Stopped)',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_stop': ('crates/kernel/src/answers.rs',
+        'enter_stopping(&mut w.nodes[i], Outcome::Stopped)',
+        'enter_stopping(&mut w.nodes[i], Outcome::Replaced)',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_unclear': ('crates/kernel/src/answers.rs',
+        'clarified: true,',
+        'clarified: false,',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_retry': ('crates/kernel/src/answers.rs',
+        'Answer::Retry => w.nodes[i].question = None,',
+        'Answer::Retry => { let _ = w.nodes[i].question; },',
+        '//crates/kernel:verus_port_answers_stopping_handler'),
+    'port_answer_stale_question': ('crates/kernel/src/answers.rs',
+        'if q.id != id {',
+        'if q.id == id {',
+        '//crates/kernel:verus_answers'),
+
+
 }
 
 

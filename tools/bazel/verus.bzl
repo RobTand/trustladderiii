@@ -640,6 +640,7 @@ def verus_proofs():
             "kernel::answer_equivalence::compare": "Test-only original-body conformance and arbitrary-input generation for the approved #806 helper extraction; executed by the kernel Rust tests.",
             "kernel::answer_equivalence::branch_extraction_matches_original": "Test-only original-body conformance and arbitrary-input generation for the approved #806 helper extraction; executed by the kernel Rust tests.",
             "kernel::answer_equivalence::clarification_allocator_order_matches_reference": "Test-only original-body conformance and arbitrary-input generation for the approved #806 helper extraction; executed by the kernel Rust tests.",
+            "kernel::answers::answer_supported": "Logical definition; selects the four independent #806 answer rows.",
             "kernel::answers::answer_post": "Logical definition; neutral public answer contract for #806 dispatcher composition.",
         }
         groups = {
@@ -881,6 +882,12 @@ def verus_proofs():
             "port_answers_verify_answer": ("kernel::port_answers_apply#verify_answer", 1),
             "port_answers_stopping_handler": ("kernel::answers#answer_stopping", 1),
             "port_answers_awaiting_handler": ("kernel::answers#answer_awaiting", 1),
+            "port_answers_handler_post_unchanged": ("kernel::port_answers_handler#post_unchanged", 1),
+            "port_answers_handler_post_retry": ("kernel::port_answers_handler#post_retry", 1),
+            "port_answers_handler_post_unclear": ("kernel::port_answers_handler#post_unclear", 1),
+            "port_answers_handler_post_stopping": ("kernel::port_answers_handler#post_stopping", 1),
+            "port_answers_handler_cleanup_input": ("kernel::port_answers_handler#cleanup_input", 1),
+            "port_answers_handler_stopping_question": ("kernel::port_answers_handler#stopping_question", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
