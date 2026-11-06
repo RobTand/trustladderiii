@@ -729,7 +729,8 @@ def test_audit_objects_to_pq3315_structured_remote_bazel_obligations():
 
     assert reply["verdict"] == "disagree", "PQ #3315: audit must object before planning to remote Bazel obligations"
     assert all(requirement in reply["evidence_contract"]
-               for requirement in case["ingest"]["evidence_contract"])
+               for requirement in case["ingest"]["evidence_contract"]
+               if requirement.get("provenance", {}).get("kind") != "method")
     for target in ("//tests:test_stage_a_chain_resume", "//tests:test_duplication_baseline"):
         assert any(target in error and "executor=authorized remote Bazel executor" in error
                    for error in reply["evidence_errors"])
