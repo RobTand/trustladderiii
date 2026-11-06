@@ -2275,3 +2275,7 @@ mod port_t860_link;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/node_updates.rs"]
+mod node_updates;

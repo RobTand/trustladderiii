@@ -480,6 +480,9 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
         }
     }
         run_failed(w, i, out);
+        kernel_proof! {
+            node_updates::counted_failure_legacy(before_reply@.nodes@[i as int], w.nodes@[i as int], before_outputs@, *out);
+        }
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);

@@ -8,7 +8,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
         old(w).nodes@[i as int].run_incidents <= 2,
-    ensures port_t860_contracts::failed_post(old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
+    ensures node_updates::counted_failure(old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -46,10 +46,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         raise_incident(w, i, needs_rob, out);
     }
     kernel_proof! {
-        assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
-            reveal(port_t860_contracts::failed_post);
-            reveal(port_t860_contracts::failed_node);
-        }
+        reveal(retirement::incident);
+        node_updates::count_failure_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
     }
 }
 }
