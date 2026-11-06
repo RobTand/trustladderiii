@@ -66,6 +66,7 @@ pub(super) fn finish_ingest_node(m: &mut Node, size: u8, early_end: Option<Early
 kernel_fn! {
 /// Reply rows / #771: one phase change, at most one paid credit and one question.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -80,45 +81,195 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        (old(w).dependencies@.len() == 0
+        ((old(w).dependencies@.len() == 0 || !matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)))
             && port_replies_contracts::ingest_accepted(old(w).nodes@[i as int], reply))
-            ==> port_replies_contracts::node_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
-                old(w).next_question, old(w).fail_fast, reply),
+            ==> port_replies_contracts::ingest_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).next_question, reply),
         final(w).next_question == (old(w).next_question
             + if matches!(reply, Reply::AuditDisagrees) && old(w).nodes@[i as int].audit_rounds >= 1
                 { 1u64 } else { 0u64 }) as u64,
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] hide [retirement::notices_only] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds); reveal(port_replies_contracts::node_post); reveal(port_replies_contracts::transitioned); reveal(port_replies_contracts::ingested); reveal(retirement::stopped);] {
+] {
+    kernel_snapshot! { ingest_before = *w }
+    kernel_snapshot! { ingest_source = w.nodes@[i as int] }
+    kernel_snapshot! { ingest_id = w.next_question }
+    kernel_snapshot! { ingest_fast = w.fail_fast }
+    kernel_snapshot! { ingest_out = *out }
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);
+            kernel_proof! {
+                port_replies_handlers::reply_output_bound(ingest_before@, *w, i as int,
+                    ingest_out@.len, out.len);
+            }
+            kernel_proof! { if ingest_before@.dependencies@.len() == 0 && ingest_source@.phase == Phase::Ingesting {
+                port_replies_handlers::fields_done(ingest_source@, w.nodes@[i as int], ingest_id@, size);
+            } }
         }
         Reply::IngestEarlyEnd(e) => {
             finish_ingest(w, i, 1, Some(e));
+            kernel_proof! {
+                port_replies_handlers::reply_output_bound(ingest_before@, *w, i as int,
+                    ingest_out@.len, out.len);
+            }
+            kernel_proof! { if ingest_before@.dependencies@.len() == 0 && ingest_source@.phase == Phase::Ingesting {
+                port_replies_handlers::fields_early(ingest_source@, w.nodes@[i as int], ingest_id@, e);
+            } }
         }
-        Reply::AuditAgrees => match w.nodes[i].early_end {
+        Reply::AuditAgrees => reply_audit_agrees(w, i, out),
+        Reply::AuditDisagrees => reply_audit_disagrees(w, i, out),
+        Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
+        _ => {}
+    }
+    kernel_proof! {
+        if reply == Reply::ProtectedPaths {
+            if port_replies_contracts::ingest_accepted(ingest_source@, reply) {
+                port_replies_handlers::fields_protected(ingest_source@, w.nodes@[i as int], ingest_id@);
+            }
+            assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
+                reveal(reply_bounds);
+            }
+        }
+    }
+
+}
+}
+
+kernel_fn! {
+/// Audit reply row / #806: private verbatim branch extraction under the standing rule.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn reply_audit_agrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        old(w).nodes@[i as int].phase == Phase::Auditing
+            ==> port_replies_contracts::ingest_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).next_question, Reply::AuditAgrees),
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        final(w).next_question == old(w).next_question,
+        successful_reply_input(old(w).nodes@[i as int], Reply::AuditAgrees)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int]),
+] {
+    kernel_snapshot! { ingest_before = *w }
+    kernel_snapshot! { ingest_source = w.nodes@[i as int] }
+    kernel_snapshot! { ingest_id = w.next_question }
+    kernel_snapshot! { ingest_fast = w.fail_fast }
+    kernel_snapshot! { ingest_out = *out }
+    match w.nodes[i].early_end {
             Some(e) => enter_stopping(&mut w.nodes[i], e.outcome()),
             None => {
                 notice(out, i, Notice::MeasuresPosted);
                 set_phase(&mut w.nodes[i], Phase::Unplanned);
             }
-        },
-        Reply::AuditDisagrees => {
+        }
+    kernel_proof! {
+        assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
+            reveal(reply_bounds);
+        }
+    }
+    kernel_proof! {
+        if ingest_source@.phase == Phase::Auditing {
+            match ingest_source@.early_end {
+                Some(e) => port_replies_handlers::fields_agreed_stop(ingest_source@, w.nodes@[i as int], ingest_id@, e),
+                None => port_replies_handlers::fields_agreed_open(ingest_source@, w.nodes@[i as int], ingest_id@),
+            }
+        }
+    }
+    kernel_proof! {
+        if successful_reply_input(ingest_source@, Reply::AuditAgrees) {
+            port_replies_handlers::audit_progress(ingest_source@, w.nodes@[i as int], ingest_id@, ingest_fast@);
+        }
+    }
+}
+}
+
+kernel_fn! {
+/// Audit reply row / #806: private verbatim branch extraction under the standing rule.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        old(w).nodes@[i as int].phase == Phase::Auditing
+            ==> port_replies_contracts::ingest_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).next_question, Reply::AuditDisagrees),
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        final(w).next_question == (old(w).next_question
+            + if old(w).nodes@[i as int].audit_rounds >= 1 { 1u64 } else { 0u64 }) as u64,
+] {
+    kernel_snapshot! { ingest_before = *w }
+    kernel_snapshot! { ingest_source = w.nodes@[i as int] }
+    kernel_snapshot! { ingest_id = w.next_question }
+    kernel_snapshot! { ingest_out = *out }
             let m = &mut w.nodes[i];
-            m.audit_rounds = m.audit_rounds.saturating_add(1);
+            increment_audit(m);
+            kernel_proof! {
+                assert((m.audit_rounds < 2) == (ingest_source@.audit_rounds == 0));
+            }
             if m.audit_rounds < 2 {
                 // Ingest revises once with the audit's objections.
                 set_phase(m, Phase::Ingesting);
+                kernel_proof! {
+                    assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
+                        reveal(reply_bounds);
+                    }
+                }
+                kernel_proof! { if ingest_source@.phase == Phase::Auditing {
+                    assert(port_replies_contracts::ingest_changes(ingest_source@, w.nodes@[i as int], ingest_id@, Reply::AuditDisagrees)) by {
+                        reveal(port_replies_contracts::ingest_changes);
+                    }
+                } }
             } else {
                 let cont = match m.early_end {
                     Some(e) => Cont::Stop(e.outcome()),
                     None => Cont::Unplanned,
                 };
                 ask_rob(w, i, QKind::AuditDisagreement, cont, 0, out);
+                kernel_proof! {
+                    assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
+                        reveal(reply_bounds);
+                    }
+                }
+                kernel_proof! { if ingest_source@.phase == Phase::Auditing {
+                    assert(port_replies_contracts::ingest_changes(ingest_source@, w.nodes@[i as int], ingest_id@, Reply::AuditDisagrees)) by {
+                        reveal(port_replies_contracts::ingest_changes);
+                    }
+                } }
             }
+
+    kernel_proof! {
+        if ingest_source@.phase == Phase::Auditing {
+            assert(port_replies_contracts::ingest_stable(ingest_source@, w.nodes@[i as int])) by {
+                reveal(port_replies_contracts::ingest_stable);
+            }
+            port_replies_handlers::ingest_join(ingest_source@, w.nodes@[i as int], ingest_id@, Reply::AuditDisagrees);
         }
-        Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
-        _ => {}
     }
+
+}
+}
+
+#[cfg(test)]
+#[path = "ingest_equivalence/mod.rs"]
+mod reply_ingest_equivalence;
+
+kernel_fn! {
+/// Audit disagreement / #806: verbatim saturation isolated from world frame proofs.
+fn increment_audit(m: &mut Node) -> (result: ()) [
+    ensures *final(m) == (Node { audit_rounds: if old(m).audit_rounds < u8::MAX {
+        (old(m).audit_rounds + 1) as u8
+    } else { u8::MAX }, ..*old(m) }),
+] {
+    m.audit_rounds = m.audit_rounds.saturating_add(1);
 }
 }

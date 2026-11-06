@@ -294,9 +294,17 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
             old(w).nodes@[i as int], reply, *old(out), *final(out)),
 ] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);
     reveal(port_replies_contracts::transition_post); reveal(reply_bounds);] {
+    kernel_snapshot! { worker_before = *w }
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
-            | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
+            | Reply::AuditDisagrees | Reply::ProtectedPaths => {
+                reply_ingest(w, i, reply, out);
+                kernel_proof! { if worker_before@.dependencies@.len() == 0
+                    && port_replies_contracts::ingest_accepted(worker_before@.nodes@[i as int], reply) {
+                    port_replies_handlers::ingest_exact(worker_before@.nodes@[i as int], w.nodes@[i as int],
+                        worker_before@.next_question, worker_before@.fail_fast, reply);
+                } }
+            },
         Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
         Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
         _ => reply_work(w, i, reply, out),
