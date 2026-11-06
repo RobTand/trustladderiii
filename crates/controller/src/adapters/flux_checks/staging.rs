@@ -28,12 +28,17 @@ pub fn stage_input(
     }
     // The shared stage function supports PB replacement. Flux publication never replaces
     // a retained input, including a partial publication or a dangling symlink.
-    fs::create_dir(root)?;
     let run = checks::descended_base(delivery)?;
     let served = run.repository.canonicalize()?;
-    if root.canonicalize()?.starts_with(&served) || trusted_harness.canonicalize()?.starts_with(&served) {
+    let parent = root.parent().ok_or(Error::Invalid("input requires a parent directory"))?;
+    if parent.canonicalize()?.starts_with(&served) || trusted_harness.canonicalize()?.starts_with(&served) {
         return Err(Error::Invalid("trusted Flux inputs must stay outside the served checkout"));
     }
+    for ancestor in root.ancestors() {
+        if ancestor.is_symlink() { return Err(Error::Invalid("Flux input ancestors cannot be symlinks")); }
+    }
+    fs::create_dir(root)?;
+    fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
     let tree_root = root.join("tree");
     let mut staged = delivery.clone();
     staged.checks = Some(run.clone());
@@ -50,8 +55,8 @@ pub fn stage_input(
     if bytes.len() > durable::MAX_BYTES { return Err(Error::Invalid("Flux input manifest exceeds byte bound")); }
     let manifest_path = root.join("input-manifest.json");
     durable::atomic(&manifest_path, &bytes).map_err(adapter_error)?;
-    fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o444))?;
-    fs::set_permissions(root, fs::Permissions::from_mode(0o555))?;
+    fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o400))?;
+    fs::set_permissions(root, fs::Permissions::from_mode(0o500))?;
     File::open(root)?.sync_all()?;
     if let Some(parent) = root.parent() { File::open(parent)?.sync_all()?; }
     let mut seen = std::collections::BTreeSet::new();
@@ -66,21 +71,21 @@ fn inventory(root: &Path, directory: &Path, files: &mut Vec<backend::InputFile>)
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
-        if directory == root && (entry.file_name() == ".git" || entry.file_name() == "action.py") { continue; }
+        if directory == root && entry.file_name() == ".git" { continue; }
         let kind = entry.file_type()?;
         if kind.is_dir() {
             inventory(root, &path, files)?;
         } else if kind.is_file() {
             if files.len() >= 100_000 { return Err(Error::Invalid("Flux input inventory exceeds file bound")); }
             let bytes = durable::read(&path).map_err(adapter_error)?;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o444))?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o400))?;
             File::open(&path)?.sync_all()?;
             files.push(backend::InputFile { path: path.strip_prefix(root).map_err(|_| Error::Invalid("input outside staged root"))?.to_owned(), sha256: durable::digest(&bytes) });
         } else {
             return Err(Error::Invalid("Flux inputs must contain regular files, without symlinks"));
         }
     }
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o555))?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o500))?;
     File::open(directory)?.sync_all()?;
     Ok(())
 }
