@@ -68,8 +68,8 @@ class Evidence:
         if self.container_seen:
             raise ValueError('duplicate runtime evidence')
         facts = json.loads(line[len(PREFIX):])
-        if (not isinstance(facts, dict) or set(facts) != {'Cpus_allowed_list', 'cgroup'}
-                or not all(isinstance(value, str) for value in facts.values())):
+        if (not isinstance(facts, dict) or not {'Cpus_allowed_list', 'cgroup'} <= set(facts)
+                or not all(isinstance(facts[key], str) for key in ('Cpus_allowed_list', 'cgroup'))):
             raise ValueError('invalid runtime evidence')
         self.record('container', facts)
         self.container_seen = True

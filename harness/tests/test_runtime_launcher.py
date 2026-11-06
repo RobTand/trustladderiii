@@ -148,10 +148,13 @@ def test_runtime_evidence_is_retained_outside_report(launcher, monkeypatch, evid
     if evidence_present:
         (executable.parent / 'stderr').write_text(PREFIX + json.dumps(facts) + '\n')
     with calls.with_suffix('.stdin').open('w+b') as selection:
+        selection.write(b'[\"test_private.py::test_case\"]')
+        selection.seek(0)
         if evidence_present:
             with Supervised([str(executable), 'run', 'immutable-fixture'], selection, ()) as process:
                 assert list(process.records()) == [b'{"event":"start","schema":1}\n']
                 assert process.stderr_diagnostic == ''
+            assert (executable.parent / 'payload').read_bytes() == b'[\"test_private.py::test_case\"]'
         else:
             with pytest.raises(ExecutionFailure, match='missing_runtime_evidence'):
                 with Supervised([str(executable), 'run', 'immutable-fixture'], selection, ()) as process:
@@ -161,3 +164,62 @@ def test_runtime_evidence_is_retained_outside_report(launcher, monkeypatch, evid
     assert records[-1] == {'event': 'cleanup', 'confirmed': True}
     assert [record['event'] for record in records] == (
         ['host', 'container', 'cleanup'] if evidence_present else ['host', 'cleanup'])
+
+
+def test_unqualified_binding_never_opens_payload_gate(launcher, monkeypatch):
+    from tl3_harness import runtime
+    from tl3_harness.runtime_evidence import PREFIX
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    facts = {'Cpus_allowed_list': '2-3', 'cgroup': '0::/unqualified\n'}
+    monkeypatch.setattr(runtime.Evidence, 'host_snapshot', staticmethod(lambda: facts))
+    monkeypatch.setattr(runtime, 'evidence_sink', lambda name: runtime.Evidence(output, name))
+
+    def reject(evidence):
+        assert evidence.container_seen
+        raise RuntimeError('Rust reports unsupported mapping')
+
+    monkeypatch.setattr(runtime, 'validate_runtime_binding', reject)
+    (executable.parent / 'stderr').write_text(PREFIX + json.dumps(facts) + '\n')
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        selection.write(b'["test_private.py::test_case"]')
+        selection.seek(0)
+        with pytest.raises(ExecutionFailure) as failed:
+            with Supervised([str(executable), 'run', 'immutable-fixture'], selection, ()) as process:
+                list(process.records())
+    assert failed.value.termination_reason == 'runtime_binding_unqualified'
+    assert failed.value.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE
+    assert not (executable.parent / 'payload').exists()
+    assert not process.report_started
+    assert process.cleanup_confirmed
+
+
+@pytest.mark.parametrize('exists', ['0', '1'])
+def test_scratch_is_removed_only_after_confirmed_container_stop(launcher, monkeypatch, exists):
+    from tl3_harness import runtime, scratch
+
+    executable, calls = launcher
+    executable.parent.chmod(0o700)
+    (executable.parent / 'exists').write_text(exists)
+    monkeypatch.setattr(runtime, '_uncertain_containers', set())
+    monkeypatch.setattr(runtime, 'temporary_root', lambda: executable.parent)
+    leaf = scratch.private_directory(executable.parent)
+
+    def run():
+        with runtime.workspace('exports-') as workspace:
+            retained.append(workspace)
+            with calls.with_suffix('.stdin').open('w+b') as selection:
+                with Supervised([str(executable), 'run', '--mount', f'type=bind,src={leaf},dst=/tmp',
+                                 'immutable-fixture'], selection, ()) as process:
+                    list(process.records())
+
+    retained = []
+    if exists == '0':
+        with pytest.raises(ExecutionFailure, match='container_cleanup_unconfirmed'):
+            run()
+        assert leaf.is_dir() and retained[0].is_dir()
+    else:
+        run()
+        assert not leaf.exists() and not retained[0].exists()

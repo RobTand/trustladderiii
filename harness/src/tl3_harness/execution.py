@@ -366,7 +366,7 @@ def selected_base(tool: TestTool, old: Path, container: Container, candidates: t
     """Admit a priority prefix at actual collected costs. Cached units consume budget
     only when their turn arrives; base failures do not refund their collection cost.
     Required historical units must fit before any ordinary candidate is admitted."""
-    key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, id(tool),
+    key = (runtime.cache_owner(), base, container, id(tool),
            json.dumps(config, sort_keys=True), "complete-prefix-v2", limit,
            tuple((name, os.environ.get(name, default)) for name, default in NATIVE_THREAD_ENVIRONMENT.items()))
     before, charged, index, saturation = {}, 0, 0, None
@@ -624,7 +624,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests, selected_failures)
                       if selected_tests else ())
         progress = Progress()
-        cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
+        cache_key = (runtime.cache_owner(), base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
             before_messages = FailureNotes()
             observed = tool.run(old, container, ordinary, root / "base.jsonl", progress, messages=before_messages)

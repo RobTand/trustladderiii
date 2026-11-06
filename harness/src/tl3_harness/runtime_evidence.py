@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import resource
 import sys
 
 
@@ -12,7 +13,8 @@ def snapshot():
     with Path('/proc/self/status').open() as status:
         cpus = next(line.split(':', 1)[1].strip() for line in status
                     if line.startswith('Cpus_allowed_list:'))
-    return {'Cpus_allowed_list': cpus, 'cgroup': Path('/proc/self/cgroup').read_text()}
+    return {'Cpus_allowed_list': cpus, 'cgroup': Path('/proc/self/cgroup').read_text(),
+            'RLIMIT_AS': resource.getrlimit(resource.RLIMIT_AS)}
 
 
 if __name__ == '__main__':
