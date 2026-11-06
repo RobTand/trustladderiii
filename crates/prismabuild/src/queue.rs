@@ -138,12 +138,17 @@ pub struct HeartbeatStamps {
 /// effective heartbeat is older is expired by PrismaBuild's own contract
 /// (`PoolQueue._effective_heartbeat`; design.md, "Lease").
 pub const LEASE_TIMEOUT_S: f64 = 300.0;
+/// TL3 reads a claim as lost only past three lease timeouts, so a PrismaBuild
+/// that raises its lease timeout or renewal interval up to 3x never makes a
+/// live claim read lost; the live wedges (PB #2819, #2821) were hours stale.
+pub const LOST_AFTER_S: f64 = 3.0 * LEASE_TIMEOUT_S;
 /// PrismaBuild's cross-host skew bound for a stamp (`OFFER_FUTURE_TOLERANCE_S`).
 pub const HEARTBEAT_FUTURE_TOLERANCE_S: f64 = 60.0;
 
 impl Lease {
-    /// Q43 (#817, found by: live probe, PB #2819 and #2821): an expired lease
-    /// is the claim lost by its own record, even while the record stays CLAIMED.
+    /// Q43 (#817, found by: live probe, PB #2819 and #2821): a lease whose
+    /// effective heartbeat is older than `LOST_AFTER_S` is the claim lost by its
+    /// own record, even while the record stays CLAIMED.
     ///
     /// The effective heartbeat follows `_effective_heartbeat`: the lease beat,
     /// raised by any stamp within the skew bound (capped at now). Conservative
@@ -161,7 +166,7 @@ impl Lease {
             .filter(|stamp| **stamp - now_unix <= HEARTBEAT_FUTURE_TOLERANCE_S)
             .map(|stamp| stamp.min(now_unix))
             .fold(self.heartbeat_unix, f64::max);
-        now_unix - beat > LEASE_TIMEOUT_S
+        now_unix - beat > LOST_AFTER_S
     }
 }
 
@@ -239,12 +244,36 @@ fn lease_lost(status: &str) -> bool {
     matches!(status, "lease_lost" | "lease_lost_max_attempts")
 }
 
-#[derive(Deserialize)]
-struct LeaseWire {
-    schema: String,
-    action_key: ActionKey,
-    #[serde(flatten)]
-    lease: Lease,
+const LEASE_SCHEMA: &str = "prismaquant.prismabuild.pool_lease.v1";
+
+/// The claim lease is a PrismaBuild-internal queue file, not its public record
+/// (#817 review 2, Flux). A lease TL3 cannot read as a v1 claim lease (absent,
+/// not JSON, another schema, missing fields, a non-finite or negative beat)
+/// gives no liveness verdict, so a declared wait stays alive. A v1 lease that
+/// names another action is corruption and stays an error, as do I/O errors.
+async fn claim_lease(path: &Path, key: &ActionKey) -> Result<Option<Lease>, Error> {
+    let bytes = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(Error::Io {
+                path: path.into(),
+                source,
+            });
+        }
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(None);
+    };
+    if value["schema"].as_str() != Some(LEASE_SCHEMA) {
+        return Ok(None);
+    }
+    if value["action_key"].as_str() != Some(key.as_str()) {
+        return Err(invalid(path, "lease identity mismatch"));
+    }
+    Ok(serde_json::from_value::<Lease>(value)
+        .ok()
+        .filter(|lease| lease.heartbeat_unix.is_finite() && lease.heartbeat_unix >= 0.0))
 }
 
 #[derive(Deserialize)]
@@ -494,19 +523,9 @@ impl PrismaBuild {
         }
         let lease = if state == ActionState::Claimed {
             let lease_path = root.join("claimed").join(format!("{key}.lease"));
-            let raw: Option<LeaseWire> = document(&lease_path).await?;
-            match raw {
+            match claim_lease(&lease_path, key).await? {
                 None => None,
-                Some(value) => {
-                    if value.action_key != *key
-                        || value.schema != "prismaquant.prismabuild.pool_lease.v1"
-                    {
-                        return Err(invalid(&lease_path, "lease identity or schema mismatch"));
-                    }
-                    let mut lease = value.lease;
-                    if !lease.heartbeat_unix.is_finite() || lease.heartbeat_unix < 0.0 {
-                        return Err(invalid(&lease_path, "invalid heartbeat"));
-                    }
+                Some(mut lease) => {
                     lease.stamps =
                         heartbeat_stamps(&root.join("lease-heartbeats").join(key.as_str()), key)
                             .await;
@@ -571,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn lease_expires_after_prismabuild_lease_timeout() {
+    fn lease_reads_lost_only_past_three_lease_timeouts() {
         let lease = Lease {
             heartbeat_unix: 1_000.0,
             owner: "host:1:owner".into(),
@@ -579,8 +598,9 @@ mod tests {
             progress_observation: None,
             stamps: HeartbeatStamps::default(),
         };
-        assert!(!lease.expired(1_000.0 + LEASE_TIMEOUT_S));
-        assert!(lease.expired(1_000.0 + LEASE_TIMEOUT_S + 0.001));
+        assert!(!lease.expired(1_000.0 + 2.0 * LEASE_TIMEOUT_S));
+        assert!(!lease.expired(1_000.0 + LOST_AFTER_S));
+        assert!(lease.expired(1_000.0 + LOST_AFTER_S + 0.001));
         let now = 1_000.0 + 10.0 * LEASE_TIMEOUT_S;
         let stamped = |heartbeats: Vec<f64>, unreadable| Lease {
             stamps: HeartbeatStamps {
@@ -591,12 +611,76 @@ mod tests {
         };
         // A fresh stamp renews a stale lease; an old one does not.
         assert!(!stamped(vec![now - 1.0], false).expired(now));
-        assert!(stamped(vec![now - LEASE_TIMEOUT_S - 1.0], false).expired(now));
+        assert!(stamped(vec![now - LOST_AFTER_S - 1.0], false).expired(now));
         // A stamp past the skew bound adds no credit; within it, it counts as now.
         assert!(stamped(vec![now + HEARTBEAT_FUTURE_TOLERANCE_S + 1.0], false).expired(now));
         assert!(!stamped(vec![now + HEARTBEAT_FUTURE_TOLERANCE_S], false).expired(now));
         // Unreadable custody evidence keeps the claim alive.
         assert!(!stamped(vec![], true).expired(now));
+    }
+
+    #[tokio::test]
+    async fn claim_lease_gives_no_verdict_for_leases_it_cannot_read_as_v1() {
+        let (root, _client, key) = fixture();
+        let path = root.path().join("claimed").join(format!("{key}.lease"));
+        let lease = |value: serde_json::Value| {
+            std::fs::write(&path, value.to_string()).unwrap();
+        };
+        assert!(claim_lease(&path, &key).await.unwrap().is_none(), "absent");
+        std::fs::write(&path, "flux-lease 1").unwrap();
+        assert!(
+            claim_lease(&path, &key).await.unwrap().is_none(),
+            "not JSON"
+        );
+        lease(
+            serde_json::json!({"schema": "prismabuild.pool_lease.v2", "action_key": key,
+            "heartbeat_unix": 1.0, "owner": "o", "host": "h"}),
+        );
+        assert!(
+            claim_lease(&path, &key).await.unwrap().is_none(),
+            "unknown schema"
+        );
+        for heartbeat in [
+            serde_json::json!(null),
+            serde_json::json!(-1.0),
+            serde_json::json!("1"),
+        ] {
+            lease(
+                serde_json::json!({"schema": LEASE_SCHEMA, "action_key": key,
+                "heartbeat_unix": heartbeat, "owner": "o", "host": "h"}),
+            );
+            assert!(
+                claim_lease(&path, &key).await.unwrap().is_none(),
+                "{heartbeat}"
+            );
+        }
+        lease(
+            serde_json::json!({"schema": LEASE_SCHEMA, "action_key": key, "owner": "o", "host": "h"}),
+        );
+        assert!(
+            claim_lease(&path, &key).await.unwrap().is_none(),
+            "missing heartbeat"
+        );
+        lease(
+            serde_json::json!({"schema": LEASE_SCHEMA, "action_key": "b".repeat(64),
+            "heartbeat_unix": 1.0, "owner": "o", "host": "h"}),
+        );
+        assert!(
+            claim_lease(&path, &key).await.is_err(),
+            "a v1 lease for another action is corrupt"
+        );
+        lease(
+            serde_json::json!({"schema": LEASE_SCHEMA, "action_key": key,
+            "heartbeat_unix": 1.0, "owner": "o", "host": "h"}),
+        );
+        assert_eq!(
+            claim_lease(&path, &key)
+                .await
+                .unwrap()
+                .unwrap()
+                .heartbeat_unix,
+            1.0
+        );
     }
 
     #[tokio::test]
