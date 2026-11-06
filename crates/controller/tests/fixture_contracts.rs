@@ -130,6 +130,12 @@ impl Executor for Spy {
     fn quota_resume_ms(&mut self, delivery: &Delivery, _: u64, _: u64) -> Result<u64> {
         self.hit("quota_resume_ms", delivery.key.clone())
     }
+    fn quota_candidates(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Vec<tl3_controller::looks::QuotaModel>> {
+        self.hit("quota_candidates", delivery.key.clone())
+    }
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.hit("stop_stalled", delivery.key.clone())
     }
@@ -225,6 +231,7 @@ fn delivery_router_forwards_every_method_without_changing_results() {
             title: "title".into(),
             summary: "summary".into(),
             id: "notice".into(),
+            resource_failure: None,
         };
         assert!(router.input_incident(&notice, 3).is_err());
         assert!(router.issue(&d.repository, 17).is_err());
@@ -243,18 +250,27 @@ fn delivery_router_forwards_every_method_without_changing_results() {
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.probe_memory().is_err());
         assert!(router.retire(&mut store).is_err());
+        assert!(router.configured_model("configured"));
+        assert!(router.quota_model_eligible(&d, "configured").is_err());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 11);
-        for (selected, method, _) in calls.iter() {
+        assert_eq!(calls.len(), 13);
+        for (selected, method, argument) in calls.iter() {
             let expected = if matches!(
                 *method,
-                "intake_question" | "issue" | "reconcile_message" | "prerequisite"
+                "intake_question"
+                    | "issue"
+                    | "reconcile_message"
+                    | "prerequisite"
+                    | "quota_model_eligible"
             ) {
                 mode
             } else {
                 "queue"
             };
             assert_eq!(*selected, expected, "{method}");
+            if *method == "quota_model_eligible" {
+                assert_eq!(argument, &format!("{}:configured", d.key));
+            }
         }
     }
 }
@@ -429,6 +445,7 @@ fn assert_delivery_methods(
     assert!(router.probe(d).is_err());
     assert!(router.resume_after_quota(d).is_err());
     assert!(router.quota_resume_ms(d, 0, 0).is_err());
+    assert!(router.quota_candidates(d).is_err());
     assert!(router.stop_stalled(d).is_err());
     assert!(router.watch_wait(d, None).is_err());
     assert!(router.retire_delivery(d).is_err());
@@ -444,6 +461,7 @@ fn assert_delivery_methods(
             "probe",
             "resume_after_quota",
             "quota_resume_ms",
+            "quota_candidates",
             "stop_stalled",
             "watch_wait",
             "retire_delivery"

@@ -110,7 +110,7 @@ _SCENARIO_SHARDS = {
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
     # #830: 62.427 s serial, measured at 34901a132a (da4bea96).
-    "tl3-controller/direct_merge": 2,
+    "tl3-controller/direct_merge": 3,
     "tl3-controller/quota_hold": 16,
     "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,

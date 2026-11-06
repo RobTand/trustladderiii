@@ -114,6 +114,17 @@ impl<Q: Executor, D: Executor> Executor for Router<Q, D> {
     fn probe_memory(&mut self) -> Result<()> {
         self.queue.probe_memory()
     }
+    fn configured_model(&self, model: &str) -> bool {
+        self.queue.configured_model(model)
+    }
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+        self.selected(&delivery.repository)
+            .quota_model_eligible(delivery, model)
+    }
+    fn quota_candidates(&mut self, delivery: &Delivery) -> Result<Vec<crate::looks::QuotaModel>> {
+        self.selected(&delivery.repository)
+            .quota_candidates(delivery)
+    }
     fn resume_after_quota(&mut self, delivery: &Delivery) -> Result<Option<Completion>> {
         self.selected(&delivery.repository)
             .resume_after_quota(delivery)

@@ -81,8 +81,11 @@ impl DirectFixture {
         direct_merge::Adapter::new(self.api.clients(), 0, &self.root.path().join("direct"), settings.clone()).unwrap().with_wakes(self.wakes.clone())
     }
     fn open(&self, settings: &tl3_config::Store) -> Controller {
+        self.open_adapter(settings, self.adapter(settings))
+    }
+    fn open_adapter(&self, settings: &tl3_config::Store, adapter: direct_merge::Adapter) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
-        registry.register(Upstream::Mergify, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), self.adapter(settings), &[direct_repo()]));
+        registry.register(Upstream::Mergify, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), adapter, &[direct_repo()]));
         let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
         let mut allowances = tl3_config::Allowances::default();
         allowances.github_mergify.silence_secs = 1;
@@ -536,6 +539,40 @@ fn r1_retirement_reclaims_terminal_direct_records() {
     let mut adapter = fixture.adapter(&settings);
     assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+}
+
+#[test]
+fn r1_retirement_crashes_preserve_consumed_merge_and_delivery_history() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut database = support::Database::start();
+    for cut in 0..4 {
+        let settings = database.create(&format!("direct_reclaim_crash_{cut}"));
+        let fixture = DirectFixture::new();
+        fixture.check(None);
+        let (controller, _) = fixture.start(&settings);
+        drop(controller);
+        let count = Arc::new(AtomicUsize::new(0));
+        let seen = count.clone();
+        let adapter = fixture.adapter(&settings).with_write_boundary(move |boundary| {
+            if boundary.write == direct_merge::Write::Reclaim && seen.fetch_add(1, Ordering::SeqCst) == cut {
+                panic!("#830 retirement crash");
+            }
+        });
+        let mut controller = fixture.open_adapter(&settings, adapter);
+        fixture.check(Some("success"));
+        fixture.check_event(&settings);
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drain(&mut controller))).is_err());
+        assert_eq!(count.load(Ordering::SeqCst), cut + 1);
+        let snapshot = controller.snapshot().unwrap();
+        assert!(snapshot.rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
+        assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged)));
+        drop(controller);
+        let mut restarted = fixture.open(&settings);
+        drain(&mut restarted);
+        assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+        assert!(matches!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+        assert!(!std::fs::read_dir(fixture.root.path().join("direct")).unwrap().any(|e| e.unwrap().path().extension().is_some_and(|ext|ext=="intent"||ext=="merged")));
+    }
 }
 #[test]
 fn r1_board_retains_actual_delivery_mode_after_configuration_change() {
