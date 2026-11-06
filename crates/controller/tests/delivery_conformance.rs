@@ -434,6 +434,9 @@ fn traced_open(
     (controller, captured)
 }
 fn ready_approval(settings: &tl3_config::Store) -> String {
+    ready_effect(settings, tl3_kernel::EffectKind::PostApproval)
+}
+fn ready_effect(settings: &tl3_config::Store, kind: tl3_kernel::EffectKind) -> String {
     let root = tempfile::tempdir().unwrap();
     let registry = tl3_controller::adapters::simulation(root.path()).unwrap();
     let mut controller = Controller::open(
@@ -470,20 +473,14 @@ fn ready_approval(settings: &tl3_config::Store) -> String {
             .into_iter()
             .find(|e| {
                 let d: Delivery = serde_json::from_value(e.payload.clone()).unwrap();
-                matches!(
-                    d.output,
-                    tl3_controller::executor::Output::Effect {
-                        kind: tl3_kernel::EffectKind::PostApproval,
-                        ..
-                    }
-                )
+                matches!(d.output, tl3_controller::executor::Output::Effect { kind: actual, .. } if actual == kind)
             })
         {
             return effect.key;
         }
         assert!(controller.drive_once().unwrap());
     }
-    panic!("no approval");
+    panic!("no {kind:?}");
 }
 fn history(settings: &tl3_config::Store, key: &str) {
     let mut store = Store::open(settings).unwrap();
@@ -830,7 +827,7 @@ fn observations_return_before_http_with_durable_sent_and_inbox() {
 fn closed_node_restart_schedules_late_resource_recovery() {
     let mut database = database::Database::start();
     let settings = database.create("closed_late_recovery");
-    ready_approval(&settings);
+    let old_key = ready_effect(&settings, tl3_kernel::EffectKind::OpenPr);
     let root = tempfile::tempdir().unwrap();
     let mut sql = fixture_connection(&settings);
     controller_restart::wait_for_owner_release(&mut sql);
@@ -842,20 +839,43 @@ fn closed_node_restart_schedules_late_resource_recovery() {
         fail_fast: false,
         operations: None,
     };
-    let mut controller = Controller::open(
-        Store::open(&settings).unwrap(),
-        tl3_controller::adapters::simulation(root.path()).unwrap(),
-        bootstrap.clone(),
-    )
-    .unwrap();
+    let flight = Arc::new(Mutex::new(Script {
+        target: Some(old_key.clone()),
+        answers: VecDeque::from([Answer::Timeout, Answer::Absent]),
+        ..Script::default()
+    }));
+    let mut registry = tl3_controller::adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::GitHub,
+        Recording(flight.clone(), settings.clone()),
+    );
+    let mut controller =
+        Controller::open(Store::open(&settings).unwrap(), registry, bootstrap.clone()).unwrap();
+    // The real dispatch commits Sent before the request loses its response.
+    drive(&mut controller, &settings, &old_key, State::Sent);
+    assert!(
+        flight
+            .lock()
+            .unwrap()
+            .calls
+            .contains(&format!("execute:{old_key}"))
+    );
+    drop(controller);
+    controller_restart::wait_for_owner_release(&mut sql);
+    let mut registry = tl3_controller::adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::GitHub,
+        Recording(flight.clone(), settings.clone()),
+    );
+    let mut controller =
+        Controller::open(Store::open(&settings).unwrap(), registry, bootstrap.clone()).unwrap();
     controller
         .observe(
             "stop-before-late-landing",
-            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+            tl3_controller::executor::Observation::Steering {
                 node: tl3_kernel::NodeId(0),
-                id: 1000,
-                command: tl3_kernel::Command::Stop,
-            }),
+                command: tl3_controller::executor::Control::Stop,
+            },
         )
         .unwrap();
     assert!((0..200).any(|_| !controller.drive_once().unwrap()));
@@ -866,7 +886,7 @@ fn closed_node_restart_schedules_late_resource_recovery() {
         .find(|r| r.table == "nodes" && r.id == "0")
         .unwrap();
     assert!(
-        node.value["phase"].get("Closed").is_some(),
+        node.value["phase"] == json!({"Closed":"Stopped"}),
         "teardown must finish before the zombie lands: {}",
         node.value["phase"]
     );
@@ -887,6 +907,9 @@ fn closed_node_restart_schedules_late_resource_recovery() {
         })
         .unwrap();
     assert!(!effect.state.is_pending());
+    assert_eq!(effect.key, old_key);
+    assert_eq!(effect.state, EffectState::Cancelled);
+    assert!(flight.lock().unwrap().answers.is_empty());
     drop(controller);
     controller_restart::wait_for_owner_release(&mut sql);
     // No mutation is issued unless the real Controller invokes the executor.
