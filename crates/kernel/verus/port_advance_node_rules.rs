@@ -111,14 +111,51 @@ pub(super) proof fn release_rules(w: World, v: World, n: Node, c: AdvanceContext
     footprint::storage_frame(w, v, n.footprint, n.footprint);
 }
 
+/// State-table teardown wait row / #806: preserve the complete per-node checker predicate.
+pub(super) proof fn teardown_wait_rules(w: World, v: World, n: Node, c: AdvanceContext)
+    requires environment(w, v, n, c), !(n.phase is Closed), !n.waiting_incident, n.effect.is_none(),
+        matches!(current_item(n), Some(Item::Teardown(_))),
+        n.question.is_some(),
+    ensures retirement::node_rules(v, node_after(n, w.next_ticket, c)),
+{
+    reveal(node_after); reveal(retirement::node_rules); reveal(node_checked); reveal(ready_checked);
+    footprint::storage_frame(w, v, n.footprint, n.footprint);
+}
+
+/// State-table teardown gone row / #806: preserve the complete per-node checker predicate.
+pub(super) proof fn teardown_gone_rules(w: World, v: World, n: Node, c: AdvanceContext)
+    requires environment(w, v, n, c), !(n.phase is Closed), !n.waiting_incident, n.effect.is_none(),
+        matches!(current_item(n), Some(Item::Teardown(_))),
+        n.question.is_none() && match current_item(n) { Some(Item::Teardown(k)) => gone(n, k), _ => false },
+    ensures retirement::node_rules(v, node_after(n, w.next_ticket, c)),
+{
+    reveal(node_after); reveal(retirement::node_rules); reveal(node_checked); reveal(ready_checked);
+    footprint::storage_frame(w, v, n.footprint, n.footprint);
+}
+
+/// State-table teardown emit row / #806: preserve the complete per-node checker predicate.
+pub(super) proof fn teardown_emit_rules(w: World, v: World, n: Node, c: AdvanceContext)
+    requires environment(w, v, n, c), !(n.phase is Closed), !n.waiting_incident, n.effect.is_none(),
+        matches!(current_item(n), Some(Item::Teardown(_))),
+        n.question.is_none() && match current_item(n) { Some(Item::Teardown(k)) => !gone(n, k), _ => false },
+    ensures retirement::node_rules(v, node_after(n, w.next_ticket, c)),
+{
+    reveal(node_after); reveal(retirement::node_rules); reveal(node_checked); reveal(ready_checked);
+    footprint::storage_frame(w, v, n.footprint, n.footprint);
+}
+
 /// State-table teardown row / #806: preserve the complete per-node checker predicate.
 pub(super) proof fn teardown_rules(w: World, v: World, n: Node, c: AdvanceContext)
     requires environment(w, v, n, c), !(n.phase is Closed), !n.waiting_incident, n.effect.is_none(),
         matches!(current_item(n), Some(Item::Teardown(_))),
     ensures retirement::node_rules(v, node_after(n, w.next_ticket, c)),
 {
-    reveal(node_after); reveal(retirement::node_rules); reveal(node_checked); reveal(ready_checked);
-    footprint::storage_frame(w, v, n.footprint, n.footprint);
+    if n.question.is_some() { teardown_wait_rules(w, v, n, c); }
+    else { match current_item(n) {
+        Some(Item::Teardown(k)) => if gone(n, k) { teardown_gone_rules(w, v, n, c); }
+            else { teardown_emit_rules(w, v, n, c); },
+        _ => {},
+    } }
 }
 
 /// State-table idle row / #806: preserve the complete per-node checker predicate.
