@@ -170,10 +170,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         if !progress_gate_apply::resume_selected(before_apply@, event) {
             reveal(progress_gate_apply::resume_apply_post);
         }
-        assert forall|j: int| 0 <= j < w.nodes@.len() implies
-            settle_shape(w.nodes@[j]) && footprint::valid_footprint(*w, w.nodes@[j].footprint) by {
-            events_lemmas::footprints_after(before_apply@, *w);
-        }
+        events_lemmas::footprints_after(before_apply@, *w);
     }
 }
 }
