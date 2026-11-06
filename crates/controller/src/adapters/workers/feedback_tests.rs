@@ -562,7 +562,6 @@ fn infrastructure_ci_failure_creates_no_maker_feedback() {
         node: NodeId(0),
         infra: true,
         checks: vec![],
-        failed_tests: vec![],
     });
     assert!(
         !f.controller
