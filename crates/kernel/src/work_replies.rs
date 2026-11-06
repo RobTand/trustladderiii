@@ -52,7 +52,8 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         old(w).next_question < u64::MAX,
         !matches!(reply, Reply::MakerNeedsFiles { .. } | Reply::IngestDone { .. }
             | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
-            | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
+            | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
             reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
