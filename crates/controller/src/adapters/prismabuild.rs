@@ -17,6 +17,13 @@ impl Fake {
     }
 }
 impl Executor for Fake {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        self.0.contract_evidence(delivery)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         let node = delivery.node();
         let observations = match delivery.output {
@@ -138,6 +145,18 @@ fn read_wait(
         RecordRead::Present(record) => record,
     };
     if !matches!(record.state, ActionState::Queued | ActionState::Claimed) {
+        return Ok(WaitRecord::Ended);
+    }
+    // Q43 (#817): a claim past PrismaBuild's own lease timeout is lost by its
+    // record, though PrismaBuild may leave it CLAIMED (PB #2819, #2821).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    if record
+        .lease
+        .as_ref()
+        .is_some_and(|lease| lease.expired(now))
+    {
         return Ok(WaitRecord::Ended);
     }
     // PB v2 snapshots retain the submitted HEAD even when the original checkout is gone.
@@ -663,6 +682,37 @@ impl Adapter {
 }
 
 impl Executor for Adapter {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        use crate::dispatch_liveness::decision::ContractEvidence;
+        // WithdrawJob has no dispatch binding of its own; its allowance remains
+        // a retry until cancellation reconciliation records an acknowledgement.
+        if !matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::SubmitChecks,
+                ..
+            }
+        ) {
+            return Ok(ContractEvidence::Absent);
+        }
+        Ok(match self.job(delivery)? {
+            Some(job)
+                if job.delivery.key == delivery.key
+                    && job.delivery.generation == delivery.generation
+                    && job.delivery.job_generation == delivery.job_generation
+                    && job.delivery.head_sha == delivery.head_sha
+                    && serde_json::to_value(job.delivery.output)?
+                        == serde_json::to_value(delivery.output)?
+                    && job.delivery.repository == delivery.repository =>
+            {
+                ContractEvidence::ActionBound
+            }
+            _ => ContractEvidence::Absent,
+        })
+    }
     /// Q7 / #850: a terminal check says nothing about current PB service health.
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         let mut demand = self.images.test_demand(&delivery.repository).map_or_else(
@@ -1068,6 +1118,234 @@ exit "$status"
             result.unwrap(),
             crate::executor::WaitRecord::Ended
         ));
+    }
+
+    /// #817 / Q43 (found by: live probe, PB #2819 and #2821): a CLAIMED action
+    /// whose lease is past PrismaBuild's own lease timeout is lost by its own
+    /// record, so a declared wait on it no longer counts as progress. A fresh
+    /// lease keeps the wait alive.
+    #[test]
+    fn expired_claim_lease_ends_wait() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.head);
+        let queue = f.root.path().join("queue");
+        let key = "a".repeat(64);
+        fs::rename(
+            queue.join("ready").join(format!("{key}.json")),
+            queue.join("claimed").join(format!("{key}.json")),
+        )
+        .unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        // 1793924588 is 125367eaf9f2's last lease renewal (2026-11-06T00:23:08Z).
+        for (heartbeat, alive) in [(now, true), (1_793_924_588.0, false)] {
+            fs::write(
+                queue.join("claimed").join(format!("{key}.lease")),
+                serde_json::to_vec(&serde_json::json!({
+                    "schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": key,
+                    "heartbeat_unix": heartbeat, "owner": "dl380g10:1:fixture", "host": "dl380g10"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let record = read_wait(&client, runtime, &key, &f.path).unwrap();
+            assert_eq!(
+                matches!(record, crate::executor::WaitRecord::Alive),
+                alive,
+                "heartbeat {heartbeat}: expected alive={alive}"
+            );
+        }
+    }
+
+    /// #817 review (PrismaBuild `_effective_heartbeat`): a contended claim
+    /// renews only its `lease-heartbeats/<key>/` stamp, never the lease. A fresh
+    /// stamp keeps the claim live even when the lease heartbeat is stale; an
+    /// older stamp, like #2819's 23:22:10Z one, adds no life.
+    #[test]
+    fn fresh_heartbeat_stamp_keeps_stale_lease_alive() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.head);
+        let queue = f.root.path().join("queue");
+        let key = "a".repeat(64);
+        fs::rename(
+            queue.join("ready").join(format!("{key}.json")),
+            queue.join("claimed").join(format!("{key}.json")),
+        )
+        .unwrap();
+        fs::write(
+            queue.join("claimed").join(format!("{key}.lease")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": key,
+                "heartbeat_unix": 1_793_924_588.0, "owner": "dl380g10:1:fixture", "host": "dl380g10"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let stamps = queue.join("lease-heartbeats").join(&key);
+        fs::create_dir_all(&stamps).unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        for (stamp, alive) in [(1_793_920_930.0, false), (now, true)] {
+            fs::write(
+                stamps.join(format!("{}.json", "b".repeat(64))),
+                serde_json::to_vec(&serde_json::json!({
+                    "action_key": key, "host": "dl380g10", "pid": 1,
+                    "pid_start_ticks": 1, "heartbeat_unix": stamp
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let record = read_wait(&client, runtime, &key, &f.path).unwrap();
+            assert_eq!(
+                matches!(record, crate::executor::WaitRecord::Alive),
+                alive,
+                "stamp {stamp}: expected alive={alive}"
+            );
+        }
+    }
+
+    /// #817 review 2 (Flux safety): the lease is a PrismaBuild-internal file, so
+    /// a lease TL3 cannot read as a v1 claim lease gives no liveness verdict,
+    /// and only a lease stale past 3x PrismaBuild's lease timeout reads lost.
+    /// The wait stays alive in every other case; it is never an error.
+    #[test]
+    fn lease_without_a_lost_verdict_keeps_wait_alive() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.head);
+        let queue = f.root.path().join("queue");
+        let key = "a".repeat(64);
+        fs::rename(
+            queue.join("ready").join(format!("{key}.json")),
+            queue.join("claimed").join(format!("{key}.json")),
+        )
+        .unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let v1 = "prismaquant.prismabuild.pool_lease.v1";
+        let cases = [
+            (
+                "unknown schema",
+                serde_json::json!({"schema": "prismabuild.pool_lease.v2",
+                "action_key": key, "heartbeat_unix": 0.0, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "v1 without heartbeat",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "v1 negative heartbeat",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "heartbeat_unix": -1.0, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "stale by 2x the lease timeout",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "heartbeat_unix": now - 600.0, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "stale past 3x the lease timeout",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "heartbeat_unix": now - 1_000.0, "owner": "o", "host": "h"}),
+                false,
+            ),
+        ];
+        for (case, lease, alive) in cases {
+            fs::write(
+                queue.join("claimed").join(format!("{key}.lease")),
+                serde_json::to_vec(&lease).unwrap(),
+            )
+            .unwrap();
+            let record = read_wait(&client, runtime, &key, &f.path);
+            assert!(
+                if alive {
+                    matches!(record, Ok(crate::executor::WaitRecord::Alive))
+                } else {
+                    matches!(record, Ok(crate::executor::WaitRecord::Ended))
+                },
+                "{case}: expected alive={alive}, read {:?}",
+                record
+                    .as_ref()
+                    .map(|r| matches!(r, crate::executor::WaitRecord::Alive))
+            );
+        }
+        // A non-JSON lease (a format TL3 does not know) is no verdict either.
+        fs::write(
+            queue.join("claimed").join(format!("{key}.lease")),
+            "flux-lease 1",
+        )
+        .unwrap();
+        assert!(matches!(
+            read_wait(&client, runtime, &key, &f.path),
+            Ok(crate::executor::WaitRecord::Alive)
+        ));
+    }
+
+    /// #817 review 2 (Flux / M1): pbd writes the v1 claim lease once at claim
+    /// and never renews it, and writes no heartbeat stamps. A queue that is not
+    /// the production PrismaBuild queue gives no lease verdict, so a declared
+    /// wait on a long Flux action stays alive however old its lease is.
+    #[test]
+    fn flux_queue_lease_written_once_keeps_wait_alive() {
+        let f = Repo::new();
+        let queue = f.root.path().join("pbflux-m1").join("pb-queue");
+        for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
+            fs::create_dir_all(queue.join(state)).unwrap();
+        }
+        let key = "a".repeat(64);
+        fs::write(
+            queue.join("claimed").join(format!("{key}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema":"prismaquant.prismabuild.pool_item.v1", "action_key":key,
+                "published_unix":100,"attempt_history":[],"checkout_snapshot":{"parent":f.head}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        fs::write(
+            queue.join("claimed").join(format!("{key}.lease")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": key,
+                "heartbeat_unix": now - 3_600.0, "owner": "pbd:1:flux", "host": "dl380g10"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let client = tl3_prismabuild::PrismaBuild::new(tl3_prismabuild::Options {
+            queue_root: queue,
+            bell_url: "http://127.0.0.1:1/".into(),
+            tool: tl3_prismabuild::Tool {
+                program: "false".into(),
+                args: vec![],
+            },
+        })
+        .unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let record = read_wait(&client, runtime, &key, &f.path);
+        assert!(
+            matches!(record, Ok(crate::executor::WaitRecord::Alive)),
+            "a lease written once in a non-production queue ended the wait: {:?}",
+            record
+                .as_ref()
+                .map(|r| matches!(r, crate::executor::WaitRecord::Alive))
+        );
     }
 
     #[test]
