@@ -18,6 +18,7 @@ pub struct Dependency {
 #[cfg(verus_keep_ghost)]
 verus! {
 /// State-table planning admission / #693 / #771: every prerequisite is delivered.
+#[verifier::opaque]
 pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> bool {
     forall|i: int| 0 <= i < dependencies.len() && dependencies[i].node == node
         ==> !dependencies[i].rejected && dependencies[i].status == DependencyStatus::Delivered
@@ -894,7 +895,7 @@ impl World {
                             && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
                     ..old(self).nodes@[0]
                 }),
-    ] proof [reveal(dependency_frame); hide(prerequisites_delivered); hide(delivered);] {
+    ] proof [reveal(dependency_frame); reveal(prerequisites_delivered);] {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
         match existing {
