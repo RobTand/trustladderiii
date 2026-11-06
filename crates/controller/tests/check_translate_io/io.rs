@@ -121,8 +121,8 @@ impl Feedback {
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Cut {
-    write: usize,
-    after: bool,
+    pub(super) write: usize,
+    pub(super) after: bool,
 }
 #[derive(Debug)]
 struct Crash;

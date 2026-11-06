@@ -1,9 +1,9 @@
 from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
 from .red_message import RedMessageMatch
+from .proof_rules import ROWS, forced_exception as forced_exception, render as render_proof, violation_data, evaluate
 # Diagnostics live in limits.py, which the in-container runner loads by path (#858).
 from .limits import Diagnostic as Diagnostic, contextual as contextual, named as named
-import builtins
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
 import json
 import re
@@ -95,15 +95,6 @@ ENVIRONMENT_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
 TARGET = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
 
 
-def forced_exception(name: str) -> type | None:
-    """A builtin exception a forcing may raise. AssertionError would be a failure by assertion
-    the forcing itself wrote, and BaseException-only classes end the test process."""
-    error = getattr(builtins, name, None) if name.isidentifier() else None
-    if isinstance(error, type) and issubclass(error, Exception) and not issubclass(error, AssertionError):
-        return error
-    return None
-
-
 @dataclass(frozen=True)
 class Forcing:
     """A plan's declarative recreation of a flake's condition (#393). It is data: the
@@ -112,8 +103,10 @@ class Forcing:
     environment: tuple[tuple[str, str], ...] = ()
     # (target, mode, argument as canonical JSON)
     patches: tuple[tuple[str, str, str], ...] = ()
+    check_index: InitVar[int | None] = 0
+    role: InitVar[str] = 'planner'
 
-    def __post_init__(self):
+    def __post_init__(self, check_index, role):
         if not isinstance(self.symptom, str) or not self.symptom.strip() or len(self.symptom) > FORCING_TEXT:
             raise HarnessInputError(named('forcing.symptom_text', f"a forcing needs a symptom of 1 to {FORCING_TEXT} characters", {}))
         if not self.environment and not self.patches:
@@ -128,22 +121,30 @@ class Forcing:
                 raise HarnessInputError(named('forcing.environment_name', f"a forcing can't set the environment variable {name!r}{detail}", {}))
             if not isinstance(value, str) or len(value) > FORCING_TEXT or "\x00" in value:
                 raise HarnessInputError(named('forcing.environment_value', f"{name} needs a string value of at most {FORCING_TEXT} characters", {}))
-        for target, mode, argument in self.patches:
+        for index, (target, mode, argument) in enumerate(self.patches):
             if not isinstance(target, str) or len(target) > 200 or not TARGET.fullmatch(target):
                 raise HarnessInputError(named('forcing.patch_target', f"a patch target must be a dotted module attribute: {target!r}", {}))
             if mode not in PATCH_MODES:
                 raise HarnessInputError(named('forcing.patch_mode', f"a patch has exactly one of {', '.join(PATCH_MODES)}", {}))
+            if not isinstance(argument, str):
+                raise HarnessInputError(named('forcing.literal_json', 'A patch argument must be a JSON literal.', {}))
             if len(argument.encode()) > FORCING_LITERAL_BYTES:
                 raise HarnessInputError(named('forcing.literal_bytes', f"a patch literal is limited to {FORCING_LITERAL_BYTES} bytes of JSON", {}))
-            value = json.loads(argument)
+            try:
+                value = json.loads(argument)
+            except (TypeError, ValueError) as error:
+                raise HarnessInputError(named('forcing.literal_json', 'A patch argument must be a JSON literal.', {})) from error
             if mode == "raises" and not (isinstance(value, str) and forced_exception(value)):
-                raise HarnessInputError(named('forcing.raise_class', f"a forcing can raise only a builtin Exception other than AssertionError: "
-                                        f"{value!r}", {}))
+                declaration = {'forcing': {'patches': [
+                    {'target': name, patch_mode: json.loads(raw)} for name, patch_mode, raw in self.patches[:index + 1]]}}
+                facts = {'reply': declaration if check_index is None else {'checks': [{} for _ in range(check_index)] + [declaration]},
+                         'field': ('' if check_index is None else f'/checks/{check_index}') + f'/forcing/patches/{index}/raises'}
+                raise ProofRefusal('forcing.raise_class', role=role, **facts)
             if mode == "delay_seconds" and (type(value) not in (int, float) or not 0 < value <= MAX_DELAY_SECONDS):
                 raise HarnessInputError(named('forcing.delay', f"delay_seconds must be above 0 and at most {MAX_DELAY_SECONDS}", {}))
 
     @classmethod
-    def parse(cls, data) -> "Forcing":
+    def parse(cls, data, *, check_index=0, role='planner') -> "Forcing":
         if not isinstance(data, dict) or set(data) - {"symptom", "environment", "patches"}:
             extra = sorted(set(data) - {"symptom", "environment", "patches"}) if isinstance(data, dict) else []
             raise HarnessInputError(named('forcing.extra_keys', f"a forcing has only symptom, environment and patches; not {', '.join(extra)}", {}))
@@ -162,7 +163,7 @@ class Forcing:
             except (TypeError, ValueError) as error:
                 raise HarnessInputError(named('forcing.literal_json', "a patch's argument must be a JSON literal", {})) from error
             parsed.append((patch["target"], modes[0], argument))
-        return cls(data.get("symptom"), tuple(sorted(environment.items())), tuple(parsed))
+        return cls(data.get("symptom"), tuple(sorted(environment.items())), tuple(parsed), check_index, role)
 
     def as_json(self) -> dict:
         return {"symptom": self.symptom, "environment": dict(self.environment),
@@ -170,12 +171,70 @@ class Forcing:
                             for target, mode, argument in self.patches]}
 
 
-class ProofRefusal(HarnessInputError):
-    """A source partition the existing tool/round repair can correct."""
+class ProofMessage(str):
+    """Trusted shared-row text, bounded by the complete result byte budget."""
 
-    def __init__(self, reason, module='', symbol=''):
-        self.reason, self.module, self.symbol = reason, module, symbol
-        super().__init__(f"Proof assembly refused {module}{'::' + symbol if symbol else ''}: {reason}.")
+
+class ProofRefusal(HarnessInputError):
+    """Shared row violations for one source partition, rendered for its caller."""
+
+    def __init__(self, rule, *, module='', symbol='', role='maker', violations=None, **facts):
+        self.role = role
+        self.violations = tuple(violations) if violations is not None else evaluate(
+            (ROWS[rule],), {**facts, 'module': module, 'symbol': symbol}, role=role)
+        self.rule = self.violations[0].rule.id
+        first = self.violations[0].facts
+        self.module, self.symbol = first.get('module', ''), first.get('symbol', '')
+        self.reason = render_proof(self.violations, role)
+        super().__init__(named(self.rule, self.reason, {'violations': self.as_json()}))
+
+    @classmethod
+    def from_violations(cls, violations, *, role='maker'):
+        return cls(violations[0].rule.id, violations=violations, role=role)
+
+    def for_check(self, check, role, check_index=0, *, footprint=(), protected=(), generated=()):
+        """Bind field names to the actual editable declaration and caller."""
+        violations = []
+        for violation in self.violations:
+            facts = dict(violation.facts)
+            module, symbol = facts.get('module', ''), facts.get('symbol', '')
+            identity = module + ('::' + symbol if symbol and not symbol.startswith(module + '::') else '')
+            if symbol.startswith(module + '::') and module:
+                identity = symbol
+            groups = []
+            if check.proof:
+                groups += [('/proof/subjects', check.proof.subjects),
+                           ('/proof/observer_support', check.proof.observer_support)]
+            groups += [('/tests', check.tests)]
+            area = violation.rule.id.split('.')[1]
+            preferred = {'support': '/proof/observer_support', 'observer': '/tests', 'subject': '/proof/subjects'}.get(area)
+            groups.sort(key=lambda group: group[0] != preferred)
+            matches = [(prefix, index) for prefix, units in groups for index, unit in enumerate(units)
+                       if unit == identity]
+            if not matches:
+                matches = [(prefix, index) for prefix, units in groups for index, unit in enumerate(units)
+                           if module and unit.split('::')[0] == module]
+            if matches and 'field' not in facts:
+                prefix, index = matches[0]
+                facts['field'] = f'{prefix}/{index}'
+            from .proof_rules import declaration_pointer
+            facts['field'] = declaration_pointer(facts.get('field', '/proof'), check_index, role)
+            facts['check_index'] = check_index
+            facts['footprint'] = tuple(footprint or ())
+            facts['protected'] = tuple(protected)
+            facts['generated'] = tuple(generated)
+            test_key = declaration_pointer('/tests', check_index, role).rsplit('/', 1)[1]
+            declaration = {test_key: list(check.tests)}
+            if check.proof:
+                declaration['proof'] = check.proof.as_json()
+            if check.forcing:
+                declaration['forcing'] = check.forcing.as_json()
+            facts['reply'] = {'checks': [{} for _ in range(check_index)] + [declaration]}
+            violations.extend(evaluate((violation.rule,), facts, role=role))
+        return self.from_violations(violations, role=role)
+
+    def as_json(self):
+        return [violation_data(violation) for violation in self.violations]
 
 
 @dataclass(frozen=True)
