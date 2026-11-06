@@ -22,8 +22,8 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
 
-from tl3_workers.evidence import forcing_capabilities, forcing_guidance
-from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
+from tl3_workers.evidence import contract_violations, forcing_capabilities, forcing_guidance
+from tl3_workers.contracts import model_facing, read_json, read_reply, reply_errors, schema, schema_violations, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.roles.audit import ingest_reply_contract
 from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
@@ -418,7 +418,16 @@ def _run(request, emit):
 
 
 def _checked(role, inputs, reply, *, worktree=None, plan_errors=None):
-    validate(role.reply_schema, planner_schema_reply(reply) if role.name == 'planner' else reply)
+    if role.name == 'planner':
+        validate(role.reply_schema, planner_schema_reply(reply))
+    else:
+        errors = reply_errors(role.reply_schema, reply)
+        if errors:
+            first = errors[0]
+            first.rule_violations = schema_violations(errors, schema(role.reply_schema))
+            if role.name in ('ingest', 'audit'):
+                first.rule_violations += contract_violations(inputs, reply)
+            raise first
     if role.check_reply is not None:
         if role.name == 'planner':
             role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None), plan_errors=plan_errors)

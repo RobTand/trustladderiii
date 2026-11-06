@@ -26,11 +26,14 @@ def repair_message(error):
     from tl3_workers.roles.planner import PlanConsistencyError
     if isinstance(error, PlanConsistencyError) and hasattr(error, 'repair_text'):
         return error.repair_text
-    # A schema message echoes the whole invalid reply. Keep where and why it failed.
-    message = validation_message(error)
+    from tl3_workers.rules import render_all
+    from tl3_workers.contracts import schema_violations
+    if getattr(error, 'rule_violations', None):
+        return render_all(error.rule_violations)
     if isinstance(error, ValidationError):
-        path = "/" + "/".join(str(part) for part in error.absolute_path)
-        message = f"{error.validator} failed at {path}: {message}"
+        return render_all(schema_violations((error,)))
+    # Legacy sources keep their existing bounded repair text until migrated.
+    message = validation_message(error)
     raw = message.encode()
     if len(raw) <= REPAIR_MESSAGE_BYTES:
         return message

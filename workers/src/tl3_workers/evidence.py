@@ -1,15 +1,39 @@
 """Compare a request's evidence with the installed tools, without substituting proof."""
 
 from tl3_harness.model import named
-
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES, MAX_DELAY_SECONDS, MAX_TOTAL_DELAY_SECONDS
+from tl3_workers.contracts import schema
+from tl3_workers.rules import Allowed, Edit, Name, Rule, evaluate, register, render_all
+
+
+EVIDENCE_FIELD = Name('field', '/evidence_contract')
+EVIDENCE_ALLOWED = Allowed('type', schema('ingest-reply')['$defs']['evidence_contract']['type'])
+
+
+def _missing_contract(facts):
+    if ('tool_capabilities' in facts['inputs'] and isinstance(facts['reply'], dict)
+            and 'evidence_contract' not in facts['reply']):
+        return ({'field': EVIDENCE_FIELD},)
+    return ()
+
+
+CONTRACT_MISSING = register(Rule(
+    'evidence.contract_missing', _missing_contract,
+    lambda facts: (facts['field'],), lambda facts: EVIDENCE_ALLOWED,
+    lambda facts: Edit(facts['field'], 'add', EVIDENCE_ALLOWED)),
+    {'inputs': {'tool_capabilities': []}, 'reply': {}}, [])
+
+
+def contract_violations(inputs, reply):
+    return evaluate((CONTRACT_MISSING,), {'inputs': inputs, 'reply': reply})
 
 
 class EvidenceContractError(ValueError):
     """A fixed, safe diagnostic for the existing reply-format repair path."""
 
     def __init__(self):
-        super().__init__(named('evidence.contract_missing', 'Return evidence_contract with source requirements and separately marked method choices.', dict(field="evidence_contract")))
+        self.rule_violations = contract_violations({'tool_capabilities': []}, {})
+        super().__init__(render_all(self.rule_violations))
 
 
 def forcing_capabilities(cpus=1):
@@ -164,7 +188,9 @@ def preflight(inputs, reply, *, planning=False, objections=None):
     if 'evidence_contract' not in reply:
         if objections is None:
             raise EvidenceContractError()
-        objections.append(named('evidence.contract_missing', str(EvidenceContractError()), {'field': 'evidence_contract'}))
+        objections.append(named('evidence.contract_missing',
+            'Return evidence_contract with source requirements and separately marked method choices.',
+            {'field': 'evidence_contract'}))
         reply['evidence_contract'] = []
     source_subjects = (reply.get('kind') == 'leaf' and any(
         goal.get('proof_obligation', {}).get('subjects') for goal in inputs.get('ingest', {}).get('goals', [])))

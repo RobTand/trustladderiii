@@ -227,7 +227,10 @@ def test_invalid_reply_gets_one_tool_free_repair_turn(role, request, tmp_path, m
     repair, offered = agent_calls(model.calls)[-1]
     # A code-owned budget notice may follow the repair instruction.
     instruction = instructions(repair)[-1]
-    assert message in instruction.text
+    if role in ('classifier', 'maker'):
+        assert 'schema.' in instruction.text and 'Allowed:' in instruction.text
+    else:
+        assert message in instruction.text
     assert not offered, "the repair turn disables tool calls"
     if tool:
         assert agent_calls(model.calls)[0][1], "earlier turns keep their tools"
@@ -579,7 +582,9 @@ def test_repair_prompt_caps_an_echoed_invalid_reply(tmp_path, monkeypatch):
     repair = model.calls[-1][0][-1]
     assert isinstance(repair, HumanMessage)
     assert len(repair.text.encode()) <= 2_048 + 512
-    assert "oneOf" in repair.text
+    assert 'schema.additionalproperties' in repair.text
+    assert '/extra' in repair.text and 'remove' in repair.text
+    assert "x" * 100 not in repair.text
 
 
 @pytest.mark.durability
@@ -631,3 +636,127 @@ def test_repair_reports_schema_and_independent_missing_contract():
     assert 'already_done' in refusal and 'duplicate' in refusal
     assert 'Allowed' in refusal and 'replace' in refusal
     assert seen == [False, True] and control.repair_attempts == 1
+
+
+@pytest.mark.parametrize('constraint,bad,good', [
+    ({'enum': ['approve', 'changes']}, 'maybe', 'approve'),
+    ({'const': 'done'}, 'maybe', 'done'),
+    ({'pattern': '^ok$'}, 'bad', 'ok'),
+    ({'type': 'integer'}, 'bad', 2),
+    ({'required': ['name']}, {}, {'name': 'ok'}),
+    ({'minLength': 2}, '', 'ok'),
+])
+def test_schema_row_rendered_repair_passes_its_guard(constraint, bad, good):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    validator = Draft202012Validator({'properties': {'a/b~c': constraint}})
+    original = {'a/b~c': bad, 'untouched': True}
+    violations = schema_violations(validator.iter_errors(original))
+    assert len(violations) == 1
+    violation = violations[0]
+    text = violation.render()
+    assert '/a~1b~0c' in text and 'Allowed' in text and 'replace' in text
+    assert json.dumps(next(iter(constraint.values()))) in text
+    facts = {**violation.facts, 'reply': original}
+    register(violation.rule, facts, good)
+    fixed = apply_edit(original, violation.rule.repair(facts), good)
+    assert permits(original, fixed, violations)
+    assert validator.is_valid(fixed)
+    assert not permits(original, {**fixed, 'untouched': False}, violations)
+    assert not permits(original, {**fixed, 'untouched': 1}, violations)
+
+
+def test_evidence_row_has_a_bounded_renderable_repair():
+    from tl3_workers.evidence import CONTRACT_MISSING, contract_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    facts = {'inputs': {'tool_capabilities': []}, 'reply': {'kind': 'brief'}}
+    register(CONTRACT_MISSING, facts, [])
+    violations = contract_violations(**facts)
+    text = violations[0].render()
+    assert '/evidence_contract' in text and 'array' in text and 'add' in text
+    fixed = apply_edit(facts['reply'], CONTRACT_MISSING.repair(violations[0].facts), [])
+    assert permits(facts['reply'], fixed, violations)
+    assert not contract_violations(facts['inputs'], fixed)
+    assert not permits(facts['reply'], {**fixed, 'evidence_contract': 'not an array'}, violations)
+
+
+def test_registration_rejects_unrenderable_and_self_rejecting_rows():
+    from tl3_workers.evidence import CONTRACT_MISSING, EVIDENCE_FIELD
+    from tl3_workers.rules import Allowed, CantMeet, Edit, register
+    facts = {'inputs': {'tool_capabilities': []}, 'reply': {}}
+    with pytest.raises(ValueError, match='renderable repair'):
+        register(replace(CONTRACT_MISSING, repair=lambda facts: None), facts, [])
+    with pytest.raises(ValueError, match='renderable repair'):
+        register(replace(CONTRACT_MISSING, repair=lambda facts: CantMeet('')), facts)
+    wrong = replace(CONTRACT_MISSING,
+        repair=lambda facts: Edit(facts['field'], 'add', Allowed('type', 'string')),
+        allowed=lambda facts: Allowed('type', 'string'))
+    with pytest.raises(ValueError, match='own witness'):
+        register(wrong, facts, [])
+    self_rejecting = replace(CONTRACT_MISSING, check=lambda facts: ({'field': EVIDENCE_FIELD},))
+    with pytest.raises(ValueError, match='own witness'):
+        register(self_rejecting, facts, [])
+
+
+def test_typed_subjects_and_gating_report_all_independent_violations():
+    from tl3_workers.rules import Allowed, CantMeet, Edit, Name, Rule, evaluate, register, render_all
+    subjects = (Name('field', '/proof/observer_support/1'), Name('path', 'tests/test_x.py'),
+                Name('symbol', 'tests/test_x.py::test_x'))
+    row = Rule('proof.subject', lambda facts: ({}, {}), lambda facts: subjects,
+               lambda facts: Allowed('enum', ['observer']), lambda facts: CantMeet('subject identity differs'))
+    text = render_all(evaluate((row,), {}))
+    assert text.count('proof.subject') == 2
+    assert 'reply field' in text and 'source path' in text and 'symbol' in text
+    assert 'Further checks were not run' not in text
+    calls = []
+    later = replace(row, id='proof.later', check=lambda facts: calls.append(True) or ())
+    gating = replace(row, gating=True)
+    found = evaluate((gating, later), {})
+    assert not calls and len(found) == 2
+    assert all('Further checks were not run' in item.render() for item in found)
+    register(gating, {'reply': {}})
+    with pytest.raises(ValueError, match='field pointer'):
+        Edit(subjects[1], 'replace', Allowed('enum', ['observer']))
+
+
+def test_schema_remove_extra_field_uses_the_same_guard():
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    validator = Draft202012Validator({'type': 'object', 'properties': {'kind': {'const': 'remark'}},
+                                     'additionalProperties': False})
+    original = {'kind': 'remark', 'extra': 'x' * 20_000}
+    violations = schema_violations(validator.iter_errors(original))
+    violation, = violations
+    register(violation.rule, {**violation.facts, 'reply': original})
+    fixed = apply_edit(original, violation.rule.repair(violation.facts))
+    assert permits(original, fixed, violations) and validator.is_valid(fixed)
+    assert '/extra' in violation.render() and 'remove' in violation.render()
+
+
+def test_all_schema_rows_survive_the_legacy_message_limit():
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
+    validator = Draft202012Validator({'type': 'array', 'items': {'enum': ['ok']}})
+    errors = list(validator.iter_errors(['bad'] * 30))
+    errors[0].rule_violations = schema_violations(errors)
+    message = repair_message(errors[0])
+    assert len(message.encode()) > REPAIR_MESSAGE_BYTES
+    assert message.count('schema.enum:') == 30
+    assert all(f'reply field "/{index}"' in message for index in range(30))
+
+
+def test_composite_schema_row_preserves_reference_context():
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import register
+    proposal = {'$defs': {'text': {'type': 'string'}}, 'oneOf': [
+        {'type': 'object', 'properties': {'kind': {'const': 'x'}, 'item': {'$ref': '#/$defs/text'}},
+         'required': ['kind', 'item']},
+        {'type': 'object', 'properties': {'kind': {'const': 'y'}}, 'required': ['kind']}]}
+    bad = {'kind': 'unknown', 'item': 3}
+    violation, = schema_violations(Draft202012Validator(proposal).iter_errors(bad))
+    register(violation.rule, {**violation.facts, 'reply': bad}, {'kind': 'x', 'item': 'ok'})
+    assert 'oneOf' in violation.render() and 'replace' in violation.render()

@@ -146,3 +146,84 @@ def model_facing(reply_schema):
     if not result["$defs"]:
         del result["$defs"]
     return result
+
+
+def _applicable_errors(error):
+    """Select a discriminated branch; retain alternatives when no branch is known."""
+    if error.validator not in ('oneOf', 'anyOf') or not error.context:
+        yield error
+        return
+    variants = error.validator_value
+    discriminators = set.intersection(*({key for key, item in variant.get('properties', {}).items()
+                                        if 'const' in item or 'enum' in item}
+                                       for variant in variants))
+    matching = []
+    for index, variant in enumerate(variants):
+        constants = {key: item.get('enum', [item.get('const')])
+                     for key, item in variant.get('properties', {}).items()
+                     if key in discriminators}
+        if constants and isinstance(error.instance, dict) and all(
+                key in error.instance and error.instance[key] in values
+                for key, values in constants.items()):
+            matching.append(index)
+    if len(matching) != 1:
+        yield error
+        return
+    for child in error.context:
+        if child.schema_path[0] == matching[0]:
+            yield from _applicable_errors(child)
+
+
+def schema_violations(errors, root_schema=None):
+    """Translate every schema failure into facts, without jsonschema's reply echo."""
+    from dataclasses import replace
+    from tl3_workers.rules import Allowed, Edit, Name, Rule, Violation, at
+
+    def check(facts):
+        try:
+            value = at(facts['reply'], facts['pointer'])
+        except (KeyError, IndexError, TypeError):
+            return () if facts.get('op') == 'remove' else (facts,)
+        if facts.get('op') == 'remove':
+            return ({**facts, 'bad_value': value},)
+        return () if facts['allowed'].accepts(value) else ({**facts, 'bad_value': value},)
+
+    def names(facts):
+        return (Name('field', facts['pointer']),)
+
+    row = Rule('schema.validation', check, names, lambda facts: facts['allowed'],
+               lambda facts: Edit(Name('field', facts['pointer']), facts.get('op', 'replace'), facts['allowed']))
+    result = []
+    for parent in errors:
+        for error in _applicable_errors(parent):
+            pointer = ''.join('/' + str(part).replace('~', '~0').replace('/', '~1')
+                              for part in error.absolute_path)
+            if error.validator == 'additionalProperties' and error.validator_value is False:
+                import re
+                extra = set(error.instance) - error.schema.get('properties', {}).keys()
+                extra = sorted(key for key in extra if not any(re.search(pattern, key)
+                               for pattern in error.schema.get('patternProperties', {})))
+                for key in extra:
+                    result.append(Violation(replace(row, id='schema.additionalproperties'), {
+                        'pointer': pointer + '/' + key.replace('~', '~0').replace('/', '~1'),
+                        'allowed': Allowed('enum', []), 'op': 'remove', 'bad_value': error.instance[key]}))
+                continue
+            if error.validator in ('oneOf', 'anyOf', 'not', 'unevaluatedProperties'):
+                context = error
+                while context.parent is not None:
+                    context = context.parent
+                source = root_schema or context.schema
+                constraint = {**error.schema, '$defs': source.get('$defs', {})}
+                if '$id' in source:
+                    constraint['$id'] = source['$id']
+                allowed = Allowed('schema', constraint)
+            else:
+                allowed = Allowed(error.validator, error.validator_value)
+            result.append(Violation(replace(row, id='schema.' + error.validator.lower()),
+                                    {'pointer': pointer, 'allowed': allowed,
+                                          'bad_value': error.instance}))
+    return tuple(result)
+
+
+def reply_errors(name, value):
+    return tuple(Draft202012Validator(schema(name), registry=registry()).iter_errors(value))
