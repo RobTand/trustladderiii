@@ -170,6 +170,22 @@ class RustDependencyTests(unittest.TestCase):
             "EstimatedComputeUnits": "1", "EstimatedCPU": "3", "EstimatedMemory": "1GB",
         })
 
+    def test_prismabuild_scenarios_are_sharded(self):
+        self.assertGreaterEqual(self.rules[":test_test_prismabuild"]["shard_count"], 4)
+
+    def test_loom_library_has_its_own_gated_selection(self):
+        runner = self.rules.get(":lib_test_tl3_controller_loom")
+        self.assertIsNotNone(runner, "the feature check only compiles Loom; a runnable target is required")
+        self.assertNotIn("manual", runner["tags"])
+        self.assertIn("rust", runner["tags"])
+        binary = self.rules[":lib_test_tl3_controller_loom_binary"]
+        self.assertIn("--cfg=loom", binary["rustc_flags"])
+        self.assertIn("loom", binary["crate_features"])
+        dependencies = self.dependencies("lib_test_tl3_controller_loom")
+        self.assertIn(":library_sources", dependencies)
+        self.assertIn("tests/support/ownership.rs", dependencies)
+        self.assertEqual(runner["args"][1], "tl3-controller/tl3_controller_loom")
+
     def test_github_notices_do_not_pull_in_the_flow_group_workers(self):
         self.assertNotIn("//tools/bazel:worker_python",
                          self.dependencies("test_test_github-notices"))
