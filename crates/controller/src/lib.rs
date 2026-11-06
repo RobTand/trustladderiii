@@ -988,6 +988,17 @@ impl Controller {
         Ok(())
     }
 
+    /// #849 / Q51: retain the completion's typed cause before its observations.
+    pub(crate) fn observe_completion(&mut self, key: &str, completion: Completion) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let effect = self
+            .store
+            .effect(key)?
+            .ok_or(Error::Invalid("missing completed effect"))?;
+        let delivery = hydrate(&effect, &snapshot)?;
+        self.look_observations(&delivery, completion)
+    }
+
     pub(crate) fn queue_observation(
         &mut self,
         snapshot: &Snapshot,
@@ -1627,6 +1638,9 @@ impl Controller {
                     .observations
                     .iter()
                     .any(|observation| matches!(observation, Observation::Quota { .. }));
+                if let Some(class) = completion.failure_class.as_deref() {
+                    self.failure_allowance(&snapshot, &delivery.key, class, &mut commit)?;
+                }
                 for (index, observation) in completion.observations.iter().enumerate() {
                     self.queue_observation(
                         &snapshot,
