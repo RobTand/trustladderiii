@@ -53,6 +53,8 @@ def main():
             (HERE / "current-publishing.rs").write_text((ROOT / path).read_text())
         else:
             (HERE / "records.rs").write_text(base[:base.index("\npub fn delivery_counts")])
+            current = (ROOT / path).read_text()
+            (HERE / "records-current.rs").write_text(current[:current.index("\npub fn delivery_counts")])
     github = (ROOT / GITHUB).read_text()
     (HERE / "message.rs").write_text(function(github, "question_draft")
                                      + function(github, "fixed_notice_text"))

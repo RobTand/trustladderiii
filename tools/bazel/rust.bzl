@@ -73,7 +73,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/p5_checker": 14,
     "tl3-controller/operations_quota": 4,
     "tl3-controller/worker_budget_orchestration": 21,
-    "tl3-controller/tl3_controller": 8,
+    "tl3-controller/tl3_controller": 32,
     "tl3-controller/redaction_generated": 8,
 }
 
@@ -154,7 +154,7 @@ _CONTROLLER_RUNTIME = {
 _CONTROLLER_TEST_SOURCES = {
     "tests/direct_merge.rs": ["tests/mergify.rs", "tests/mergify/**", "tests/support/**", "tests/fixtures/mergify/**"],
     "tests/input_resources.rs": ["tests/support/**"],
-    "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json"],
+    "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json", "tests/fixtures/dispatch-restart-regressions.json"],
     # CC-P: exact source replay and persistent differential schedules.
     "tests/prismabuild_schedule/main.rs": ["tests/prismabuild_schedule/io.rs", "tests/prismabuild_schedule/reference.rs", "tests/prismabuild_schedule/extracted.rs", "tests/prismabuild_schedule/io_schedule-regressions.txt"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],
