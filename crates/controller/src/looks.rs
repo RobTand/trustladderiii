@@ -779,7 +779,9 @@ impl Controller {
                 snapshot,
             );
             if !self.queue_failure_cause(snapshot, &mut fact, node, q58, &mut commit)? {
-                commit.rows.push(put("queue_facts", row.id.clone(), json!(fact)));
+                commit
+                    .rows
+                    .push(put("queue_facts", row.id.clone(), json!(fact)));
             }
             self.store.commit(&commit)?;
             return Ok(true);

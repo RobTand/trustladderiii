@@ -26,9 +26,10 @@ impl Fixture {
             )));
         }
         if path.ends_with("/actions/jobs/127715175818/logs") {
-            return Some(ResponseTemplate::new(200).set_body_string(include_str!(
-                "../fixtures/mergify/pq3309/pr-gate-job.log"
-            )));
+            return Some(
+                ResponseTemplate::new(200)
+                    .set_body_string(include_str!("../fixtures/mergify/pq3309/pr-gate-job.log")),
+            );
         }
         if path.ends_with("/pulls/100/files") {
             return Some(ResponseTemplate::new(200).set_body_json(json!([])));
@@ -305,7 +306,13 @@ fn held(controller: &mut Controller) -> bool {
         .any(|row| row.table == "queue_holds")
 }
 
-fn deliver(controller: &mut Controller, api: &Server, config: &Bootstrap, event: &str, body: Value) {
+fn deliver(
+    controller: &mut Controller,
+    api: &Server,
+    config: &Bootstrap,
+    event: &str,
+    body: Value,
+) {
     for input in Translator::new(api.clients())
         .unwrap()
         .webhook(
@@ -363,7 +370,11 @@ impl Verdict {
         for violation in &self.0 {
             println!("RED 4g {mode}: {violation}");
         }
-        assert!(self.0.is_empty(), "4g {mode}: {} violation(s)", self.0.len());
+        assert!(
+            self.0.is_empty(),
+            "4g {mode}: {} violation(s)",
+            self.0.len()
+        );
         println!("test dequeue_{mode} ... ok");
     }
 }
@@ -405,7 +416,9 @@ fn ended(
         "an upstream write was sent; the single shared requeue must not be re-sent",
     );
     verdict.check(
-        !incidents.iter().any(|incident| incident["needs_rob"] == true),
+        !incidents
+            .iter()
+            .any(|incident| incident["needs_rob"] == true),
         "a Rob-only incident was raised for an environmental dequeue",
     );
     verdict.check(
@@ -415,9 +428,9 @@ fn ended(
         "the answered requeue was reported as permanently failed queue_requeue",
     );
     verdict.check(
-        !incidents.iter().any(|incident| {
-            incident["class"] == "queue_unfinished" && incident["open"] == true
-        }),
+        !incidents
+            .iter()
+            .any(|incident| incident["class"] == "queue_unfinished" && incident["open"] == true),
         "a 'Mergify has not finished' incident stays open after the dequeue",
     );
     verdict.check(
@@ -444,7 +457,15 @@ fn scenario_3309(settings: &tl3_config::Store, mode: &str) {
     let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
         std::time::SystemTime::now(),
     )));
-    let mut controller = publish(settings, &api, root.path(), &clock, &config, pq3309, bind_command);
+    let mut controller = publish(
+        settings,
+        &api,
+        root.path(),
+        &clock,
+        &config,
+        pq3309,
+        bind_command,
+    );
     let mut verdict = Verdict(vec![]);
     let key = enqueues(settings).pop().unwrap();
     let applied = record(root.path(), &key, "applied").exists();
@@ -485,7 +506,15 @@ fn scenario_restart(settings: &tl3_config::Store, mode: &str) {
         bind_command(state, delivery);
         state.fail_reads = true;
     }
-    let mut controller = publish(settings, &api, root.path(), &clock, &config, pq3309, unavailable);
+    let mut controller = publish(
+        settings,
+        &api,
+        root.path(),
+        &clock,
+        &config,
+        pq3309,
+        unavailable,
+    );
     let key = pending_enqueue(&mut controller).expect("the old enqueue is still pending");
     let before = controller.world().unwrap().nodes[0];
     api.state.lock().unwrap().fail_reads = false;
@@ -514,11 +543,17 @@ fn scenario_restart(settings: &tl3_config::Store, mode: &str) {
             });
         }
     }
-    assert!(!seed.rows.is_empty(), "the captured dequeue translates to a fact");
+    assert!(
+        !seed.rows.is_empty(),
+        "the captured dequeue translates to a fact"
+    );
     drop(controller);
     Store::open(settings).unwrap().commit(&seed).unwrap();
     // The old executor's records for effect 400:19.
-    let head = api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().to_owned();
+    let head = api.state.lock().unwrap().pull["head"]["sha"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let receipt = requeue_key(&api.state.lock().unwrap(), &head);
     std::fs::write(
         record(root.path(), &key, "intent"),
@@ -529,8 +564,10 @@ fn scenario_restart(settings: &tl3_config::Store, mode: &str) {
     let digest = format!("{:x}", Sha256::digest(receipt.as_bytes()));
     std::fs::write(
         record(root.path(), &format!("requeue:{digest}"), "requeue"),
-        serde_json::to_vec(&json!({"eligible_since_ms":null,"command":"Sent","command_key":receipt}))
-            .unwrap(),
+        serde_json::to_vec(
+            &json!({"eligible_since_ms":null,"command":"Sent","command_key":receipt}),
+        )
+        .unwrap(),
     )
     .unwrap();
     let mut controller = open(settings, &api, root.path(), &clock, &config);
@@ -560,7 +597,11 @@ fn scenario_3318(settings: &tl3_config::Store, mode: &str) {
     );
     let before = controller.world().unwrap().nodes[0];
     let posts = api.state.lock().unwrap().posts;
-    assert_eq!(before.phase, Phase::Queued, "Mergify acknowledged the enqueue");
+    assert_eq!(
+        before.phase,
+        Phase::Queued,
+        "Mergify acknowledged the enqueue"
+    );
     // TL3's 1800 s no-progress allowance equals Mergify's 30-minute checks
     // timeout. At 15:13:32Z no read showed a dequeue: the control stall.
     looks(&mut controller, &clock, 1_801, 1);
@@ -626,13 +667,27 @@ fn scenario_witness(settings: &tl3_config::Store, mode: &str) {
             .unwrap()
             .retain(|c| c["name"] != tl3_mergify::QUEUE_CHECK);
     }
-    let mut controller = publish(settings, &api, root.path(), &clock, &config, awaiting, bind_head);
+    let mut controller = publish(
+        settings,
+        &api,
+        root.path(),
+        &clock,
+        &config,
+        awaiting,
+        bind_head,
+    );
     let mut verdict = Verdict(vec![]);
     let phase = controller.world().unwrap().nodes[0].phase;
-    verdict.check(phase == Phase::Publishing, "the enqueue was acknowledged early");
+    verdict.check(
+        phase == Phase::Publishing,
+        "the enqueue was acknowledged early",
+    );
     pq3318_dequeued(&mut api.state.lock().unwrap());
     queue_check_completed(&mut controller, &api, &config);
-    verdict.check(held(&mut controller), "the dequeue did not reach the #854 hold");
+    verdict.check(
+        held(&mut controller),
+        "the dequeue did not reach the #854 hold",
+    );
     health(&mut controller, &api, &config);
     looks(&mut controller, &clock, 1, 2);
     let (attempts, requeues) = {
