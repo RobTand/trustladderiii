@@ -3081,18 +3081,20 @@ fn stale_lease_wait_ends_bounded(settings: &tl3_config::Store) {
         c.look_due().unwrap();
         while c.drive_once().unwrap() {}
         let node = c.world().unwrap().nodes[0];
-        assert_eq!(
-            node.run_failures, round,
+        // The kernel counts the first infrastructure failure, then on the second
+        // resets the count and raises the incident (Q7).
+        let ended = if round == 1 {
+            node.run_failures == 1 && node.run_incidents == 0
+        } else {
+            node.run_failures == 0 && node.run_incidents == 1 && node.waiting_incident
+        };
+        assert!(
+            ended,
             "round {round}: a declared wait on a CLAIMED action with an expired lease \
-             held the run silently ({:?})",
-            node.phase
+             held the run silently ({:?}, run failures {}, run incidents {})",
+            node.phase, node.run_failures, node.run_incidents
         );
     }
-    let node = c.world().unwrap().nodes[0];
-    assert!(
-        node.waiting_incident,
-        "the retry's second loss raises the incident"
-    );
     fs::write(root.path().join("entered.release"), "go").unwrap();
 }
 
