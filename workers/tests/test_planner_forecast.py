@@ -91,7 +91,7 @@ def test_each_reply_has_code_forecast(tmp_path, planner_request, proposal, files
     result = run_reply(tmp_path, planner_request, proposal)
     assert result.exit_code == 0, result.stderr
     reply = result.events[-1]["reply"]
-    assert result.events == [
+    assert [{k: v for k, v in event.items() if k != 'plan_check'} for event in result.events] == [
         {"event": "progress", "unit": "model_turn"},
         {"event": "reply", "role": "planner", "reply": reply},
     ]
@@ -146,7 +146,10 @@ def test_model_cannot_supply_its_own_forecast(tmp_path, planner_request):
     good = run_reply(tmp_path, planner_request, LEAF)
     assert good.exit_code == 0, good.stderr
     forged = good.events[-1]["reply"]
-    assert_rejected(run_reply(tmp_path, planner_request, forged))
+    result = run_reply(tmp_path, planner_request, forged)
+    assert result.exit_code == 0, result.stderr
+    assert any('only code may supply planning evidence' in text for text in result.events[-1]['reply']['violations'])
+    assert result.events[-1]['plan_check']['repair']['reason'] == 'disabled'
 
 
 @pytest.mark.parametrize("change", [
