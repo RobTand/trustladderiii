@@ -264,7 +264,7 @@ fn evidence_with_read(
                         error.column(),
                     ),
                 };
-                return Ok((false, false, vec![], vec![diagnostic], Some(HARNESS)));
+                return Ok((false, false, vec![], vec![diagnostic], Some(HARNESS), None));
             }
         };
         if let Some(parsed) = parsed {

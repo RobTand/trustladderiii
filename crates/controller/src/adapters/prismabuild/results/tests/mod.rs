@@ -455,7 +455,8 @@ fn tessera() -> (Job, Value) {
 #[test]
 fn tessera_1194_mismatch_keeps_the_real_failed_check() {
     let (job, report) = tessera();
-    let (reported, passed, results, failed, class) = evaluate(&job, &report);
+    let (reported, passed, results, failed, class, diagnostic) = evaluate(&job, &report);
+    assert!(diagnostic.is_none());
     let completion = completion(&job, reported, passed, results.clone(), failed.clone()).unwrap();
     println!(
         "TESSERA_COMPLETION {}",
@@ -515,7 +516,8 @@ fn schema_decode_failure_is_a_bounded_harness_diagnostic() {
     long["results"][0]["tests"][0]["head"] = json!("x".repeat(4000));
     cases.push(long);
     for report in cases {
-        let (reported, passed, results, failed, class) = evaluate(&job, &report);
+        let (reported, passed, results, failed, class, diagnostic) = evaluate(&job, &report);
+        assert!(diagnostic.is_none());
         assert_eq!(
             class,
             Some(HARNESS),
