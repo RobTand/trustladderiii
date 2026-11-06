@@ -176,7 +176,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
 
 kernel_fn! {
 /// Reply rows / #806: the accepted statement block moved verbatim under the standing rule.
-fn admitted_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
+fn admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
@@ -184,14 +184,14 @@ fn admitted_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
         !(old(w).nodes@[i as int].phase is Stopping),
-        port_review_reply::active(old(w).nodes@[i as int], generation),
+        port_review_reply::active(old(w).nodes@[i as int], _generation),
         port_review_reply::accepted_reply(*old(w), old(w).nodes@[i as int], reply),
     ensures port_review_reply::reply_post(*old(w), *final(w), i as int,
-            generation, reply, *old(out), *final(out)),
+            _generation, reply, *old(out), *final(out)),
         progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
-            generation, reply, *old(out), *final(out)),
+            _generation, reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
-            && generation == old(w).nodes@[i as int].generation
+            && _generation == old(w).nodes@[i as int].generation
             && successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
@@ -222,7 +222,7 @@ fn admitted_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
             && old(w).nodes@[i as int].phase is Planning
             && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
-            && old(w).nodes@[i as int].run == Some(generation) ==> {
+            && old(w).nodes@[i as int].run == Some(_generation) ==> {
                 let n = final(w).nodes@[i as int];
                 n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
                     && n.review_stop == Some(ReviewStop::PlanCantMeet)
@@ -252,7 +252,7 @@ fn admitted_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
             reply_files(w, i, files, fits, out);
             kernel_proof! {
                 progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
-                    generation, reply, before_outputs@, *out);
+                    _generation, reply, before_outputs@, *out);
             }
         }
         _ => {
@@ -262,7 +262,7 @@ fn admitted_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     before_outputs@.len, out.len);
                 progress_gate_contracts::table_order_frame(after_operation@, *w);
                 progress_gate_contracts::maker_reply_composed(before_reply@, after_operation@,
-                    *w, i as int, generation, reply, before_outputs@, *out);
+                    *w, i as int, _generation, reply, before_outputs@, *out);
                 if let Reply::PlanLeaf { footprint, .. } = reply {
                     footprint::valid_under_table_growth(before_reply@, *w, footprint);
                 }
@@ -275,8 +275,8 @@ fn admitted_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                 after_operation@.nodes@[i as int], reply, before_outputs@, *out);
         }
         port_review_admission::accepted(before_reply@, after_operation@, *w, i as int,
-            generation, reply, before_outputs@, *out);
-        port_review_admission::mount(before_reply@, *w, i as int, generation, reply, before_outputs@, *out);
+            _generation, reply, before_outputs@, *out);
+        port_review_admission::mount(before_reply@, *w, i as int, _generation, reply, before_outputs@, *out);
     }
 
 }
