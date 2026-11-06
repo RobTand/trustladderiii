@@ -52,7 +52,7 @@ fn evidence(tag: u8, head: &str, flags: u8) -> Evidence {
                 changed_paths: Some(vec!["src/changed.rs".into()]),
                 complete: true,
                 decision: None,
-            },
+            ..Default::default()},
         },
         6 => Evidence::Conflict {
             check: 42,
@@ -543,7 +543,7 @@ fn function<'a>(source: &'a str, name: &str, indent: &str) -> &'a str {
 /// comparisons refuse drift in either the base copy or today's production.
 #[test]
 fn shared_helper_bodies_are_verbatim() {
-    for name in ["node", "recorded", "identity"] {
+    for name in ["node", "recorded"] {
         assert_eq!(
             function(include_str!("base-adapter.rs.txt"), name, "    "),
             function(include_str!("queue-fact.rs"), name, "    ")
@@ -587,7 +587,6 @@ fn shared_helper_bodies_are_verbatim() {
     for name in [
         "terminal_text",
         "safe",
-        "bounded",
         "test_path",
         "outside_change",
     ] {
@@ -958,4 +957,17 @@ fn mandatory_dispatch_rejects_impossible_setup_kernel_pairs() {
             );
         }
     }
+}
+
+#[test]
+fn attribution_helpers_are_real_current_source() {
+    for name in ["node", "recorded", "identity"] {
+        assert_eq!(function(include_str!("../../src/adapters/mergify.rs"), name, "    "), function(include_str!("queue-fact-current.rs"), name, "    "));
+    }
+    assert_eq!(function(include_str!("base-adapter.rs.txt"), "identity", "    "), function(include_str!("queue-fact.rs"), "identity", "    "));
+    for name in ["queue_gate", "queue_hold_witness", "queue_failure_cause"] {
+        assert_eq!(function(include_str!("../../src/queue_cause.rs"), name, "    "), function(include_str!("cause-methods-current.rs"), name, "    "));
+    }
+    assert_eq!(function(include_str!("../../src/adapters/mergify/ci_evidence.rs"), "bounded", ""), function(include_str!("ci-evidence-current.rs"), "bounded", ""));
+    assert_eq!(function(include_str!("base-ci.rs.txt"), "bounded", ""), function(include_str!("ci-evidence.rs"), "bounded", ""));
 }

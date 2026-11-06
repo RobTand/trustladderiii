@@ -83,10 +83,13 @@ pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
         test.message = safe(&test.message, findings::MAX_MESSAGE_CHARS.min(remaining));
         remaining = remaining.saturating_sub(test.message.chars().count());
     }
+    if !details.complete {
+        details.fingerprint = None;
+    }
     details
 }
 
-fn failures(text: &str) -> Vec<FailedTest> {
+pub(super) fn failures(text: &str) -> Vec<FailedTest> {
     static FAILED: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?:^|\s)FAILED(?: \((?:rust|python)\))?:?\s+(//[^\s]+|[^\s]+\.py(?:::[^\s]+)?)",
@@ -141,9 +144,26 @@ pub(super) async fn read_checks(
         .collect();
     let mut details = QueueCiEvidence {
         complete: failed.len() <= 20 && !failed.is_empty(),
+        reporters_complete: !failed.is_empty()
+            && failed.len() <= 128
+            && failed.iter().all(|check| check.app.is_some()),
+        reporters: failed
+            .iter()
+            .take(128)
+            .filter_map(|check| {
+                check
+                    .app
+                    .as_ref()
+                    .map(|app| crate::queue_cause::CheckIdentity {
+                        app: app.id,
+                        name: check.name.clone(),
+                    })
+            })
+            .collect(),
         ..Default::default()
     };
     let mut seen = BTreeSet::new();
+    let mut fingerprint_parts = Vec::new();
     for check in failed.into_iter().take(20) {
         let mut summary = vec![format!(
             "Conclusion: {}",
@@ -194,6 +214,11 @@ pub(super) async fn read_checks(
             .rev()
             .collect::<String>();
         for test in parsed {
+            fingerprint_parts.push((
+                check.app.as_ref().map(|app| app.id),
+                check.name.clone(),
+                test.test.clone(),
+            ));
             if seen.insert(test.test.clone()) {
                 details.failed_tests.push(test);
             }
@@ -203,6 +228,9 @@ pub(super) async fn read_checks(
             summary: format!("{}\n{log_lines}\n{tail}", summary.join("\n")),
             url: check.details_url.clone(),
         });
+    }
+    if details.complete && details.reporters_complete {
+        details.fingerprint = Some(crate::queue_cause::fingerprint(&mut fingerprint_parts));
     }
     bounded(details)
 }
@@ -221,9 +249,15 @@ pub(super) async fn read_queue(
         .and_then(|output| output.summary.as_deref())
         .and_then(|summary| DRAFT.captures_iter(summary).last())
         .and_then(|capture| capture[1].parse::<u64>().ok());
+    let mut context = Some(queue_cause::context(&state.pull_request));
     let mut details = match draft {
         Some(number) => match github.pull_request(repo, number).await {
-            Ok(pull) if is_merge_queue_pr(&pull) => {
+            Ok(pull)
+                if is_merge_queue_pr(&pull)
+                    && pull.base.branch == state.pull_request.base.branch =>
+            {
+                context = queue_cause::batch_context(&pull)
+                    .filter(|context| context.members.contains(&state.pull_request.number));
                 match github.check_runs(repo, &pull.head.sha).await {
                     Ok(checks) => read_checks(github, repo, &checks).await,
                     Err(_) => QueueCiEvidence::default(),
@@ -253,6 +287,7 @@ pub(super) async fn read_queue(
         });
         details.complete = false;
     }
+    details.context = context.map(Box::new);
     details.changed_paths = github
         .pull_request_paths(repo, state.pull_request.number)
         .await

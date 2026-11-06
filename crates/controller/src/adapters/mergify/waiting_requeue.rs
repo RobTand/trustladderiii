@@ -1,5 +1,6 @@
 //! Recovery of an eligible repaired head after Mergify forgot its queue membership.
 use super::*;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::time::UNIX_EPOCH;
 
@@ -13,6 +14,8 @@ struct Recovery {
     command: Command,
     /// An old executor may already have sent the effect-keyed command.
     command_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry: Option<crate::queue_cause::RetryTransition>,
 }
 impl Adapter {
     fn recovery_key(&self, delivery: &Delivery) -> Result<String> {
@@ -37,6 +40,7 @@ impl Adapter {
                 eligible_since_ms: None,
                 command: Command::Refused,
                 command_key: delivery.key.clone(),
+                retry: None,
             },
         )
     }
@@ -64,6 +68,7 @@ impl Adapter {
                 eligible_since_ms: None,
                 command,
                 command_key: delivery.key.clone(),
+                retry: None,
             },
         )
     }
@@ -83,7 +88,188 @@ impl Adapter {
         self.records.write(
             &self.recovery_path(delivery)?,
             &serde_json::to_vec(recovery)?,
-        )
+        )?;
+        if recovery.command == Command::Sent {
+            self.publish_queue_retry(delivery, recovery)?;
+        }
+        Ok(())
+    }
+
+    /// #854b r2.B: an existing PR read rebinds a same-head hold after retargeting.
+    /// The original deadline, failed identities and shared command budget remain.
+    pub(super) fn reconcile_queue_destination(
+        &self,
+        delivery: &Delivery,
+        fresh: &tl3_mergify::Observation,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<()> {
+        let (Some(snapshot), Some(settings)) = (snapshot, &self.store) else {
+            return Ok(());
+        };
+        let (number, head) = enqueue(delivery)?;
+        let retargeted = |snapshot: &Snapshot| -> Result<Option<crate::queue_cause::Hold>> {
+            let hold = crate::queue_cause::held(snapshot, delivery.node(), head)?;
+            Ok(hold.filter(|hold| {
+                hold.repository == delivery.repository
+                    && hold.number == number
+                    && fresh.pull_request.head.sha == head
+                    && hold.context.branch != fresh.pull_request.base.branch
+            }))
+        };
+        if retargeted(snapshot)?.is_none() {
+            return Ok(());
+        }
+        // The caller's snapshot predates the upstream PR read. Rebind against
+        // the latest revision so a concurrent commit cannot fail this read.
+        let mut store = tl3_store::Store::open(settings)?;
+        let snapshot = &store.load()?;
+        let Some(mut hold) = retargeted(snapshot)? else {
+            return Ok(());
+        };
+        hold.context = crate::queue_cause::QueueContext {
+            base: fresh.pull_request.base.sha.clone(),
+            branch: fresh.pull_request.base.branch.clone(),
+            batch: None,
+            members: vec![number],
+        };
+        hold.witness = None;
+        hold.witnessed_ms = None;
+        let mut commit = tl3_store::Commit::new(
+            format!(
+                "queue-destination:{}:{}:{}:{}",
+                delivery.node().0,
+                head,
+                hold.context.branch,
+                snapshot.revision.get()
+            ),
+            json!({"queue_destination":hold.context.branch}),
+            snapshot,
+        );
+        commit.rows.push(crate::put(
+            "queue_holds",
+            crate::queue_cause::key(delivery.node(), head),
+            json!(hold),
+        ));
+        store.commit(&commit)?;
+        Ok(())
+    }
+
+    fn queue_retry_binding(
+        &self,
+        delivery: &Delivery,
+        fresh: &tl3_mergify::Observation,
+        command_key: &str,
+    ) -> Result<Option<crate::queue_cause::RetryTransition>> {
+        let Some(snapshot) = self.snapshot()? else {
+            return Ok(None);
+        };
+        let (number, head) = enqueue(delivery)?;
+        let Some(hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {
+            return Ok(None);
+        };
+        if hold.context.branch != fresh.pull_request.base.branch
+            || hold.witness.as_ref().is_none_or(|gate| {
+                gate.context.branch != fresh.pull_request.base.branch
+                    || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+            })
+        {
+            return Ok(None);
+        }
+        let mut before = vec![hold.identity];
+        for row in &snapshot.rows {
+            let fact = if row.table == "queue_facts" {
+                Some(crate::decode_stored::<QueueFact>(row.value.clone())?)
+            } else if row.table == "inbox" {
+                match crate::decode_stored::<Observation>(row.value.clone())? {
+                    Observation::Queue(fact) => Some(fact),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(fact) = fact
+                && fact.repository == delivery.repository
+                && fact.number == number
+                && matches!(&fact.evidence, Evidence::CiFailed {head:failed,..} if failed == head)
+            {
+                before.push(fact.identity());
+            }
+        }
+        if let Some(check) = &fresh.check {
+            before.push(
+                QueueFact {
+                    repository: delivery.repository.clone(),
+                    number,
+                    evidence: Evidence::CiFailed {
+                        check: check.id,
+                        completed_at: check.completed_at.map(|at| at.to_rfc3339()),
+                        head: head.into(),
+                        head_check: false,
+                        infra: false,
+                        details: Default::default(),
+                    },
+                }
+                .identity(),
+            );
+        }
+        before.sort();
+        before.dedup();
+        Ok(Some(crate::queue_cause::RetryTransition {
+            command_key: command_key.into(),
+            before,
+        }))
+    }
+
+    fn publish_queue_retry(&self, delivery: &Delivery, recovery: &Recovery) -> Result<()> {
+        let (Some(settings), Some(retry)) = (&self.store, &recovery.retry) else {
+            return Ok(());
+        };
+        let mut store = tl3_store::Store::open(settings)?;
+        let snapshot = store.load()?;
+        let (number, head) = enqueue(delivery)?;
+        let Some(mut hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {
+            return Ok(());
+        };
+        if hold.retry.is_some() || hold.repository != delivery.repository || hold.number != number {
+            return Ok(());
+        }
+        hold.retry = Some(retry.clone());
+        let mut commit = tl3_store::Commit::new(
+            format!("queue-retry:{}", retry.command_key),
+            json!({"queue_retry":retry.command_key}),
+            &snapshot,
+        );
+        commit.rows.push(crate::put(
+            "queue_holds",
+            crate::queue_cause::key(hold.node, head),
+            json!(hold),
+        ));
+        // Recover a crash after the Sent receipt but before this publication.
+        // Previously held post-dispatch reports must be classified again.
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
+            let fact: QueueFact = crate::decode_stored(row.value.clone())?;
+            if fact.repository == delivery.repository
+                && fact.number == number
+                && !retry.before.contains(&fact.identity())
+                && matches!(&fact.evidence, Evidence::CiFailed {head:failed,details,..} if failed == head && !matches!(details.cause.as_deref(),Some(crate::queue_cause::CauseEvidence::Change {..})))
+            {
+                commit.rows.push(tl3_store::RowChange::Delete {
+                    table: "queue_facts".into(),
+                    id: row.id.clone(),
+                });
+                commit.rows.push(crate::put(
+                    "inbox",
+                    format!("retry:{}:{}", retry.command_key, row.id),
+                    json!(Observation::Queue(fact)),
+                ));
+            }
+        }
+        store.commit(&commit)?;
+        Ok(())
     }
     /// Stored queue facts retain the verified dequeue across later heads and
     /// label removal. Labels alone never establish this history or approval.
@@ -269,6 +455,7 @@ impl Adapter {
             eligible_since_ms: None,
             command: Command::Ready,
             command_key: self.recovery_key(delivery)?,
+            retry: None,
         });
         if !budget::inspect_history(Self::command_stage(recovery.command)) {
             return Ok(recovery);
@@ -504,6 +691,17 @@ impl Adapter {
         }
         let snapshot = self.snapshot()?;
         let (fresh, _) = self.read(delivery, snapshot.as_ref())?;
+        if let Some(snapshot) = &snapshot
+            && let Some(hold) =
+                crate::queue_cause::held(snapshot, delivery.node(), enqueue(delivery)?.1)?
+            && (hold.context.branch != fresh.pull_request.base.branch
+                || hold.witness.as_ref().is_none_or(|gate| {
+                    gate.context.branch != fresh.pull_request.base.branch
+                        || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+                }))
+        {
+            return Ok(Reconciliation::Pending);
+        }
         let gate = match schedule::dispatch_gate(waiting, None) {
             schedule::DispatchGate::Eligibility => schedule::dispatch_gate(
                 waiting,
@@ -562,6 +760,18 @@ impl Adapter {
                     if schedule::fence(Self::command_stage(recovery.command)) {
                         self.fence(delivery)?;
                     }
+                    if recovery.command == Command::Sending
+                        && recovery.retry.is_none()
+                        && snapshot.as_ref().is_some_and(|snapshot| {
+                            snapshot.rows.iter().any(|row| {
+                                row.table == "queue_holds"
+                                    && row.id == crate::queue_cause::key(delivery.node(), head)
+                            })
+                        })
+                    {
+                        recovery.retry =
+                            self.queue_retry_binding(delivery, &fresh, &recovery.command_key)?;
+                    }
                     self.save_recovery(delivery, &recovery)?;
                 }
                 lifecycle::Effect::Complete(lifecycle::Complete::Pending) => {
@@ -613,6 +823,28 @@ impl Adapter {
         }
         Ok(Reconciliation::Pending)
     }
+    /// #854b uses the same per-head command receipt as Q58. Human holds and
+    /// pauses still fence dispatch; unknown POSTs are reconciled, never replayed.
+    pub(super) fn queue_hold_command(
+        &mut self,
+        delivery: &Delivery,
+        snapshot: &Snapshot,
+    ) -> Result<()> {
+        let github = &self.clients[&delivery.repository.installation];
+        let events = self.runtime.block_on(
+            github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
+        )?;
+        if self.human_hold_in_events(delivery, Some(snapshot), &events)? {
+            return Ok(());
+        }
+        let _ = self.queue_command(delivery, None)?;
+        if let Some(recovery) = self.recovery(delivery)?
+            && recovery.command == Command::Sent
+        {
+            self.publish_queue_retry(delivery, &recovery)?;
+        }
+        Ok(())
+    }
     pub(super) fn requeue_progress(&self, delivery: &Delivery) -> Result<Option<String>> {
         let Some(recovery) = self.recovery(delivery)? else {
             return Ok(None);
@@ -659,4 +891,37 @@ impl Adapter {
 }
 fn refused(class: &'static str) -> Reconciliation {
     Reconciliation::Found(Box::new(Completion::permanent(class)))
+}
+
+impl Adapter {
+    pub(super) fn retest_hold(&mut self, delivery: &Delivery) -> Result<()> {
+        let Some(snapshot) = self.snapshot()? else {
+            return Ok(());
+        };
+        let Some(head) = delivery.head_sha.as_deref() else {
+            return Ok(());
+        };
+        let Some(hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {
+            return Ok(());
+        };
+        if hold.repository != delivery.repository
+            || hold.number != delivery.pull_request.unwrap_or_default()
+            || hold.witness.is_none()
+        {
+            return Ok(());
+        }
+        let world = crate::snapshot::decode(&snapshot)?;
+        let current = &world.nodes[delivery.node().0 as usize];
+        if current.phase != tl3_kernel::Phase::Queued
+            || current.paused
+            || current.waiting_incident
+            || approved_head(&snapshot, current.approved)? != head
+        {
+            return Ok(());
+        }
+        let mut authorized = delivery.clone();
+        authorized.epoch = snapshot.epoch.get();
+        self.queue_hold_command(&authorized, &snapshot)?;
+        Ok(())
+    }
 }

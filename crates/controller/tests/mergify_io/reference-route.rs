@@ -1,4 +1,9 @@
 use super::*;
+// #854b: the frozen A3 reference keeps the pre-#854b Evidence (namespace-only rebinding).
+mod frozen_evidence {
+    include!("reference-evidence.rs");
+}
+pub(super) use frozen_evidence::Evidence;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueueFact {
     pub repository: Repository,

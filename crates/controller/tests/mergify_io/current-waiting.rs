@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 use crate::mergify_io::io::mock_std as std;
 use lifecycle::Command;
 use tl3_mergify::decide::recovery::{budget, command, eligibility, schedule};
@@ -9,6 +10,8 @@ struct Recovery {
     command: Command,
     /// An old executor may already have sent the effect-keyed command.
     command_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry: Option<queue_retry::RetryTransition>,
 }
 impl Adapter {
     fn recovery_key(&self, delivery: &Delivery) -> Result<String> {
@@ -33,6 +36,7 @@ impl Adapter {
                 eligible_since_ms: None,
                 command: Command::Refused,
                 command_key: delivery.key.clone(),
+                retry: None,
             },
         )
     }
@@ -60,6 +64,7 @@ impl Adapter {
                 eligible_since_ms: None,
                 command,
                 command_key: delivery.key.clone(),
+                retry: None,
             },
         )
     }
@@ -79,7 +84,11 @@ impl Adapter {
         self.records.write(
             &self.recovery_path(delivery)?,
             &serde_json::to_vec(recovery)?,
-        )
+        )?;
+        if recovery.command == Command::Sent {
+            self.publish_queue_retry(delivery, recovery)?;
+        }
+        Ok(())
     }
     fn recovery_eligible(
         &self,
@@ -146,6 +155,7 @@ impl Adapter {
             eligible_since_ms: None,
             command: Command::Ready,
             command_key: self.recovery_key(delivery)?,
+            retry: None,
         });
         if !budget::inspect_history(Self::command_stage(recovery.command)) {
             return Ok(recovery);
@@ -341,6 +351,17 @@ impl Adapter {
         }
         let snapshot = self.snapshot()?;
         let (fresh, _) = self.read(delivery, snapshot.as_ref())?;
+        if let Some(snapshot) = &snapshot
+            && let Some(hold) =
+                queue_retry::held(snapshot, delivery.node(), enqueue(delivery)?.1)?
+            && (hold.context.branch != fresh.pull_request.base.branch
+                || hold.witness.as_ref().is_none_or(|gate| {
+                    gate.context.branch != fresh.pull_request.base.branch
+                        || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+                }))
+        {
+            return Ok(Reconciliation::Pending);
+        }
         let gate = match schedule::dispatch_gate(waiting, None) {
             schedule::DispatchGate::Eligibility => schedule::dispatch_gate(
                 waiting,
@@ -398,6 +419,18 @@ impl Adapter {
                 lifecycle::Effect::SaveRecovery => {
                     if schedule::fence(Self::command_stage(recovery.command)) {
                         self.fence(delivery)?;
+                    }
+                    if recovery.command == Command::Sending
+                        && recovery.retry.is_none()
+                        && snapshot.as_ref().is_some_and(|snapshot| {
+                            snapshot.rows.iter().any(|row| {
+                                row.table == "queue_holds"
+                                    && row.id == queue_retry::key(delivery.node(), head)
+                            })
+                        })
+                    {
+                        recovery.retry =
+                            self.queue_retry_binding(delivery, &fresh, &recovery.command_key)?;
                     }
                     self.save_recovery(delivery, &recovery)?;
                 }
@@ -510,4 +543,236 @@ impl Adapter {
 }
 fn refused(class: &'static str) -> Reconciliation {
     Reconciliation::Found(Box::new(Completion::permanent(class)))
+}
+
+impl Adapter {
+    pub(super) fn reconcile_queue_destination(
+        &self,
+        delivery: &Delivery,
+        fresh: &tl3_mergify::Observation,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<()> {
+        let (Some(snapshot), Some(settings)) = (snapshot, &self.store) else {
+            return Ok(());
+        };
+        let (number, head) = enqueue(delivery)?;
+        let retargeted = |snapshot: &Snapshot| -> Result<Option<queue_retry::Hold>> {
+            let hold = queue_retry::held(snapshot, delivery.node(), head)?;
+            Ok(hold.filter(|hold| {
+                hold.repository == delivery.repository
+                    && hold.number == number
+                    && fresh.pull_request.head.sha == head
+                    && hold.context.branch != fresh.pull_request.base.branch
+            }))
+        };
+        if retargeted(snapshot)?.is_none() {
+            return Ok(());
+        }
+        // The caller's snapshot predates the upstream PR read. Rebind against
+        // the latest revision so a concurrent commit cannot fail this read.
+        let mut store = tl3_store::Store::open(settings)?;
+        let snapshot = &store.load()?;
+        let Some(mut hold) = retargeted(snapshot)? else {
+            return Ok(());
+        };
+        hold.context = queue_retry::QueueContext {
+            base: fresh.pull_request.base.sha.clone(),
+            branch: fresh.pull_request.base.branch.clone(),
+            batch: None,
+            members: vec![number],
+        };
+        hold.witness = None;
+        hold.witnessed_ms = None;
+        let mut commit = tl3_store::Commit::new(
+            format!(
+                "queue-destination:{}:{}:{}:{}",
+                delivery.node().0,
+                head,
+                hold.context.branch,
+                snapshot.revision.get()
+            ),
+            json!({"queue_destination":hold.context.branch}),
+            snapshot,
+        );
+        commit.rows.push(queue_retry::put(
+            "queue_holds",
+            queue_retry::key(delivery.node(), head),
+            json!(hold),
+        ));
+        store.commit(&commit)?;
+        Ok(())
+    }
+}
+
+impl Adapter {
+    fn queue_retry_binding(
+        &self,
+        delivery: &Delivery,
+        fresh: &tl3_mergify::Observation,
+        command_key: &str,
+    ) -> Result<Option<queue_retry::RetryTransition>> {
+        let Some(snapshot) = self.snapshot()? else {
+            return Ok(None);
+        };
+        let (number, head) = enqueue(delivery)?;
+        let Some(hold) = queue_retry::held(&snapshot, delivery.node(), head)? else {
+            return Ok(None);
+        };
+        if hold.context.branch != fresh.pull_request.base.branch
+            || hold.witness.as_ref().is_none_or(|gate| {
+                gate.context.branch != fresh.pull_request.base.branch
+                    || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+            })
+        {
+            return Ok(None);
+        }
+        let mut before = vec![hold.identity];
+        for row in &snapshot.rows {
+            let fact = if row.table == "queue_facts" {
+                Some(crate::decode_stored::<QueueFact>(row.value.clone())?)
+            } else if row.table == "inbox" {
+                match crate::decode_stored::<Observation>(row.value.clone())? {
+                    Observation::Queue(fact) => Some(fact),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(fact) = fact
+                && fact.repository == delivery.repository
+                && fact.number == number
+                && matches!(&fact.evidence, Evidence::CiFailed {head:failed,..} if failed == head)
+            {
+                before.push(fact.identity());
+            }
+        }
+        if let Some(check) = &fresh.check {
+            before.push(
+                QueueFact {
+                    repository: delivery.repository.clone(),
+                    number,
+                    evidence: Evidence::CiFailed {
+                        check: check.id,
+                        completed_at: check.completed_at.map(|at| at.to_rfc3339()),
+                        head: head.into(),
+                        head_check: false,
+                        infra: false,
+                        details: Default::default(),
+                    },
+                }
+                .identity(),
+            );
+        }
+        before.sort();
+        before.dedup();
+        Ok(Some(queue_retry::RetryTransition {
+            command_key: command_key.into(),
+            before,
+        }))
+    }
+}
+
+impl Adapter {
+    fn publish_queue_retry(&self, delivery: &Delivery, recovery: &Recovery) -> Result<()> {
+        let (Some(settings), Some(retry)) = (&self.store, &recovery.retry) else {
+            return Ok(());
+        };
+        let mut store = tl3_store::Store::open(settings)?;
+        let snapshot = store.load()?;
+        let (number, head) = enqueue(delivery)?;
+        let Some(mut hold) = queue_retry::held(&snapshot, delivery.node(), head)? else {
+            return Ok(());
+        };
+        if hold.retry.is_some() || hold.repository != delivery.repository || hold.number != number {
+            return Ok(());
+        }
+        hold.retry = Some(retry.clone());
+        let mut commit = tl3_store::Commit::new(
+            format!("queue-retry:{}", retry.command_key),
+            json!({"queue_retry":retry.command_key}),
+            &snapshot,
+        );
+        commit.rows.push(queue_retry::put(
+            "queue_holds",
+            queue_retry::key(hold.node, head),
+            json!(hold),
+        ));
+        // Recover a crash after the Sent receipt but before this publication.
+        // Previously held post-dispatch reports must be classified again.
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
+            let fact: QueueFact = crate::decode_stored(row.value.clone())?;
+            if fact.repository == delivery.repository
+                && fact.number == number
+                && !retry.before.contains(&fact.identity())
+                && matches!(&fact.evidence, Evidence::CiFailed {head:failed,details,..} if failed == head && !matches!(details.cause.as_deref(),Some(queue_retry::CauseEvidence::Change {..})))
+            {
+                commit.rows.push(tl3_store::RowChange::Delete {
+                    table: "queue_facts".into(),
+                    id: row.id.clone(),
+                });
+                commit.rows.push(queue_retry::put(
+                    "inbox",
+                    format!("retry:{}:{}", retry.command_key, row.id),
+                    json!(Observation::Queue(fact)),
+                ));
+            }
+        }
+        store.commit(&commit)?;
+        Ok(())
+    }
+}
+
+mod queue_retry {
+    use super::*;
+    use chrono::{DateTime, Utc};
+    pub use crate::queue_cause::{CauseEvidence, QueueContext, GateEvidence, CheckIdentity};
+/// Captured in the shared command receipt before POST and published on Sent.
+/// Failure identities already observed at that fence cannot be retest results.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct RetryTransition {
+    pub command_key: String,
+    pub before: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Hold {
+    pub repository: Repository,
+    pub number: u64,
+    pub node: NodeId,
+    pub head: String,
+    pub identity: String,
+    pub context: QueueContext,
+    pub failed_at: Option<DateTime<Utc>>,
+    pub since_ms: u64,
+    pub witness: Option<GateEvidence>,
+    pub witnessed_ms: Option<u64>,
+    #[serde(default)]
+    pub retry: Option<RetryTransition>,
+    #[serde(default)]
+    pub reporters: Vec<CheckIdentity>,
+    #[serde(default)]
+    pub reporters_complete: bool,
+}
+
+pub(crate) fn key(node: NodeId, head: &str) -> String {
+    format!("{}:{head}", node.0)
+}
+
+pub(crate) fn held(snapshot: &Snapshot, node: NodeId, head: &str) -> Result<Option<Hold>> {
+    snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "queue_holds" && row.id == key(node, head))
+        .map(|row| decode_stored(row.value.clone()))
+        .transpose()
+}
+
+
+    pub fn put(table: &str, id: String, value: Value) -> ::tl3_store::RowChange {
+        ::tl3_store::RowChange::Put {table:table.into(),id,value}
+    }
 }

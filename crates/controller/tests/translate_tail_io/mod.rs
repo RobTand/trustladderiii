@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use tl3_controller::{Error, Result};
 use tl3_kernel::{Event, Fact, NodeId, Phase, Reply, World};
 use io::{Commit, Controller, RowChange, Snapshot, put};
+mod queue_cause { pub use tl3_controller::queue_cause::*; }
 mod contracts { pub use tl3_controller::contracts::MESSAGE_CHARS; }
 #[allow(unused_imports)] // Verbatim prefix keeps the full source import list.
 mod findings { include!("findings.rs"); }
