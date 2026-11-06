@@ -275,7 +275,7 @@ fn fact_pr_dequeued(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
     ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::PrDequeuedByPerson, *old(out), *final(out)),
-] hide [current_item, items, settle_shape] {
+] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
             pr_dequeued(w, i, out);
@@ -351,7 +351,7 @@ fn fact_ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (re
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
     ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::CiFailed { infra }, *old(out), *final(out)),
-] hide [current_item, items, settle_shape] {
+] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
             ci_failed(w, i, infra, out);
@@ -376,7 +376,7 @@ fn fact_upstream_stalled(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
     ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::UpstreamStalled, *old(out), *final(out)),
-] hide [current_item, items, settle_shape] {
+] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     kernel_proof! {
@@ -409,7 +409,7 @@ fn fact_incident_cleared(w: &mut World, i: usize, by_rob: bool, out: &mut Outbox
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
     ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::IncidentCleared { by_rob }, *old(out), *final(out)),
-] hide [current_item, items, settle_shape] {
+] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
             incident_cleared(w, i, by_rob, out);
