@@ -394,7 +394,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_runtime::ci_post(old(w).nodes@[i as int], final(w).nodes@[i as int], infra,
             old(w).fail_fast, old(w).next_question, final(w).next_question),
-] hide [current_item, items] {
+] hide [current_item, items] proof [reveal(retirement_runtime::ci_post);] {
     kernel_snapshot! { ci_world = *w }
     kernel_snapshot! { ci_out = *out }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
@@ -407,10 +407,6 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
                 reveal(retirement::fact_node);
             }
             reveal(retirement::fact_frame);
-            assert(retirement_runtime::ci_post(before_ci@, *m, infra,
-                ci_world@.fail_fast, ci_world@.next_question, w.next_question)) by {
-                reveal(retirement_runtime::ci_post);
-            }
         }
 
         return;
@@ -433,10 +429,6 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
             retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
-            assert(retirement_runtime::ci_post(before_ci@, w.nodes@[i as int], infra,
-                ci_world@.fail_fast, ci_world@.next_question, w.next_question)) by {
-                reveal(retirement_runtime::ci_post);
-            }
         }
 
         return;
@@ -447,10 +439,6 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     ci_infrastructure(w, i, out);
     kernel_proof! {
         retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
-        assert(retirement_runtime::ci_post(before_ci@, w.nodes@[i as int], infra,
-            ci_world@.fail_fast, ci_world@.next_question, w.next_question)) by {
-            reveal(retirement_runtime::ci_post);
-        }
     }
 
 }
