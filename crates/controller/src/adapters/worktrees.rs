@@ -874,9 +874,21 @@ impl Executor for Real {
         Ok(match self.reconcile(delivery)? {
             Reconciliation::Found(c) => crate::executor::Look::Found(c),
             Reconciliation::Absent => crate::executor::Look::Absent,
-            Reconciliation::Pending => crate::executor::Look::Alive {
-                progress: "configured generation pending".into(),
-            },
+            Reconciliation::Pending
+                if self.generator_configured(&delivery.repository)
+                    && matches!(
+                        delivery.output,
+                        Out::Effect {
+                            kind: EffectKind::StartRebase,
+                            ..
+                        }
+                    ) =>
+            {
+                crate::executor::Look::Alive {
+                    progress: "configured generation pending".into(),
+                }
+            }
+            Reconciliation::Pending => crate::executor::Look::Pending,
         })
     }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {

@@ -1238,6 +1238,118 @@ fn r1_undeclared_output_is_durable_failure_and_queue_repair_keeps_running() {
     }
 }
 
+#[test]
+fn r1_running_executor_survives_crash_and_replays_without_blocking() {
+    if let Some(root) = std::env::var_os("TL3_RUNNING_GENERATOR_ROOT") {
+        let mut f = Fixture::open(std::path::Path::new(&root));
+        f.repositories[0].generated_files = vec!["gen/**/*.json".into()];
+        f.repositories[0].generator = Some("python3 tools/gen_manifest.py".into());
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        config.github.repos = f.repositories.clone();
+        config.workers.python = f.root.join("python");
+        config.prismabuild.container_image = format!("sha256:{}", "1".repeat(64));
+        config.planning.protected_paths.clear();
+        let mut adapter = f.adapter().with_generation(&config).unwrap();
+        let mut delivery = f.delivery(EffectKind::StartRebase, 2);
+        delivery.epoch = 0;
+        delivery.paths = vec!["src/a.txt".into(), "gen/manifest.json".into()];
+        delivery.head_sha = Some(f.head(&delivery));
+        loop {
+            match adapter.execute(&delivery) {
+                Err(tl3_controller::Error::GenerationPending) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                result => panic!(
+                    "executor should stay blocked until the parent kills this controller: {result:?}"
+                ),
+            }
+        }
+    }
+    let mut g = Generated::new();
+    g.leaf();
+    g.upstream();
+    let started = g._root.path().join("executor-started");
+    let released = g._root.path().join("executor-released");
+    let block = format!(
+        "        import time\n        Path({:?}).touch()\n        while not Path({:?}).exists(): time.sleep(0.01)\n",
+        started.to_str().unwrap(),
+        released.to_str().unwrap()
+    );
+    fs::write(
+        g._root.path().join("transport.py"),
+        TRANSPORT.replace("        root = Path", &(block + "        root = Path")),
+    )
+    .unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "r1_running_executor_survives_crash_and_replays_without_blocking",
+            "--nocapture",
+        ])
+        .env("TL3_RUNNING_GENERATOR_ROOT", g._root.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !started.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(started.exists(), "existing executor did not start");
+    let delivery = g.rebase(2);
+    let first = g.adapter.execute(&delivery);
+    assert!(
+        matches!(first, Err(tl3_controller::Error::GenerationPending)),
+        "replay must yield while the old executor is live"
+    );
+    fs::write(&released, "").unwrap();
+    let completion = g.adapter.await_execute(&delivery).unwrap();
+    let head = completion
+        .observations
+        .iter()
+        .find_map(|o| match o {
+            Observation::Rebased { sha, .. } => Some(sha),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        git(&g.f.repo, &["show", &format!("{head}:gen/manifest.json")]),
+        "{\"count\": 2}"
+    );
+    assert_eq!(git(&g.checkout, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn r1_undeclared_freshness_output_routes_checks_to_repair() {
+    let g = Generated::new();
+    let sha = commit(
+        &g.checkout,
+        "tools/gen_manifest.py",
+        &(GENERATOR.to_owned() + "Path('gen/new.json').write_text('{}\\n')\n"),
+    );
+    let mut f = Controlled::new(g);
+    f.arm(Phase::Checking, Some(&sha));
+    f.check(&sha);
+    let n = f.c.world().unwrap().nodes[0];
+    assert_ne!(n.checked, n.head);
+    assert!(matches!(
+        n.phase,
+        Phase::Making | Phase::Ready(tl3_kernel::Resume::Making)
+    ));
+    assert!(
+        f.c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "maker_findings"
+                && row.value.to_string().contains("gen/new.json"))
+    );
+    assert!(!f.g.checkout.join("gen/new.json").exists());
+}
+
 fn await_generation<T>(
     mut operation: impl FnMut() -> tl3_controller::Result<T>,
 ) -> tl3_controller::Result<T> {

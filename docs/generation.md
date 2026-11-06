@@ -43,3 +43,17 @@ update leaves the original branch intact and preserves the existing maker route;
 a later publication conflict reaches Rebasing. Repositories without a configured
 generator retain their existing repair behavior. Checking verifies the maker's
 result again before it can publish.
+
+Generation runs outside the controller drive loop. Its source wakes the loop when
+journaled completion is available. Checking retains pending generation separately
+from other inputs, so a queued generator does not prevent another leaf or Stop
+from being processed. Replay waits for a surviving executor to finish before
+resuming its recorded action. Only the controller installs authorized commits.
+
+Before deploying authored-only locks, verify the required queue-tree regeneration
+check for every served repository with a configured generator, including errors,
+deletions and untracked outputs. Private snapshot clones currently accumulate
+under each repository's common Git directory at
+`tl3-controller/generation/<operation>/<contract>/checkout` and
+`tl3-controller/freshness/<operation>/<contract>/checkout`. Monitor disk usage;
+snapshot retirement is deferred.
