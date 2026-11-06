@@ -12,7 +12,7 @@ pub mod queue {
         pub unavailable: bool,
         pub missing_suites: bool,
     }
-    /// Q52, docs/state-table.md:542: missing contexts gate suite reads. The independent permission gate preserves existing behaviour (no rule).
+    /// Q52, docs/state-table.md:556: missing contexts gate suite reads. The independent permission gate preserves existing behaviour (no rule).
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out.unavailable == !permissions_empty && out.missing_suites == !missing_empty,))]
     pub fn setup(permissions_empty: bool, missing_empty: bool) -> Setup {
         Setup {
@@ -20,12 +20,12 @@ pub mod queue {
             missing_suites: !missing_empty,
         }
     }
-    /// #447, docs/state-table.md:545,578: blocked suites are read only for settled Waiting with unmet conditions.
+    /// #447, docs/state-table.md:559,592: blocked suites are read only for settled Waiting with unmet conditions.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (waiting && settled && unmet),))]
     pub fn blocked_suites(waiting: bool, settled: bool, unmet: bool) -> bool {
         waiting && settled && unmet
     }
-    /// #447, docs/state-table.md:545: only completed Waiting can contribute unmet queue conditions.
+    /// #447, docs/state-table.md:559: only completed Waiting can contribute unmet queue conditions.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (waiting && completed),))]
     pub fn conditions(waiting: bool, completed: bool) -> bool {
         waiting && completed
@@ -36,7 +36,7 @@ pub mod queue {
         missing.append(&mut reported);
         missing
     }
-    /// Q52, docs/state-table.md:543: CheckReported belongs to both the open incidents and reported requirements.
+    /// Q52, docs/state-table.md:557: CheckReported belongs to both the open incidents and reported requirements.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (open && has_report),))]
     pub fn reported(open: bool, has_report: bool) -> bool {
         open && has_report
@@ -54,7 +54,7 @@ pub mod queue {
 
     #[cfg(verus_keep_ghost)]
     verus! {
-    /// Q52/#447, docs/state-table.md:542-545: gates and CheckReported have positive and rejecting witnesses.
+    /// Q52/#447, docs/state-table.md:556-559: gates and CheckReported have positive and rejecting witnesses.
     fn gates_witness() {
         let setup_ = setup(false, false); assert(setup_.unavailable && setup_.missing_suites);
         let empty = setup(true, true); assert(!empty.unavailable && !empty.missing_suites);
@@ -131,7 +131,7 @@ pub mod webhook {
     pub fn pull(queue_pr: bool, tracked: bool) -> bool {
         !queue_pr && tracked
     }
-    /// docs/state-table.md:667 PushByOther: a synchronized head is attributed only to an actor other than TL3; exact actor/head comparison preserves existing behaviour.
+    /// docs/state-table.md:681 PushByOther: a synchronized head is attributed only to an actor other than TL3; exact actor/head comparison preserves existing behaviour.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (!app_bot && same_head),))]
     pub fn push(app_bot: bool, same_head: bool) -> bool {
         !app_bot && same_head
@@ -154,7 +154,7 @@ pub mod webhook {
     pub fn head_pull(head: bool, empty: bool, listed: bool) -> bool {
         head && (empty || listed)
     }
-    /// Q52, docs/state-machine.md:720; queue-event waking preserves existing behaviour (no rule): non-queue checks look and wake only a pending enqueue on its approved head.
+    /// Q52, docs/state-machine.md:731; queue-event waking preserves existing behaviour (no rule): non-queue checks look and wake only a pending enqueue on its approved head.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out.look == (queue_event || pending && approved) && out.wake == (!queue_event && pending && approved),))]
     pub fn check_action(queue_event: bool, pending: bool, approved: bool) -> Action {
         Action {
@@ -162,7 +162,7 @@ pub mod webhook {
             wake: !queue_event && pending && approved,
         }
     }
-    /// Q52, docs/state-machine.md:720: the completed suite looks and wakes pending enqueues on the approved head.
+    /// Q52, docs/state-machine.md:731: the completed suite looks and wakes pending enqueues on the approved head.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out.look == pending && out.wake == pending,))]
     pub fn suite_action(pending: bool) -> Action {
         Action {
@@ -192,7 +192,7 @@ pub mod webhook {
         let internal = pull(true,true); assert(!internal);
         let absent = pull(false,false); assert(!absent);
     }
-    /// docs/state-table.md:667 PushByOther; queue authentication is preserved existing behaviour (no rule).
+    /// docs/state-table.md:681 PushByOther; queue authentication is preserved existing behaviour (no rule).
     fn authenticity_witness() {
         let pushed = push(false,true); assert(pushed);
         let bot = push(true,true); assert(!bot);
@@ -202,7 +202,7 @@ pub mod webhook {
         let spoof_slug = check(true,true,false); assert(spoof_slug == Check::Drop);
         let other = check(false,true,true); assert(other == Check::Other);
     }
-    /// Q52, docs/state-machine.md:720: head/PR filters and conditional look/wake have positive and negative witnesses.
+    /// Q52, docs/state-machine.md:731: head/PR filters and conditional look/wake have positive and negative witnesses.
     fn checks_witness() {
         let any = head_pull(true,true,false); assert(any);
         let listed = head_pull(true,false,true); assert(listed);
@@ -228,7 +228,7 @@ pub mod projection {
     pub fn number(left: u64, right: u64) -> bool {
         left == right
     }
-    /// Q52 docs/state-table.md:543: stale-head missing-check facts skip node/incident lookup.
+    /// Q52 docs/state-table.md:557: stale-head missing-check facts skip node/incident lookup.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == same_head,))]
     pub fn missing_head(same_head: bool) -> bool {
         same_head
@@ -253,7 +253,7 @@ pub mod projection {
     pub fn catch_pull(queue_pr: bool, merged: bool) -> bool {
         !queue_pr && !merged
     }
-    /// docs/state-table.md:667 PushByOther: an unknown observed head is recorded; known-head suppression preserves existing behaviour.
+    /// docs/state-table.md:681 PushByOther: an unknown observed head is recorded; known-head suppression preserves existing behaviour.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (!known_head),))]
     pub fn unknown(known_head: bool) -> bool {
         !known_head
@@ -263,12 +263,12 @@ pub mod projection {
     pub fn pending(repository: bool, number: bool, enqueue: bool) -> bool {
         repository && number && enqueue
     }
-    /// Q52, docs/state-table.md:543: only a missing context on this head/node with an open incident is eligible for clearing.
+    /// Q52, docs/state-table.md:557: only a missing context on this head/node with an open incident is eligible for clearing.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (same_head && same_node && incident_open),))]
     pub fn missing(same_head: bool, same_node: bool, incident_open: bool) -> bool {
         same_head && same_node && incident_open
     }
-    /// docs/state-table.md:669: catch-up person events belong to the tracked PR; close/dequeue mapping preserves existing behaviour.
+    /// docs/state-table.md:683: catch-up person events belong to the tracked PR; close/dequeue mapping preserves existing behaviour.
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == (same_number && human),))]
     pub fn person(same_number: bool, human: bool) -> bool {
         same_number && human
@@ -289,7 +289,7 @@ pub mod projection {
         let pending_ = pending(true,true,true); assert(pending_);
         let other = pending(true,true,false); assert(!other);
     }
-    /// Q52 docs/state-table.md:543 and PushByOther :667: head/node/incident and unknown-head witnesses.
+    /// Q52 docs/state-table.md:557 and PushByOther :681: head/node/incident and unknown-head witnesses.
     fn evidence_witness() {
         let unknown_ = unknown(false); assert(unknown_);
         let known = unknown(true); assert(!known);
@@ -326,7 +326,7 @@ pub mod failure {
     pub fn first<T>(checks: &[T]) -> &T {
         &checks[0]
     }
-    /// docs/state-table.md:540-541,574-575: preserve the selected test/runner failure and its payload. Infrastructure's first check is selected at the typed boundary, as before (no rule).
+    /// docs/state-table.md:554-555,588-589: preserve the selected test/runner failure and its payload. Infrastructure's first check is selected at the typed boundary, as before (no rule).
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures match failure {
     Some(Failure::Tests(value)) => matches!(out, Some(Evidence { value: v, infra: false }) if equal(v,value)),
     Some(Failure::Infrastructure(value)) => matches!(out, Some(Evidence { value: v, infra: true }) if equal(v,value)),
@@ -345,7 +345,7 @@ pub mod failure {
 
     #[cfg(verus_keep_ghost)]
     verus! {
-    /// docs/state-table.md:540-541: real test, infrastructure, absent and selected-payload witnesses.
+    /// docs/state-table.md:554-555: real test, infrastructure, absent and selected-payload witnesses.
     fn failure_witness() {
         let tests = evidence(Some(Failure::Tests(7u64))); assert(matches!(tests,Some(Evidence {value:7,infra:false})));
         let infra = evidence(Some(Failure::Infrastructure(11u64))); assert(matches!(infra,Some(Evidence {value:11,infra:true})));

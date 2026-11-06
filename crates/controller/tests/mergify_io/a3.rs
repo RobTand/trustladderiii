@@ -503,7 +503,7 @@ fn evidence(report: &Value, name: &str) -> usize {
     }
     visit(&report["result"], name)
 }
-/// docs/state-table.md:667: real synchronized payload, app bot, another bot and stale head.
+/// docs/state-table.md:681: real synchronized payload, app bot, another bot and stale head.
 #[test]
 fn mandatory_a3_push_actor_and_head() {
     for actor in 0..4 {
@@ -882,7 +882,7 @@ fn mandatory_a3_fresh_close_and_unlabel() {
     );
     assert_eq!(count(&r, "github.events"), 0, "{r:#}");
 }
-/// Q52 docs/state-machine.md:720; closed-unmerged queue-check routing and approved-head waking preserve existing behaviour.
+/// Q52 docs/state-machine.md:731; closed-unmerged queue-check routing and approved-head waking preserve existing behaviour.
 #[test]
 fn mandatory_a3_include_closed_and_approved_gate() {
     for merged in [false, true] {
@@ -942,7 +942,7 @@ fn mandatory_a3_include_closed_and_approved_gate() {
     );
     assert_eq!(evidence(&r, "Look"), 0, "{r:#}");
 }
-/// docs/state-table.md:667,669: unknown heads and person mappings stop after merged/queue PRs.
+/// docs/state-table.md:681,683: unknown heads and person mappings stop after merged/queue PRs.
 #[test]
 fn mandatory_a3_catchup_head_and_person_gates() {
     for fresh_kind in 0..4 {
@@ -1048,7 +1048,7 @@ fn mandatory_a3_independent_suites_reads() {
     assert!(r["result"].get("error").is_some(), "{r:#}");
     assert_eq!(count(&r, "github.suites"), 1);
 }
-/// docs/state-table.md:540-541: real Tests/Infra selection, first infrastructure payload and recorded early return.
+/// docs/state-table.md:554-555: real Tests/Infra selection, first infrastructure payload and recorded early return.
 #[test]
 fn mandatory_a3_head_failure_variants() {
     for tests in [false, true] {
@@ -1072,7 +1072,7 @@ fn mandatory_a3_head_failure_variants() {
         assert_eq!(ci["head_check"], true);
     }
 }
-/// Q52 docs/state-table.md:543: missing-incident projections clear only the matching head/node while open.
+/// Q52 docs/state-table.md:557: missing-incident projections clear only the matching head/node while open.
 #[test]
 fn mandatory_a3_missing_projection_gates() {
     for (cleared, stale_missing) in [(false, false), (true, false), (false, true)] {
@@ -1125,5 +1125,71 @@ fn mandatory_a3_exact_merge_title() {
         );
         assert_eq!(evidence(&r, "Merged"), 1, "{r:#}");
         assert_eq!(count(&r, "github.checks"), usize::from(title != 1), "{r:#}");
+    }
+}
+
+/// #760 fidelity: real boundary failures must terminate at the same read on both sides.
+#[test]
+fn mandatory_a3_boundary_errors() {
+    for (kind, pending, malformed, no_client) in [
+        (7, false, 0, true),
+        (7, false, 1, false),
+        (7, false, 2, false),
+        (4, true, 3, false),
+        (7, false, 4, false),
+    ] {
+        let r = compare(
+            Inputs {
+                kind,
+                pending,
+                malformed,
+                no_client,
+                ..Inputs::default()
+            },
+            Entry::Webhook,
+        );
+        assert!(r["result"].get("error").is_some(), "{r:#}");
+    }
+    for op in [
+        "github.pull",
+        "github.events",
+        "github.checks",
+        "github.requirements",
+        "github.suites",
+    ] {
+        for status in 0..4 {
+            let mut s = schedule();
+            s.overrides.push(io::ReadOverride {
+                op: op.into(),
+                suffix: String::new(),
+                nth: 0,
+                frame: Frame {
+                    word: 256 | (status << 5),
+                    elapsed_ms: 0,
+                },
+            });
+            let r = io::a3_compare(&s, |new| {
+                run(
+                    Inputs {
+                        kind: 1,
+                        fresh_kind: 2,
+                        missing: true,
+                        unmet: true,
+                        ..Inputs::default()
+                    },
+                    Entry::Webhook,
+                    new,
+                )
+            });
+            // Requirements' 403/404 may become ChecksUnavailable rather than an error.
+            // Every status still appears in the exact old/current recorded read result.
+            assert!(count(&r, op) > 0, "{op}: {r:#}");
+            assert!(
+                r["calls"].as_array().unwrap().iter().any(|call| {
+                    call["op"] == op && call["result"].as_str().unwrap().contains("error")
+                }),
+                "{r:#}"
+            );
+        }
     }
 }
