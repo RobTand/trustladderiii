@@ -968,6 +968,60 @@ fn success_on_an_earlier_rung_wakes_a_hold_from_the_last_rung() {
     );
 }
 
+/// Q53 / #817(c): two quota-ended rungs retry at T1, before the last hint T2.
+#[test]
+fn classifier_uses_the_earliest_ladder_retry_before_the_last_hint() {
+    use tl3_controller::dispatch_liveness::{DispatchStatus, decision::RetryPending};
+    use tl3_kernel::NodeId;
+    const EARLIER: u64 = RESET - 86_400_000;
+    let mut f = Fixture::with_earlier_rung(true);
+    // #828 B also permits an hourly probe. Put T1 before that deadline so
+    // this fixture continues to isolate the two ladder reset deadlines.
+    f.clock.0.set(EARLIER - 30 * 60 * 1000);
+    f.intake(2662);
+    f.until(|f| f.hold().is_some());
+    let key = f.hold().unwrap().0;
+    f.controller.look_due().unwrap();
+    f.until(|f| {
+        f.hold()
+            .is_some_and(|(_, hold)| hold["last_quota_model"] == "alternate-model")
+    });
+    // Before the adapter computes the ladder retry, the durable provider hint
+    // still covers the quota ending. Older allowances use this same fallback.
+    assert!(f.hold().unwrap().1["quota_retry_ms"].is_null());
+    assert_eq!(
+        f.controller.dispatch_status(NodeId(0)).unwrap(),
+        DispatchStatus::Retry(RetryPending::ModelQuota { until: RESET })
+    );
+    f.controller.look_due().unwrap();
+    assert_eq!(
+        f.attempt(&key),
+        1,
+        "both real ladder rungs ended with quota"
+    );
+    let (_, hold) = f.hold().unwrap();
+    assert_eq!(hold["quota_ms"], RESET, "T2 is the last provider hint");
+    assert_eq!(hold["quota_retry_ms"], EARLIER, "T1 is the earliest retry");
+    assert!(hold["quota_retry_ms"].as_u64().unwrap() < hold["quota_ms"].as_u64().unwrap());
+    let before = f.controller.world().unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            f.controller.dispatch_status(NodeId(0)).unwrap(),
+            DispatchStatus::Retry(RetryPending::ModelQuota { until: EARLIER }),
+            "classification must use the effective ladder deadline T1"
+        );
+        f.controller.look_due().unwrap();
+        assert_eq!(f.controller.world().unwrap(), before);
+        assert_eq!(
+            f.hold().unwrap().1,
+            hold,
+            "classification does not change the hold"
+        );
+        assert_eq!(f.attempt(&key), 1, "a durable retry is not silence");
+        f = f.restart();
+    }
+}
+
 /// Q53 / #828 review: legacy status survives restart with the ladder's earlier reset,
 /// even when the next scheduled look only posts the #759 maintenance note.
 #[test]
