@@ -419,20 +419,83 @@ CASES = {
         '                let _ = (i, id, command);',
         '//crates/kernel:verus_events'),
 
-    'answer_continuation_pay_question': ('crates/kernel/src/continuations.rs', '    m.question = None;', '    let _ = m.question;', '//crates/kernel:verus_port_answers_pay_handler'),
-    'answer_continuation_order': ('crates/kernel/src/continuations.rs', '    pay_answer(m, q, deposit);\n    kernel_snapshot! { paid = *m }\n    resume_answer(m, i, q, out);', '    resume_answer(m, i, q, out);\n    kernel_snapshot! { paid = *m }\n    pay_answer(m, q, deposit);', '//crates/kernel:lib_test_tl3_kernel'),
-    'answer_continuation_pay_cost': ('crates/kernel/src/continuations.rs', 'm.credit.fund_and_pay(deposit, q.cost);', 'm.credit.fund_and_pay(deposit, 0);', '//crates/kernel:verus_port_answers_pay_handler'),
+    'answer_continuation_pay_question': (
+        'crates/kernel/src/continuations.rs',
+        '    m.question = None;',
+        '    let _ = m.question;',
+        '//crates/kernel:verus_port_answers_pay_handler'),
 
-    'answer_continuation_planning_reset': ('crates/kernel/src/continuations.rs', 'm.plan_retries = 0;', 'm.plan_retries = 1;', '//crates/kernel:verus_port_answers_planning_handler'),
+    'answer_continuation_order': (
+        'crates/kernel/src/continuations.rs',
+        '    pay_answer(m, q, deposit);\n    kernel_snapshot! { paid = *m }\n    resume_answer(m, i, q, out);',
+        '    resume_answer(m, i, q, out);\n    kernel_snapshot! { paid = *m }\n    pay_answer(m, q, deposit);',
+        '//crates/kernel:lib_test_tl3_kernel'),
 
-    'answer_continuation_ingesting': ('crates/kernel/src/continuations.rs', 'set_phase(m, Phase::Ingesting);', 'set_phase(m, Phase::Auditing);', '//crates/kernel:verus_port_answers_resume_ingesting'),
-    'answer_continuation_auditing': ('crates/kernel/src/continuations.rs', 'set_phase(m, Phase::Auditing);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_auditing'),
-    'answer_continuation_unplanned': ('crates/kernel/src/continuations.rs', 'set_phase(m, Phase::Unplanned);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_unplanned'),
-    'answer_continuation_ready': ('crates/kernel/src/continuations.rs', 'set_phase(m, Phase::Ready(r));', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_ready'),
-    'answer_continuation_stop': ('crates/kernel/src/continuations.rs', 'enter_stopping(m, o);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_stop'),
-    'answer_continuation_nowhere': ('crates/kernel/src/continuations.rs', 'enter_stopping(m, Outcome::Stopped);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_nowhere'),    'port_answer_continue': ('crates/kernel/src/answers.rs', 'Answer::Continue => go_on(w, i, q, 0, out),', 'Answer::Continue => go_on(w, i, q, 1, out),', '//crates/kernel:verus_port_answers_awaiting_handler'),
-    'port_answer_try_again': ('crates/kernel/src/answers.rs', 'm.attempt = 1;', 'm.attempt = 0;', '//crates/kernel:verus_port_answers_awaiting_handler'),
-    'port_answer_add_credit': ('crates/kernel/src/answers.rs', 'go_on(w, i, q, k, out);', 'go_on(w, i, q, 0, out);', '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'answer_continuation_pay_cost': (
+        'crates/kernel/src/continuations.rs',
+        'm.credit.fund_and_pay(deposit, q.cost);',
+        'm.credit.fund_and_pay(deposit, 0);',
+        '//crates/kernel:verus_port_answers_pay_handler'),
+
+    'answer_continuation_planning_reset': (
+        'crates/kernel/src/continuations.rs',
+        'm.plan_retries = 0;',
+        'm.plan_retries = 1;',
+        '//crates/kernel:verus_port_answers_planning_handler'),
+
+    'answer_continuation_ingesting': (
+        'crates/kernel/src/continuations.rs',
+        'set_phase(m, Phase::Ingesting);',
+        'set_phase(m, Phase::Auditing);',
+        '//crates/kernel:verus_port_answers_resume_ingesting'),
+
+    'answer_continuation_auditing': (
+        'crates/kernel/src/continuations.rs',
+        'set_phase(m, Phase::Auditing);',
+        'set_phase(m, Phase::Ingesting);',
+        '//crates/kernel:verus_port_answers_resume_auditing'),
+
+    'answer_continuation_unplanned': (
+        'crates/kernel/src/continuations.rs',
+        'set_phase(m, Phase::Unplanned);',
+        'set_phase(m, Phase::Ingesting);',
+        '//crates/kernel:verus_port_answers_resume_unplanned'),
+
+    'answer_continuation_ready': (
+        'crates/kernel/src/continuations.rs',
+        'set_phase(m, Phase::Ready(r));',
+        'set_phase(m, Phase::Ingesting);',
+        '//crates/kernel:verus_port_answers_resume_ready'),
+
+    'answer_continuation_stop': (
+        'crates/kernel/src/continuations.rs',
+        'enter_stopping(m, o);',
+        'set_phase(m, Phase::Ingesting);',
+        '//crates/kernel:verus_port_answers_resume_stop'),
+
+    'answer_continuation_nowhere': (
+        'crates/kernel/src/continuations.rs',
+        'enter_stopping(m, Outcome::Stopped);',
+        'set_phase(m, Phase::Ingesting);',
+        '//crates/kernel:verus_port_answers_resume_nowhere'),
+
+    'port_answer_continue': (
+        'crates/kernel/src/answers.rs',
+        'Answer::Continue => go_on(w, i, q, 0, out),',
+        'Answer::Continue => go_on(w, i, q, 1, out),',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+
+    'port_answer_try_again': (
+        'crates/kernel/src/answers.rs',
+        'm.attempt = 1;',
+        'm.attempt = 0;',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+
+    'port_answer_add_credit': (
+        'crates/kernel/src/answers.rs',
+        'go_on(w, i, q, k, out);',
+        'go_on(w, i, q, 0, out);',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
 
 }
 
