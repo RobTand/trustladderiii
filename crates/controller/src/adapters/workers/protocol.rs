@@ -39,9 +39,43 @@ pub(crate) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
 }
 
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
+    map_reply_with_plan_check(role, reply, None)
+}
+
+pub(crate) fn map_reply_with_plan_check(
+    role: &str,
+    reply: &Value,
+    provenance: Option<&crate::contracts::plan_check::PlanCheckProvenance>,
+) -> Result<MappedReply> {
     let validator = validator(role, "reply")?;
     if !validator.is_valid(reply) {
         return Err(Error::Invalid("worker reply breaks role schema"));
+    }
+    if let Some(provenance) = provenance {
+        use crate::contracts::plan_check::ObjectionClass;
+        if role != "planner"
+            || provenance.objections.is_empty()
+            || provenance.objections.iter().any(|objection| {
+                objection.rule.trim().is_empty()
+                    || objection.items.is_empty()
+                    || objection.items.iter().any(|item| item.trim().is_empty())
+                    || objection.diagnostic.trim().is_empty()
+            })
+        {
+            return Err(Error::Invalid("invalid plan-check provenance"));
+        }
+        forecast(reply)?;
+        return Ok(MappedReply::Kernel(
+            if provenance
+                .objections
+                .iter()
+                .any(|objection| objection.class == ObjectionClass::Other)
+            {
+                Reply::PlanCheckRejected
+            } else {
+                Reply::PlanCheckNeedsSplit
+            },
+        ));
     }
     if role == "maker" {
         return Ok(match reply["kind"].as_str().unwrap() {
@@ -108,24 +142,27 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
         },
         "reviewer" if reply["verdict"] == "out_of_room" => Reply::ReviewerOutOfRoom,
         "reviewer" => Reply::ChangesRequested,
-        "planner" => {
-            forecast(reply)?;
-            let violations = reply["violations"]
-                .as_array()
-                .ok_or(Error::Invalid("planner violations missing"))?;
-            if !violations.is_empty() || reply["kind"] == "cant_meet" {
-                Reply::PlanCantMeet
-            } else if reply["kind"] == "split" {
-                Reply::PlanSplit
-            } else {
-                Reply::PlanLeaf {
-                    footprint: tl3_kernel::Footprint::default(),
-                    fits: reply["forecast"]["fits"] == true,
-                }
-            }
-        }
+        "planner" => ordinary_planner_reply(reply)?,
         _ => return Err(Error::Invalid("unsupported worker role")),
     }))
+}
+
+/// Ordinary planner mapping; #820 can replace this boundary with its typed mapper.
+fn ordinary_planner_reply(reply: &Value) -> Result<Reply> {
+    forecast(reply)?;
+    let violations = reply["violations"]
+        .as_array()
+        .ok_or(Error::Invalid("planner violations missing"))?;
+    Ok(if !violations.is_empty() || reply["kind"] == "cant_meet" {
+        Reply::PlanCantMeet
+    } else if reply["kind"] == "split" {
+        Reply::PlanSplit
+    } else {
+        Reply::PlanLeaf {
+            footprint: tl3_kernel::Footprint::default(),
+            fits: reply["forecast"]["fits"] == true,
+        }
+    })
 }
 
 pub(crate) fn relative_file(path: &str) -> bool {
