@@ -379,3 +379,98 @@ fn checks_authorize_only_declared_generated_outputs() {
         assert_eq!(matches!(world.nodes[0].phase, Phase::Reviewing), authorized);
     }
 }
+
+/// #845: an existing schema upgrades without inventing declared scopes for old leaves.
+#[test]
+fn declared_scope_migration_upgrades_without_legacy_backfill() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    let before = f.c().world().unwrap();
+    let mut client = postgres::Config::new()
+        .host(&f.settings.host)
+        .port(f.settings.port)
+        .user(&f.settings.user)
+        .dbname(&f.settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    client.batch_execute("ALTER TABLE tl3_world DROP CONSTRAINT IF EXISTS tl3_declared_scope_files; DELETE FROM tl3_schema_migrations WHERE version > 24").unwrap();
+    let mut upgraded = Store::open(&f.settings).unwrap();
+    assert!(
+        client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM tl3_schema_migrations WHERE version=25)",
+                &[]
+            )
+            .unwrap()
+            .get::<_, bool>(0),
+        "declared scope migration 25 must run"
+    );
+    assert!(
+        !upgraded
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "declared_scopes")
+    );
+    assert_eq!(f.c().world().unwrap(), before);
+}
+
+/// #845: legacy leaves keep full locks through growth until a fresh plan.
+#[test]
+fn legacy_scope_and_locks_stay_identical_until_replan() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], false);
+    f.plan(0, &files(&["src/input.rs"], &["gen/manifest.json"]));
+    let mut store = Store::open(&f.settings).unwrap();
+    let mut commit = Commit::new("legacy-scope", json!(null), &store.load().unwrap());
+    commit.rows.push(RowChange::Delete {
+        table: "declared_scopes".into(),
+        id: "0".into(),
+    });
+    store.commit(&commit).unwrap();
+    f.config.github.repos[0].generator = Some("python3 tools/gen_manifest.py".into());
+    f.restart();
+    f.arm(0, Phase::Making);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation,role:"maker".into(),model:None,plan_check:None,reply:json!({"kind":"needs_files","files":[{"path":"gen/extra.json","why":"output"}],"fits":true})});
+    assert!(f.scope(0).is_none());
+    let mut locks = f.locks(0);
+    locks.sort();
+    assert_eq!(
+        locks,
+        ["gen/extra.json", "gen/manifest.json", "src/input.rs"]
+    );
+    f.arm(0, Phase::Planning { must_split: false });
+    f.plan(0, &files(&["src/replanned.rs"], &["gen/new.json"]));
+    assert_eq!(
+        f.scope(0),
+        Some(json!(["src/replanned.rs", "gen/new.json"]))
+    );
+    assert_eq!(f.locks(0), ["src/replanned.rs"]);
+}
+
+/// #845/deferred-post-freeze: the unchanged kernel conservatively unions old fallback locks.
+#[test]
+fn generated_only_leaf_retains_old_locks_after_authored_growth() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    f.plan(0, &["gen/manifest.json".into()]);
+    f.arm(0, Phase::Making);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation,role:"maker".into(),model:None,plan_check:None,reply:json!({"kind":"needs_files","files":[{"path":"src/extra.rs","why":"input"}],"fits":true})});
+    let mut locks = f.locks(0);
+    locks.sort();
+    assert_eq!(locks, ["gen/manifest.json", "src/extra.rs"]);
+}
+
+/// #845: schema-validated worker planning uses the same declared scope boundary.
+#[test]
+fn planner_worker_reply_persists_full_scope() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation,role:"planner".into(),model:None,plan_check:None,reply:json!({"kind":"leaf","files":["src/input.rs","gen/manifest.json"],"checks":[{"kind":"regression","node_ids":["tests/test_input.py::test_input"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"src/input.rs":0,"gen/manifest.json":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}})});
+    assert_eq!(
+        f.scope(0),
+        Some(json!(["src/input.rs", "gen/manifest.json"]))
+    );
+    assert_eq!(f.locks(0), ["src/input.rs"]);
+}
