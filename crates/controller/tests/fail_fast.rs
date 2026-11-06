@@ -408,6 +408,154 @@ fn plan_check_endings_preserve_evidence_without_questions_or_children() {
     }
 }
 
+/// Auditing / #832-A, Q27 2026-11-05: replay PB #2781's two actual readings
+/// and audits through the controller, including its durable stop and summary.
+#[test]
+fn audit_disagreement_stops_with_both_readings_and_named_objections() {
+    let golden: Value = serde_json::from_str(include_str!("fail_fast/pb-2781.json")).unwrap();
+    let mut database = support::Database::start();
+    for fail_fast in [false, true] {
+        let settings = database.create(&format!("audit_stop_{fail_fast}"));
+        let root = tempfile::tempdir().unwrap();
+        let fakes = root.path().join("fakes");
+        let posted: Posted = Arc::default();
+        let mut registry = adapters::simulation(&fakes).unwrap();
+        // Only the worker boundary is held. The controller maps and persists
+        // every reply below, then the ordinary stop effects run to completion.
+        registry.register(Upstream::Workers, HeldIntake);
+        registry.register(
+            Upstream::GitHub,
+            GitHub {
+                fake: adapters::github::Fake::new(&fakes),
+                posted: posted.clone(),
+            },
+        );
+        let mut c = Controller::open(
+            Store::open(&settings).unwrap(),
+            registry,
+            bootstrap(fail_fast),
+        )
+        .unwrap();
+        c.intake(labelled()).unwrap();
+        drain(&mut c);
+        for (index, record) in golden["records"].as_array().unwrap().iter().enumerate() {
+            let role = record["trace"]["tags"]["role"].as_str().unwrap();
+            let mut reply = record["reply"].clone();
+            if role == "ingest" {
+                reply["memory_ids"] = json!([]);
+                reply["files"] = json!([]);
+                reply["forecast"] = json!({"tokenizer":"o200k_base", "brief_tokens":1,
+                    "file_tokens":{}, "overhead_tokens":0, "tokens":1,
+                    "fit_tokens":100, "context_tokens":150, "fits":true});
+            }
+            let before = c.world().unwrap();
+            c.observe(
+                &format!("golden-{index}"),
+                Observation::WorkerReply {
+                    node: tl3_kernel::NodeId(0),
+                    generation: before.nodes[0].generation,
+                    role: role.into(),
+                    reply,
+                    model: None,
+                    plan_check: None,
+                },
+            )
+            .unwrap();
+            if index == 3 {
+                c.drive_once().unwrap();
+                let after = c.world().unwrap();
+                assert_eq!(
+                    after.nodes[0].phase,
+                    Phase::Stopping(Outcome::Stopped),
+                    "fail_fast={fail_fast}"
+                );
+                assert_eq!(after.nodes[0].question, None);
+                assert_eq!(after.next_question, before.next_question);
+                assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
+            }
+            drain(&mut c);
+            if index == 1 {
+                assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Ingesting);
+                assert_eq!(c.world().unwrap().nodes[0].audit_rounds, 1);
+            }
+        }
+        let world = c.world().unwrap();
+        assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Stopped));
+        assert_eq!(world.nodes.len(), 1);
+        assert_eq!(world.nodes[0].credit.spent, 0);
+        assert_eq!(world.next_question, 0);
+        assert!(!posted.lock().unwrap().iter().any(|d| matches!(
+            d.output,
+            Output::Notice {
+                notice: Notice::Ask { .. },
+                ..
+            }
+        )));
+        let snapshot = c.snapshot().unwrap();
+        assert!(!snapshot.rows.iter().any(|r| r.table == "questions"));
+        let stop = &snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "review_stops" && r.id == "0")
+            .unwrap()
+            .value;
+        assert_eq!(stop["step"], "audit_disagreement");
+        let evidence = &stop["findings"];
+        assert_eq!(evidence["readings"][0], golden["records"][0]["reply"]);
+        // Stored current input includes the ordinary controller envelope too.
+        assert_eq!(
+            evidence["readings"][1]["brief"],
+            golden["records"][2]["reply"]["brief"]
+        );
+        assert_eq!(
+            evidence["readings"][1]["goals"],
+            golden["records"][2]["reply"]["goals"]
+        );
+        assert_eq!(evidence["audits"][0], golden["records"][1]["reply"]);
+        assert_eq!(evidence["audits"][1], golden["records"][3]["reply"]);
+        let open = evidence["open_objections"].as_array().unwrap();
+        assert_eq!(open.len(), 3);
+        for (index, item) in open.iter().enumerate() {
+            assert_eq!(item["id"], format!("audit_objections[{index}]"));
+            assert_eq!(
+                item["objection"],
+                golden["records"][3]["reply"]["objections"][index]
+            );
+        }
+        let summary = summary(&posted);
+        assert!(matches!(
+            summary.output,
+            Output::Notice {
+                notice: Notice::Summary(Outcome::Stopped),
+                ..
+            }
+        ));
+        let input = adapters::github::writer_input(
+            &summary,
+            Some(Notice::Summary(Outcome::Stopped)),
+            "Fix the sandbox build",
+            "Fix the sandbox build",
+        )
+        .unwrap();
+        assert!(input.facts["findings"].get("decision").is_none());
+        let report = input.facts["findings"]["report"].as_str().unwrap();
+        for index in 0..3 {
+            assert!(report.contains(&format!("audit_objections[{index}]")));
+        }
+        assert_operations_note(&posted, "audit_disagreement");
+    }
+}
+
+struct HeldIntake;
+impl Executor for HeldIntake {
+    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Pending)
+    }
+}
+
 #[test]
 fn plan_cant_meet_stops_with_the_planners_report_and_no_rerun() {
     let mut database = support::Database::start();
