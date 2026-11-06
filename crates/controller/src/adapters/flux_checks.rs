@@ -187,7 +187,7 @@ impl Executor for Adapter {
             None => self.preparation.capacity(delivery)?,
         };
         Ok(self.shared.backend.probe(&reservation, &placement).is_ok_and(|probe|
-            matches!(probe.availability, backend::Availability::Available)))
+            matches!(probe.availability, backend::Availability::Available | backend::Availability::Busy)))
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.shared.transaction(|| self.shared.fence(delivery.epoch))?;
