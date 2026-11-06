@@ -1,4 +1,5 @@
 """#709: bind RED to the complete failure before bounding display text."""
+import json
 from pathlib import Path
 import sys
 
@@ -38,7 +39,7 @@ def checking(tmp_path, monkeypatch):
 
     monkeypatch.setattr(execution, 'run_tree', capture)
 
-    def run(statement, declared, *, padding='', elsewhere=''):
+    def run(statement, declared, *, padding='', elsewhere='', added_name=False):
         source = ('import product\nimport pytest\nSLOW_S = 1\n' + elsewhere
                   + 'def test_hold():\n'
                   + '    holds = {"transition_held_max_s": product.value()}\n'
@@ -47,7 +48,9 @@ def checking(tmp_path, monkeypatch):
         (repo / 'tests/test_holds.py').write_text(source)
 
         def save(value):
-            (repo / 'product.py').write_text(f'def value(): return {value}\n')
+            (repo / 'product.py').write_text(
+                f'def value(): return {value}\n'
+                + ('def read_accepted_unit(): return 1\n' if added_name and value else ''))
             git(repo, 'add', '.')
             git(repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                 'commit', '-qm', 'fixture')
@@ -72,12 +75,14 @@ def test_pb2722_source_assertion_matches_beyond_display_limit(checking):
     assert result.verdict == Verdict.PASS, result
     assert failure['red_message_match'] == 'source-assertion'
     assert result.proof['red_message_matches'][NODE] == 'source-assertion'
+    assert result.proof['red_classes'] == {NODE: 'assertion'}
 
 
 def test_one_character_difference_beyond_display_limit_refuses(checking):
     result, _ = checking(ASSERTION, ASSERTION[:-1] + 'X', padding='x' * 2000)
     assert result.verdict == Verdict.FAIL
     assert 'declared assertion reason' in result.tests[0].message
+    assert result.proof['red_classes'] == {}
 
 
 def test_same_assertion_elsewhere_cannot_supply_the_failing_location(checking):
@@ -146,3 +151,18 @@ def test_capture_match_cannot_be_reused_for_another_declaration():
                          proof=Proof((), (), ASSERTION[:-1] + 'X')),
                    outcomes, {NODE: Outcome.PASSED}, base_notes=notes)
     assert result.verdict == Verdict.FAIL
+
+
+def test_tessera1455_added_name_red_with_declared_assertion_reason(checking):
+    result, _ = checking('from product import read_accepted_unit; assert read_accepted_unit() == 1',
+                         'expected accepted unit', added_name=True)
+    assert result.verdict == Verdict.PASS, result
+    assert result.tests[0].base == Outcome.ADDED_NAME
+    assert result.proof['red_message_matches'] == {}
+    assert result.proof['red_classes'] == {NODE: 'added-name'}
+
+
+def test_red_class_values_match_the_rust_generated_schema():
+    schema = json.loads((Path(__file__).resolve().parents[2]
+                         / 'workers/src/tl3_workers/schemas/check-report.json').read_text())
+    assert set(execution.RED_CLASSES.values()) == set(schema['$defs']['RedClass']['enum'])

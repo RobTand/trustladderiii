@@ -42,6 +42,9 @@
     "observer_sha256": {
      "tests/test_holds.py::test_hold": "388c1ee933e88bc32bc45c0e5faf980e6c667c93551d2c073114879f03994510"
     },
+    "red_classes": {
+     "tests/test_holds.py::test_hold": "assertion"
+    },
     "red_message_matches": {
      "tests/test_holds.py::test_hold": "source-assertion"
     },

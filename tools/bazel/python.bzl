@@ -90,6 +90,8 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     package = native.package_name()
     module = main or srcs[0]
     package_data = _PACKAGE_DATA.get(package, [])
+    if package == "harness/tests" and name == "test_red_message":
+        package_data = package_data + ["//workers:schemas"]
     if package == "tools/ci" and name == "test_kani_gate":
         package_data = ["//:workflows", "//crates/kernel:src/proofs.rs"]
     tags, exec_properties = nonhermetic(name)
