@@ -119,6 +119,8 @@ mod witness;
 use settling::settle;
 mod steps;
 pub use steps::{step, step_with_passes};
+pub mod report;
+pub use report::{FailedRoundCause, Report, ReportEntry, ReplyKind, StopCause};
 #[cfg(verus_keep_ghost)]
 mod progress_pool;
 #[cfg(verus_keep_ghost)]
