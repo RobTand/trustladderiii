@@ -92,3 +92,77 @@ class OtherHelper(Helper):
         'test_policy.py::Intermediate::test_admission',
         'test_policy.py::Policy::test_admission',
         'test_policy.py::Policy::test_refusal']
+
+
+def test_rule_core_loads_standalone_and_repairs_its_table():
+    import ast
+    from dataclasses import replace
+    from types import ModuleType
+    source = Path(__file__).parents[1] / 'src/tl3_harness'
+    for filename in ('rules.py', 'terminal_forms.py'):
+        tree = ast.parse((source / filename).read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                assert all(alias.name.split('.')[0] in sys.stdlib_module_names for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                sibling_core = filename == 'terminal_forms.py' and node.level == 1 and node.module == 'rules'
+                assert sibling_core or (node.level == 0 and node.module.split('.')[0] in sys.stdlib_module_names)
+    package = ModuleType('staged_harness')
+    package.__path__ = [str(source)]
+    sys.modules[package.__name__] = package
+    loaded = []
+    try:
+        for name in ('rules', 'terminal_forms'):
+            spec = importlib.util.spec_from_file_location(package.__name__ + '.' + name, source / (name + '.py'))
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            loaded.append(spec.name)
+            spec.loader.exec_module(module)
+        core, forms = (sys.modules[name] for name in loaded)
+        assert core.terminal_for('planner') is forms.PLANNER
+        assert core.terminal_for('maker') is forms.MAKER
+        field = core.Name('field', '/observer')
+        allowed = core.Allowed('enum', ['assertion', 'exception'])
+        before = {'observer': 'guess', 'untouched': True}
+        row = core.register(core.Rule('proof.observer',
+            lambda facts: () if allowed.accepts(facts['reply']['observer']) else (
+                {'bad_value': facts['reply']['observer']},),
+            lambda facts: (field, core.Name('path', 'tests/test_x.py'),
+                           core.Name('symbol', 'tests/test_x.py::test_x')),
+            lambda facts: allowed, lambda facts: core.Edit(field, 'replace', allowed),
+            example={'reply': before}, witness='assertion'), roles=('planner', 'maker'))
+        violation, = core.evaluate((row,), {'reply': before}, role='planner')
+        rendered = violation.render(role='planner')
+        assert all(item in rendered for item in ('/observer', 'source path', 'symbol', 'guess',
+                                                 'assertion', 'exception', 'replace'))
+        after = core.apply_edit(before, row.repair(violation.facts), 'assertion')
+        assert core.permits(violation, before, after, role='planner')
+        assert not core.permits(violation, before, {**after, 'untouched': 1}, role='planner')
+        assert not core.Allowed('enum', [1]).accepts(True)
+        with pytest.raises(ValueError, match='renderable repair'):
+            core.register(replace(row, repair=lambda facts: None), roles=('planner',))
+        with pytest.raises(ValueError, match='own witness'):
+            core.register(replace(row, check=lambda facts: ({},)), roles=('planner',))
+        with pytest.raises(ValueError, match='own witness'):
+            core.register(replace(row, check=lambda facts: () if facts['reply']['observer'] == 'assertion'
+                                  else ({'bad_value': facts['reply']['observer']},)), roles=('planner',))
+        gate = core.register(replace(row, gating=True, repair=lambda facts: core.CantMeet('identity differs'),
+                                     witness={'kind': 'cant_meet'}), roles=('planner', 'maker'))
+        found = core.evaluate((gate, row), {'reply': before}, role='planner')
+        assert 'Further checks were not run' in core.render_all(found, role='planner')
+        assert forms.PLANNER.phrase in core.render_all(found, role='planner')
+        assert forms.MAKER.phrase in core.render_all(found, role='maker')
+        assert core.permits(gate, before, {'kind': 'cant_meet'}, role='planner')
+        assert core.permits(found, before, {'kind': 'cant_meet'}, role='maker')
+        assert not core.permits(found, before, after, role='planner')
+        for roles in (('postmortem',), ('planner', 'postmortem')):
+            with pytest.raises(ValueError, match='terminal reply form'):
+                core.register(gate, roles=roles)
+        with pytest.raises(ValueError, match='not declared'):
+            core.evaluate((row,), {'reply': before}, role='postmortem')
+        with pytest.raises(ValueError, match='not declared'):
+            core.render_all(found, role='postmortem')
+    finally:
+        for name in reversed(loaded):
+            del sys.modules[name]
+        del sys.modules[package.__name__]
