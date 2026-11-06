@@ -55,7 +55,7 @@ fn flux_requires_explicit_container_mode_without_fallback() {
     document["flux"].as_table_mut().unwrap().remove("container_mode");
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
     for invalid in ["", "auto", "in-job", "OwnScope"] {
-        document["flux"]["container_mode"] = invalid.into();
+        document["flux"].as_table_mut().unwrap().insert("container_mode".into(), invalid.into());
         assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
     }
 }
