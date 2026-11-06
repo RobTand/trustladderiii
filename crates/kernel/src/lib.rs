@@ -2389,3 +2389,11 @@ mod port_failfast_replies;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_failfast_files.rs"]
 mod port_failfast_files;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_checks.rs"]
+mod port_failfast_checks;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_reply_apply.rs"]
+mod port_failfast_reply_apply;

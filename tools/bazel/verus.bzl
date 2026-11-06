@@ -1165,8 +1165,12 @@ def verus_proofs():
             "port_replies_audit_stop_reply": ("kernel::port_replies_admission#audit_stop_reply", 1),
             "port_failfast_replies_admitted": ("kernel::port_failfast_replies#admitted", 1),
             "port_failfast_replies_ordinary": ("kernel::port_failfast_replies#ordinary", 1),
-            "port_failfast_files_inline_input": ("kernel::port_failfast_files#inline_input", 1),
             "port_failfast_files_compare": ("kernel::port_failfast_files#compare", 1),
+            "port_failfast_checks_node": ("kernel::port_failfast_checks#node", 1),
+            "port_failfast_checks_world": ("kernel::port_failfast_checks#world", 1),
+            "port_failfast_reply_compare": ("kernel::port_failfast_reply_apply#compare", 1),
+            "port_failfast_reply_safe": ("kernel::port_failfast_reply_apply#safe", 1),
+            "port_failfast_reply_apply": ("kernel::port_failfast_reply_apply#reply", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

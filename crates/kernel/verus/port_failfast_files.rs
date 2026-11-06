@@ -2,15 +2,6 @@
 use super::*;
 
 verus! {
-/// Original-domain empty storage implies inline handles for every valid input.
-pub(super) proof fn inline_input(w: World, reply: Reply)
-    requires retirement::domain(w), retirement::accepted(w), w.file_sets@.len() == 0,
-    ensures port_replies_maker_admission::inline_input(w, reply),
-{
-    reveal(retirement::accepted); reveal(retirement::node_rules);
-    reveal(footprint::valid_footprint); reveal(footprint::inline_footprint);
-}
-
 /// Q54 MakerNeedsFiles: funded unions agree, unfunded unions ask for credit,
 /// and non-fitting/empty inputs instantiate the same parametric room diversion.
 pub(super) proof fn compare(before: World, off: World, on: World, generation: u64,
@@ -20,6 +11,7 @@ pub(super) proof fn compare(before: World, off: World, on: World, generation: u6
         before.nodes@[0].phase == Phase::Making, node_headroom(before.nodes@[0]), initial.len == 0,
         port_review_reply::active(before.nodes@[0], generation),
         footprint::valid_footprint(before, files),
+        port_replies_maker_admission::inline_input(before, Reply::MakerNeedsFiles { files, fits }),
         port_review_reply::reply_post(before, off, 0, generation,
             Reply::MakerNeedsFiles { files, fits }, initial, off_out),
         port_review_reply::reply_post(World { fail_fast: true, ..before }, on,
@@ -32,7 +24,6 @@ pub(super) proof fn compare(before: World, off: World, on: World, generation: u6
     port_failfast_replies::admitted(before, off, generation, reply, initial, off_out);
     port_failfast_replies::admitted(World { fail_fast: true, ..before }, on,
         generation, reply, initial, on_out);
-    inline_input(before, reply);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
     reveal(port_review_reply::reply_post); reveal(port_replies_maker::union_post);
     reveal(retirement::accepted); reveal(retirement::node_rules);
