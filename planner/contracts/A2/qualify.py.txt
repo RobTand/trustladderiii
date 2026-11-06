@@ -26,7 +26,7 @@ def verify(mode):
     affected = ['test_maker_review', 'test_maker', 'test_maker_evidence', 'test_maker_forecast',
                 'test_workers', 'test_turns', 'test_postmortem', 'test_planner_forecast',
                 'test_planner_protocol', 'test_proof_obligations', 'test_subject_observer_contract',
-                'test_large_files']
+                'test_large_files', 'test_planner_forcing_evidence', 'test_planner_applicability_correction']
     if mode == 'affected':
         targets = ['//workers/tests:' + name for name in affected]
     elif mode == 'workers':

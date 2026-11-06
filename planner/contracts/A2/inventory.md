@@ -79,3 +79,15 @@ landed EP d3b9eb126, A0c, A1, F2 and harness R1. Supplied EP history and the red
 commit remain ancestors. Only the A2 diff against actual origin is owned here;
 inherited Rust/Cargo work does not make A2 clippy applicable. No A2 Rust/Cargo
 or controller production source edit exists. No *_io pin edits are needed.
+
+## Full-sweep rendering correction
+
+The 954ae3324 full worker sweep exposed seven existing assertions in
+`test_planner_forcing_evidence` and `test_planner_applicability_correction`:
+unsupported requirement identity and exact missing dimension/value were lost
+when planner output switched to its resolved row. METHOD_REPLACE's CantMeet
+reason now uses its existing requirement/missing/method facts. Edit/CantMeet
+kind, allowed membership, permissions, decisions, A1 bounded-message and
+message_limit provenance remain unchanged. No raise-site prose, shared core/API
+or preflight change. Both existing targets join the affected target inventory;
+all seven original assertions remain, with separate 954 red logs retained.

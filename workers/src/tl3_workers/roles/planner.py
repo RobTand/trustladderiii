@@ -713,7 +713,14 @@ def methods(f):
             for key in mutable}) for cap in f['inputs'].get('tool_capabilities', [])]
         if alternatives:
             repairs.append(edit(f, f'/evidence_contract/{index}', Allowed('schema', {'anyOf': alternatives})))
-    return repairs or cannot_repair(f)
+    if repairs:
+        return repairs
+    requirement = f['items'].get('requirement')
+    if requirement:
+        missing = f['items'].get('missing', [f"removed proof encoding {f['items'].get('method')}"])
+        return [CantMeet(f"Unsupported evidence requirement: {requirement['requirement']} "
+                         f"({', '.join(missing)}). No bounded declaration edit is supported by the captured facts.")]
+    return cannot_repair(f)
 
 
 REPAIRS = {
