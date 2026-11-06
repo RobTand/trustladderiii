@@ -937,3 +937,38 @@ fn fake_and_production_merge_outcomes_have_identical_receipts() {
     }
     assert_eq!(results[0], results[1], "fake and production must apply identical facts and world rows");
 }
+
+/// Existing upstream names and ingress cursor keys remain usable after S2.
+#[test]
+fn legacy_delivery_upstream_snapshot_still_routes() {
+    let mut database = support::Database::start();
+    let settings = database.create("legacy_delivery_upstream");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let snapshot = controller.snapshot().unwrap();
+    let mut commit = tl3_store::Commit::new("legacy-upstream-snapshot", json!({}), &snapshot);
+    // This is the deployed structured incident signature shape.
+    let signature: tl3_controller::looks::Signature = serde_json::from_value(json!({
+        "upstream": "Mergify", "class": "upstream_read",
+    })).unwrap();
+    assert_eq!(signature.upstream, Upstream::Delivery);
+    assert_eq!(serde_json::to_value(&signature).unwrap()["upstream"], "Mergify");
+    assert_eq!(signature.upstream.kind(), "Mergify");
+    assert_eq!(tl3_controller::executor::upstream(delivery.output), signature.upstream);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "legacy_upstream_fixture".into(), id: delivery.key.clone(), value: serde_json::to_value(signature).unwrap(),
+    });
+    Store::open(&settings).unwrap().commit(&commit).unwrap();
+    drop(controller);
+    let mut controller = fixture.open(&settings);
+    let restored = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "legacy_upstream_fixture").unwrap();
+    let restored: tl3_controller::looks::Signature = serde_json::from_value(restored.value).unwrap();
+    assert_eq!(restored.upstream, Upstream::Delivery);
+    fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+}

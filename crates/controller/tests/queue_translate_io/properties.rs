@@ -404,8 +404,8 @@ fn arm(source: &str) -> &str {
         .find("            Observation::Queue(mut fact) => {")
         .unwrap();
     let end = source[start..]
-        .find("            Observation::Outcome { node, outcome, receipt } => {")
-        .or_else(|| source[start..].find("            Observation::GitHubComment {"))
+        .find("            Observation::GitHubComment {")
+        .or_else(|| source[start..].find("            Observation::Outcome { node, outcome, receipt } => {"))
         .map(|at| start + at)
         .unwrap_or_else(|| source[start..].find("\n        };\n").unwrap() + start + 1);
     &source[start..end]
