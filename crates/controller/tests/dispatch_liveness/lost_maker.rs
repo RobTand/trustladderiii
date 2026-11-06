@@ -436,9 +436,9 @@ fn intake(daemon: &mut Daemon, number: u64) {
 
 /// PB #2819: the maker wrote its progress, then its processes ended with no
 /// exit record while tl3d kept running, and tl3d later restarted several times.
-/// The running tl3d must reclaim it within bounded work (its source poll and
-/// the looks due over hours of silence): a Q7 infrastructure failure and a
-/// retry in a new generation, which releases and re-grants the slot. The
+/// The running tl3d must reclaim it on the process-exit wake, before any
+/// allowance clock moves: a Q7 LostWorker infrastructure failure and a retry
+/// in a new generation, which releases and re-grants the slot. The
 /// retry's loss across a restart raises the incident, and later restarts keep
 /// that one incident without launching again. It is never a silent wait.
 #[test]
@@ -450,26 +450,17 @@ fn pb2819_dead_maker_without_exit_is_reclaimed_across_restarts() {
     let launched = daemon.seen(&fixture.settings);
     assert_eq!(launched.phase, Phase::Making);
     assert_eq!(launched.failures, 0, "a live maker is not a failure");
-    // The maker dies after its progress; this tl3d keeps running for hours.
+    // The maker dies after its progress while this tl3d runs. Its ending is
+    // evidence (the process exit wakes the source); reclaim it on that wake,
+    // without waiting for an allowance clock.
     fixture.launches.borrow_mut().kill();
-    for hour in 1..=15 {
-        fixture.clock.0.set(fixture.clock.0.get() + 3_600_000);
-        daemon.settle();
-        let seen = daemon.seen(&fixture.settings);
-        if seen.failures > 0 || seen.incidents > 0 {
-            break;
-        }
-        assert!(
-            hour < 15,
-            "PB #2819 shape silent for {hour} h while tl3d ran: {seen:?}"
-        );
-    }
+    daemon.settle();
     let reclaimed = daemon.seen(&fixture.settings);
     print_events(&fixture.settings, "PB #2819 reclaim");
     let launches = fixture.launches.borrow().keys.clone();
     assert_eq!(
         reclaimed.failures, 1,
-        "the loss is one infrastructure failure"
+        "PB #2819 shape silent at the process-exit wake: {reclaimed:?}"
     );
     assert!(reclaimed.generation > launched.generation, "{reclaimed:?}");
     assert_eq!(launches.len(), 2, "Q7 retries the lost maker once");
