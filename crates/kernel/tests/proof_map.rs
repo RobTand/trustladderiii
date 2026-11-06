@@ -121,6 +121,12 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "progress_from_unplanned_waiting_one",
         "progress_unplanned_waiting",
     ),
+    ("apply_approved", "review_world_verify_apply"),
+    ("apply_changes_requested", "review_world_verify_apply"),
+    ("apply_reviewer_out_of_room", "review_world_verify_apply"),
+    ("apply_rebase_clean", "review_world_verify_apply"),
+    ("apply_rebase_needs_changes", "review_world_verify_apply"),
+    ("apply_run_failed", "review_world_verify_apply"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

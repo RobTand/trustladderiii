@@ -2263,3 +2263,23 @@ mod port_review_admission;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_frames.rs"]
+mod port_review_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_properties.rs"]
+mod port_review_properties;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_safety.rs"]
+mod port_review_safety;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_world.rs"]
+mod port_review_world;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_witness.rs"]
+mod port_review_witness;
