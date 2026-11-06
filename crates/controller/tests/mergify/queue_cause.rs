@@ -459,7 +459,7 @@ fn batch_health(controller: &mut Controller, api: &Server, config: &Bootstrap, n
     controller.drive_once().unwrap();
 }
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow", "retargeted"];
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow", "retargeted", "terminal-hold", "gate-retention"];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -577,6 +577,27 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
             controller.look_now().unwrap();controller.look_now().unwrap();
             assert_eq!(api.state.lock().unwrap().requeues,0,"old destination merge cannot authorize our retargeted PR");
+        }
+        "terminal-hold" => {
+            failure(&mut controller,&api,&config);
+            {
+                let mut state=api.state.lock().unwrap();state.merged(false);
+                let head=state.pull["head"]["sha"].clone();state.checks=fixture("merged","checks");
+                for check in state.checks.as_array_mut().unwrap() {check["head_sha"]=head.clone();}
+            }
+            failure(&mut controller,&api,&config);drain(&mut controller);
+            assert_eq!(controller.world().unwrap().nodes[0].phase,Phase::Closed(Outcome::Merged));
+            assert!(!controller.snapshot().unwrap().rows.iter().any(|r|r.table=="queue_holds"),"r1.6: terminal cleanup must retire queue holds");
+        }
+        "gate-retention" => {
+            failure(&mut controller,&api,&config);
+            for i in 0..132 {
+                health(&mut controller,&api,&config,"2026-11-06T03:00:00Z",&format!("{:040x}",10000+i));
+            }
+            let snapshot=controller.snapshot().unwrap();
+            let gates=snapshot.rows.iter().filter(|r|r.table=="queue_gates").count();
+            assert!(gates<=128,"r1.6: gate retention must be bounded; retained {gates}");
+            assert!(snapshot.rows.iter().any(|r|r.table=="queue_holds"&&!r.value["witness"].is_null()),"retention must preserve attached hold witnesses");
         }
         _ => panic!("unknown review schedule {mode}"),
     }
