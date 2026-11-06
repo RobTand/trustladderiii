@@ -156,8 +156,12 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
+    kernel_snapshot! { before_node = w.nodes@[i as int] }
     audit_disagreement_node(&mut w.nodes[i]);
-    kernel_proof! { reveal(reply_bounds); }
+    kernel_proof! {
+        ingest_facts::audit_result(before_node@, w.nodes@[i as int]);
+        reveal(reply_bounds);
+    }
 }
 }
 
@@ -167,11 +171,6 @@ kernel_fn! {
 fn audit_disagreement_node(m: &mut Node) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures ingest_facts::audit_post(*old(m), *final(m)),
-        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
-        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
-        final(m).generation as int <= old(m).generation as int + 1,
-        final(m).next_seq == old(m).next_seq, final(m).last_cmd == old(m).last_cmd,
-        final(m).credit == old(m).credit,
 ] {
     kernel_snapshot! { before_audit = *m }
     increment_audit(m);
