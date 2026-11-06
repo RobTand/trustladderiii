@@ -241,6 +241,14 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     }
 
     kernel_proof! {
+        if retirement::selected(fact) {
+            retirement_runtime::selected_node_frame(before_transition@.nodes@[i as int], fact);
+        }
+        if retirement_retry::selected(fact) {
+            retirement_runtime::retry_node_frame(before_transition@.nodes@[i as int], fact,
+                before_transition@.fail_fast, before_transition@.next_question);
+        }
+        reveal(retirement_runtime::transition_node_frame);
         if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
