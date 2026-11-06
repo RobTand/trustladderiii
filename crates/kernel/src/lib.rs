@@ -70,11 +70,11 @@ pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
 pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
 }
 #[cfg(verus_keep_ghost)]
-#[path = "../verus/port_acks_specs.rs"]
-mod port_acks_specs;
-#[cfg(verus_keep_ghost)]
 #[path = "../verus/port_acks_commands.rs"]
 mod port_acks_commands;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_specs.rs"]
+mod port_acks_specs;
 use events::*;
 mod allocation;
 use allocation::*;
@@ -2258,3 +2258,7 @@ mod port_review_reply;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_output.rs"]
 mod port_review_output;
+
+#[cfg(test)]
+#[path = "../tests/mark_handled_equivalence/cases.rs"]
+mod mark_handled_equivalence;

@@ -296,6 +296,15 @@ CASES = {
                                '    if !approved {',
                                '    if approved {',
                                '//crates/kernel:verus_facts_merge'),
+    'mark_handled_pool_release': ('crates/kernel/src/command_helpers.rs',
+        '            m.pool = false;',
+        '            let _ = m.pool;',
+        '//crates/kernel:verus_command_helpers_mark_handled_resources'),
+    'mark_handled_double_increment': ('crates/kernel/src/command_helpers.rs',
+        '        m.pos += 1;',
+        '        m.pos += 1;\n        m.pos += 1;',
+        '//crates/kernel:lib_test_tl3_kernel'),
+
 }
 
 

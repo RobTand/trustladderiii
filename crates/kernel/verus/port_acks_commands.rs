@@ -1,6 +1,6 @@
 //! #806: exact owner-command frames and complete real-apply safety.
 use super::port_acks_specs::*;
-use super::retirement::{domain, accepted, bounded, node_rules, holders};
+use super::retirement::{accepted, bounded, domain, holders, node_rules};
 use super::*;
 
 verus! {

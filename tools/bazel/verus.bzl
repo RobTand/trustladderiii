@@ -886,6 +886,7 @@ def verus_proofs():
             "port_acks_command_rules": ("kernel::port_acks_commands#command_rules", 1),
             "port_acks_command_world": ("kernel::port_acks_commands#command_world", 1),
             "port_acks_verify_command_apply": ("kernel::port_acks_commands#verify_command_apply", 1),
+            "command_helpers_mark_handled_resources": ("kernel::command_helpers#mark_handled_resources", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
