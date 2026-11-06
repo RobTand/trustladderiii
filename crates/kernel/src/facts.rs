@@ -386,7 +386,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     if m.phase != Phase::Queued && !before_enqueue {
         kernel_proof! { reveal(retirement::fact_node);
             retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
-            retirement_runtime::noop_frame(ci_world@, i, ci_out@);
+            retirement_runtime::noop_frame(ci_world@, *w, i, ci_out@);
         }
 
         return;
@@ -464,7 +464,6 @@ pub(super) fn ci_infrastructure(w: &mut World, i: usize, out: &mut Outbox) -> (r
 ] {
     kernel_snapshot! { before_world = *w }
     kernel_snapshot! { before_out = *out }
-    kernel_snapshot! { ci_out = *out }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let escalation = infrastructure_retry(&mut w.nodes[i]);
     if let Some(needs_rob) = escalation {
