@@ -107,6 +107,17 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+            && old(w).nodes@[i as int].run == Some(generation) ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
 ] hide [successful_reply_input, node_checked, current_item, settle_shape, arithmetic_consistent, node_headroom] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
@@ -160,7 +171,10 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         return;
     }
     admitted_reply(w, i, generation, reply, out);
-
+    kernel_proof! {
+        port_replies_admission::audit_stop_reply(before_reply@, *w, i as int,
+            generation, reply, before_outputs@, *out);
+    }
 }
 }
 
@@ -398,6 +412,15 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
         // #806 W1 worker-family contract, separate from W2's shared forwarding.
         port_replies_contracts::transition_post(*old(w), *final(w), i as int,
             old(w).nodes@[i as int], reply, *old(out), *final(out)),
@@ -409,7 +432,8 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => {
                 reply_ingest(w, i, reply, out);
-                kernel_proof! { if worker_before@.dependencies@.len() == 0
+                kernel_proof! { if (worker_before@.dependencies@.len() == 0
+                    || !matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)))
                     && port_replies_contracts::ingest_accepted(worker_before@.nodes@[i as int], reply) {
                     port_replies_handlers::ingest_exact(worker_before@.nodes@[i as int], w.nodes@[i as int],
                         worker_before@.next_question, worker_before@.fail_fast, reply);

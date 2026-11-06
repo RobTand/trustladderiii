@@ -61,11 +61,11 @@ pub(super) proof fn fields_audit_first(n: Node, after: Node, id: u64, mid: Node)
     ensures ingest_post(n, after, id, Reply::AuditDisagrees),
 { reveal(ingest_post); reveal(ingest_stable); reveal(ingest_changes);  }
 
-/// #806 ingest/audit row: compose this real handler branch into normalized fields.
-pub(super) proof fn fields_audit_ask(n: Node, after: Node, id: u64, mid: Node)
-    requires n.generation < u64::MAX, n.phase == Phase::Auditing, n.audit_rounds >= 1, mid == (Node { audit_rounds: if n.audit_rounds < u8::MAX { (n.audit_rounds + 1) as u8 } else { u8::MAX }, ..n }), after == asked(mid, id, QKind::AuditDisagreement, match n.early_end { Some(e) => Cont::Stop(early_outcome(e)), None => Cont::Unplanned }, 0),
+/// #832-A second audit disagreement: stop for review after the one repair is spent.
+pub(super) proof fn fields_audit_stop(n: Node, after: Node, id: u64, mid: Node)
+    requires n.generation < u64::MAX, n.phase == Phase::Auditing, n.audit_rounds >= 1, mid == (Node { audit_rounds: if n.audit_rounds < u8::MAX { (n.audit_rounds + 1) as u8 } else { u8::MAX }, ..n }), after == retirement::stopped(Node { review_stop: Some(ReviewStop::AuditDisagreement), ..mid }, Outcome::Stopped),
     ensures ingest_post(n, after, id, Reply::AuditDisagrees),
-{ reveal(ingest_post); reveal(ingest_stable); reveal(ingest_changes);  }
+{ reveal(ingest_post); reveal(ingest_stable); reveal(ingest_changes); reveal(retirement::stopped); }
 
 /// #806 ingest/audit row: compose this real handler branch into normalized fields.
 pub(super) proof fn fields_protected(n: Node, after: Node, id: u64)
@@ -103,6 +103,7 @@ pub(super) proof fn exact_audit_disagrees(n: Node, after: Node, id: u64, fast: b
     } else {
         assert(node_post(n, after, id, fast, reply)) by {
             reveal(ingest_post); reveal(ingest_stable); reveal(ingest_changes); reveal(node_post); reveal(transitioned);
+            reveal(retirement::stopped);
         }
     }
 }

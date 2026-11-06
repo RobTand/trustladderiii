@@ -30,7 +30,8 @@ fn node(x: &[u64; 64]) -> Node {
     let early = [EarlyEnd::Duplicate, EarlyEnd::AlreadyDone, EarlyEnd::NotActionable];
     let stops = [ReviewStop::ChecksFailed, ReviewStop::ChangesRequested, ReviewStop::CiFailed,
         ReviewStop::MakerCantMeet, ReviewStop::MakerNeedsFiles, ReviewStop::MakerOutOfRoom,
-        ReviewStop::ReviewerOutOfRoom, ReviewStop::PlanCantMeet, ReviewStop::PublicationBody];
+        ReviewStop::ReviewerOutOfRoom, ReviewStop::PlanCantMeet, ReviewStop::PublicationBody,
+        ReviewStop::AuditDisagreement];
     Node {
         phase: phase(x[0]), pos: x[1] as u8, repo: RepoId(x[2]),
         footprint: Footprint::inline(x[3]), generation: x[4].min(u64::MAX - 1),

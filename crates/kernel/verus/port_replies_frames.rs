@@ -45,7 +45,14 @@ pub(super) open spec fn node_change(b: Node, n: Node, fast: bool, reply: Reply) 
             && n.question != b.question ==> reply is PlanLeaf)
         && (n.review_stop != b.review_stop ==> b.review_stop.is_none()
             && n.phase == Phase::Stopping(Outcome::Stopped) && n.credit == b.credit && n.question.is_none())
-        && (!fast ==> n.review_stop == b.review_stop)
+        && (!fast && n.review_stop != b.review_stop ==> {
+            n.review_stop == Some(ReviewStop::PublicationBody)
+                || (n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && reply == Reply::AuditDisagrees && b.phase == Phase::Auditing && b.audit_rounds >= 1)
+                || (n.review_stop == Some(ReviewStop::PlanCantMeet)
+                    && matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+                    && b.phase is Planning)
+        })
 }
 
 /// #806: complete local checker and resource frame used by the world lift.

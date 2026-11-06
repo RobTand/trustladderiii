@@ -324,3 +324,348 @@ mod proof_obligation_tests {
         );
     }
 }
+
+use regex::Regex;
+
+const LIMIT: usize = 80_000;
+const REPAIR: &str =
+    "Shorten the brief summary to leave room for the issue's verbatim code and test identifiers";
+const OBJECTION: &str = "The ingest brief drops verbatim source code or supplied test identifiers. Preserve the issue's code exactly, including its test path, class and method, before planning.";
+
+use tl3_contracts::roles::ingest_retention::{Action, decide};
+
+struct SourceBlock {
+    text: String,
+    body: String,
+    node_ids: Vec<String>,
+}
+
+fn normalized_lines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Retain source bytes, bounded by the preceding paragraph or previous fence.
+fn source_blocks(source: &str) -> Vec<SourceBlock> {
+    let path = Regex::new(r"`([^`\n ]+\.py)`").unwrap();
+    let class = Regex::new(r"^class\s+([A-Za-z_][A-Za-z_0-9]*)\b").unwrap();
+    let test = Regex::new(r"^(?:async\s+)?def\s+(test_[A-Za-z_0-9]+)\s*\(").unwrap();
+    let retain = |start, content, body_end, end, previous_end| {
+        let prefix = source[previous_end..start].trim_end();
+        let mut paragraph = previous_end;
+        let mut position = previous_end;
+        for line in prefix.split_inclusive('\n') {
+            position += line.len();
+            if line.trim().is_empty() {
+                paragraph = position;
+            }
+        }
+        let context = &source[paragraph..start];
+        let mut nodes = Vec::new();
+        if let Some(file) = path.captures_iter(context).last() {
+            let mut owner: Option<(usize, String)> = None;
+            for code in source[content..body_end].lines() {
+                let text = code.trim_start();
+                let indentation = code.len() - text.len();
+                if !text.is_empty()
+                    && !text.starts_with('#')
+                    && owner
+                        .as_ref()
+                        .is_some_and(|(level, _)| indentation <= *level)
+                {
+                    owner = None;
+                }
+                if let Some(name) = class.captures(text) {
+                    owner = Some((indentation, name[1].to_owned()));
+                } else if let Some(name) = test.captures(text) {
+                    let scope = owner
+                        .as_ref()
+                        .map_or(String::new(), |(_, name)| format!("{name}::"));
+                    nodes.push(format!("{}::{scope}{}", &file[1], &name[1]));
+                }
+            }
+        }
+        SourceBlock {
+            text: source[paragraph..end].to_owned(),
+            body: normalized_lines(&source[content..body_end]),
+            node_ids: nodes,
+        }
+    };
+    let mut blocks = Vec::new();
+    let mut offset = 0;
+    let mut previous_end = 0;
+    let mut opened: Option<(char, usize, usize, usize)> = None;
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim_start_matches(' ');
+        let indent = line.len() - trimmed.len();
+        if indent <= 3 {
+            let marker = trimmed.chars().next().unwrap_or(' ');
+            let width = trimmed.chars().take_while(|c| *c == marker).count();
+            if let Some((fence, minimum, start, content)) = opened {
+                if marker == fence && width >= minimum && trimmed[width..].trim().is_empty() {
+                    blocks.push(retain(
+                        start,
+                        content,
+                        offset,
+                        offset + line.len(),
+                        previous_end,
+                    ));
+                    previous_end = offset + line.len();
+                    opened = None;
+                }
+            } else if matches!(marker, '`' | '~')
+                && width >= 3
+                && (marker != '`' || !trimmed[width..].contains('`'))
+            {
+                opened = Some((marker, width, offset, offset + line.len()));
+            }
+        }
+        offset += line.len();
+    }
+    if let Some((_, _, start, content)) = opened {
+        blocks.push(retain(
+            start,
+            content,
+            source.len(),
+            source.len(),
+            previous_end,
+        ));
+    }
+    blocks
+}
+
+fn preserve_ingest(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
+    let ingest = if role == "audit" {
+        &inputs["ingest"]
+    } else {
+        &*reply
+    };
+    if ingest["kind"] != "brief" {
+        return Ok(());
+    }
+    let source = inputs["issue"]["body"].as_str().unwrap_or_default();
+    let blocks = source_blocks(source);
+    if blocks.is_empty() {
+        return Ok(());
+    }
+    let brief = ingest["brief"]
+        .as_str()
+        .ok_or(Error::Invalid("invalid ingest brief"))?;
+    let present = normalized_lines(brief);
+    let mut retained: Vec<String> = Vec::new();
+    let mut missing = Vec::new();
+    for block in blocks {
+        if !present.contains(&block.body) && !retained.iter().any(|unit| unit.contains(&block.body))
+        {
+            retained.push(normalized_lines(&block.text));
+            missing.push(block.text);
+        }
+        for node in block.node_ids {
+            if !present.contains(&node) && !retained.iter().any(|unit| unit.contains(&node)) {
+                retained.push(node.clone());
+                missing.push(format!("Source test identifiers:\n{node}"));
+            }
+        }
+    }
+    let appendix = format!("\n\nVerbatim issue material:\n{}", missing.join("\n\n"));
+    let fits = brief.chars().count() + appendix.chars().count() <= LIMIT;
+    match decide(role == "audit", missing.is_empty(), fits) {
+        Action::Keep => return Ok(()),
+        Action::Repair => return Err(Error::Invalid(REPAIR)),
+        Action::Object => {
+            reply["verdict"] = json!("disagree");
+            let objections = reply["objections"]
+                .as_array_mut()
+                .ok_or(Error::Invalid("audit objections missing"))?;
+            if !objections.contains(&json!(OBJECTION)) {
+                objections.push(json!(OBJECTION));
+            }
+            return Ok(());
+        }
+        Action::Append => (),
+    }
+    reply["brief"] = json!(format!("{brief}{appendix}"));
+    Ok(())
+}
+
+pub fn check_ingest_reply(
+    role: &str,
+    inputs: &Value,
+    reply: &Value,
+) -> Result<tl3_contracts::roles::ingest_reply::PreservedIngestReply> {
+    let mut reply = reply.clone();
+    let violations = match preserve_ingest(role, inputs, &mut reply) {
+        Ok(()) => Vec::new(),
+        Err(Error::Invalid(message)) => vec![message.to_owned()],
+        Err(error) => return Err(error),
+    };
+    Ok(tl3_contracts::roles::ingest_reply::PreservedIngestReply { reply, violations })
+}
+
+#[cfg(test)]
+mod ingest_tests {
+    use super::*;
+    use proptest::{prelude::*, test_runner::TestRunner};
+
+    #[test]
+    fn fenced_source_survives_json_and_repeated_handoffs() {
+        TestRunner::new(ProptestConfig::with_cases(64))
+            .run(&("[^`~\\r\\n]{0,80}", 3usize..7, any::<bool>()), |(text, width, tilde)| {
+                let fence = if tilde { "~" } else { "`" }.repeat(width);
+                let code = format!("class SuppliedTest:\n    def test_example(self):\n        assert {text:?}\n");
+                let source = format!("Add `tests/test_supplied.py` with exactly this test.\n\n{fence}python\n{code}{fence}\n");
+                let request = json!({"issue":{"body":source}});
+                let bytes = serde_json::to_vec(&request).unwrap();
+                let decoded: Value = serde_json::from_slice(&bytes).unwrap();
+                let mut reply = json!({"kind":"brief","brief":"Implement it."});
+                preserve_ingest("ingest", &decoded, &mut reply).unwrap();
+                let brief = reply["brief"].as_str().unwrap();
+                prop_assert!(brief.contains(&code));
+                prop_assert!(brief.contains("tests/test_supplied.py::SuppliedTest::test_example"));
+                let once = reply.clone();
+                preserve_ingest("ingest", &decoded, &mut reply).unwrap();
+                prop_assert_eq!(&once, &reply);
+                let mut audit = json!({"verdict":"agree","objections":[]});
+                preserve_ingest("audit", &json!({"issue":decoded["issue"],"ingest":reply}), &mut audit).unwrap();
+                prop_assert_eq!(audit["verdict"].as_str(), Some("agree"));
+                Ok(())
+            }).unwrap();
+    }
+
+    #[test]
+    fn retention_is_atomic_at_unicode_wire_limit_and_audit_keeps_objections() {
+        let inputs = json!({"issue":{"body":"Add `tests/test_a.py`.\n\n```python\ndef test_a(): pass\n```\n"}});
+        let mut brief = json!({"kind":"brief","brief":"é".repeat(LIMIT)});
+        let original = brief.clone();
+        assert_eq!(
+            preserve_ingest("ingest", &inputs, &mut brief)
+                .unwrap_err()
+                .to_string(),
+            REPAIR
+        );
+        assert_eq!(brief, original);
+        let mut audit = json!({"verdict":"disagree","objections":["Existing finding"]});
+        let inputs = json!({"issue":inputs["issue"],"ingest":brief});
+        preserve_ingest("audit", &inputs, &mut audit).unwrap();
+        preserve_ingest("audit", &inputs, &mut audit).unwrap();
+        assert_eq!(audit["objections"], json!(["Existing finding", OBJECTION]));
+        let mut early = json!({"kind":"early_end","outcome":"duplicate"});
+        let original = early.clone();
+        preserve_ingest("ingest", &inputs, &mut early).unwrap();
+        assert_eq!(early, original);
+    }
+
+    #[test]
+    fn fence_width_and_multiple_source_blocks_are_preserved() {
+        let source = "```python\none\n````\n\n~~~text\ntwo\n~~~\n";
+        assert_eq!(source_blocks(source).len(), 2);
+        assert_eq!(source_blocks("```python\nunterminated").len(), 1);
+        assert!(source_blocks("```python`invalid\nnot a fence\n").is_empty());
+        assert!(source_blocks("    ```python\nindented\n    ```\n").is_empty());
+    }
+
+    #[test]
+    fn retained_units_allow_different_wrapping_and_line_endings() {
+        let inputs = json!({"issue":{"body":"Add `tests/test_a.py`.\r\n\r\n```python\r\ndef test_a(): pass\r\n```\r\n"}});
+        let mut reply = json!({"kind":"brief","brief":"Supplied code:\ndef test_a(): pass\n\nNode: tests/test_a.py::test_a"});
+        let original = reply.clone();
+        preserve_ingest("ingest", &inputs, &mut reply).unwrap();
+        assert_eq!(
+            reply, original,
+            "body and identifier are independently complete"
+        );
+        let mut audit = json!({"verdict":"agree","objections":[]});
+        preserve_ingest(
+            "audit",
+            &json!({"issue":inputs["issue"],"ingest":reply}),
+            &mut audit,
+        )
+        .unwrap();
+        assert_eq!(audit["verdict"], "agree");
+    }
+
+    #[test]
+    fn repeated_bodies_and_identifiers_are_retained_once() {
+        let block = "Add `tests/test_a.py`.\n\n```python\ndef test_a(): pass\n```\n";
+        let inputs = json!({"issue":{"body":format!("{block}\n{block}")}});
+        let mut reply = json!({"kind":"brief","brief":"Summary"});
+        preserve_ingest("ingest", &inputs, &mut reply).unwrap();
+        let brief = reply["brief"].as_str().unwrap();
+        assert_eq!(brief.matches("def test_a(): pass").count(), 1);
+        assert_eq!(brief.matches("tests/test_a.py::test_a").count(), 1);
+        let once = reply.clone();
+        preserve_ingest("ingest", &inputs, &mut reply).unwrap();
+        assert_eq!(reply, once);
+        let mut already_code = json!({"kind":"brief","brief":"def test_a(): pass\n"});
+        preserve_ingest("ingest", &inputs, &mut already_code).unwrap();
+        assert_eq!(
+            already_code["brief"]
+                .as_str()
+                .unwrap()
+                .matches("def test_a(): pass")
+                .count(),
+            1
+        );
+        assert!(
+            already_code["brief"]
+                .as_str()
+                .unwrap()
+                .contains("tests/test_a.py::test_a")
+        );
+        let mut already_node = json!({"kind":"brief","brief":"tests/test_a.py::test_a"});
+        preserve_ingest("ingest", &inputs, &mut already_node).unwrap();
+        let brief = already_node["brief"].as_str().unwrap();
+        assert_eq!(brief.matches("tests/test_a.py::test_a").count(), 1);
+        assert_eq!(brief.matches("def test_a(): pass").count(), 1);
+    }
+
+    #[test]
+    fn source_paragraphs_stop_at_crlf_blanks_and_previous_fences() {
+        for separator in ["\r\n", "\r\n\r\n"] {
+            let source = format!(
+                "Earlier context\r\n\r\n```text\r\none\r\n```{separator}Second context\r\n\r\n~~~text\r\ntwo\r\n~~~\r\n"
+            );
+            let mut reply = json!({"kind":"brief","brief":"Summary"});
+            preserve_ingest("ingest", &json!({"issue":{"body":source}}), &mut reply).unwrap();
+            let brief = reply["brief"].as_str().unwrap();
+            assert_eq!(brief.matches("Earlier context").count(), 1);
+            assert_eq!(brief.matches("one\r\n").count(), 1);
+            assert_eq!(brief.matches("Second context").count(), 1);
+        }
+    }
+
+    #[test]
+    fn unclosed_fence_is_retained_and_audited_through_eof() {
+        let inputs = json!({"issue":{"body":"```python\nassert '🦀'"}});
+        let original = json!({"kind":"brief","brief":"Summary"});
+        let mut reply = original.clone();
+        preserve_ingest("ingest", &inputs, &mut reply).unwrap();
+        assert!(reply["brief"].as_str().unwrap().contains("assert '🦀'"));
+        let mut audit = json!({"verdict":"agree","objections":[]});
+        preserve_ingest(
+            "audit",
+            &json!({"issue":inputs["issue"],"ingest":original}),
+            &mut audit,
+        )
+        .unwrap();
+        assert_eq!(audit["verdict"], "disagree");
+    }
+
+    #[test]
+    fn astral_exact_fit_and_one_over_are_atomic() {
+        let inputs = json!({"issue":{"body":"```python\nassert '🦀'\n```\n"}});
+        let appendix = "\n\nVerbatim issue material:\n```python\nassert '🦀'\n```\n";
+        for extra in [0, 1] {
+            let mut reply = json!({"kind":"brief","brief":"🦀".repeat(LIMIT - appendix.chars().count() + extra)});
+            let original = reply.clone();
+            let result = preserve_ingest("ingest", &inputs, &mut reply);
+            if extra == 0 {
+                result.unwrap();
+                assert_eq!(reply["brief"].as_str().unwrap().chars().count(), LIMIT);
+                assert!(reply["brief"].as_str().unwrap().ends_with(appendix));
+            } else {
+                assert_eq!(result.unwrap_err().to_string(), REPAIR);
+                assert_eq!(reply, original);
+            }
+        }
+    }
+}

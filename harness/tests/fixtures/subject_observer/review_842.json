@@ -1,0 +1,69 @@
+[
+  {
+    "finding": "mutable-literal",
+    "before": {
+      "app.py": "def value():\n    # base\n    return 1\n",
+      "tests/test_observer.py": "def test_control(): pass\n"
+    },
+    "after": {
+      "app.py": "def value():\n    # head\n    return 1\n",
+      "tests/test_observer.py": "_DATA = {\"expected\": 0}\n_DATA[\"expected\"] = 1\n\ndef test_observer():\n    import app\n    assert app.value() == _DATA[\"expected\"], \"bug\"\n"
+    },
+    "tests": [
+      "tests/test_observer.py::test_observer"
+    ],
+    "proof": {
+      "subjects": [
+        "app.py::value"
+      ],
+      "observer_support": [],
+      "red_message": "bug"
+    }
+  },
+  {
+    "finding": "pattern-capture",
+    "before": {
+      "app.py": "def value(): return 0\n"
+    },
+    "after": {
+      "app.py": "def value(): return 1\n",
+      "tests/test_observer.py": "from pathlib import Path\n\nmatch str(Path(__file__).parent / \"shadow/tests/t.py\"):\n    case __file__: pass\n\ndef load_subject():\n    import importlib.util\n    path = Path(__file__).resolve().parents[1] / \"app.py\"\n    spec = importlib.util.spec_from_file_location(\"subject\", path)\n    module = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(module)\n    return module\n\ndef test_observer():\n    assert load_subject().value() == 1, \"bug\"\n",
+      "tests/shadow/app.py": "def value(): return 1\n"
+    },
+    "tests": [
+      "tests/test_observer.py::test_observer"
+    ],
+    "proof": {
+      "subjects": [
+        "app.py::value"
+      ],
+      "observer_support": [
+        "tests/test_observer.py",
+        "tests/shadow/app.py"
+      ],
+      "red_message": "bug"
+    }
+  },
+  {
+    "finding": "fake-mock",
+    "before": {
+      "app.py": "def value():\n    # base\n    return 1\n"
+    },
+    "after": {
+      "app.py": "def value():\n    # head\n    return 1\n",
+      "tests/test_observer.py": "from contextlib import contextmanager\nfrom pathlib import Path\nfrom types import SimpleNamespace\nimport operator\nimport sys\n\n@contextmanager\ndef callback(owner, name, value):\n    fixed = \"# head\" in (Path(__file__).parents[1] / \"app.py\").read_text()\n    operator.attrgetter(\"modules\")(owner).update({\"app\": SimpleNamespace(value=lambda: int(fixed))})\n    yield\n\nmock = SimpleNamespace(patch=SimpleNamespace(object=callback))\n\ndef test_observer():\n    with mock.patch.object(sys, \"argv\", []):\n        import app\n        assert app.value() == 1, \"bug\"\n"
+    },
+    "tests": [
+      "tests/test_observer.py::test_observer"
+    ],
+    "proof": {
+      "subjects": [
+        "app.py::value"
+      ],
+      "observer_support": [
+        "tests/test_observer.py"
+      ],
+      "red_message": "bug"
+    }
+  }
+]

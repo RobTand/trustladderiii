@@ -15,6 +15,38 @@ const CHECKS_FAIL: Reply = Reply::ChecksDone {
     in_footprint: true,
 };
 
+/// Auditing / #832-A Q27: one repair then a free stop, under either flag.
+#[test]
+fn second_audit_disagreement_never_asks_or_spends() {
+    for fail_fast in [false, true] {
+        let mut run = Run::new(fail_fast);
+        run.reply(Reply::IngestDone { size: 2 });
+        run.reply(Reply::AuditDisagrees);
+        assert_eq!(run.phase(), Phase::Ingesting);
+        let generation = run.node().generation;
+        run.reply(Reply::IngestDone { size: 3 });
+        assert!(run.node().generation > generation);
+        let before = run.w.clone();
+        run.send(Event::Reply {
+            node: NodeId(0),
+            generation: run.node().generation,
+            reply: Reply::AuditDisagrees,
+        });
+        // `step` settles an intake stop immediately when no teardown remains.
+        // The source-connected on_reply proof checks the exact Stopping phase.
+        assert!(matches!(
+            run.phase(),
+            Phase::Stopping(Outcome::Stopped) | Phase::Closed(Outcome::Stopped)
+        ));
+        assert_eq!(run.node().question, None);
+        assert_eq!(run.w.next_question, before.next_question);
+        assert_eq!(run.node().credit, before.nodes[0].credit);
+        assert!(!run.notices.iter().any(|n| matches!(n, Notice::Ask { .. })));
+        run.confirm();
+        assert_eq!(run.phase(), Phase::Closed(Outcome::Stopped));
+    }
+}
+
 struct Run {
     w: World,
     notices: Vec<Notice>,

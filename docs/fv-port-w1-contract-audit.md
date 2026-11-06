@@ -46,3 +46,35 @@ The prior 333-group sweep belongs only to `756acc7524`, whose shared
 precondition narrowing was rejected by review. Slice 1 remains accepted at
 `564de367`; verification of both slices at this new head awaits the full
 uncached kernel sweep and affected mutants after the hold lifts.
+
+## #832-A main integration, local and unverified
+
+The next local integration imports main
+`6a1f337adc6df8b1b8c4de135f4c96973389457e`, including Rob's #832-A rule at
+`2d4157418`. A second AuditDisagrees in Auditing stops with
+`ReviewStop::AuditDisagreement`, preserves credit, question counter and the
+entire outbox, and leaves no question. The first disagreement still returns
+to Ingesting. Both branches retain the saturating audit counter.
+
+The approved stop statements are kept verbatim inside the existing private
+audit helper. After helper inlining, the ingest executable tokens match the
+unextracted main handler exactly. Its equivalence reference now copies that
+same main body. The generator includes the new review-stop variant.
+
+Main's #832-A clauses on `reply_ingest`, `on_reply` and `reply_transition` are
+preserved byte for byte. The new W1 `audit_stop_reply` proof forwards the
+combined relation into the main clause on `on_reply`; W2's `admitted_reply`
+signature and contract remain unchanged. Owner identity records separate the
+imported main clause from W1's proof-only forwarding.
+
+The shared W1 rule with fail-fast off permits review-stop changes only to
+PublicationBody, AuditDisagreement on the second audit disagreement, or
+PlanCantMeet for a plan-check ending. Exact audit fields, output and counter
+relations now describe #832-A. Cover cases 8 and 9 construct consistent,
+settled original-domain worlds and execute real apply for the spent repair
+with fail-fast off and on. The existing first-disagreement cover is retained.
+
+#860 has not landed in the imported main head. Its later audit-disagreement
+retirement must replace W1's retirement entry when it lands. All previous
+GREEN evidence remains evidence for its original pre-integration head only.
+No remote runs or pushes are made during the BuildBuddy hold.

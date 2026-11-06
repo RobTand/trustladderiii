@@ -16,6 +16,30 @@ pub(super) open spec fn specific(before: World, after: World, generation: u64, r
             && current_item(b) == Some(Item::Await) && b.run == Some(generation)
             ==> n.phase == Phase::Stopping(Outcome::Stopped)
                 && n.review_stop == Some(ReviewStop::PlanCantMeet))
+        && (reply == Reply::AuditDisagrees && b.phase == Phase::Auditing && b.audit_rounds >= 1
+            && current_item(b) == Some(Item::Await) && b.run == Some(generation)
+            ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                && n.review_stop == Some(ReviewStop::AuditDisagreement) && n.credit == b.credit
+                && after.next_question == before.next_question)
+}
+
+/// #832-A: forward the spent audit repair through arbitrary-generation reply admission.
+pub(super) proof fn audit_stop_reply(before: World, after: World, i: int, generation: u64,
+    reply: Reply, out_before: Outbox, out_after: Outbox)
+    requires port_review_reply::reply_post(before, after, i, generation, reply, out_before, out_after),
+    ensures ({
+        let b = before.nodes@[i]; let n = after.nodes@[i];
+        reply == Reply::AuditDisagrees && b.phase == Phase::Auditing && b.audit_rounds >= 1
+            && current_item(b) == Some(Item::Await) && b.run == Some(generation) ==>
+            n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                && n.review_stop == Some(ReviewStop::AuditDisagreement) && n.credit == b.credit
+                && after.next_question == before.next_question && out_after == out_before
+    }),
+{
+    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result);
+    reveal(port_review_reply::transition_post); reveal(port_review_reply::accepted_reply);
+    reveal(port_replies_contracts::transition_post); reveal(node_post); reveal(transitioned);
+    reveal(retirement::stopped);
 }
 
 /// Q50 / #806: consume the shared exact failed-run contract, rather than

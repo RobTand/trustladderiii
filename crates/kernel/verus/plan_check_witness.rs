@@ -1,4 +1,4 @@
-//! #832 Planning/Q54: source-connected safety and reachable semantic endings.
+//! #832 Planning/Auditing: source-connected safety and reachable review stops.
 use super::*;
 
 kernel_fn! {
@@ -52,5 +52,52 @@ kernel_fn! {
 fn apply_plan_check_needs_split() -> (result: ()) [] {
     check_plan_ending(false, 1, true);
     check_plan_ending(true, 0, true);
+}
+}
+
+kernel_fn! {
+/// Auditing / #832-A: execute the real admitted second disagreement.
+/// One node and one gate witness reachability. The reply contracts quantify
+/// over every node count, both flags, all early endings and all positive rounds.
+fn check_audit_ending(fail_fast: bool, early_end: Option<EarlyEnd>, rounds: u8)
+    -> (result: ()) [ requires rounds >= 1, ]
+    proof [reveal(initial_node); reveal(node_headroom); reveal(arithmetic_consistent);
+        reveal(footprint::ordered_table);] {
+    let mut n = Node::new(RepoId(0));
+    n.phase = Phase::Auditing;
+    n.pos = 1;
+    n.credit.ready = true;
+    n.credit.start = 4;
+    n.run = Some(0);
+    n.pool = true;
+    n.audit_rounds = rounds;
+    n.early_end = early_end;
+    let mut nodes = Vec::new();
+    nodes.push(n);
+    let mut gates = Vec::new();
+    gates.push(Gate { w: 1 });
+    let mut w = World { nodes, gates, pool_capacity: 1, next_ticket: 0, next_question: 7,
+        file_sets: Vec::new(), dependencies: Vec::new(), fail_fast };
+    let mut out = Outbox::new();
+    kernel_proof! { footprint::inline_is_valid(w, 0); }
+    on_reply(&mut w, 0, 0, Reply::AuditDisagrees, &mut out);
+    kernel_proof! {
+        assert(w.nodes@[0].phase == Phase::Stopping(Outcome::Stopped));
+        assert(w.nodes@[0].question.is_none());
+        assert(w.nodes@[0].review_stop == Some(ReviewStop::AuditDisagreement));
+        assert(w.nodes@[0].credit == n.credit);
+        assert(w.next_question == 7);
+        assert(empty_outbox(out));
+    }
+}
+}
+
+kernel_fn! {
+/// #832-A: witnesses include both flags, brief/early endings and saturation.
+fn apply_second_audit_disagreement() -> (result: ()) [] {
+    check_audit_ending(false, None, 1);
+    check_audit_ending(true, Some(EarlyEnd::Duplicate), 1);
+    check_audit_ending(false, Some(EarlyEnd::AlreadyDone), 255);
+    check_audit_ending(true, Some(EarlyEnd::NotActionable), 2);
 }
 }

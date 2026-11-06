@@ -81,13 +81,21 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
         ((old(w).dependencies@.len() == 0 || !matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)))
             && port_replies_contracts::ingest_accepted(old(w).nodes@[i as int], reply))
             ==> port_replies_contracts::ingest_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
                 old(w).next_question, reply),
-        final(w).next_question == (old(w).next_question
-            + if matches!(reply, Reply::AuditDisagrees) && old(w).nodes@[i as int].audit_rounds >= 1
-                { 1u64 } else { 0u64 }) as u64,
+        final(w).next_question == old(w).next_question,
+        reply == Reply::AuditDisagrees ==> *final(out) == *old(out),
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
 ] {
     kernel_snapshot! { ingest_before = *w }
@@ -203,9 +211,16 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         old(w).nodes@[i as int].phase == Phase::Auditing
             ==> port_replies_contracts::ingest_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
             old(w).next_question, Reply::AuditDisagrees),
+        (old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+            }),
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-        final(w).next_question == (old(w).next_question
-            + if old(w).nodes@[i as int].audit_rounds >= 1 { 1u64 } else { 0u64 }) as u64,
+        final(w).next_question == old(w).next_question,
+        *final(out) == *old(out),
 ] {
     kernel_snapshot! { ingest_before = *w }
     kernel_snapshot! { ingest_source = w.nodes@[i as int] }
@@ -213,6 +228,7 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
     kernel_snapshot! { ingest_out = *out }
             let m = &mut w.nodes[i];
             increment_audit(m);
+            kernel_snapshot! { audit_incremented = *m }
             kernel_proof! {
                 assert((m.audit_rounds < 2) == (ingest_source@.audit_rounds == 0));
             }
@@ -225,36 +241,22 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
                     }
                 }
                 kernel_proof! { if ingest_source@.phase == Phase::Auditing {
-                    assert(port_replies_contracts::ingest_changes(ingest_source@, w.nodes@[i as int], ingest_id@, Reply::AuditDisagrees)) by {
-                        reveal(port_replies_contracts::ingest_changes);
-                    }
+                    port_replies_handlers::fields_audit_first(ingest_source@,
+                        w.nodes@[i as int], ingest_id@, audit_incremented@);
                 } }
             } else {
-                let cont = match m.early_end {
-                    Some(e) => Cont::Stop(e.outcome()),
-                    None => Cont::Unplanned,
-                };
-                ask_rob(w, i, QKind::AuditDisagreement, cont, 0, out);
+                // Q27, #832-A: intake cannot split. The one repair is spent.
+                stop_for_review(m, ReviewStop::AuditDisagreement);
                 kernel_proof! {
                     assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
                         reveal(reply_bounds);
                     }
                 }
                 kernel_proof! { if ingest_source@.phase == Phase::Auditing {
-                    assert(port_replies_contracts::ingest_changes(ingest_source@, w.nodes@[i as int], ingest_id@, Reply::AuditDisagrees)) by {
-                        reveal(port_replies_contracts::ingest_changes);
-                    }
+                    port_replies_handlers::fields_audit_stop(ingest_source@,
+                        w.nodes@[i as int], ingest_id@, audit_incremented@);
                 } }
             }
-
-    kernel_proof! {
-        if ingest_source@.phase == Phase::Auditing {
-            assert(port_replies_contracts::ingest_stable(ingest_source@, w.nodes@[i as int])) by {
-                reveal(port_replies_contracts::ingest_stable);
-            }
-            port_replies_handlers::ingest_join(ingest_source@, w.nodes@[i as int], ingest_id@, Reply::AuditDisagrees);
-        }
-    }
 
 }
 }

@@ -26,7 +26,11 @@ pub fn settings(root: &Path, mode: &str, bell_url: &str) -> (PrismaBuild, Settin
         tool: tool.clone(),
         bell_url: bell_url.into(),
     })
-    .unwrap();
+    .unwrap()
+    .with_status_tool(Tool {
+        program: "false".into(),
+        args: vec![],
+    });
     (
         client,
         Settings {
