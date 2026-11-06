@@ -203,6 +203,7 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
     }
     let mut excerpt = String::new();
     let mut count = 0;
+    let mut seen = BTreeSet::new();
     for (index, line) in diagnostics.iter().enumerate() {
         let remaining =
             MAX_DIAGNOSTICS_BYTES.saturating_sub(excerpt.len() + DIAGNOSTICS_OMITTED.len() + 2);
@@ -211,6 +212,9 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
         }
         if !excerpt.is_empty() {
             excerpt.push('\n');
+        }
+        if line.len() <= MAX_DIAGNOSTIC_BYTES.min(remaining) {
+            seen.insert(line.clone());
         }
         excerpt.push_str(&byte_excerpt(
             line,
@@ -223,7 +227,6 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
         excerpt.push('\n');
         excerpt.push_str(DIAGNOSTICS_OMITTED);
     }
-    let mut seen: BTreeSet<_> = diagnostics.into_iter().collect();
     let header = safe(&summary.join("\n"), usize::MAX);
     let header = header
         .lines()
@@ -234,11 +237,18 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
     let mut result = format!("{header}\n{excerpt}");
     seen.extend(header.lines().map(str::to_owned));
     // Keep target lines and the existing suffix, without re-emitting diagnostics
-    // already selected above. Drop the suffix's potentially partial first line.
+    // already retained above. Drop a partial first line only when a complete
+    // following line exists; a complete or single-line suffix remains useful.
+    let tail = if tail.len() < text.len() && !text[..text.len() - tail.len()].ends_with('\n') {
+        tail.split_once('\n')
+            .map_or(tail.as_str(), |(_, rest)| rest)
+    } else {
+        tail.as_str()
+    };
     let context = crate::memory::redact_text(&terminal_text(&log_lines));
     let context = context
         .lines()
-        .chain(tail.lines().skip(1))
+        .chain(tail.lines())
         .map(|line| log_line(line).trim())
         .filter(|line| !line.is_empty() && seen.insert((*line).to_owned()))
         .collect::<Vec<_>>()

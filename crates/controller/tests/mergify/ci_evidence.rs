@@ -577,6 +577,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 assert!(summaries.len() <= 1000);
                 assert!(
                     summaries
+                        .split("FAILED: //tests:test_action_resource_profile")
+                        .next()
+                        .unwrap()
                         .lines()
                         .filter(|line| line.starts_with("ERROR:"))
                         .count()
