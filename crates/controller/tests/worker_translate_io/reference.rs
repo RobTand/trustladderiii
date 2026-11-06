@@ -1,4 +1,13 @@
 use super::*;
+mod adapters {
+    pub use crate::adapters::prismabuild;
+    pub mod workers {
+        pub use crate::adapters::workers::{protocol, review};
+        pub mod reproducing {
+            include!("reference-reproducing.rs");
+        }
+    }
+}
 struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> { type Target=Controller; fn deref(&self)->&Controller { self.0 } }
 impl std::ops::DerefMut for Shell<'_> { fn deref_mut(&mut self)->&mut Controller { self.0 } }
@@ -44,6 +53,7 @@ impl Shell<'_> {
                 role,
                 mut reply,
                 model,
+                plan_check: _,
             } => {
                 let n = world
                     .nodes

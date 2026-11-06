@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "ObjectionClass": {
+      "enum": [
+        "size_execution_fit",
+        "other"
+      ],
+      "type": "string"
+    },
+    "PlanObjection": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/ObjectionClass"
+        },
+        "diagnostic": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class",
+        "rule",
+        "items",
+        "diagnostic"
+      ],
+      "type": "object"
+    },
+    "PlanRepair": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "attempted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/RepairUnavailable"
+            },
+            "status": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RepairUnavailable": {
+      "enum": [
+        "disabled",
+        "input_allowance",
+        "message_limit",
+        "format_allowance_consumed"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "objections": {
+      "items": {
+        "$ref": "#/$defs/PlanObjection"
+      },
+      "type": "array"
+    },
+    "repair": {
+      "$ref": "#/$defs/PlanRepair"
+    }
+  },
+  "required": [
+    "objections",
+    "repair"
+  ],
+  "title": "PlanCheckProvenance",
+  "type": "object"
+}

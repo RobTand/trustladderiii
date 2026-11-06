@@ -74,3 +74,12 @@ unchanged QueueFact boundary records independent recorded/not-recorded responses
 including errors. Two reads verify that ordinary facts are deduplicated while an
 unrecorded setup gap is observed again. This supersedes the original no-queue-
 evidence restriction.
+
+#828 changes Q53 behavior after this extraction. The three affected shells
+`look_state`, `look_observations`, and `quota_allowance` remain frozen at the
+audited integration 8b49b5cdff extraction recorded in sync.py, with SHA-256 body
+pins. This retains every historical differential assertion and crash schedule.
+It does not claim equivalence between the old Q53 rule and the approved new
+rule. `test_test_quota_hold` covers the current quota shells through real store,
+supervisor, reset, failure, stop and restart paths. Other shells remain pinned
+to current production.

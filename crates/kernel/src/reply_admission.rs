@@ -10,7 +10,8 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
             footprint::valid_footprint(*w, footprint),
-        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet) => true,
+        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
         (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
             footprint::valid_footprint(*w, files),
@@ -30,7 +31,8 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) => w.has_footprint(*footprint),
-        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet) => true,
+        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
         (Phase::Making, Reply::MakerNeedsFiles { files, .. }) => w.has_footprint(*files),
         (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
@@ -51,6 +53,7 @@ kernel_fn! {
 /// Reply rows / #771: stale operations stutter, invalid replies use the bounded
 /// failure handler, and successful replies use the actual transition bodies.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -58,7 +61,9 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+    ensures progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
+            generation, reply, *old(out), *final(out)),
+        (node_checked(*old(w), old(w).nodes@[i as int])
             && generation == old(w).nodes@[i as int].generation
             && successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
@@ -87,8 +92,21 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal(reply_bounds); reveal(footprint::ordered_table);] {
+        (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+            && old(w).nodes@[i as int].phase is Planning
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+            && old(w).nodes@[i as int].run == Some(generation) ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::PlanCantMeet)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && n.plan_retries == old(w).nodes@[i as int].plan_retries
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
+] {
     kernel_snapshot! { before_reply = *w }
+    kernel_snapshot! { before_outputs = *out }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
@@ -101,11 +119,21 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
             m.job = None;
         }
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
+        kernel_proof! {
+            progress_gate_contracts::table_order_frame(before_reply@, *w);
+            progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
+                generation, reply, before_outputs@, *out);
+        }
         return;
     }
     if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation))
     {
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
+        kernel_proof! {
+            progress_gate_contracts::table_order_frame(before_reply@, *w);
+            progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
+                generation, reply, before_outputs@, *out);
+        }
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
@@ -119,6 +147,11 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     if !accepts(w, n, &reply) {
         run_failed(w, i, out);
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
+        kernel_proof! {
+            progress_gate_contracts::table_order_frame(before_reply@, *w);
+            progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
+                generation, reply, before_outputs@, *out);
+        }
         return;
     }
     kernel_snapshot! { before_operation = *w }
@@ -126,14 +159,31 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     kernel_proof! {
         footprint::valid_under_table_growth(before_operation@, *w, w.nodes@[i as int].footprint);
     }
+    kernel_snapshot! { after_operation = *w }
+    kernel_proof! {
+        progress_gate_contracts::table_order_frame(before_reply@, *w);
+        if successful_reply_input(before_reply@.nodes@[i as int], reply) {
+            progress_gate_contracts::end_reply_progress(before_reply@.nodes@[i as int],
+                w.nodes@[i as int], reply);
+        }
+    }
     match reply {
         Reply::MakerNeedsFiles { files, fits } => {
             kernel_proof! { footprint::valid_under_table_growth(before_operation@, *w, files); }
             reply_files(w, i, files, fits, out);
+            kernel_proof! {
+                progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
+                    generation, reply, before_outputs@, *out);
+            }
         }
         _ => {
             reply_transition(w, i, reply, out);
             kernel_proof! {
+                progress_gate_contracts::reply_bounds_result(after_operation@, *w, i as int,
+                    before_outputs@.len, out.len);
+                progress_gate_contracts::table_order_frame(after_operation@, *w);
+                progress_gate_contracts::maker_reply_composed(before_reply@, after_operation@,
+                    *w, i as int, generation, reply, before_outputs@, *out);
                 if let Reply::PlanLeaf { footprint, .. } = reply {
                     footprint::valid_under_table_growth(before_operation@, *w, footprint);
                 }
@@ -219,18 +269,31 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+    ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
+            reply, *old(out), *final(out)),
+        (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance);] {
+        (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+            && old(w).nodes@[i as int].phase is Planning ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::PlanCantMeet)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && n.plan_retries == old(w).nodes@[i as int].plan_retries
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
+] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
         Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
+        Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
         _ => reply_work(w, i, reply, out),
     }
 }

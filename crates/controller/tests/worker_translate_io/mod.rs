@@ -23,6 +23,8 @@ mod findings;
 mod goals;
 mod helpers;
 mod io;
+#[path = "resource.rs"]
+mod input_resources;
 mod memory;
 mod properties;
 mod quota;
@@ -76,6 +78,7 @@ enum Observation {
         role: String,
         reply: Value,
         model: Option<String>,
+        plan_check: Option<contracts::plan_check::PlanCheckProvenance>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

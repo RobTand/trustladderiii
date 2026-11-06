@@ -1,6 +1,8 @@
 load("@rules_python//python:defs.bzl", "py_binary")
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
+# gazelle:exclude p5
+
 py_library(
     name = "worker_process",
     srcs = ["worker_process.py"],
@@ -637,6 +639,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        ":worker_process",
         "//workers/src",
         "@tl3_pip//pytest",
     ],
@@ -955,6 +958,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        ":worker_process",
         "//workers/src",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
@@ -1138,6 +1142,24 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "p5_references",
+    srcs = glob([
+        "p5/*.py",
+        "p5/*.json",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "p5_recordings",
+    srcs = [
+        "checker_stub.py",
+        "p5-checker-vectors.json.xz",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 py_binary(
     name = "pb_evidence_vectors",
     srcs = ["pb_evidence_vectors.py"],
@@ -1253,6 +1275,17 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":prompt_render_stub",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_binary(
+    name = "harness_io_schedule",
+    srcs = ["harness_io_schedule.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
     ],

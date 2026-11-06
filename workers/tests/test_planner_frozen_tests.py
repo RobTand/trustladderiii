@@ -89,6 +89,34 @@ def test_corrected_plan_declares_its_edit(tmp_path, planner_request, digests_pla
     assert reply['violations'] == []
 
 
+@pytest.mark.parametrize('at_base', [True, False], ids=['missing-from-worktree', 'only-in-worktree'])
+def test_edit_declaration_uses_original_base(planner_request, digests_plan, at_base):
+    from worker_process import git
+
+    root = Path(planner_request['worktree'])
+    source = (root / DIGESTS).read_text()
+    if not at_base:
+        (root / DIGESTS).unlink()
+    git(root, 'init', '-q')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'original planner base')
+    planner_request['inputs']['base_sha'] = git(root, 'rev-parse', 'HEAD')
+    if at_base:
+        (root / DIGESTS).unlink()
+    else:
+        (root / DIGESTS).write_text(source)
+    digests_plan['edits_tests'] = [FROZEN]
+    digests_plan['checks'] = [{
+        'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0, 1],
+        'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'},
+    }]
+
+    expected = [] if at_base else [
+        f'edits_tests must name a test defined at the base: `{FROZEN}`. '
+        'A test the change adds belongs only in a demonstrating check.']
+    assert planned(planner_request, digests_plan) == expected
+
+
 def test_test_only_observer_edits_use_the_source_partition(planner_request, digests_plan):
     # Existing selected assertions are observers. Checking judges their RED.
     digests_plan['files'] = [DIGESTS]

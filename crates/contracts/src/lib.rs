@@ -52,6 +52,27 @@ pub fn generated() -> Vec<Generated> {
         }),
     );
     files.push(roles::reviewer_input::generated().unwrap_or_else(|error| panic!("{error}")));
+    files.extend(
+        [
+            roles::ingest_input::generated(),
+            roles::audit_input::generated(),
+            roles::planner_input::generated(),
+            roles::maker_input::generated(),
+            roles::writer_input::generated(),
+            roles::classifier_input::generated(),
+        ]
+        .into_iter()
+        .map(|file| file.unwrap_or_else(|error| panic!("{error}"))),
+    );
+    files.push(Generated {
+        path: format!("{SCHEMA_DIRECTORY}/plan-check-provenance.json"),
+        text: render(
+            &SchemaSettings::draft2020_12()
+                .into_generator()
+                .into_root_schema_for::<plan_check::PlanCheckProvenance>()
+                .to_value(),
+        ),
+    });
     files
 }
 
@@ -105,3 +126,5 @@ pub mod decision_context;
 
 pub mod request;
 pub mod roles;
+
+pub mod plan_check;

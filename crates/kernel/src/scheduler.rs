@@ -32,6 +32,16 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
             ==> scheduling_safe(*final(w))
                 && (forall|j: int| 0 <= j < final(w).nodes@.len() ==> settle_shape(final(w).nodes@[j])),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        old(w).nodes@[i as int].phase == Phase::Unplanned && old(w).nodes@[i as int].pos == 0
+            && old(w).nodes@[i as int].ticket.is_none() ==> {
+                (result ==> final(w).nodes@[i as int].phase == (Phase::Planning { must_split: false }))
+                && result == (!old(w).nodes@[i as int].paused
+                    && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+                    && dependencies::delivered(old(w).dependencies@, NodeId(i as u64))
+                    && old(w).nodes@[i as int].repo.0 < old(w).gates@.len()
+                    && slot_waiters(old(w).nodes@, old(w).nodes@.len(), old(w).nodes@[i as int].repo)
+                        < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
+            },
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }

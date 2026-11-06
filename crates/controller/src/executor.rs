@@ -184,6 +184,9 @@ pub enum Observation {
         /// The model that ran, so review can stay a different family (Q53).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// #832: emitted by worker code beside the model's reply, never inside it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan_check: Option<crate::contracts::plan_check::PlanCheckProvenance>,
     },
     Kernel(Event),
     /// Commands carry intent; steering allocates their kernel command ID.
@@ -475,6 +478,10 @@ pub trait Executor {
     fn quota_resume_ms(&mut self, _delivery: &Delivery, announced: u64, _now: u64) -> Result<u64> {
         Ok(announced)
     }
+    /// Q53 / #828: identity of the model a quota probe would actually launch.
+    fn quota_candidates(&mut self, _delivery: &Delivery) -> Result<Vec<crate::looks::QuotaModel>> {
+        Ok(vec![])
+    }
     /// Success proves that the exact stalled attempt has ended.
     fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {
         Err(crate::Error::Invalid("adapter cannot stop a stalled run"))
@@ -608,6 +615,7 @@ mod observation_shapes {
                 generation: 3,
                 role: "maker".into(),
                 reply: json!({"kind": "done"}),
+                plan_check: None,
                 model: None,
             }),
             json!({"WorkerReply": {"node": 0, "generation": 3, "role": "maker",

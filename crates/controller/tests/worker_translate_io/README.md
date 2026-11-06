@@ -40,9 +40,34 @@ for conformance of the shell's boundary projections and I/O schedule.
 
 Run `//crates/controller:test_test_worker_translate_io` alone on BuildBuddy.
 
+The current shell includes #833's typed prerequisite validation. Its resource
+inspection calls the production Rust helper, and its buffered diagnostic write
+is copied verbatim and source-checked. Existing differential schedules return
+non-mismatching prerequisite results and preserve the original write/read order.
+The real mismatch and rollback cases run in `test_test_input_resources`.
+
 Reviewer verdict and head presence are generated independently. The successful
 findings property varies nonempty blocker counts/text, existing feedback and
 material/document tapes, and asserts a committed populated maker_findings row.
 It feeds those exact rows into a maker reply and replays both sides of its intern
 write. Mandatory shell witnesses assert RunFailed and the expected call/row
 trace for invalid maker paths and known request-scope citations without a quote.
+
+#832 adds the optional plan-check provenance field to the test observation. The
+reference arm ignores exactly that field; its original arm bytes and all frozen
+leaf hashes remain pinned. The current arm and its protocol mapping are copied
+from production by `sync.py`, which runs on BuildBuddy. Only the current arm uses
+`protocol-current.rs`; the reference keeps the original protocol implementation.
+The differential schedules supply no provenance, so they check the dormant
+fallback and preserve the existing I/O and failure order. Semantic-provenance
+cases run through the real controller acceptance tests.
+
+#828 keeps the reviewed historical WorkerReply arm from
+683829169d577b921a1bc93e446b49399886a092 for extraction conformance. The only
+intentional difference from production is the legacy model-only quota clear,
+which is now forbidden. Its exact bytes and SHA256 are pinned separately in
+legacy-quota-clear.rs.txt and pins.json. The source check strips only that block
+before comparing all remaining code to
+production. Original differential schedules, I/O assertions and references stay
+unchanged. The real-store quota_hold upgrade regression proves that an older or
+other-family success preserves unknown legacy quota after restart.
