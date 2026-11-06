@@ -76,31 +76,6 @@ pub(super) proof fn joined_unfunded(before: World, fast: World, off: World, on: 
     assert(port_failfast_pair::retried(before.nodes@[0], off.nodes@[0]));
 }
 
-/// Q54 MakerNeedsFiles fitting extension: funded unions agree; an unfunded union
-/// asks for maker credit under fail_fast while the ordinary branch asks to split.
-pub(super) proof fn joined(before: World, fast: World, off: World, on: World, generation: u64,
-    files: Footprint, fits: bool, initial: Outbox, off_out: Outbox, on_out: Outbox)
-    requires retirement::domain(before), retirement::accepted(before), !before.fail_fast,
-        fast.fail_fast, port_failfast_admission::same_world(before, fast),
-        before.file_sets@.len() == 0, before.next_question < u64::MAX,
-        before.nodes@[0].phase == Phase::Making, node_headroom(before.nodes@[0]), initial.len == 0,
-        port_review_reply::active(before.nodes@[0], generation),
-        footprint::valid_footprint(before, files),
-        port_replies_maker_admission::inline_input(before, Reply::MakerNeedsFiles { files, fits }),
-        port_review_reply::reply_post(before, off, 0, generation,
-            Reply::MakerNeedsFiles { files, fits }, initial, off_out),
-        port_review_reply::reply_post(fast, on,
-            0, generation, Reply::MakerNeedsFiles { files, fits }, initial, on_out),
-        fits, !footprint::footprint_empty(files),
-    ensures port_failfast_replies::diverted(before, off, on, Reply::MakerNeedsFiles { files, fits }, on_out),
-{
-    if port_review_retry::funded(port_review_reply::ended(before.nodes@[0])) {
-        joined_funded(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
-    } else {
-        joined_unfunded(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
-    }
-}
-
 /// Q54 MakerNeedsFiles non-fitting or empty input: one world's real reply
 /// relation reduces to the exhaustion-row equation and an unchanged world frame.
 pub(super) proof fn room_side(w: World, after: World, generation: u64, files: Footprint,
@@ -162,7 +137,11 @@ pub(super) proof fn compare(before: World, fast: World, off: World, on: World, g
     ensures port_failfast_replies::diverted(before, off, on, Reply::MakerNeedsFiles { files, fits }, on_out),
 {
     if fits && !footprint::footprint_empty(files) {
-        joined(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
+        if port_review_retry::funded(port_review_reply::ended(before.nodes@[0])) {
+            joined_funded(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
+        } else {
+            joined_unfunded(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
+        }
     } else {
         exhausted(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
     }
