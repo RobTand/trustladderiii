@@ -7,7 +7,16 @@ use proptest::{
 use sha2::{Digest, Sha256};
 fn arm<'a>(source: &'a str, name: &str) -> &'a str {
     let prefix = "            Observation::";
-    let start = source.find(&format!("{prefix}{name}")).unwrap();
+    let start = source
+        .match_indices(&format!("{prefix}{name}"))
+        .find(|(start, found)| {
+            matches!(
+                source.as_bytes().get(*start + found.len()),
+                Some(b' ' | b'{' | b'(')
+            )
+        })
+        .unwrap()
+        .0;
     let rest = &source[start..];
     let end = [
         "\n            Observation::",
