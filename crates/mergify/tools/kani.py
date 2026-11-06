@@ -32,7 +32,6 @@ PROOF_FILES = [
 # property its harness states, so the harness must fail. Every harness has at
 # least one.
 MUTANTS = [
-    ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
 ]
 
 

@@ -208,6 +208,22 @@ def verus_proofs():
             "dequeue_fresh": ("dequeue_fresh", "enqueue#dequeue_pending", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
             "dequeue_fresh_label_event": ("dequeue_fresh", "enqueue#LabelEvent::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
             "dequeue_fresh_witness": ("dequeue_fresh", "witness", 4, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            # ctrl-core C2: required-check port and rerun-budget selectors.
+            "required_check": ("required_check", "enqueue#required_check", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_types": ("required_check", "enqueue#RequiredState::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_witness": ("required_check", "witness#covers", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_oracle_witness": ("required_check", "witness#oracle", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "rerun_budget": ("rerun_budget", "enqueue#decide", 1),
+            "rerun_budget_consumed_receipt_witness": ("rerun_budget", "witness#consumed_receipt", 1),
+            "rerun_budget_retained_budget_witness": ("rerun_budget", "witness#retained_budget", 1),
+            "rerun_budget_dispatch_once_witness": ("rerun_budget", "witness#dispatch_once", 1),
+            "rerun_budget_result_budget_witness": ("rerun_budget", "witness#result_budget", 1),
+            "rerun_budget_read_gates_witness": ("rerun_budget", "witness#read_gates", 1),
+            "rerun_budget_read_receipts_witness": ("rerun_budget", "witness#read_receipts", 1),
+            "rerun_budget_absent_results_witness": ("rerun_budget", "witness#absent_results", 1),
+            "rerun_budget_terminal_results_witness": ("rerun_budget", "witness#terminal_results", 1),
+            "rerun_budget_resumable_results_witness": ("rerun_budget", "witness#resumable_results", 1),
+            "rerun_budget_pending_covers_witness": ("rerun_budget", "witness#pending_covers", 1),
         }
         for name, entry in enqueue_groups.items():
             root, module, count = entry[:3]

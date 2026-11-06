@@ -331,11 +331,11 @@ fn matches(selector: &str, name: &str) -> bool {
 }
 
 fn inventory(root: &Path, groups: &[Group]) -> Result<(usize, usize), String> {
-    let proofs = root.join("proofs");
+    let proofs = root.join("proofs").canonicalize().unwrap();
     let production = root.join("src/decide/enqueue.rs").canonicalize().unwrap();
     let mut sources = BTreeMap::new();
     sources.insert(production, Vec::new());
-    for file in std::fs::read_dir(proofs).unwrap() {
+    for file in std::fs::read_dir(&proofs).unwrap() {
         let file = file.unwrap().path();
         if file
             .file_name()
@@ -379,6 +379,16 @@ fn inventory(root: &Path, groups: &[Group]) -> Result<(usize, usize), String> {
         for input in base_inputs.iter().chain(&group.extra_specs) {
             match root.join(input).canonicalize() {
                 Ok(path) if path.is_file() => {
+                    // Roots may share inputs; obligation ownership is checked below.
+                    if group.extra_specs.contains(input)
+                        && (!path.starts_with(&proofs)
+                            || path.extension().is_none_or(|e| e != "rs")
+                            || Path::new(input)
+                                .components()
+                                .any(|c| c == std::path::Component::ParentDir))
+                    {
+                        errors.push(format!("{}: invalid extra proof input {input}", group.name));
+                    }
                     if !declared.insert(path) {
                         errors.push(format!("{}: duplicate proof input {input}", group.name));
                     }
@@ -557,6 +567,7 @@ fn extra_specs_are_optional_existing_and_unique() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut groups = groups(GROUPS);
     assert!(groups[0].extra_specs.is_empty());
+    assert!(inventory(root, &groups).is_ok());
     groups[0]
         .extra_specs
         .push("proofs/enqueue_write_ahead_label_spec.rs".into());
@@ -581,4 +592,21 @@ fn extra_specs_are_optional_existing_and_unique() {
             .unwrap_err()
             .contains("missing proof input")
     );
+}
+
+#[test]
+fn mandatory_extra_specs_stay_under_proofs() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for input in [
+        "Cargo.toml",
+        "proofs/../proofs/enqueue_write_ahead_label_spec.rs",
+    ] {
+        let mut groups = groups(GROUPS);
+        groups[0].extra_specs.push(input.into());
+        assert!(
+            inventory(root, &groups)
+                .unwrap_err()
+                .contains("invalid extra proof input")
+        );
+    }
 }
