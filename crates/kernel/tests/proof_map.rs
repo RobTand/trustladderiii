@@ -121,6 +121,7 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "progress_from_unplanned_waiting_one",
         "progress_unplanned_waiting",
     ),
+    ("fail_fast_plan_cant_meet", "port_failfast_apply_plan"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

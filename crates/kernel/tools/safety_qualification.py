@@ -313,8 +313,8 @@ CASES = {
         '//crates/kernel:verus_footprint'),
     'port_failfast_rung_diversion': (
         'crates/kernel/src/retries.rs',
-        '    if fail_fast {\n        stop_for_review(m, step);\n    } else if m.attempt < 3 {',
-        '    if false && fail_fast {\n        stop_for_review(m, step);\n    } else if m.attempt < 3 {',
+        '    let fail_fast = w.fail_fast;\n    let m = &mut w.nodes[i];\n    kernel_snapshot! { rung_node = *m }',
+        '    let fail_fast = false;\n    let m = &mut w.nodes[i];\n    kernel_snapshot! { rung_node = *m }',
         '//crates/kernel:verus_review_retry_rung'),
     # #806 W1: each original worker-reply transition has a production mutant.
     'reply_ingest_done': ('crates/kernel/src/ingest.rs',
