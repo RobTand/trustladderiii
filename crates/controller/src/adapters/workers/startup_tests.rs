@@ -994,6 +994,18 @@ fn t653_input_schema_defect_reaches_the_incident_without_retrying() {
             .count(),
         1
     );
+    // #862 case 2 (design note, current behaviour): a permanent schema failure
+    // asks Rob and holds no incident wait, so Q51's release clear skips it.
+    assert_eq!(incident["needs_rob"], true);
+    assert_eq!(incident["blocking"], false);
+    let node = incident["node"].as_u64().unwrap() as usize;
+    assert!(controller.world().unwrap().nodes[node].question.is_some());
+    controller.start_release("t862-release").unwrap();
+    let after = store.load().unwrap();
+    assert!(after.rows.iter().any(|row| row.table == "incidents"
+        && row.value["open"] == true
+        && row.value["signature"]["class"] == "worker_input_schema"));
+    assert!(controller.world().unwrap().nodes[node].question.is_some());
 }
 
 #[test]
