@@ -1094,6 +1094,7 @@ mod tests {
             seed.rows.push(put(&table, id, value));
         }
         c.store.commit(&seed).unwrap();
+        seed_current_delivery(&mut c, &repository, 2761);
         let before = c.world().unwrap();
         let endings = |snapshot: &Snapshot| {
             snapshot
@@ -1223,6 +1224,25 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    fn seed_current_delivery(c: &mut Controller, repo: &Repository, number: u64) {
+        let snapshot = c.snapshot().unwrap();
+        let mut commit = Commit::new("seed-current-delivery", json!(null), &snapshot);
+        retain_fact(
+            &snapshot,
+            &mut commit,
+            ExternalFact {
+                repository: repo.clone(),
+                kind: PrerequisiteKind::Issue,
+                number,
+                status: DependencyStatus::Delivered,
+                reason: Some("completed".into()),
+                updated_at: Some("2026-11-04T00:00:00Z".parse().unwrap()),
+            },
+        )
+        .unwrap();
+        c.store.commit(&commit).unwrap();
     }
 
     fn event(c: &mut Controller, event: Event) {
@@ -1498,6 +1518,7 @@ mod tests {
             Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone),
         );
         reply(&mut c, restarted, Reply::AuditAgrees);
+        external(&mut c, &repo, 2761, DependencyStatus::Delivered);
         assert_eq!(
             c.world().unwrap().nodes[1].phase,
             Phase::Planning { must_split: false }
@@ -1694,7 +1715,7 @@ mod tests {
     #[test]
     fn completion_without_waiters_retains_delivery_for_later_declaration() {
         let mut db = Database::start();
-        let (_repo, mut c, repo) = fixture(&mut db, "completion_without_waiters");
+        let (fake_repo, mut c, repo) = fixture(&mut db, "completion_without_waiters");
         let root = intake(&mut c, &repo, 2761);
         reply(&mut c, root, Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone));
         reply(&mut c, root, Reply::AuditAgrees);
@@ -1706,6 +1727,12 @@ mod tests {
                 .unwrap()
                 .status,
             DependencyStatus::Delivered
+        );
+        crate::adapters::github::set_fake_issue(
+            &fake_repo.root.path().join("fakes"),
+            &serde_json::from_value(json!({"number":2761,"title":"Delivered", "body":null,
+                "state":"closed","state_reason":"completed","updated_at":"2026-11-04T00:00:00Z"}))
+            .unwrap(),
         );
         let waiter = intake(&mut c, &repo, 42);
         ingest(&mut c, waiter, &[2761]);

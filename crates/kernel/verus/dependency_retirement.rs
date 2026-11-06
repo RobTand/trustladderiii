@@ -80,21 +80,21 @@ pub(super) open spec fn fact_result(before: World, after: World, incoming: Depen
         && after.dependencies@[0].status == expected(before, incoming)
         && after.nodes@[0].phase == before.nodes@[0].phase
         && (prepared(before, incoming, None) ==> after.nodes@ == before.nodes@
-            && out_after == out_before)
+            && out_after.len == out_before.len && out_after.items@ == out_before.items@)
         && (!prepared(before, incoming, None) ==> {
             let blocked = incoming != DependencyStatus::Delivered;
             after.nodes@[0] == (Node {
                 waiting_prerequisite: if blocked { Some(2761u64) } else { None },
                 credit: Credit { withheld: before.nodes@[0].credit.withheld
                     || (blocked && !before.nodes@[0].planning_started
-                        && matches!(before.nodes@[0].phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+                        && (match before.nodes@[0].phase { Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true, _ => false })
                         && before.nodes@[0].credit.ready), ..before.nodes@[0].credit },
                 ..before.nodes@[0]
             }) && if incoming == DependencyStatus::Abandoned {
                 out_after.len == out_before.len + 1 && out_after.items@[out_before.len as int]
                     == Some(Out::Notice { node: NodeId(0), notice: Notice::Note(
                         NoteKind::DependencyAbandoned { number: 2761 }) })
-            } else { out_after == out_before }
+            } else { out_after.len == out_before.len && out_after.items@ == out_before.items@ }
         })
 }
 }
@@ -127,6 +127,7 @@ pub(super) proof fn preserves(before: World, after: World, incoming: DependencyS
 pub(super) fn verify_fact(mut world: World, status: DependencyStatus) -> (result: (World, Outbox))
     requires domain(world), accepted(world),
     ensures domain(result.0), accepted(result.0),
+        dependencies::dependency_frame(world, result.0, 0),
         pristine(world.nodes@[0]) ==> pristine(result.0.nodes@[0]),
         result.0.dependencies@[0].status == expected(world, status),
         result.0.nodes@[0].phase == world.nodes@[0].phase,
@@ -140,9 +141,15 @@ pub(super) fn verify_fact(mut world: World, status: DependencyStatus) -> (result
     }
     let target = world.dependencies[0].target;
     let ghost empty = out;
+    proof {
+        let canonical = Outbox { items: [None; OUTBOX], len: 0 };
+        assert(canonical.items@ =~= empty.items@);
+    }
     world.dependency_fact(0, target, status, &mut out);
     proof { preserves(before, world, status, empty, out); }
-    proof { reveal(storage_ordered); reveal(footprint::ordered_table); }
+    proof { reveal(storage_ordered); reveal(footprint::ordered_table);
+        reveal(dependency_retirement_domain); reveal(dependency_retirement_accepted); }
+    proof { reveal(dependency_retirement_domain); reveal(dependency_retirement_accepted); }
     let checked = world.check();
     assert(checked.is_ok());
     (world, out)
@@ -159,6 +166,7 @@ pub(super) open spec fn pristine(n: Node) -> bool {
 /// #693: original one-node waiting constructor, no loop/unwind.
 pub(super) fn waiting_world() -> (world: World)
     ensures domain(world), accepted(world), pristine(world.nodes@[0]),
+        world.nodes@[0].generation == 0, !world.nodes@[0].planning_started,
         world.nodes@[0].phase == Phase::Unplanned,
         world.nodes@[0].credit == (Credit { ready: true, start: 4, earned: 0, added: 0,
             spent: 0, merge_credited: false, withheld: true }),
@@ -212,6 +220,7 @@ pub(super) fn verify_abandoned(status: DependencyStatus) -> (result: (World, boo
         reveal(scheduling_safe); reveal_with_fuel(open_prefix, 2);
         reveal_with_fuel(potential_prefix, 2);
         reveal(advance_pre); reveal(initial_node); reveal(retirement::node_rules);
+        reveal(dependencies::dependency_frame);
         dependencies::delivered_definition(world.dependencies@, NodeId(0));
         footprint::inline_is_valid(world, 0);
     }
@@ -225,6 +234,7 @@ pub(super) fn verify_abandoned(status: DependencyStatus) -> (result: (World, boo
         else { assert(world.nodes@[0] == before.nodes@[0]); }
         assert(accepted(world));
     }
+    proof { reveal(dependency_retirement_domain); reveal(dependency_retirement_accepted); }
     let checked = world.check();
     assert(checked.is_ok());
     (world, admitted)
@@ -259,6 +269,7 @@ fn fact_witness(case: u8) -> (result: World)
     proof {
         reveal(initial_node); reveal(retirement::node_rules);
         footprint::inline_is_valid(world, 0);
+        footprint::inline_is_valid(world, 1);
         assert(accepted(world));
     }
     let status = if case == 0 { DependencyStatus::Delivered } else { DependencyStatus::Abandoned };

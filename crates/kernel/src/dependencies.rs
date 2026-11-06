@@ -469,6 +469,7 @@ impl World {
                 let mut edge = 0usize;
                 kernel_while! { (edge < self.dependencies.len()) [
                     invariant edge <= self.dependencies.len(),
+                        dependency_retirement::edge_domain(*self) ==> node_index == 0,
                         progress_unplanned_witness::fixture_edges(*self)
                             ==> node_index == 0 && self.dependencies@.len() > 0,
                         !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
@@ -711,7 +712,9 @@ impl World {
     kernel_fn! {
     /// #693 / #771: find the same first blocking declaration as the public query.
     pub(super) fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
-        ensures match result {
+        ensures dependency_retirement::edge_domain(*self) && node == NodeId(0) ==> result ==
+                if self.dependencies@[0].status == DependencyStatus::Delivered { None } else { Some(self.dependencies@[0]) },
+            match result {
             Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
                 && exists|j: int| 0 <= j < self.dependencies@.len() && self.dependencies@[j] == d,
             None => prerequisites_delivered(*self, node),
@@ -766,6 +769,7 @@ impl World {
         };
         self.record_dependency(i, existing, dependency, out);
         kernel_proof! {
+            reveal(dependency_frame);
             if status == DependencyStatus::Delivered && delivery_input(before_delivery@, i as int, target) {
                 reveal(delivery_input);
                 let k = existing.unwrap() as int;
@@ -884,11 +888,12 @@ impl World {
                     waiting_prerequisite: if dependency.status == DependencyStatus::Delivered { None } else { Some(2761u64) },
                     credit: Credit { withheld: old(self).nodes@[0].credit.withheld
                         || (dependency.status != DependencyStatus::Delivered && !old(self).nodes@[0].planning_started
-                            && matches!(old(self).nodes@[0].phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+                            && (match old(self).nodes@[0].phase { Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true, _ => false })
                             && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
                     ..old(self).nodes@[0]
                 }),
     ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
+        kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
         match existing {
             Some(index) => self.dependencies[index] = dependency,
@@ -911,7 +916,25 @@ impl World {
                 }),
             );
         }
-        self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
+        kernel_proof! {
+            if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
+                && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
+                && !dependency.rejected {
+                assert(dependency_retirement::edge_domain(*self));
+                assert(self.dependencies@[0] == dependency);
+            }
+        }
+        let waiting = self.first_undelivered(node);
+        self.nodes[i].waiting_prerequisite = match waiting {
+            Some(d) => Some(d.target.number), None => None,
+        };
+        kernel_proof! {
+            if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
+                && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
+                && !dependency.rejected {
+                assert(self.nodes@[0].waiting_prerequisite == if dependency.status == DependencyStatus::Delivered { None } else { Some(2761u64) });
+            }
+        }
         self.withhold_dependency_credit(i);
     }
     }

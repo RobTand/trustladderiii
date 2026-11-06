@@ -110,6 +110,7 @@ fn queue_merge_refusal() {
     world.nodes[0].credit.start = 4;
     world.next_ticket = u64::MAX - world.ticket_step_budget().unwrap();
     persist_world(&mut c, &world, "seed-queue-refusal");
+    seed_current_delivery(&mut c, &repository, 2761);
     let snapshot = c.snapshot().unwrap();
     let mut binding = Commit::new("bind-queue-pr", json!(null), &snapshot);
     binding
