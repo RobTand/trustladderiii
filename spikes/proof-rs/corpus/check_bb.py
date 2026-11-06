@@ -43,7 +43,21 @@ try:
         binary = Path(temporary) / 'rustfmt'
         binary.write_bytes(archive.extractfile(member).read())
         binary.chmod(0o755)
-        result = subprocess.run([str(binary), '--check', '--edition', '2024', 'spikes/proof-rs/src/main.rs'])
+        # rustfmt links the matching compiler driver and LLVM shared libraries.
+        compiler_url = formatter_url.replace('rustfmt-', 'rustc-')
+        with urllib.request.urlopen(compiler_url, timeout=60) as response:
+            compiler_data = response.read()
+        with urllib.request.urlopen(compiler_url + '.sha256', timeout=60) as response:
+            compiler_expected = response.read().decode().split()[0]
+        if hashlib.sha256(compiler_data).hexdigest() != compiler_expected:
+            raise ValueError('rustc archive checksum mismatch')
+        with tarfile.open(fileobj=io.BytesIO(compiler_data), mode='r:xz') as compiler:
+            for library in compiler.getmembers():
+                if library.isfile() and '.so' in Path(library.name).name:
+                    (Path(temporary) / Path(library.name).name).write_bytes(compiler.extractfile(library).read())
+        formatter_environment = dict(os.environ)
+        formatter_environment['LD_LIBRARY_PATH'] = temporary
+        result = subprocess.run([str(binary), '--check', '--edition', '2024', 'spikes/proof-rs/src/main.rs'], env=formatter_environment)
         print('CHECK rustfmt-1.99.1', result.returncode, flush=True)
         if result.returncode:
             failed.append('rustfmt')
