@@ -4700,7 +4700,13 @@ fn proof_rows_survive_check_observation(settings: &tl3_config::Store) {
             adapters::prismabuild::Fake::new(&fakes),
             vec![],
             move |delivery, completion: &mut Completion| {
-                if matches!(delivery.output, Out::Effect { kind: EffectKind::SubmitChecks, .. }) {
+                if matches!(
+                    delivery.output,
+                    Out::Effect {
+                        kind: EffectKind::SubmitChecks,
+                        ..
+                    }
+                ) {
                     let sha = delivery.head_sha.clone().unwrap();
                     completion.observations = vec![Observation::Checks {
                         node: delivery.node(),
@@ -4749,7 +4755,10 @@ fn proof_rows_survive_check_observation(settings: &tl3_config::Store) {
         .unwrap();
     let mut store = tl3_store::Store::open(settings).unwrap();
     for _ in 0..100 {
-        assert!(controller.drive_once().unwrap(), "checks must reach feedback");
+        assert!(
+            controller.drive_once().unwrap(),
+            "checks must reach feedback"
+        );
         if let Some(findings) = store.worker_document("0", "maker_findings").unwrap() {
             let finding = &findings[0];
             assert_eq!(

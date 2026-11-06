@@ -95,7 +95,10 @@ impl Shell<'_> {
                     .take(findings::MAX_FAILED_TESTS)
                     .map(|test| findings::FailedTest {
                         test: findings::clipped(&test.test, 4096),
-                        message: findings::clipped(&test.message, tl3_contracts::report::PROOF_MESSAGE_CHARS),
+                        message: findings::clipped(
+                            &test.message,
+                            tl3_contracts::report::PROOF_MESSAGE_CHARS,
+                        ),
                     })
                     .collect();
                 Event::Reply {
