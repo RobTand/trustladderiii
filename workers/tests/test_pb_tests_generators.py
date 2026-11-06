@@ -16,6 +16,19 @@ from worker_process import generator_backend  # noqa: F401
 from worker_process import generator_repo  # noqa: F401
 
 
+def test_selected_flux_generator_holds_without_pb_tools_or_checkpoint_loss(generator_repo, tmp_path):
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.test_settings = TestSettings(image=IMAGE,
+        execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
+    original = {'phase': 'submitted', 'backend': 'prismabuild', 'key': KEY, 'contract': {}}
+    tree.generator_state.write_text(json.dumps(original))
+    with tree:
+        result = generate()
+    assert result['status'] == 'not_available'
+    assert 'shared worker collector' in result['message']
+    assert json.loads(tree.generator_state.read_text()) == original
+
+
 @pytest.mark.durability
 def test_request_132_git_index_generation_lands_before_independent_check(generator_repo, generator_backend, tmp_path):
     tree, generate = configured_generator(generator_repo, tmp_path)

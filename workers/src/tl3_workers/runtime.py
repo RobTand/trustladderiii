@@ -27,6 +27,7 @@ from tl3_workers.roles import ROLES
 from tl3_workers.roles.audit import ingest_reply_contract
 from tl3_workers.roles.planner import EXPLORATION_DECLARATION
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
+from tl3_workers.pb_tests import TestSettings
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
@@ -312,6 +313,9 @@ def _run(request, emit):
             worktree.environment_errors_end_run = role.environment_errors_end_run
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
+            if 'tests' in request['inputs']:
+                worktree.test_settings = TestSettings(**request['inputs']['tests'])
+                worktree.test_checkout = Path(request['worktree'])
         if role.name == 'planner':
             worktree.forcing_rehearsals = ForcingRehearsals(
                 worktree, request['inputs'], checkout=request['worktree'], checkpoint=request.get('session_file'))

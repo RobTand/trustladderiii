@@ -117,6 +117,8 @@ def make_generator_tool(worktree, *, restore_only=False):
         patterns = list(getattr(worktree, "generated_files", ()))
         if not isinstance(settings, TestSettings) or not command or not patterns:
             return {"status": "not_available", "message": "No admitted generator command/output contract was configured."}
+        if settings.backend == 'flux':
+            return {"status": "not_available", "message": "Flux generator execution is held pending the shared worker collector, output bounds and qualified runtime."}
         generator.configured_argv(command)
         selected = generator.budget(settings.cpus, settings.mem_gb,
                                     getattr(worktree, "generator_timeout_s", generator.TIMEOUT))
@@ -130,6 +132,8 @@ def make_generator_tool(worktree, *, restore_only=False):
         state_path = getattr(worktree, "generator_state", None)
         nonlocal transient_state
         state = json.loads(state_path.read_text()) if state_path and state_path.exists() else transient_state
+        if state.get('phase') in ('submitted', 'importing') and state.get('backend', 'prismabuild') != settings.backend:
+            raise ValueError("Generator checkpoint belongs to another execution backend; retain its binding for resolution.")
 
         def record():
             nonlocal transient_state
@@ -192,7 +196,7 @@ def make_generator_tool(worktree, *, restore_only=False):
                     key = submitted["action_key"]
                     if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
                         raise ValueError("PrismaBuild returned an invalid generator action key.")
-                    state = {"phase": "submitted", "contract": identity, "key": key,
+                    state = {"phase": "submitted", "contract": identity, "key": key, "backend": settings.backend,
                              "before": current, "input_tree": tree}
                     record()
             key = state["key"]

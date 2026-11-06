@@ -88,16 +88,25 @@ def selection_matches(value, selectors):
 @dataclass(frozen=True)
 class TestSettings:
     image: str
-    tools_path: Path
+    tools_path: Path | None = None
     cpus: int = 1
     mem_gb: int = 2
     quiet_seconds: int = 120
+    execution: dict | None = None
+
+    @property
+    def backend(self):
+        return 'prismabuild' if self.execution is None else self.execution['backend']
 
     def __post_init__(self):
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
             raise ValueError("Use an immutable container image digest")
-        if not Path(self.tools_path).is_absolute():
-            raise ValueError("PrismaBuild tools_path must be absolute")
+        if self.execution is None:
+            if self.tools_path is None or not Path(self.tools_path).is_absolute():
+                raise ValueError("PrismaBuild tools_path must be absolute")
+        elif (self.tools_path is not None or set(self.execution) != {'backend', 'profile'}
+              or self.backend != 'flux' or not Path(self.execution['profile']).is_absolute()):
+            raise ValueError("Use the controller's selected execution profile")
         if any(type(v) is not int or v < 1 for v in (self.cpus, self.mem_gb, self.quiet_seconds)):
             raise ValueError("Test resource and quiet allowances must be positive integers")
 
@@ -461,7 +470,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
         phase = "admission"
         try:
             if not isinstance(settings, TestSettings):
-                return infrastructure("PrismaBuild test settings were not supplied by the role.")
+                return infrastructure("Test settings were not supplied by the role.")
+            if settings.backend == 'flux':
+                # Shared collector/bounds and runtime qualification must be published before activation.
+                return infrastructure("Flux worker execution is held pending the shared worker collector, output bounds and qualified runtime.")
             base_sha = getattr(worktree, "check_base_sha", None) if base else None
             if base and (not isinstance(base_sha, str)
                          or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", base_sha)
@@ -486,7 +498,11 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 worktree.pb_identity = identity
                 # Stage first. An old checkpoint is usable only for this immutable
                 # input, selection, resources and trusted executor implementation.
-                reattach = getattr(worktree, "pb_reattach", {}).pop(base, None)
+                reattachments = getattr(worktree, "pb_reattach", {})
+                reattach = reattachments.get(base)
+                if isinstance(reattach, dict) and reattach.get('backend', 'prismabuild') != settings.backend:
+                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "reattachment", "checkpoint_backend_changed")
+                reattachments.pop(base, None)
                 if (isinstance(reattach, dict) and getattr(worktree, "pb_strict_reattach", False)
                         and (reattach.get("identity") != identity or reattach.get("tree") != tree)):
                     key = reattach.get("key")

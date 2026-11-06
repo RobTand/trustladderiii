@@ -39,6 +39,21 @@ def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal):
     assert restored.active['inflight']['backend'] == 'flux'
 
 
+def test_selected_flux_maker_reaches_explicit_hold_without_pb_transport(rehearsal, monkeypatch):
+    from tl3_workers import pb_tests
+    ledger, _, _, calls = rehearsal
+    ledger.worktree.test_settings = pb_tests.TestSettings(
+        image='sha256:' + '1' * 64,
+        execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
+    def forbidden(_):
+        pytest.fail('selected Flux invoked a PB transport')
+    monkeypatch.setattr(pb_tests, '_json_command', forbidden)
+    result = pb_tests.make_test_tool(ledger.worktree)([NODE])
+    assert result['status'] == 'infrastructure_error'
+    assert 'shared worker collector' in result['message']
+    assert not calls
+
+
 @pytest.mark.parametrize('reached', [False, True])
 def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch, reached):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel

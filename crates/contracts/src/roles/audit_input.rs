@@ -11,6 +11,8 @@ use serde_json::Value;
 /// Serialize through `serde_json::to_value` to retain the producer's sorted keys.
 /// Direct struct serialization follows declaration order and differs from those bytes.
 pub struct AuditInput {
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub tests: Option<crate::roles::maker_input::Tests>,
     #[schemars(with = "IssueRef")]
     pub issue: crate::roles::ingest_input::Issue,
     /// Bounded orientation at the pinned base. Explore source evidence with read-only tools.

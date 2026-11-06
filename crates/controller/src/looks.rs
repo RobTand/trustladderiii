@@ -1303,12 +1303,12 @@ impl Controller {
                     state.external_wait = Some(wait.clone());
                     state.wait_ended = false;
                 }
-                let record = if wait.upstream == "prismabuild" {
+                let record = if matches!(wait.upstream.as_str(), "prismabuild" | "flux") {
                     self.adapters
                         .get(Upstream::PrismaBuild)?
                         .wait_record(&wait.key, &checkout)
                 } else {
-                    Ok(crate::executor::WaitRecord::Ended)
+                    Err(crate::Error::Invalid("unrecognized external wait backend"))
                 };
                 match state_decisions::wait_action(wait_status(&record), state.wait_ended) {
                     state_decisions::WaitAction::WatchAlive => {

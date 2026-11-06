@@ -17,6 +17,16 @@ from worker_process import prepare_base_submission
 from worker_process import submission  # noqa: F401
 
 
+def test_pb_selection_holds_flux_checkpoint_without_consuming_it(submission):
+    root, scripts = submission
+    with Worktree(root) as tree:
+        tree.pb_reattach = {False: {'backend': 'flux', 'key': 'worker:' + 'a' * 64}}
+        for _ in range(2):
+            result = make_test_tool(tree, TestSettings(IMAGE, scripts))(['test_code.py'])
+            assert result['execution']['termination_reason'] == 'checkpoint_backend_changed'
+            assert tree.pb_reattach[False]['backend'] == 'flux'
+
+
 def test_base_run_returns_base_outcomes_and_keeps_maker_tree(submission):
     root, scripts = submission
     base, head, before, git = prepare_base_submission(submission)
