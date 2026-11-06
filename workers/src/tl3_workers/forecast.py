@@ -3,6 +3,8 @@
 Deployment must preload tiktoken's o200k_base data in TIKTOKEN_CACHE_DIR.
 """
 
+from tl3_harness.model import named
+
 import base64
 import codecs
 import hashlib
@@ -90,6 +92,7 @@ class DeclaredFileError(ValueError):
 
     def __init__(self, path, reason, size=None):
         self.path, self.reason, self.size = path, reason, size
+        self.rule = getattr(reason, "rule", "path.unusable")
         super().__init__(f"{path}: {reason}" + (f" ({size} bytes)" if size is not None else ""))
 
 
@@ -104,9 +107,9 @@ def _file_tokens(worktree, path, encoding):
     try:
         parts = _parts(path)
     except ValueError as error:
-        raise DeclaredFileError(path, str(error)) from None
+        raise DeclaredFileError(path, named("path.noncanonical", str(error), dict(path=path))) from None
     if not parts or str(PurePosixPath(path)) != path:
-        raise DeclaredFileError(path, "not a canonical relative path")
+        raise DeclaredFileError(path, named('path.noncanonical', "not a canonical relative path", dict(path=path)))
     # New files, including those in new directories, have no base content.
     # Existing ancestors still pass the file tools' descriptor confinement.
     try:
@@ -117,31 +120,31 @@ def _file_tokens(worktree, path, encoding):
     except (OSError, ValueError) as error:
         if _environment(error):
             raise
-        raise DeclaredFileError(path, "not a regular file inside the worktree") from None
+        raise DeclaredFileError(path, named('path.not_regular', "not a regular file inside the worktree", dict(path=path))) from None
     try:
         with worktree._file(path) as stream:
             size = os.fstat(stream.fileno()).st_size
             if size > HARD_CAP_BYTES:
-                raise DeclaredFileError(path, f"over the {HARD_CAP_BYTES}-byte limit", size)
+                raise DeclaredFileError(path, named('path.hard_cap', f"over the {HARD_CAP_BYTES}-byte limit", dict(path=path)), size)
             decoder = codecs.getincrementaldecoder("utf-8")()
             chunks = []
             read = 0
             while chunk := stream.buffer.read(1_048_576):
                 read += len(chunk)
                 if read > HARD_CAP_BYTES:
-                    raise DeclaredFileError(path, f"over the {HARD_CAP_BYTES}-byte limit", read)
+                    raise DeclaredFileError(path, named('path.hard_cap', f"over the {HARD_CAP_BYTES}-byte limit", dict(path=path)), read)
                 if any(byte < 32 and byte not in (9, 10, 13) for byte in chunk):
-                    raise DeclaredFileError(path, "binary", size)
+                    raise DeclaredFileError(path, named('path.binary', "binary", dict(path=path)), size)
                 text = decoder.decode(chunk)
                 if read <= LARGE_FILE_BYTES:
                     chunks.append(text)
             decoder.decode(b"", final=True)
     except UnicodeDecodeError:
-        raise DeclaredFileError(path, "not UTF-8 text", size) from None
+        raise DeclaredFileError(path, named('path.encoding', "not UTF-8 text", dict(path=path)), size) from None
     except (OSError, ValueError) as error:
         if isinstance(error, DeclaredFileError) or _environment(error):
             raise
-        raise DeclaredFileError(path, "not a regular file inside the worktree") from None
+        raise DeclaredFileError(path, named('path.not_regular', "not a regular file inside the worktree", dict(path=path))) from None
     if worktree.is_generated(path):
         return GENERATED_FILE_TOKENS, read if read > LARGE_FILE_BYTES else None
     if read > LARGE_FILE_BYTES:

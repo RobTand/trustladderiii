@@ -77,7 +77,8 @@ def test_whole_file_gets_exact_tool_free_correction(planner_request, file_plan, 
     assert 'Tools are unavailable' in history[-1].text
     assert not any(node in history[-1].text for node in NODES)
     result = events[-1]['reply']
-    assert result['violations'] == []
+    assert events[-1]['reply']['violations']
+    assert any(item['rule'] == 'guard.fields_changed' for item in events[-1]['plan_check']['objections'])
     assert result['checks'] == corrected(file_plan)['checks']
     assert result['files'] == file_plan['files']
     assert result['estimated_tool_turns'] == 46
@@ -115,15 +116,12 @@ def test_file_correction_cannot_change_obligations(planner_request, file_plan, m
 
 def test_file_correction_exhaustion_records_selector(planner_request, file_plan, monkeypatch):
     from tl3_workers import runtime
-    from tl3_workers.tracing import failure_tags
-    from tl3_workers.turns import InvalidReply
     model = model_for(monkeypatch, file_plan, file_plan)
     events = []
-    with pytest.raises(InvalidReply) as raised:
-        runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2 and not any(event['event'] == 'reply' for event in events)
-    message = failure_tags(raised.value)['failure_message']
-    assert FILE in message and 'repaired reply' in message
+    runtime.run(planner_request, events.append)
+    assert len(model.calls) == 2
+    assert FILE in '\n'.join(events[-1]['reply']['violations'])
+    assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
 
 
 @pytest.mark.parametrize('obstacle', ['budget', 'protected', 'must_split', 'disabled'])
@@ -141,7 +139,7 @@ def test_file_syntax_does_not_repair_substantive_refusals(planner_request, file_
     model = model_for(monkeypatch, file_plan, corrected(file_plan))
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
+    assert len(model.calls) == (1 if obstacle == 'disabled' else 2)
     assert events[-1]['reply']['violations']
 
 
@@ -157,7 +155,8 @@ def test_nonexact_selectors_use_planner_chosen_base_nodes(planner_request, file_
     events = []
     runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    assert events[-1]['reply']['violations'] == []
+    assert events[-1]['reply']['violations']
+    assert any(item['rule'] == 'guard.fields_changed' for item in events[-1]['plan_check']['objections'])
     assert events[-1]['reply']['checks'] == fixed['checks']
 
 
@@ -177,18 +176,24 @@ def test_selector_correction_uses_original_base(planner_request, file_plan, monk
         (root / FILE).unlink()
     else:
         (root / FILE).write_text(SOURCE)
-    # A demonstrating observer is allowed to be new. Only selector correction
-    # requires its replacement to be an exact definition from the original base.
+    # Retain this file's original-base observation through an unchanged control.
+    # The demonstrating correction may replace only its rejected selector slot.
+    file_plan['checks'][1]['node_ids'].append(NODES[1])
     file_plan['checks'][2].update(kind='demonstrating', proof={
         'subjects': [], 'observer_support': [], 'red_message': 'expected regression'})
-    fixed = corrected(file_plan)
-    fixed['checks'][2]['node_ids'] = [NODES[0]]
+    fixed = copy.deepcopy(file_plan)
+    fixed['checks'][2]['node_ids'][-1] = NODES[0]
     model = model_for(monkeypatch, file_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)
 
     assert len(model.calls) == 2
-    expected = [] if at_base else [
-        f'Corrected check must name a test defined at the base: {NODES[0]}']
-    assert events[-1]['reply']['violations'] == expected
+    if at_base:
+        assert events[-1]['reply']['violations'] == []
+        assert 'plan_check' not in events[-1]
+    else:
+        assert events[-1]['reply']['violations']
+        assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
+        assert any(item['rule'] == 'check.base_missing'
+                   for item in events[-1]['plan_check']['objections'])
     assert events[-1]['reply']['checks'] == fixed['checks']
