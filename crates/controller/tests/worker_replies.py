@@ -127,6 +127,8 @@ def scripted_reply(request, mode, marker):
                  "no_design_questions": True, "lands_on_its_own": True}
         if mode == "plan-bad-schema":
             reply["checks"][0]["kind"] = "invalid"
+        elif mode == "plan-size":
+            reply["estimated_tool_turns"] = 1000
         elif mode == "plan-invalid":
             reply["files"] = ["conftest.py"]
         elif mode in {"plan-split", "plan-bad-split"}:
