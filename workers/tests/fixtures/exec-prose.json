@@ -52,5 +52,23 @@
     "original_paragraph": "The original scope includes runtime, checkpoint or measurement dependencies. Run any required GPU or served validation through PrismaBuild; CPU checks alone do not establish serving or numerical qualification. Keep the exact original measurement scope.",
     "original_is_route_only": false,
     "source_sha256": "b5b2b43702ebca7eae844192e56c0e664993bb659966ec221eea13fb9db09c23"
+  },
+  {
+    "id": "tessera-1455",
+    "source": "https://github.com/RobTand/tessera/issues/1455",
+    "route": "Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads. Record exit status, logs, terminal records, CAS receipts, skips and missing tools.",
+    "verification": "Existing artifact/device-dependent skips are not evidence for those cases; add self-contained tiny-wire regressions.",
+    "original_paragraph": "Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads. Record exit status, logs, terminal records, CAS receipts, skips and missing tools.",
+    "original_is_route_only": true,
+    "source_sha256": "e2446bdbd231b6c43ba2dba56398a5e440892b86b81e4bc6f30676fa535ae9f9"
+  },
+  {
+    "id": "tessera-1455-visible-audit",
+    "source": "https://github.com/RobTand/tessera/issues/1455#issuecomment-6697514798",
+    "route": "Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records.",
+    "verification": "Existing artifact/device-dependent skips are not evidence for those cases; add self-contained tiny-wire regressions.",
+    "original_paragraph": "Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records.",
+    "original_is_route_only": true,
+    "source_sha256": "b72dbd6ad129272295244b598ac0e8af6dc21412dace16fb74ab969ca7b713ab"
   }
 ]

@@ -1026,3 +1026,143 @@ def test_exec_prose_audit_route_removal_keeps_protected_paths():
     assert after == {'verdict': 'agree', 'objections': [], 'protected_paths': ['protected.py'],
                      'evidence_contract': []}
     validate('audit-reply', after)
+
+
+# #931 EP2: policy categories compose, while nearby verification duties survive.
+EP2_CATEGORIES = [
+    ('execution', 'Execute the development test suite via BuildBuddy.',
+     'Execute arbitrary-command via BuildBuddy.'),
+    ('priority', 'Use scheduling priority -7.',
+     'Use scheduling priority -7 and prove fairness.'),
+    ('admission', 'Reserve CPU and RAM before dispatch.',
+     'Reserve CPU and RAM and verify peak memory stays below 2 GiB.'),
+    ('bounds', 'Limit worker count and native thread count.',
+     'Limit worker count and native thread count and prove no oversubscription.'),
+    ('records', 'Report return codes, run logs, receipts, skipped checks and unavailable tools.',
+     'Report return codes and assert corrupt wires refuse.'),
+]
+EP2_VERIFICATION = [
+    'Existing artifact/device-dependent skips are not evidence for those cases; add self-contained tiny-wire regressions.',
+    'Record skips and missing tools, add no skips/retries/quarantine.',
+    'Tests must pass without skips.',
+    'The new test must fail on base and pass on head.',
+    'GPU and serving validation must establish numerical qualification.',
+    'Install the real parser tool needed to verify the wire.',
+    'Run unknown validation through PrismaBuild.',
+]
+
+
+@pytest.mark.parametrize('category,policy,near_miss', EP2_CATEGORIES)
+@pytest.mark.parametrize('role', ['ingest', 'audit'])
+def test_ep2_policy_categories_and_near_misses(category, policy, near_miss, role):
+    from tl3_workers.evidence import contract_violations
+    from tl3_workers.rules import apply_edit, permits
+
+    before = dict(copy.deepcopy(BRIEF if role == 'ingest' else AGREE),
+                  evidence_contract=[route_requirement(policy), route_requirement(near_miss)])
+    inputs = {'tool_capabilities': [], 'issue': {'body': policy}}
+    rows = contract_violations(inputs, before, role=role)
+    assert rows, category
+    after = copy.deepcopy(before)
+    for row in rows:
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
+    assert after['evidence_contract'] == [route_requirement(near_miss)]
+    assert permits(rows, before, after, role=role)
+    assert not permits(rows, before, dict(after, evidence_contract=[]), role=role)
+    if role == 'ingest':
+        assert policy in after['brief']
+
+
+@pytest.mark.parametrize('guard', EP2_VERIFICATION)
+@pytest.mark.parametrize('policy', [row[1] for row in EP2_CATEGORIES])
+def test_ep2_composed_verification_stays_mandatory(policy, guard):
+    from tl3_workers.evidence import contract_violations, preflight
+
+    mixed = policy + ' ' + guard
+    entry = route_requirement(mixed)
+    before = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
+    inputs = {'tool_capabilities': []}
+    assert not contract_violations(inputs, before)
+    preflight(inputs, before)
+    assert before['evidence_contract'] == [entry]
+    assert any(mixed in error for error in before['evidence_errors'])
+
+
+@pytest.mark.parametrize('case', [case for case in EXEC_PROSE if case['id'].startswith('tessera-1455')],
+                         ids=lambda case: case['id'])
+@pytest.mark.parametrize('dimension,value', [
+    ('runner_features', ['priority', 'resource_admission', 'worker_bound', 'native_threads_2']),
+    ('artifacts', ['exit_status', 'logs', 'terminal_records', 'cas_receipt', 'skips', 'missing_tools']),
+])
+def test_ep2_classifies_before_unsupported_projection(case, dimension, value):
+    from tl3_workers.rules import apply_edit, permits
+    from tl3_workers.evidence import contract_violations
+
+    route = route_requirement(case['route'])
+    route[dimension] = value
+    verification = route_requirement(case['verification'], verification=True)
+    before = dict(copy.deepcopy(BRIEF), evidence_contract=[route, verification])
+    inputs = {'tool_capabilities': [], 'issue': {'body': case['original_paragraph']}}
+    rows = contract_violations(inputs, before)
+    assert rows
+    after = copy.deepcopy(before)
+    for row in rows:
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
+    assert after['evidence_contract'] == [verification]
+    assert case['original_paragraph'] in after['brief']
+    assert permits(rows, before, after, role='ingest')
+    runtime._checked(ROLES['ingest'], inputs, after)
+    assert all(case['route'] not in error for error in after['evidence_errors'])
+    assert any(case['verification'] in error for error in after['evidence_errors'])
+    # An inherited policy must be classified before audit capability comparison.
+    inputs['ingest'] = dict(copy.deepcopy(BRIEF), brief=case['original_paragraph'],
+                            evidence_contract=[route, verification])
+    reply = dict(copy.deepcopy(AGREE), evidence_contract=[])
+    runtime._checked(ROLES['audit'], inputs, reply)
+    assert reply['evidence_contract'] == [verification]
+    assert all(case['route'] not in error for error in reply['objections'])
+    assert any(case['verification'] in error for error in reply['objections'])
+
+
+@pytest.mark.parametrize('dimension,value', [
+    ('methods', ['red_green']), ('runner_features', ['base_head']),
+    ('artifacts', ['numerical_measurement']), ('protected_files', ['reader.py']),
+    ('executor', 'unknown_executor'), ('runner_features', ['unknown_policy']),
+])
+def test_ep2_policy_words_do_not_override_substantive_dimensions(dimension, value):
+    from tl3_workers.evidence import contract_violations, preflight
+
+    entry = route_requirement(EXEC_PROSE[-2]['route'])
+    entry[dimension] = value
+    reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
+    inputs = {'tool_capabilities': []}
+    assert not contract_violations(inputs, reply)
+    preflight(inputs, reply)
+    assert reply['evidence_contract'] == [entry]
+    assert reply['evidence_errors']
+
+
+def test_ep2_unsupported_wrapper_is_not_blanket_context():
+    from tl3_workers.evidence import contract_violations
+
+    text = 'Unsupported evidence requirement: ' + EXEC_PROSE[-2]['route']
+    reply = dict(copy.deepcopy(AGREE), verdict='disagree', objections=[text])
+    assert not contract_violations({'tool_capabilities': []}, reply, role='audit')
+
+
+@pytest.mark.parametrize('name,text,is_context', [['source-policy-paragraph', 'Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads. Record exit status, logs, terminal records, CAS receipts, skips and missing tools.', True], ['source-route-sentence', 'Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads.', True], ['source-recording-sentence', 'Record exit status, logs, terminal records, CAS receipts, skips and missing tools.', True], ['policy-skips-isolated', 'Record skips.', True], ['policy-missing-tools-isolated', 'Record missing tools.', True], ['policy-receipts-isolated', 'Verify terminal records, logs and CAS receipts.', True], ['known-priority-positive', 'Run development tests through PrismaBuild at priority -10.', True], ['visible-audit-requirement', 'Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records.', True], ['verification-parse-once', 'A tiny valid immutable wire is parsed once across cached-unit verification and accepted-wire decoding, measured at the real container parser.', False], ['verification-refusal', 'Corrupt wires, receipt or expected-identity mismatches, incomplete planes, wrong recipes, foreign handles and malformed metadata refuse through the real reader.', False], ['verification-cpu-fixtures', 'Self-contained CPU pytest fixtures and targeted PrismaBuild results establish the parse-count and refusal behavior without a model download.', False], ['verification-skips-not-evidence', 'Existing artifact/device-dependent skips are not evidence for those cases; add self-contained tiny-wire regressions.', False], ['verification-checks-unchanged', 'The accepted-wire path returns the same metadata and decoded values as the ordinary bytes-taking reader, with every existing metadata, profile, plane, geometry and reconstruction check.', False]], ids=lambda value: value if isinstance(value, str) and len(value) < 45 else None)
+def test_ep2_parent_thirteen_cases(name, text, is_context):
+    from tl3_workers.evidence import contract_violations, preflight
+    from tl3_workers.rules import apply_edit
+
+    reply = dict(copy.deepcopy(BRIEF), evidence_contract=[route_requirement(text)])
+    inputs = {'tool_capabilities': [], 'issue': {'body': text}}
+    rows = contract_violations(inputs, reply)
+    assert bool(rows) is is_context, name
+    for row in rows:
+        reply = apply_edit(reply, row.repair, row.repair.allowed.value)
+    preflight(inputs, reply)
+    assert bool(reply['evidence_errors']) is not is_context
+    assert bool(reply['evidence_contract']) is not is_context
+    if is_context:
+        assert text in reply['brief']
