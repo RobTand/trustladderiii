@@ -26,11 +26,15 @@ def repair_message(error):
     from tl3_workers.roles.planner import PlanConsistencyError
     if isinstance(error, PlanConsistencyError) and hasattr(error, 'repair_text'):
         return error.repair_text
-    # A schema message echoes the whole invalid reply. Keep where and why it failed.
-    message = validation_message(error)
+    from tl3_workers.rules import render_all
+    from tl3_workers.contracts import schema_violations
+    role = getattr(error, 'rule_role', 'schema')
+    if getattr(error, 'rule_violations', None):
+        return render_all(error.rule_violations, role=role)
     if isinstance(error, ValidationError):
-        path = "/" + "/".join(str(part) for part in error.absolute_path)
-        message = f"{error.validator} failed at {path}: {message}"
+        return render_all(schema_violations((error,), role=role), role=role)
+    # Legacy sources keep their existing bounded repair text until migrated.
+    message = validation_message(error)
     raw = message.encode()
     if len(raw) <= REPAIR_MESSAGE_BYTES:
         return message
@@ -43,6 +47,14 @@ class InvalidReply(ValueError):
     def __init__(self, first, second):
         super().__init__(f"{validation_message(first)}; repaired reply: {validation_message(second)}")
         self.errors = (first, second)
+
+
+class RepairScopeError(ValidationError):
+    """The single correction changed data outside its row permissions."""
+
+    def __init__(self):
+        super().__init__('repaired reply changed fields outside the permitted edits',
+                         validator='repair_scope')
 
 
 class Unrepairable(ValueError):
@@ -118,6 +130,7 @@ class TurnControl(AgentMiddleware):
 def repaired(control, history, ask, check):
     """Return check(ask()), giving an invalid reply one repair turn in the same run."""
     text = ask()
+    original = text
     try:
         return check(text)
     except Unrepairable:
@@ -132,6 +145,14 @@ def repaired(control, history, ask, check):
             control.repair_unavailable = 'input_allowance'
             raise first from None
         try:
+            violations = getattr(first, 'rule_violations', ())
+            if violations:
+                from tl3_workers.contracts import read_reply
+                from tl3_workers.rules import permits
+                before = read_reply(original) if isinstance(original, str) else original
+                after = read_reply(text) if isinstance(text, str) else text
+                if not permits(violations, before, after, role=getattr(first, 'rule_role', 'schema')):
+                    raise RepairScopeError()
             return check(text)
         except (ValueError, ValidationError) as second:
             raise InvalidReply(first, second) from second

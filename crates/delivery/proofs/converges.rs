@@ -1,62 +1,78 @@
-//! State-table Converges / late requests :753.
-#[path = "../src/step.rs"] mod step;
-pub use step::*;
-#[path = "../src/mirror.rs"] mod mirror;
+//! Reconciliation and completion have distinct durable boundaries.
+#[path = "../src/step.rs"] mod delivery;
+use delivery::*;
 #[path = "../src/upstream.rs"] mod upstream;
 use upstream::*;
 use vstd::prelude::*;
 verus! {
-/// State-table Converges: after quiescence an ordinary pending reconciliation
-/// confirms iff the upstream read finds the desired state. Holds preserve an
-/// absent Uncertain effect; they never turn absence into confirmation.
-fn reconciliation_agrees_with_quiescent_upstream(before: Upstream, held: bool)
-    requires before.outstanding == 0, before.incorrect <= before.copies,
-{
-    let observed = read(before,Class::Converges);
-    let result = if observed.found {mirror::Read::Found} else {mirror::Read::Absent};
-    let action = mirror::reconciliation(State::Uncertain,result,held,false,false);
-    let after = mirror::committed(State::Uncertain,action,Ack::Confirmed);
-    assert((after == State::Confirmed) == (before.copies > 0));
+#[verifier::opaque]
+spec fn enqueued_only(out: Action) -> bool {
+    matches!(out, Action::EnqueueCompletion(_))
 }
-/// State-table Effects late-landing paragraph / F3, R1 counterexample. Final
-/// keys leave pending_effects. Startup retires their closed-node allowances,
-/// so a create landing after teardown has no scheduled recovery. This witness
-/// records the missing guarantee, rather than assuming a closed-node look.
-/// Bound: one original request, one restart; the pending reconciliation lemma
-/// above remains valid. Full post-final Converges is BLOCKED on the owner fix.
-fn late_landing_after_final_exposes_missing_recovery() {
-    let old=issue(Upstream {copies:0,incorrect:0,outstanding:0,repair_debt:0,found:false});
-    let absent=read(lose_response(old),Class::Converges);
+
+proof fn classify_enqueue(out: Action)
+    ensures enqueued_only(out) == matches!(out, Action::EnqueueCompletion(_)),
+{
+    reveal(enqueued_only);
+}
+
+fn found_enqueues_without_committing(v: DeliveryView, pending: Continuation, ack: Ack)
+    requires permission_at(pending, v),
+{
+    let next = action(v, Input::Reconciled { pending, evidence: Evidence::Found(ack) });
+    assert(!matches!(next, Action::Commit(_) | Action::Transition(_)));
+}
+
+fn pending_never_proves_absence(v: DeliveryView, pending: Continuation) {
+    let next = action(v, Input::Reconciled { pending, evidence: Evidence::Pending });
+    assert(!matches!(next, Action::Transition(State::Intended) | Action::CancelAbsent | Action::EnqueueCompletion(_)));
+}
+
+fn read_error_is_not_acknowledgement(v: DeliveryView, pending: Continuation) {
+    let next = action(v, Input::Reconciled { pending, evidence: Evidence::Error });
+    assert(matches!(next, Action::Wait));
+}
+
+fn consumption_retires_old_retry_key(v: DeliveryView, successor: bool)
+    requires v.kind == DeliveryKind::KernelEffect, matches!(v.state, State::Sent | State::Uncertain),
+{
+    let next = action(v, Input::Consume { key: v.key, ack: Ack::Retryable, kernel_ack: Ack::Retryable, approval_successor: successor });
+    assert(matches!(next, Action::Commit(p) if p.retire_retry && p.remove_watch && p.completion.to == State::Intended));
+}
+
+/// Quiescent reads have no schedule bound. A held absence preserves U; a
+/// Found queues evidence, and only a later Consume changes the effect state.
+fn reconciliation_agrees_with_quiescent_upstream(v: DeliveryView, before: Upstream)
+    requires v.state == State::Uncertain, v.fence == Fence::Live,
+        !v.waits.outage, !v.waits.quota, before.outstanding == 0, before.incorrect <= before.copies,
+{
+    let sampled = read(before, Class::Converges);
+    let first = action(v, Input::Start);
+    if let Action::Observe(pending) = first {
+        let second = action(v, Input::Observed { pending, revision_changed: false });
+        if let Action::Reconcile(pending) = second {
+            let evidence = if sampled.found { Evidence::Found(Ack::Confirmed) } else { Evidence::Absent };
+            let next = action(v, Input::Reconciled { pending, evidence });
+            proof { classify_enqueue(next); }
+            assert(enqueued_only(next) == (before.copies > 0));
+            if !sampled.found && v.waits.held { assert(matches!(next, Action::Wait)); }
+        } else { assert(false); }
+    } else { assert(false); }
+}
+
+/// Preserve the missing closed-node recovery witness. Finals are excluded
+/// from pending delivery, even when an old upstream request lands after restart.
+fn late_landing_after_final_exposes_missing_recovery(v: DeliveryView)
+    requires v.state == State::Cancelled,
+{
+    let old = issue(Upstream { copies: 0, incorrect: 0, outstanding: 0, repair_debt: 0, found: false });
+    let absent = read(lose_response(old), Class::Converges);
     assert(!absent.found);
-    let cancelled=mirror::committed(State::Cancelling,mirror::Action::Cancel,Ack::Retryable);
-    assert(cancelled == State::Cancelled);
-    let checked_1=mirror::recovery(cancelled,false,false);
-    assert(checked_1 == mirror::Recovery::None);
-    let zombie=land(restart(absent),Class::Converges,true,OnceLaws {atomic_original_key_dedup:false,stable_operation_identity:false});
-    let scheduled=mirror::recovery(cancelled,false,false);
-    assert(scheduled == mirror::Recovery::None);
+    let next = action(v, Input::Start); assert(matches!(next, Action::Wait));
+    let zombie = land(restart(absent), Class::Converges, true,
+        OnceLaws { atomic_original_key_dedup: false, stable_operation_identity: false });
     assert(zombie.copies == 1 && zombie.outstanding == 0);
-    assert(cancelled == State::Cancelled);
-}
-/// R1: history commits, input enqueue and consume are distinct crash cuts.
-/// Any starting active state and ack, with optional real kernel replacement.
-fn durable_completion_boundaries(state:State, ack:Ack, kernel:bool, replacement:bool)
-    requires matches!(state,State::Sent | State::Uncertain | State::Cancelling),
-{
-    let input=mirror::CompletionInput {state,ack,queued:false,kernel_effect:kernel,
-        replacement:false,replacement_grant:false,watch:true,retirement:false};
-    let queued=mirror::enqueue_completion(input,ack);
-    assert(queued.state == state && queued.queued);
-    let after=mirror::consume_completion(queued,false,replacement);
-    assert(!after.queued);
-    if kernel && ack == Ack::Retryable && state != State::Cancelling {
-        assert(after.state == State::Cancelled && after.retirement && !after.watch);
-        assert(after.replacement == replacement);
-    }
-    let found=mirror::approval_history(true,false,false,mirror::Read::Found);
-    let pending=mirror::approval_history(true,false,false,mirror::Read::Pending);
-    assert(found.sent == State::Sent && found.outcome == mirror::Action::Complete);
-    assert(pending.sent == State::Sent && pending.outcome == mirror::Action::Ambiguous);
+    let next = action(v, Input::Start); assert(matches!(next, Action::Wait));
 }
 }
 fn main() {}
