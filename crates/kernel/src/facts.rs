@@ -185,10 +185,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             kernel_proof! { reveal(retirement::fact_node); }
         }
-        Fact::PrDequeuedByPerson => {
-            pr_dequeued(w, i, out);
-            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
-        }
+        Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
@@ -216,7 +213,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         }
         Fact::CiFailed { infra } => {
             ci_failed(w, i, infra, out);
-            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
+            kernel_proof! {
+                retirement_runtime::ci_retirement(before_transition@.nodes@[i as int],
+                    w.nodes@[i as int], infra, before_transition@.fail_fast,
+                    before_transition@.next_question, w.next_question);
+            }
         }
         Fact::Conflict => {
             let m = &mut w.nodes[i];
@@ -236,12 +237,14 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             raise_incident(w, i, needs_rob, out);
             kernel_proof! { retirement_runtime::upstream_result(before_transition@.nodes@[i as int]); }
         }
-        Fact::IncidentCleared { by_rob } => {
-            incident_cleared(w, i, by_rob, out);
-            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
-        }
+        Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
 
+    kernel_proof! {
+        if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
+            facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+        }
+    }
 }
 }
 
@@ -388,8 +391,6 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         infra ==> final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra }),
         infra ==> final(w).next_question == old(w).next_question,
         infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-        final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).0,
-        final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_runtime::ci_post(old(w).nodes@[i as int], final(w).nodes@[i as int], infra,
             old(w).fail_fast, old(w).next_question, final(w).next_question),
@@ -405,8 +406,11 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             assert(infra ==> *m == retirement::fact_node(before_ci@, Fact::CiFailed { infra })) by {
                 reveal(retirement::fact_node);
             }
-            retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
             reveal(retirement::fact_frame);
+            assert(retirement_runtime::ci_post(before_ci@, *m, infra,
+                ci_world@.fail_fast, ci_world@.next_question, w.next_question)) by {
+                reveal(retirement_runtime::ci_post);
+            }
         }
 
         return;
@@ -429,8 +433,10 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
             retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
-            retirement_runtime::ci_retry(ci_world@.nodes@[i as int], ci_world@.fail_fast,
-                ci_world@.next_question, w.nodes@[i as int], w.next_question);
+            assert(retirement_runtime::ci_post(before_ci@, w.nodes@[i as int], infra,
+                ci_world@.fail_fast, ci_world@.next_question, w.next_question)) by {
+                reveal(retirement_runtime::ci_post);
+            }
         }
 
         return;
@@ -441,7 +447,10 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     ci_infrastructure(w, i, out);
     kernel_proof! {
         retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
-        retirement_runtime::ci_infra(ci_world@.nodes@[i as int], ci_world@.fail_fast, ci_world@.next_question);
+        assert(retirement_runtime::ci_post(before_ci@, w.nodes@[i as int], infra,
+            ci_world@.fail_fast, ci_world@.next_question, w.next_question)) by {
+            reveal(retirement_runtime::ci_post);
+        }
     }
 
 }
