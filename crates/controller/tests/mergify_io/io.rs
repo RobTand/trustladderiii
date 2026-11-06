@@ -955,6 +955,16 @@ impl GitHub {
         returned(&result);
         Ok(result)
     }
+    pub async fn check_suite_has_no_runs(
+        &self,
+        repo: &str,
+        id: u64,
+    ) -> ::std::result::Result<bool, ::tl3_github::Error> {
+        let f = github_frame("github.suite_runs", &format!("{repo}/{id}"))?;
+        let empty = f.word & 1 == 0;
+        returned(&empty);
+        Ok(empty)
+    }
     pub async fn job_log_tail(
         &self,
         repo: &str,

@@ -1,0 +1,347 @@
+{
+  "repo": "RobTand/prismabuild",
+  "issue": 2815,
+  "trace_ids": {
+    "planner": "tr-0bede992ff274a86771607cd896f0987",
+    "audit": "tr-c333d028a8e55339c153dad5486d7a21",
+    "ingest": "tr-3026d8deab4c6647100549fe546accfc"
+  },
+  "tool_capabilities": [
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "sha",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [
+        "red_green",
+        "declared_symptom",
+        "head",
+        "base_head",
+        "subject_observer",
+        "forced_reproduction.environment",
+        "forced_reproduction.patches"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "base_head",
+        "repeat",
+        "parallel",
+        "always_tests",
+        "native_threads_1"
+      ],
+      "tool": "run_tests"
+    },
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "input_tree",
+        "output_tree",
+        "artifact_sha256",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_generator",
+      "methods": [
+        "configured_generation"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "git_index",
+        "scoped_outputs",
+        "idempotent_import"
+      ],
+      "tool": "run_generator"
+    }
+  ],
+  "ingest": {
+    "kind": "brief",
+    "brief": "PROBLEM (issue #2815, unverified: the issue says it was code-checked on origin/main 39d66e87 and that no test was run).\n\nIn src/prismabuild/tier_cycle.py, mint_stage_supply (line 9195) calls the in-lock writable_reader inside the nested wanted() function. If the reader raises OSError, ValueError or TypeError, and writable_tokens is not None, the code prints a 'tier-mint-writable-unreadable' event. It then uses the stale discovery value writable_tokens as 'writable'. Next it adds the current landed tokens: supply = writable + landed.\n\nExample from the issue: discovery saw 100 GiB writable. A 50 GiB mover then landed, so real writable space is 50 GiB. If the fresh sample fails, supply becomes 150 and 100 tokens are free. Only 50 GiB is really writable. Movers can be admitted against space that does not exist. The stage path has no RAM-window cap to hide this.\n\nThe production caller is near lines 10195-10215. It passes writable_tokens=supply_writable and writable_reader=reader. The reader comes from _supply_reader_for, or from the injected supply_reader_for. The stage reader read_stage (near line 9294) raises OSError when ZFS evidence is unavailable.\n\nWANTED BEHAVIOUR (from the issue)\n- A failed required fresh sample must not authorise extra capacity from stale discovery data.\n- Keep existing holdings.\n- Refuse or withhold this mint until usable evidence exists.\n- A successful sample keeps today's accounting.\n- Scope: src/prismabuild/tier_cycle.py and its focused tests. Keep the fix inside the sampler/mint/cycle boundary.\n\nNOT INCLUDED (from the issue)\n- No change to tier-record fields, resource units, or the landed/in-flight definitions.\n- No new capacity ledger, controller, quota system or eviction policy.\n- No consumer-visible JSON field-set change, CLI flag change, or exit-code change.\n- No change to action identity or keys, queue or attempt schema, CAS layout, bell protocol, or SDK wire.\n- No protected-path edits.\n- #1976 (dataset quota configuration) is out of scope.\n\nWHAT I READ\n- mint_guarded in tier_holdings.py runs wanted_fn inside the mutation lock, before _apply_mint. This is the audit's reading. I did not read it myself, so the maker must confirm it. If it is true, an exception from the reader leaves holdings and free supply unchanged.\n- The existing ram test 'test_the_minted_supply_is_zero_when_the_resample_hits_the_inode_floor' passes a reader that returns 0 and no longer raises. It stays valid.\n- tools/fleet/shape_gate.py (protected, do not edit) defines its own _supply_reader_for(record, tier_id, *, fallback_tokens). Keep that signature working. Keep the fallback_tokens parameter of _supply_reader_for.\n\nREQUIRED TEST (from the issue)\nAdd test_failed_stage_resample_does_not_increase_free_supply to tests/test_a_ram_tier_mints_what_the_tmpfs_says_it_may_hold.py. Use:\n- a private PoolQueue;\n- a stage tier with supply 50 and a real 50-token holding with a complete mover receipt;\n- an injected landed/byte census only if needed to avoid unrelated movement setup;\n- writable_tokens=100, cap=None, and a writable_reader that raises OSError('sample unavailable').\nCapture the holding and the free supply before the call. Allow the existing OSError refusal if the fix propagates it. Assert that the holding is unchanged and that no new free tokens were minted. On base, mint_stage_supply returns supply=150 and writable=100 and exposes 100 free tokens. Add a control with a reader that returns 50. It must give supply 100 and free 50. No GiB payload allocation is needed.\n\nPROOF REQUIREMENT\nThe independent check needs one exact assertion message to match on base. The issue gives no text. The stale-supply assertion must carry a message that names supply=150 and 100 free tokens, for example 'failed stage resample minted from stale discovery: supply=150, 100 free tokens'.\n\nAUDIT OBJECTIONS ADDRESSED\n- Add the message above.\n- Other callers and patchers of the changed code exist and must be run: tests/test_audit_shared_cache_capacity_credit.py (calls mint_stage_supply near lines 754 and 801-823); tests/test_a_source_mark_copy_with_a_proven_original_is_reclaimed.py (lines 596-600); tests/test_incident_1627_stalled_window_reclaims.py, tests/test_the_campaign_shape_harness.py and tests/test_the_ram_window_promotes_only_to_its_refill_horizon.py (patch or stub _supply_reader_for); and the compat tests that use tests/compat/support/compat_tier_adapters.py. The maker must also grep for any test that makes writable_reader fail while writable_tokens is set, because such a test may rely on the old fallback.\n- Four texts still describe the discovery number as a fallback. Fix them: (1) the mint_stage_supply docstring ('doubling as the fallback'); (2) the comment at the caller near line 10195 ('discovery's number stays as the fallback'); (3) the _supply_reader_for docstring ('the mint then uses the discovery number via its fallback path'); (4) the read_ram comment ('sends the mint to its discovery fallback'). Keep the case where writable_reader is None and a fixed writable_tokens is given. That case is used by tests and by records with no samplable source.\n- Behaviour change to prove: before, a failed stage sample fell back and the cycle went on. After, the OSError can leave mint_stage_supply. I did not read how the production caller near line 10205 handles that exception. I do not know whether one tier's failure stops the other tiers. The maker must read the cycle code and show the result with a test or a cited handler. The maker must not assume it. The wanted behaviour is that this tier's mint is withheld, its holdings stay, and the other tiers and the cycle are not broken.\n- The ram reader read_ram calls filesystem_capacity.local_disk_room. If that call raises OSError, the ram mint is also affected by the new refusal. Check this and state it.\n\nEXECUTION EVIDENCE\nThe issue asks for validation through the published PrismaBuild entrypoint with declared aggregate CPU/memory demand, bounded native threads, and verified terminal records, logs and CAS receipts. run_tests on prismabuild_pytest with the native_threads_1 runner feature can supply these artifacts: action key, CAS receipt, sha, logs and terminal verdict. Its receipt shows only the action key, exit status and digests. It does not show the command, the measured affinity, or the resource details. Do not call those observed.\n\nThe issue also asks for BuildBuddy self-hosted pools, --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, --jobs of 16 or fewer, and respect for GATE_WINDOW. No listed capability can carry these settings. This is an unsupported requirement. Keep it in the evidence contract. No one may claim it was met.\n\nGENERATED FILES: none expected. The test is added to an existing file, so BUILD files do not change.\n\nLIMITS OF THIS BRIEF: I did not run any test. I did not read the full cycle caller exception handling. I did not read the holding and receipt fixture setup for a 50-token stage holding. I did not read the other listed tests in full.\n\nThese declared files are too large to read whole. Read them by range with read's offset and limit, or find lines with grep first, and change them with edit's unique exact-text replacement: src/prismabuild/tier_cycle.py (560236 bytes).",
+    "goals": [
+      {
+        "description": "In src/prismabuild/tier_cycle.py, change mint_stage_supply so that a failed writable_reader never substitutes the stale writable_tokens value. Remove the discovery fallback inside wanted(). The reader failure (OSError, ValueError or TypeError) must refuse or withhold this mint. The holding and the free supply must stay unchanged. A successful reader must keep today's accounting: supply = writable + landed, capped by cap when cap is given. When writable_reader is None and a fixed writable_tokens is given, the old behaviour must stay.",
+        "stage": "maker",
+        "verification": "test",
+        "proof_obligation": {
+          "kind": "assertion",
+          "observer": "new",
+          "subjects": [
+            "src/prismabuild/tier_cycle.py::mint_stage_supply"
+          ],
+          "source": "issue.body",
+          "quote": "Main instead returns `supply=150`, `writable=100` and exposes 100 free tokens. A control with a successful fresh reader returning 50 must still produce supply 100 and free 50."
+        }
+      },
+      {
+        "description": "Add test_failed_stage_resample_does_not_increase_free_supply to tests/test_a_ram_tier_mints_what_the_tmpfs_says_it_may_hold.py. Use a private PoolQueue, a stage tier with supply 50, a real 50-token holding with a complete mover receipt, writable_tokens=100, cap=None, and a writable_reader that raises OSError('sample unavailable'). Capture the holding and free supply before the call. Allow the existing OSError refusal. Assert that the holding is unchanged and that no new free tokens were minted. The stale-supply assertion must carry one exact message that names supply=150 and 100 free tokens, so the independent check can match it on base. Add a control test where the reader returns 50. It must give supply 100 and free 50. The new failure test must fail on base and pass on head. No GiB payload may be allocated.",
+        "stage": "maker",
+        "verification": "test"
+      },
+      {
+        "description": "Show how the production cycle near tier_cycle.py line 10205 behaves when mint_stage_supply now raises or withholds. Read the caller and its callers. Either cite an existing handler, or add a minimal handler or test inside the sampler/mint/cycle boundary. The result must be that this tier's holdings and free supply stay unchanged, the other tiers still mint, and the cycle does not crash. Do not assume this. State the evidence in the final report. Do not add a new controller, ledger or record field.",
+        "stage": "maker",
+        "verification": "test"
+      },
+      {
+        "description": "Update the four stale texts that call the discovery number a fallback: the mint_stage_supply docstring, the comment at the caller near line 10195, the _supply_reader_for docstring, and the comment in read_ram. They must state that a failed fresh sample withholds the mint and that writable_tokens alone is used only when no reader exists. Keep the _supply_reader_for signature, including fallback_tokens.",
+        "stage": "maker",
+        "verification": "review"
+      },
+      {
+        "description": "Run these test files with the fix and report the results: tests/test_a_ram_tier_mints_what_the_tmpfs_says_it_may_hold.py, tests/test_audit_shared_cache_capacity_credit.py, tests/test_a_source_mark_copy_with_a_proven_original_is_reclaimed.py, tests/test_incident_1627_stalled_window_reclaims.py, tests/test_the_campaign_shape_harness.py, tests/test_the_ram_window_promotes_only_to_its_refill_horizon.py, and the compat tests that use tests/compat/support/compat_tier_adapters.py. Grep the tests for any case that makes writable_reader fail while writable_tokens is set. Fix any test that relied on the old fallback, without weakening it. If a failure cannot be fixed inside scope, report it.",
+        "stage": "maker",
+        "verification": "test"
+      },
+      {
+        "description": "Keep the change inside src/prismabuild/tier_cycle.py and its focused tests. Make no change to tier-record fields, resource units, the landed/in-flight definitions, JSON field sets, CLI flags or exit codes, action keys, queue or attempt schema, CAS layout, bell protocol or SDK wire. Make no protected-path edits (this includes tools/fleet/shape_gate.py). Add no new capacity ledger, controller, quota system or eviction policy.",
+        "stage": "maker",
+        "verification": "review"
+      },
+      {
+        "description": "Independent check: run the new test through run_tests (prismabuild_pytest, native_threads_1) as red_green. It must fail on base with the exact stale-supply assertion message (supply=150, 100 free tokens). It must pass on head. The control test and the existing tests in the changed test file must pass on head. Record the action key, CAS receipt, logs and terminal verdict. The BuildBuddy/bazelrc/--jobs/GATE_WINDOW settings and the declared CPU/memory demand are not supported by the available tool. Report that gap. Do not claim it was met.",
+        "stage": "checking",
+        "verification": "test"
+      }
+    ],
+    "memory_ids": [],
+    "evidence_contract": [
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "requirement": "Run validation through the published PrismaBuild entrypoint. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts. The run_tests receipt shows the action key, exit status and digests only. The declared CPU/memory demand and the measured affinity are not shown by the receipt. Do not call them observed.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts."
+        }
+      },
+      {
+        "tool": "bazel",
+        "executor": "buildbuddy_self_hosted_pool",
+        "runner_features": [],
+        "artifacts": [],
+        "methods": [
+          "--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc",
+          "--jobs<=16",
+          "GATE_WINDOW"
+        ],
+        "protected_files": [],
+        "requirement": "UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed capability can carry these settings. Keep this gap. Do not claim it was met.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer."
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed capability can carry these settings. Keep this gap. Do not claim it was met. (tool=bazel, executor=buildbuddy_self_hosted_pool, methods=--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, methods=--jobs<=16, methods=GATE_WINDOW)."
+    ]
+  },
+  "audit": {
+    "verdict": "agree",
+    "objections": [],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+          "source": "issue.body"
+        },
+        "requirement": "Run validation through the published PrismaBuild entrypoint. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts. The run_tests receipt shows the action key, exit status and digests only. The declared CPU/memory demand and the measured affinity are not shown by the receipt. Do not call them observed.",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [],
+        "executor": "buildbuddy_self_hosted_pool",
+        "methods": [
+          "--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc",
+          "--jobs<=16",
+          "GATE_WINDOW"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer.",
+          "source": "issue.body"
+        },
+        "requirement": "UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed capability can carry these settings. Keep this gap. Do not claim it was met.",
+        "runner_features": [],
+        "tool": "bazel"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "requirement": "Run validation through the published PrismaBuild entrypoint. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts. The run_tests receipt shows the action key, exit status and digests only. It does not show the declared CPU/memory demand or the measured affinity. Do not call them observed.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts."
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed capability can carry these settings. Keep this gap. Do not claim it was met. (tool=bazel, executor=buildbuddy_self_hosted_pool, methods=--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, methods=--jobs<=16, methods=GATE_WINDOW)."
+    ]
+  },
+  "planner": {
+    "kind": "cant_meet",
+    "report": "Unsupported evidence requirement: UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed capability can carry these settings. Keep this gap. Do not claim it was met. (tool=bazel, executor=buildbuddy_self_hosted_pool, methods=--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, methods=--jobs<=16, methods=GATE_WINDOW).\nUnsupported evidence requirement: UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed tool has this executor or these settings. Do not claim this requirement was met. (tool=bazel, executor=buildbuddy_self_hosted_pool, methods=--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, methods=--jobs<=16, methods=GATE_WINDOW).",
+    "violations": [],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+          "source": "issue.body"
+        },
+        "requirement": "Run validation through the published PrismaBuild entrypoint. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts. The run_tests receipt shows the action key, exit status and digests only. The declared CPU/memory demand and the measured affinity are not shown by the receipt. Do not call them observed.",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [],
+        "executor": "buildbuddy_self_hosted_pool",
+        "methods": [
+          "--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc",
+          "--jobs<=16",
+          "GATE_WINDOW"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer.",
+          "source": "issue.body"
+        },
+        "requirement": "UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed capability can carry these settings. Keep this gap. Do not claim it was met.",
+        "runner_features": [],
+        "tool": "bazel"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+          "source": "issue.body"
+        },
+        "requirement": "Run validation through the published PrismaBuild entrypoint. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts. The run_tests receipt shows the action key, exit status and digests only. It does not show the declared CPU/memory demand or the measured affinity. Do not call them observed.",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "requirement": "Run validation through the published PrismaBuild entrypoint. Bound native threads with native_threads_1. Verify the terminal records, the logs and the CAS receipts. The run_tests receipt shows the action key, the exit status and the digests only. It does not show the declared aggregate CPU/memory demand or the measured affinity. Do not call them observed. CAPABILITY GAP: no receipt field records the declared aggregate CPU/memory demand.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts."
+        }
+      },
+      {
+        "tool": "bazel",
+        "executor": "buildbuddy_self_hosted_pool",
+        "runner_features": [],
+        "artifacts": [],
+        "methods": [
+          "--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc",
+          "--jobs<=16",
+          "GATE_WINDOW"
+        ],
+        "protected_files": [],
+        "requirement": "UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed tool has this executor or these settings. Do not claim this requirement was met.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer."
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed capability can carry these settings. Keep this gap. Do not claim it was met. (tool=bazel, executor=buildbuddy_self_hosted_pool, methods=--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, methods=--jobs<=16, methods=GATE_WINDOW).",
+      "Unsupported evidence requirement: UNSUPPORTED by tool_capabilities: run validation on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No listed tool has this executor or these settings. Do not claim this requirement was met. (tool=bazel, executor=buildbuddy_self_hosted_pool, methods=--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, methods=--jobs<=16, methods=GATE_WINDOW)."
+    ]
+  }
+}

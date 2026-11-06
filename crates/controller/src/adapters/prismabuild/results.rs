@@ -169,7 +169,7 @@ pub(super) async fn ending(
     Ok(Some(completion))
 }
 
-/// The failure class when TL3's trusted harness rejected its own check input:
+/// TL3's trusted harness failures, including parsed test-run infrastructure outcomes.
 /// TL3-side under Q51, not a PrismaBuild failure.
 pub(crate) const HARNESS: &str = "harness";
 
@@ -278,6 +278,9 @@ fn evidence_with_read(
                 .results
                 .iter()
                 .all(|r| !matches!(r.verdict, Verdict::InfrastructureFailure));
+            // Q51 / #849: a successful PB action's no-report outcome is TL3-side.
+            // Known PB failures retain the unclassified Q7 path, even with results.
+            failure = (successful && !report).then_some(HARNESS);
             pass = report
                 && successful
                 && parsed
@@ -949,7 +952,7 @@ pub(crate) mod contract_vectors {
         }))
         .unwrap();
         let (report, pass, results, failed_tests, failure) = evidence(ending, &job).unwrap();
-        assert_eq!(failure, None, "{name}");
+        assert_eq!(failure, (!report).then_some(HARNESS), "{name}: Q51");
         Parsed {
             name,
             vector,
