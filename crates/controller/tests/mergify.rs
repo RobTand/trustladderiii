@@ -10,6 +10,8 @@ mod check_reads;
 mod ci_evidence;
 #[path = "mergify/classic_protection.rs"]
 mod classic_protection;
+#[path = "mergify/dequeue.rs"]
+mod dequeue;
 #[path = "mergify/dequeue_followups.rs"]
 mod dequeue_followups;
 #[path = "mergify/head_checks.rs"]
@@ -152,6 +154,7 @@ struct State {
     ci_fixture: Option<ci_evidence::Fixture>,
     entry_fixture: Option<queue_entry::Fixture>,
     cause_fixture: Option<queue_cause::Fixture>,
+    dequeue_fixture: Option<dequeue::Fixture>,
 }
 impl State {
     fn new() -> Self {
@@ -213,6 +216,7 @@ impl State {
             ci_fixture: None,
             entry_fixture: None,
             cause_fixture: None,
+            dequeue_fixture: None,
         }
     }
     fn checks(&self) -> Value {
@@ -226,7 +230,10 @@ impl State {
                 check["completed_at"] = json!("2026-10-31T22:00:00Z");
             }
         }
-        if self.ci_fixture.is_none() && self.entry_fixture.is_none() && self.cause_fixture.is_none()
+        if self.ci_fixture.is_none()
+            && self.entry_fixture.is_none()
+            && self.cause_fixture.is_none()
+            && self.dequeue_fixture.is_none()
         {
             for check in checks.as_array_mut().unwrap() {
                 if check["name"] == tl3_mergify::QUEUE_CHECK
@@ -345,10 +352,16 @@ impl Respond for Api {
         {
             return response;
         }
+        if let Some(fixture) = &state.dequeue_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
+        }
         if method == "GET"
             && state.ci_fixture.is_none()
             && state.entry_fixture.is_none()
             && state.cause_fixture.is_none()
+            && state.dequeue_fixture.is_none()
         {
             if path == "/repos/owner/sandbox/pulls/424242" {
                 let mut draft = state.pull.clone();
@@ -2882,6 +2895,19 @@ fn main() {
         println!("1 Mergify scenarios passed; no skips; no live upstream calls");
         return;
     }
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--dequeue-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        if let Some((_, reason)) = dequeue::PENDING.iter().find(|(name, _)| *name == mode) {
+            println!("running pending dequeue_{mode} ({reason})");
+        }
+        dequeue::scenario(&database.create("dequeue"), &mode);
+        database.stop();
+        println!("1 Mergify scenarios passed; no skips; no live upstream calls");
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--queue-cause") {
         let mut database = support::Database::start();
         for mode in queue_cause::MODES {
@@ -3121,6 +3147,7 @@ fn main() {
         .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
         .chain(std::iter::repeat_n(10, queue_cause::MODES.len()))
         .chain(std::iter::repeat_n(10, queue_cause::REVIEW_MODES.len()))
+        .chain(std::iter::repeat_n(10, dequeue::MODES.len()))
         .chain(seconds[tail..].iter().copied())
         .enumerate()
         .map(|(index, seconds)| (index, 1, seconds))
@@ -3487,6 +3514,15 @@ fn main() {
             &database.create(&format!("queue_cause_r1_{mode}")),
             mode
         ));
+    }
+    for mode in dequeue::MODES {
+        scenario!(dequeue::scenario(
+            &database.create(&format!("dequeue_{mode}")),
+            mode
+        ));
+    }
+    for (mode, reason) in dequeue::PENDING {
+        println!("test dequeue_{mode} ... ignored, {reason}");
     }
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));

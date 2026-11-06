@@ -325,8 +325,10 @@ macro_rules! adapter {
         }
     };
 }
+// 4g: the current side passes the observed queue read as a trailing argument;
+// the frozen references keep their original arity.
 macro_rules! run_entry {
-    ($a:ident, $entry:ident, $d:ident, $waiting:expr) => {
+    ($a:ident, $entry:ident, $d:ident, $waiting:expr $(, $observed:expr)?) => {
         match $entry {
             io::Entry::Webhook | io::Entry::CatchUp | io::Entry::QueueFacts => $a.routing($entry),
             io::Entry::Read => {
@@ -335,14 +337,14 @@ macro_rules! run_entry {
                     Err(e) => json!({"error":e.to_string()}),
                 }
             },
-            io::Entry::Completion => io::reconciliation($a.completion($d, None)),
+            io::Entry::Completion => io::reconciliation(io::EntryReconciliation::reconciliation($a.completion($d, None))),
             io::Entry::Execute => io::completed($a.execute($d)),
             io::Entry::Reconcile => io::reconciliation($a.reconcile($d)),
             io::Entry::Waiting => io::reconciliation((|| {
                 let snapshot = $a.snapshot()?;
-                $a.recover_waiting($d, snapshot.as_ref())
+                $a.recover_waiting($d, snapshot.as_ref() $(, $observed)?)
             })()),
-            io::Entry::Command => io::reconciliation($a.queue_command($d, $waiting)),
+            io::Entry::Command => io::reconciliation($a.queue_command($d, $waiting $(, $observed)?)),
             io::Entry::Rerun => match (|| -> Result<()> {
                 let (state, _) = $a.read($d, None)?;
                 $a.rerun_head_checks($d, &state)
@@ -393,7 +395,7 @@ mod current {
     }
     pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
         let mut a = Adapter::new();
-        run_entry!(a, entry, d, None)
+        run_entry!(a, entry, d, None, None)
     }
     pub(super) fn router_run(entry: io::Entry, d: &Delivery, wrapped: bool) -> Value {
         let bare = Adapter::new();
@@ -720,6 +722,10 @@ mod properties {
                     "recovery_eligible",
                     "command_budget",
                     "reconcile_command",
+                    "answered",
+                    "dequeued",
+                    "ended",
+                    "command_ending",
                     "recover_waiting",
                     "queue_command",
                     "recovery_decide",
@@ -2101,7 +2107,7 @@ struct A2Config {
     saved_heal: Option<(bool, bool)>,
 }
 macro_rules! a2_entry {
-    ($waiting:expr) => {
+    ($waiting:expr $(, $observed:expr)?) => {
         pub(super) fn a2_run(entry: io::Entry, d: &Delivery, config: A2Config, heal: bool) -> Value {
             if let Some((same_head, reran)) = config.saved_heal { io::a2_seed_heal(same_head, reran); }
             let mut a = Adapter::new();
@@ -2118,7 +2124,7 @@ macro_rules! a2_entry {
                     Err(error) => json!({"error":error.to_string()}),
                 }
             } else {
-                run_entry!(a, entry, d, $waiting)
+                run_entry!(a, entry, d, $waiting $(, $observed)?)
             }
         }
     }
@@ -2169,7 +2175,7 @@ mod a2_current {
     mod head_checks {
         include!("current-head.rs");
     }
-    a2_entry!(None);
+    a2_entry!(None, None);
     pub(super) fn a2_reruns(
         runs: &[tl3_github::WorkflowRun],
         head: &str,
