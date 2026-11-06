@@ -1462,3 +1462,159 @@ fn t629_local_body_defect_stops_for_tl3_review_without_owner_question() {
             .any(|r| r.table == "incidents" && r.value["open"] == true)
     );
 }
+
+#[test]
+fn rp_2648_reopen_keeps_one_use_feedback_and_terminal_reason() {
+    use tl3_contracts::plan_check::*;
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/pq-2648-empty-replan.json")).unwrap();
+    let mut database = support::Database::start();
+    for (index, case) in cases.iter().enumerate() {
+        for fail_fast in [false, true] {
+            let settings = database.create(&format!("rp_{index}_{fail_fast}"));
+            let root = tempfile::tempdir().unwrap();
+            let fakes = root.path().join("fakes");
+            let posted: Posted = Arc::default();
+            let plans: Arc<Mutex<Vec<Delivery>>> = Arc::default();
+            let registry = || {
+                let mut registry = adapters::simulation(&fakes).unwrap();
+                let counted = plans.clone();
+                registry.register(
+                    Upstream::Workers,
+                    support::workers::Workers::new(
+                        None,
+                        adapters::workers::Fake::new(&fakes),
+                        vec![],
+                        move |delivery: &Delivery, completion: &mut Completion| {
+                            if completion
+                                .observations
+                                .iter()
+                                .any(|o| matches!(o, Observation::Plan { .. }))
+                            {
+                                counted.lock().unwrap().push(delivery.clone());
+                                completion
+                                    .observations
+                                    .retain(|o| !matches!(o, Observation::Plan { .. }));
+                            }
+                        },
+                    ),
+                );
+                registry.register(
+                    Upstream::GitHub,
+                    GitHub {
+                        fake: adapters::github::Fake::new(&fakes),
+                        posted: posted.clone(),
+                    },
+                );
+                registry
+            };
+            let mut c = Controller::open(
+                Store::open(&settings).unwrap(),
+                registry(),
+                bootstrap(fail_fast),
+            )
+            .unwrap();
+            c.intake(labelled()).unwrap();
+            drain(&mut c);
+            let before = c.world().unwrap();
+            assert!(matches!(before.nodes[0].phase, Phase::Planning { .. }));
+            assert_eq!(plans.lock().unwrap().len(), 1);
+            let metadata = PlanCheckProvenance {
+                objections: vec![PlanObjection {
+                    allowed_empty: true,
+                    class: ObjectionClass::Other,
+                    rule: case["rule"].as_str().unwrap().into(),
+                    items: serde_json::from_value(case["items"].clone()).unwrap(),
+                    diagnostic: case["diagnostic"].as_str().unwrap().into(),
+                }],
+                repair: PlanRepair::Attempted,
+            };
+            c.observe(
+                "rp-first",
+                Observation::WorkerReply {
+                    node: tl3_kernel::NodeId(0),
+                    generation: before.nodes[0].generation,
+                    role: "planner".into(),
+                    reply: case["reply"].clone(),
+                    model: None,
+                    plan_check: Some(metadata),
+                },
+            )
+            .unwrap();
+            drain(&mut c);
+            let after = c.world().unwrap();
+            assert!(matches!(after.nodes[0].phase, Phase::Planning { .. }));
+            assert!(after.nodes[0].empty_allowed_replanned);
+            assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
+            assert_eq!(plans.lock().unwrap().len(), 2);
+            let findings = Store::open(&settings)
+                .unwrap()
+                .worker_document("0", "findings")
+                .unwrap()
+                .unwrap();
+            assert!(
+                findings
+                    .to_string()
+                    .contains(case["rule"].as_str().unwrap())
+            );
+            let stored = Store::open(&settings)
+                .unwrap()
+                .worker_document("0", "plans")
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored["plan_check"]["objections"][0]["allowed_empty"], true);
+            drop(c);
+            let mut reopened = Controller::open(
+                Store::open(&settings).unwrap(),
+                registry(),
+                bootstrap(fail_fast),
+            )
+            .unwrap();
+            let recovered = reopened.world().unwrap();
+            assert!(recovered.nodes[0].empty_allowed_replanned);
+            assert_eq!(recovered.nodes[0].generation, after.nodes[0].generation);
+            reopened
+                .observe(
+                    "rp-later-cant-meet",
+                    Observation::WorkerReply {
+                        node: tl3_kernel::NodeId(0),
+                        generation: recovered.nodes[0].generation,
+                        role: "planner".into(),
+                        reply: case["reply"].clone(),
+                        model: None,
+                        plan_check: None,
+                    },
+                )
+                .unwrap();
+            drain(&mut reopened);
+            let stopped = reopened.world().unwrap();
+            assert_eq!(stopped.nodes[0].phase, Phase::Closed(Outcome::Stopped));
+            assert_eq!(stopped.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
+            assert!(stopped.nodes[0].empty_allowed_replanned);
+            assert_eq!(stopped.nodes[0].credit, before.nodes[0].credit);
+            assert_eq!(
+                plans.lock().unwrap().len(),
+                2,
+                "no second re-plan across reopen"
+            );
+            assert!(!posted.lock().unwrap().iter().any(|delivery| matches!(
+                delivery.output,
+                Output::Notice {
+                    notice: Notice::Ask { .. },
+                    ..
+                }
+            )));
+            let stored = Store::open(&settings)
+                .unwrap()
+                .worker_document("0", "plans")
+                .unwrap()
+                .unwrap();
+            assert!(
+                stored["empty_allowed_replan_stop"]
+                    .as_str()
+                    .unwrap()
+                    .contains("one empty-allowed re-plan")
+            );
+        }
+    }
+}

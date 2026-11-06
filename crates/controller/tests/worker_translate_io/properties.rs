@@ -89,7 +89,7 @@ fn production_and_reference_sources_are_pinned() {
                     mapping(&production),
                     "current mapping drift"
                 );
-                let helper = |source: &str| source[source.find("pub(crate) fn after_empty_allowed_replan(").unwrap()..].split("#[cfg(test)]").next().unwrap().trim();
+                let helper = |source: &str| source[source.find("pub(crate) fn after_empty_allowed_replan(").unwrap()..].split("#[cfg(test)]").next().unwrap().trim().to_owned();
                 assert_eq!(helper(&copy), helper(&production));
                 for part in pin["parts"].as_array().unwrap().iter().skip(1) {
                     let part = part.as_str().unwrap();

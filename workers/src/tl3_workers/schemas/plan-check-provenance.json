@@ -3,13 +3,22 @@
     "ObjectionClass": {
       "enum": [
         "size_execution_fit",
-        "other"
+        "other",
+        "owner_decision",
+        "infrastructure",
+        "credit",
+        "quota"
       ],
       "type": "string"
     },
     "PlanObjection": {
       "additionalProperties": false,
       "properties": {
+        "allowed_empty": {
+          "default": false,
+          "description": "Code-owned row result. Legacy provenance never opts into a re-plan.",
+          "type": "boolean"
+        },
         "class": {
           "$ref": "#/$defs/ObjectionClass"
         },

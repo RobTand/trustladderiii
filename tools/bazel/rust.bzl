@@ -169,7 +169,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs", "tests/support/ownership.rs"],
     "tests/console_commands.rs": ["tests/fixtures/decisions/**", "tests/support/scenario.rs", "tests/support/command.rs"],
     "tests/hindsight.rs": ["README.md"],
-    "tests/fail_fast.rs": ["tests/support/**"],
+    "tests/fail_fast.rs": ["tests/support/**", "tests/fixtures/pq-2648-empty-replan.json"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
     "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
