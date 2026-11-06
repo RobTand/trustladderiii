@@ -289,7 +289,7 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
             .as_str()
             .unwrap()
             .chars()
-            .take(crate::findings::TITLE_CHARS)
+            .take(crate::feedback::TITLE_CHARS)
             .collect();
         assert_eq!(sent["report"], title, "a collapsed item keeps its title");
         assert!(sent.get("failed_tests").is_none());

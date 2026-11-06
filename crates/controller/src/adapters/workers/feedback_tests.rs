@@ -247,11 +247,10 @@ fn failed_run_details_reach_the_retry_maker() {
         failure_class: "worker_exit".into(),
         failure_message: "maker exited during reproduction".into(),
     });
-    f.observe(Observation::Kernel(Event::Command {
+    f.observe(Observation::Steering {
         node: NodeId(0),
-        id: 1,
         command: tl3_kernel::Command::Resume,
-    }));
+    });
     let snapshot = f.controller.snapshot().unwrap();
     assert!(
         snapshot.pending_effects.iter().any(|effect| {
