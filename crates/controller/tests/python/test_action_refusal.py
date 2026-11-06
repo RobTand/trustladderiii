@@ -96,11 +96,11 @@ class ActionRefusalTests(unittest.TestCase):
                 self.assertIn("proof.support.call_allowlist", message)
                 self.assertIn("proof.support.member_write", message)
                 if owned and not generated:
-                    self.assertIn("Change `tests/test_value.py`", message)
+                    self.assertIn('Change "tests/test_value.py"', message)
                     self.assertNotIn("cant_meet", message)
                 else:
                     self.assertIn("cant_meet", message)
-                    self.assertNotIn("Change `", message)
+                    self.assertNotIn('Change "', message)
 
     def test_symlink_in_the_head_is_a_failing_check_naming_it(self):
         # The maker's head is the maker's change: refuse it as a check, not an action error.
