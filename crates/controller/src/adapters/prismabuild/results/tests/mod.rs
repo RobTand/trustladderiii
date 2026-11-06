@@ -70,7 +70,7 @@ fn producer_overrides_preserve_retained_phases() {
         let (mut old, _) = recorded_io::run(
             vec![],
             vec![recorded_io::Step::Bytes(bytes.clone())],
-            || normalized(before::run(ending(&bytes), &job)),
+            || normalized_before(before::run(ending(&bytes), &job)),
         );
         // #849 intentionally changes only the class of the producer's no-report case.
         let expected_class = if selected {
@@ -95,9 +95,10 @@ fn disagreement_uses_the_confirmed_harness_class() {
         parse(&raw(&report), &job).unwrap().is_some(),
         "shape/identity validation must not swallow a judge disagreement"
     );
-    let (report, pass, results, failed, class) = evaluate(&job, &report);
+    let (report, pass, results, failed, class, diagnostic) = evaluate(&job, &report);
     assert!(!report && !pass && results.is_empty() && failed.is_empty());
     assert_eq!(class, Some(HARNESS));
+    assert!(diagnostic.is_none());
     assert_eq!(JUDGE_MISMATCH_CLASS, Some(HARNESS));
 }
 
@@ -175,7 +176,8 @@ fn changed_test_refusal_preserves_its_failure_over_no_report() {
     let (mut job, mut report) = fixture("no-report", "passed", false, false);
     report["results"][0]["verdict"] = json!("fail");
     job.changed_paths = vec!["tests/test_x.py".into()];
-    let (reported, passed, results, failed, class) = evaluate(&job, &report);
+    let (reported, passed, results, failed, class, diagnostic) = evaluate(&job, &report);
+    assert!(diagnostic.is_none());
     assert!(reported && !passed && !results.is_empty() && !failed.is_empty());
     assert_eq!(class, None);
 
@@ -270,10 +272,20 @@ fn retained_boundary_checks_campaign_flags_and_forced_heads() {
 
 pub(super) mod recorded_io;
 
+fn normalized_before(value: Result<before::CheckEvidence>) -> Value {
+    normalized(
+        value.map(|(report, pass, results, failed, class)| {
+            (report, pass, results, failed, class, None)
+        }),
+    )
+}
+
 fn normalized(value: Result<CheckEvidence>) -> Value {
     match value {
-        Ok((report, pass, results, failed, class)) => json!({"report": report, "pass": pass,
-            "results": results, "failed": failed, "class": class}),
+        Ok((report, pass, results, failed, class, diagnostic)) => {
+            json!({"report": report, "pass": pass,
+            "results": results, "failed": failed, "class": class, "diagnostic": diagnostic})
+        }
         Err(error) => json!({"error": error.to_string()}),
     }
 }
@@ -318,9 +330,9 @@ proptest! {
             ending
         };
         let (mut old, old_calls) = recorded_io::run(opens.clone(), schedule.clone(),
-            || normalized(before::run(make_ending(), &job)));
+            || normalized_before(before::run(make_ending(), &job)));
         let (pinned, pinned_calls) = recorded_io::run(opens.clone(), schedule.clone(),
-            || normalized(current::run(make_ending(), &job)));
+            || normalized_before(current::run(make_ending(), &job)));
         let (new, new_calls) = recorded_io::run(opens, schedule,
             || normalized(evidence(make_ending(), &job)));
         prop_assert_eq!(&pinned_calls, &new_calls);
@@ -359,7 +371,7 @@ fn campaign_planned_proof_requires_positive_ordinary_head() {
     let (old, _) = recorded_io::run(
         vec![],
         vec![recorded_io::Step::Bytes(bytes.clone())],
-        || normalized(before::run(ending(&bytes), &job)),
+        || normalized_before(before::run(ending(&bytes), &job)),
     );
     assert_eq!(normalized(Ok(evaluate(&job, &report))), old);
     assert!(parse(&bytes, &job).unwrap().is_none());
@@ -391,7 +403,8 @@ fn shell_invariant_counterexample(selected: bool, forced: bool) {
         parse(&raw(&report), &job).unwrap().is_some(),
         "the counterexample is shape-valid"
     );
-    let (reported, passed, results, failed, class) = evaluate(&job, &report);
+    let (reported, passed, results, failed, class, diagnostic) = evaluate(&job, &report);
+    assert!(diagnostic.is_none());
     assert!(!reported && !passed && results.is_empty() && failed.is_empty());
     assert_eq!(class, Some(HARNESS));
 }
