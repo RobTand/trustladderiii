@@ -37,7 +37,8 @@ fn production_and_reference_sources_are_pinned() {
     let normalized_arm = arm(&normalized);
     let normalized_end = normalized_arm.find("        };\n        *detail").unwrap();
     let rp_current = include_str!("rp-current.rs");
-    let rp_arm = arm(rp_current);
+    let rp_normalized = rp_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n");
+    let rp_arm = arm(&rp_normalized);
     let rp_end = rp_arm.find("        };\n        *detail").unwrap();
     assert_eq!(&rp_arm[..rp_end], arm(source));
     assert!(!normalized_arm[..normalized_end].contains("empty_allowed_replanned"));

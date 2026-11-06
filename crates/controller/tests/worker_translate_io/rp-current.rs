@@ -92,9 +92,18 @@ impl Shell<'_> {
                         }));
                     }
                 };
-                // Q53 / #828: unknown legacy identity/order is not success evidence.
-                // Only model_success_evidence can clear ordered quota; reset and
-                // operator clear remain available for pre-upgrade holds.
+                // Legacy quota rows have no ordering identity. Preserve their
+                // once-only reply consumption until fresh quota facts replace them.
+                if let Some(row) = snapshot.rows.iter().find(|row| {
+                    row.table == "model_quotas"
+                        && Some(row.id.as_str()) == model.as_deref()
+                        && row.value["finished_ms"].is_null()
+                }) {
+                    commit.rows.push(RowChange::Delete {
+                        table: row.table.clone(),
+                        id: row.id.clone(),
+                    });
+                }
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {
