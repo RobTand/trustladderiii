@@ -551,7 +551,8 @@ impl Credit {
         /// State-table credit ledger: one unit per paid retry or continuation.
         fn spend(&mut self, cost: u64) -> (result: ()) [
             requires old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures final(self).spent as int == old(self).spent as int + cost as int,
+            ensures *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
+                final(self).spent as int == old(self).spent as int + cost as int,
                 final(self).start == old(self).start,
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
@@ -2245,3 +2246,11 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_retry.rs"]
+mod port_review_retry;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_reply.rs"]
+mod port_review_reply;
