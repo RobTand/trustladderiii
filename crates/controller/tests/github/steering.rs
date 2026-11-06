@@ -118,6 +118,7 @@ struct Daemon {
     address: SocketAddr,
     marker: std::path::PathBuf,
     runs: std::path::PathBuf,
+    retain_owner: bool,
 }
 impl Daemon {
     fn start(settings: &tl3_config::Store, mode: &str) -> Self {
@@ -181,6 +182,7 @@ impl Daemon {
             address,
             marker,
             runs,
+            retain_owner: false,
         }
     }
     fn store_settings(&self) -> tl3_config::Store {
@@ -302,17 +304,11 @@ impl Daemon {
         stdin.flush().unwrap();
     }
     fn restart(&mut self) {
+        let retained = self.retain_owner.then(|| fixture_lifecycle::RetainedOwner::start(&self.store_settings())).flatten();
+        let rejected = retained.as_ref().map(|owner| owner.rejection_signal());
         self.child.kill().unwrap();
         self.child.wait().unwrap();
-        let settings = self.store_settings();
-        let mut connection = postgres::Config::new()
-            .host(&settings.host)
-            .port(settings.port)
-            .user(&settings.user)
-            .dbname(&settings.database)
-            .password("tl3-disposable-test-password")
-            .connect(postgres::NoTls)
-            .unwrap();
+        let mut connection = fixture_lifecycle::connect(&self.store_settings());
         support::controller_restart::wait_for_owner_release(&mut connection);
         drop(connection);
         let mut child = Command::new(env!("CARGO_BIN_EXE_tl3d"))
@@ -337,6 +333,7 @@ impl Daemon {
             for line in BufReader::new(stderr).lines() {
                 let line = line.unwrap();
                 eprintln!("recovered steering daemon: {line}");
+                fixture_lifecycle::rejected(&rejected, &line);
                 if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
                     let _ = tx.send(address.parse().unwrap());
                 }
@@ -358,6 +355,12 @@ impl Daemon {
                 })
         });
     }
+}
+pub(super) fn restart_owner_probe(settings: &tl3_config::Store) {
+    let mut daemon = Daemon::start(settings, "steering-commands");
+    daemon.retain_owner = true;
+    daemon.restart();
+    assert!(daemon.child.try_wait().unwrap().is_none());
 }
 impl Drop for Daemon {
     fn drop(&mut self) {

@@ -9,6 +9,7 @@ use std::{
 use tempfile::TempDir;
 
 mod cache;
+mod checkpoint_probe;
 mod scratch;
 
 pub struct Database {
@@ -192,7 +193,41 @@ impl Database {
     }
 
     pub fn stop(&self) {
-        self.runtime.block_on(self.postgres.stop()).unwrap();
+        let probe = std::env::args().any(|arg| arg == "--fixture-database-probe");
+        if probe {
+            let settings = self.postgres.settings();
+            let mut client = postgres::Config::new()
+                .host(&settings.host)
+                .port(settings.port)
+                .user(&settings.username)
+                .password(&settings.password)
+                .dbname("postgres")
+                .connect_timeout(Duration::from_secs(10))
+                .connect(postgres::NoTls)
+                .expect("connect to disposable cluster for teardown probe");
+            for row in client.query("SELECT pid, datname, backend_type, state, wait_event_type, wait_event FROM pg_stat_activity WHERE pid <> pg_backend_pid() ORDER BY pid", &[]).unwrap() {
+                eprintln!("[fixture-db-probe] pid={} db={:?} type={} state={:?} wait={:?}/{:?}", row.get::<_, i32>(0), row.get::<_, Option<String>>(1), row.get::<_, String>(2), row.get::<_, Option<String>>(3), row.get::<_, Option<String>>(4), row.get::<_, Option<String>>(5));
+            }
+            client.close().unwrap();
+        }
+        let load = checkpoint_probe::Load::start(self.scratch.path());
+        let started = Instant::now();
+        let result = self.runtime.block_on(self.postgres.stop());
+        drop(load);
+        if probe || result.is_err() {
+            let settings = self.postgres.settings();
+            eprintln!("[fixture-db-probe] stop data={} port={} mode=fast elapsed={:?} result={result:?}", settings.data_dir.display(), settings.port, started.elapsed());
+            match fs::read_to_string(settings.data_dir.join("start.log")) {
+                Ok(log) => {
+                    let lines: Vec<_> = log.lines().collect();
+                    for line in &lines[lines.len().saturating_sub(100)..] {
+                        eprintln!("[fixture-db-probe] server: {line}");
+                    }
+                }
+                Err(error) => eprintln!("[fixture-db-probe] cannot read server log: {error}"),
+            }
+        }
+        result.unwrap();
         assert!(self.scratch.path().exists());
     }
 }
