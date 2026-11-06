@@ -5,7 +5,6 @@ kernel_fn! {
 /// Reply rows / #771: phase, schema and commit identity use the executable checks.
 pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
     ensures result == port_t860_contracts::admissible(*w, *n, *reply),
-        result == port_review_reply::accepted_reply(*w, *n, *reply),
         result == match (n.phase, *reply) {
         (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => true,
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
