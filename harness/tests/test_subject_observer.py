@@ -1511,3 +1511,12 @@ def test_r1_report_all_keeps_each_support_declaration_pointer(tmp_path):
         'proof.support.call_allowlist', 'proof.support.member_write'}
     assert {name.value for violation in caught.value.violations for name in violation.rule.names(violation.facts)
             if name.kind == 'field'} == {'/proof/observer_support/0', '/proof/observer_support/1'}
+
+
+def test_r1_report_all_includes_independent_inferred_support(tmp_path):
+    case = t842_immutable_case('_FIRST = {}\n_SECOND = {}', '_FIRST or _SECOND')
+    with pytest.raises(model.ProofRefusal) as caught:
+        assemble_t842_case(tmp_path, case)
+    literals = [violation for violation in caught.value.violations
+                if violation.rule.id == 'proof.support.literal_binding']
+    assert {violation.facts['symbol'] for violation in literals} == {'_FIRST', '_SECOND'}
