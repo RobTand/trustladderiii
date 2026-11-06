@@ -678,3 +678,165 @@ def test_generated_scope_keeps_protected_paths_excluded():
     forecast = {"generator": {"command": ["generate"]},
                 "generated_files": ["tests/BUILD.bazel", "src/BUILD.bazel"]}
     assert configured_outputs(None, forecast, ["tests/**"]) == ["src/BUILD.bazel"]
+
+
+@pytest.mark.parametrize("issue", [
+    pytest.param(2713, marks=pytest.mark.xfail(
+        strict=True,
+        reason="PB #2713: prose-only runner capability gap; pending lead decision on the #841 prompt change",
+    )),
+    2815,
+    2817,
+])
+def test_audit_objects_to_real_unavailable_executor_obligations(issue):
+    fixture = Path(__file__).with_name("fixtures") / "intake-executor-capability" / f"prismabuild-{issue}.json"
+    case = json.loads(fixture.read_text())
+    inputs = {
+        "issue": {"title": "", "body": "\n".join(
+            requirement.get("provenance", {}).get("quote", "")
+            for requirement in case["ingest"]["evidence_contract"])},
+        "ingest": copy.deepcopy(case["ingest"]),
+        "tool_capabilities": case["tool_capabilities"],
+    }
+    reply = copy.deepcopy(case["audit"])
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+
+    assert reply["verdict"] == "disagree", (
+        f"PB #{issue}: audit must object before planning to an unavailable executor or runner feature")
+    assert reply["objections"]
+    assert all(requirement in reply["evidence_contract"]
+               for requirement in case["ingest"]["evidence_contract"])
+    blocker = "saved Bazel source closure" if issue == 2713 else "BuildBuddy"
+    assert blocker in "\n".join(reply["objections"])
+
+
+def test_audit_objects_to_pq3315_structured_remote_bazel_obligations():
+    fixture = Path(__file__).with_name("fixtures") / "intake-executor-capability" / "prismaquant-3315.json"
+    case = json.loads(fixture.read_text())
+    inputs = {
+        "issue": {"title": "", "body": "\n".join(
+            requirement.get("provenance", {}).get("quote", "")
+            for requirement in case["ingest"]["evidence_contract"])},
+        "ingest": {"brief": "", "goals": [], **copy.deepcopy(case["ingest"])},
+        "tool_capabilities": case["tool_capabilities"],
+    }
+    reply = copy.deepcopy(case["audit"])
+    assert reply["verdict"] == "agree"
+    assert inputs["ingest"]["evidence_errors"]
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+
+    assert reply["verdict"] == "disagree", "PQ #3315: audit must object before planning to remote Bazel obligations"
+    assert all(requirement in reply["evidence_contract"]
+               for requirement in case["ingest"]["evidence_contract"]
+               if requirement.get("provenance", {}).get("kind") != "method")
+    for target in ("//tests:test_stage_a_chain_resume", "//tests:test_duplication_baseline"):
+        assert any(target in error and "executor=authorized remote Bazel executor" in error
+                   for error in reply["evidence_errors"])
+        assert any(target in objection and "executor=authorized remote Bazel executor" in objection
+                   for objection in reply["objections"])
+
+
+@pytest.fixture
+def audit_evidence_case():
+    fixture = Path(__file__).with_name("fixtures") / "intake-executor-capability" / "prismabuild-2815.json"
+    case = json.loads(fixture.read_text())
+    return {
+        "issue": {"title": "", "body": ""},
+        "ingest": copy.deepcopy(case["ingest"]),
+        "tool_capabilities": case["tool_capabilities"],
+    }
+
+
+@pytest.mark.parametrize("require_execution", [False, True])
+def test_audit_keeps_supported_evidence_agreement(audit_evidence_case, require_execution):
+    inputs = audit_evidence_case
+    supported = inputs["ingest"]["evidence_contract"][:1] if require_execution else []
+    inputs["ingest"]["evidence_contract"] = supported
+    reply = {**copy.deepcopy(AGREE), "evidence_contract": copy.deepcopy(supported)}
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+    assert reply == {**AGREE, "evidence_contract": supported, "evidence_errors": []}
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("missing", ["executor", "runner_feature", "all_tools"])
+def test_audit_objects_to_inherited_source_obligations(audit_evidence_case, legacy, missing):
+    inputs = audit_evidence_case
+    requirement = inputs["ingest"]["evidence_contract"][1]
+    if legacy:
+        requirement.pop("provenance")
+    if missing == "runner_feature":
+        requirement.update(tool="run_tests", executor="prismabuild_pytest",
+                           runner_features=["bazel_source_closure"], methods=[])
+    elif missing == "all_tools":
+        inputs["tool_capabilities"] = []
+    inputs["ingest"]["evidence_contract"] = [requirement]
+    reply = {**copy.deepcopy(AGREE), "evidence_contract": []}
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+    assert reply["verdict"] == "disagree"
+    assert reply["evidence_contract"] == [requirement]
+    assert reply["objections"] == reply["evidence_errors"]
+    assert requirement["requirement"] in "\n".join(reply["objections"])
+
+
+def test_audit_does_not_inherit_method_only_evidence(audit_evidence_case):
+    inputs = audit_evidence_case
+    method = inputs["ingest"]["evidence_contract"][1]
+    method["provenance"] = {"kind": "method"}
+    inputs["ingest"]["evidence_contract"] = [method]
+    reply = {**copy.deepcopy(AGREE), "evidence_contract": []}
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+    assert reply == {**AGREE, "evidence_contract": [], "evidence_errors": []}
+
+
+def test_audit_preserves_and_deduplicates_existing_objections(audit_evidence_case):
+    inputs = audit_evidence_case
+    inputs["ingest"]["evidence_contract"] = inputs["ingest"]["evidence_contract"][1:]
+    known_error = inputs["ingest"]["evidence_errors"][0]
+    objections = ["The brief omits the issue's punctuation goal.", known_error]
+    reply = {"verdict": "disagree", "objections": objections.copy(), "evidence_contract": []}
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+    assert reply["objections"] == objections
+    previous = copy.deepcopy(reply)
+    ROLES["audit"].check_reply(inputs, reply)
+    assert reply == previous
+
+
+@pytest.mark.parametrize("stale_errors", [False, True])
+@pytest.mark.parametrize("ingest_present", [False, True])
+def test_audit_keeps_legacy_behavior_without_capability_declarations(audit_evidence_case, stale_errors,
+                                                                   ingest_present):
+    inputs = audit_evidence_case if ingest_present else {}
+    inputs.pop("tool_capabilities", None)
+    reply = {**copy.deepcopy(AGREE), "evidence_contract": []}
+    if stale_errors:
+        reply["evidence_errors"] = ["An earlier preflight had different capabilities."]
+    previous = copy.deepcopy(reply)
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+    assert reply == previous
+
+
+@pytest.mark.parametrize("outcome", ["duplicate", "already_done", "not_actionable"])
+@pytest.mark.parametrize("verdict", ["agree", "disagree"])
+def test_audit_keeps_independent_early_end_verdict(audit_evidence_case, outcome, verdict):
+    inputs = audit_evidence_case
+    requirement = inputs["ingest"]["evidence_contract"][1]
+    inputs["ingest"] = {
+        "kind": "early_end", "outcome": outcome,
+        "reason": "Evidence for the early-end proposal is independently audited.",
+        "evidence_contract": [requirement],
+    }
+    objections = ["The supplied evidence does not support this early end."] if verdict == "disagree" else []
+    reply = {"verdict": verdict, "objections": objections.copy(), "evidence_contract": []}
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+    assert reply["verdict"] == verdict
+    assert reply["objections"] == objections
+    assert reply["evidence_errors"]
+    assert reply["evidence_contract"] == [requirement]
