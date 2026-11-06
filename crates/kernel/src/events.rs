@@ -82,7 +82,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             _ => true,
         },
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
-] hide [node_checked] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
