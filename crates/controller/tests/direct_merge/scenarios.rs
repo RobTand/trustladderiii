@@ -97,7 +97,9 @@ impl DirectFixture {
         controller
     }
     fn start(&self, settings: &tl3_config::Store) -> (Controller, Delivery) {
-        let mut controller = self.open(settings);
+        self.start_controller(settings, self.open(settings))
+    }
+    fn start_controller(&self, settings: &tl3_config::Store, mut controller: Controller) -> (Controller, Delivery) {
         controller.intake(LabelledIssue { delivery:"direct-label".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
         let mut enqueue = None;
         for _ in 0..100 {
@@ -301,7 +303,7 @@ fn restart_direct_write_cuts(cuts: std::ops::Range<usize>) {
     let mut database = support::Database::start();
     for cut in cuts {
         let settings = database.create(&format!("direct_crash_{cut}"));
-        let fixture = DirectFixture::new();
+        let mut fixture = DirectFixture::new();
         fixture.check(None);
         let (controller, delivery) = fixture.start(&settings);
         drop(controller);
@@ -332,22 +334,20 @@ fn restart_direct_write_cuts(cuts: std::ops::Range<usize>) {
             }
         }
         drop(issuer);
-        // A recovered Merge intent cannot authorize a new write by itself.
-        let puts_before_recovery = fixture.direct.lock().unwrap().puts.len();
-        let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
-            &fixture.root.path().join("direct"), settings.clone()).unwrap();
-        match adapter.reconcile(&delivery).unwrap() {
-            Reconciliation::Found(c) => assert_eq!(c.ack, tl3_kernel::Ack::Confirmed),
-            Reconciliation::Pending => assert_eq!(fixture.direct.lock().unwrap().puts.len(), puts_before_recovery,
-                "a recovered consumed authorization cannot write at cut {cut}"),
-            Reconciliation::Absent => panic!("recovery cannot lose durable evidence at cut {cut}"),
-        }
-        drop(adapter);
+        // Reopen exactly as production does, without preparing history/receipts
+        // through a separate adapter.reconcile call or a webhook.
+        fixture.wakes = direct_merge::Wakes::default();
         let mut restarted = fixture.open(&settings);
+        drain(&mut restarted);
+        if fixture.direct.lock().unwrap().successes == 1 {
+            assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"),
+                "unmasked Controller recovery must retain direct history at cut {cut}");
+        }
         fixture.check_event(&settings);
         drain(&mut restarted);
         assert!(matches!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
         assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+        assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
     }
 }
 
@@ -842,4 +842,33 @@ fn r3_a_annotation_crash_preserves_legacy_and_current_merge_attempts() {
         assert_eq!(fixture.direct.lock().unwrap().successes, 1);
         assert!(matches!(recovered.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
     }
+}
+
+#[test]
+fn r3_b_unmasked_controller_recovery_keeps_history_before_merged_fact() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_r3_observation_history");
+    let mut fixture = DirectFixture::new();
+    let adapter = fixture.adapter(&settings).with_write_boundary(|boundary| {
+        if boundary == (direct_merge::WriteBoundary {write:direct_merge::Write::History, after:false}) {
+            panic!("crash after successful PUT before History");
+        }
+    });
+    let controller = fixture.open_adapter(&settings, adapter);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fixture.start_controller(&settings, controller))).is_err());
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    assert!(!Store::open(&settings).unwrap().load().unwrap().rows.iter().any(|r|r.table == "delivery_history"));
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut recovered = fixture.open(&settings);
+    // No adapter reconciliation preparation, no webhook and no ingress delivery.
+    drain(&mut recovered);
+    assert!(matches!(recovered.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+    assert!(recovered.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"),
+        "observations() must persist direct history before its terminal fact retires the intent");
+    let mut reader = Store::open(&settings).unwrap().reader().unwrap();
+    let mut tx = reader.transaction().unwrap();
+    let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
+    assert!(rows.requests[0].direct_delivery, "unmasked recovery must keep the board's direct delivery marker");
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
