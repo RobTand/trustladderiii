@@ -54,7 +54,9 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
             | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
-    ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
+    ensures port_review_reply::transition_post(*old(w), *final(w), i as int,
+            old(w).nodes@[i as int], reply, *old(out), *final(out)),
+        progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
             reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
@@ -62,7 +64,7 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(port_review_reply::transition_post); reveal(port_review_reply::transition); reveal(port_review_retry::recheck_post); reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
@@ -111,17 +113,27 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         matches!(reply, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges | Reply::RunFailed),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+    ensures port_review_reply::transition_post(*old(w), *final(w), i as int,
+            old(w).nodes@[i as int], reply, *old(out), *final(out)),
+        (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] hide [successful_reply_input, ordinary_await, current_item, items] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+    kernel_snapshot! { rebase_before = *w }
+    kernel_snapshot! { rebase_outputs = *out }
+
     match reply {
         Reply::RebaseClean { head } => {
             update_recheck_head(&mut w.nodes[i], head);
+            kernel_snapshot! { rebase_updated = w.nodes@[i as int] }
             recheck(w, i, Phase::Checking, out);
+            kernel_proof! {
+                port_review_admission::clean_pair(rebase_before@.nodes@[i as int], rebase_updated@,
+                    w.nodes@[i as int], head, rebase_before@.fail_fast, rebase_before@.next_question, w.next_question);
+            }
         }
         Reply::RebaseNeedsChanges => {
             let m = &mut w.nodes[i];
@@ -141,6 +153,17 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         }
         _ => {}
     }
+    kernel_proof! {
+        assert(port_review_reply::transition_post(rebase_before@, *w, i as int,
+            rebase_before@.nodes@[i as int], reply, rebase_outputs@, *out)) by {
+            reveal(port_review_reply::transition_post);
+            reveal(port_review_reply::transition);
+        }
+    }
+    kernel_proof! {
+        port_review_admission::rebase_progress(rebase_before@, *w, i as int, reply, rebase_outputs@, *out);
+    }
+
 }
 }
 

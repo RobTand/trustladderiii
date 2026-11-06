@@ -24,7 +24,7 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Rebasing, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges) => true,
         _ => false,
     },
-] {
+] proof [reveal(port_review_reply::accepted_reply);] {
     match (n.phase, reply) {
         (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => {
             true
@@ -270,7 +270,9 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
+    ensures port_review_reply::transition_post(*old(w), *final(w), i as int,
+            old(w).nodes@[i as int], reply, *old(out), *final(out)),
+        progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
             reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
@@ -289,7 +291,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
+] proof [reveal(port_review_reply::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),

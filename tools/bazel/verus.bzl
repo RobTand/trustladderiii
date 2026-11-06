@@ -873,6 +873,19 @@ def verus_proofs():
             "review_retry_recheck": ("kernel::retries#recheck", 1),
             "review_output_notice_append": ("kernel::port_review_output#notice_append", 1),
 
+            "review_retry_rung_stop_result": ("kernel::port_review_retry_lemmas#rung_stop", 1),
+            "review_retry_rung_attempt_paid": ("kernel::port_review_retry_lemmas#rung_attempt_paid", 1),
+            "review_retry_rung_attempt_question": ("kernel::port_review_retry_lemmas#rung_attempt_question", 1),
+            "review_retry_rung_replan_paid": ("kernel::port_review_retry_lemmas#rung_replan_paid", 1),
+            "review_retry_rung_replan_question": ("kernel::port_review_retry_lemmas#rung_replan_question", 1),
+            "review_retry_rung_question_result": ("kernel::port_review_retry_lemmas#rung_question", 1),
+            "review_retry_recheck_question_result": ("kernel::port_review_retry_lemmas#recheck_question", 1),
+            "review_retry_recheck_shape": ("kernel::port_review_retry_lemmas#recheck_shape", 1),
+            "review_retry_rung_shape": ("kernel::port_review_retry_lemmas#rung_shape", 1),
+            "review_retry_recheck_resumed": ("kernel::port_review_retry_lemmas#recheck_resumed", 1),
+            "review_retry_recheck_progress": ("kernel::port_review_retry_lemmas#recheck_progress", 1),
+            "review_admission_rebase_progress": ("kernel::port_review_admission#rebase_progress", 1),
+            "review_admission_clean_pair": ("kernel::port_review_admission#clean_pair", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
