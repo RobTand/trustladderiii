@@ -608,3 +608,26 @@ def test_non_planner_repair_message_is_byte_identical(message, expected):
     from tl3_workers.turns import repair_message
 
     assert repair_message(ValueError(message)).encode() == expected.encode()
+
+
+def test_repair_reports_schema_and_independent_missing_contract():
+    from tl3_workers.turns import TurnControl, repaired
+    control, history = TurnControl(), []
+    valid = {**test_workers.EARLY, 'evidence_contract': []}
+    replies = iter([{**test_workers.EARLY, 'outcome': 'too_big'}, valid])
+    seen = []
+
+    def ask():
+        seen.append(control.repairing)
+        return next(replies)
+
+    result = repaired(control, history, ask, lambda value: runtime._checked(
+        runtime.ROLES['ingest'], {'tool_capabilities': []}, value))
+    assert result['outcome'] == valid['outcome']
+    refusal = history[-1].text
+    assert 'evidence.contract_missing' in refusal
+    assert '/evidence_contract' in refusal and 'add' in refusal
+    assert '/outcome' in refusal and 'too_big' in refusal
+    assert 'already_done' in refusal and 'duplicate' in refusal
+    assert 'Allowed' in refusal and 'replace' in refusal
+    assert seen == [False, True] and control.repair_attempts == 1
