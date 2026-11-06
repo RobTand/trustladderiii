@@ -256,16 +256,11 @@ pub(super) async fn read_queue(
                 if is_merge_queue_pr(&pull)
                     && pull.base.branch == state.pull_request.base.branch =>
             {
-                if let Some(batch) = queue_cause::batch_context(&pull)
-                    .filter(|context| context.members.contains(&state.pull_request.number))
-                {
-                    context = Some(batch);
-                    match github.check_runs(repo, &pull.head.sha).await {
-                        Ok(checks) => read_checks(github, repo, &checks).await,
-                        Err(_) => QueueCiEvidence::default(),
-                    }
-                } else {
-                    QueueCiEvidence::default()
+                context = queue_cause::batch_context(&pull)
+                    .filter(|context| context.members.contains(&state.pull_request.number));
+                match github.check_runs(repo, &pull.head.sha).await {
+                    Ok(checks) => read_checks(github, repo, &checks).await,
+                    Err(_) => QueueCiEvidence::default(),
                 }
             }
             _ => QueueCiEvidence::default(),

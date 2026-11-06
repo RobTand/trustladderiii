@@ -1,6 +1,7 @@
 use crate::queue_cause::{CauseEvidence, QueueContext, GateEvidence, Hold, held, key};
 use crate::queue_cause_decide::{self as decision, Attribution};
 use chrono::{DateTime, Utc};
+use tl3_controller::Repository;
 impl Shell<'_> {
     pub(crate) fn queue_gate(
         &self,

@@ -14,7 +14,7 @@ struct Recovery {
     command: Command,
     /// An old executor may already have sent the effect-keyed command.
     command_key: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     retry: Option<crate::queue_cause::RetryTransition>,
 }
 impl Adapter {
@@ -685,7 +685,9 @@ impl Adapter {
                     if schedule::fence(Self::command_stage(recovery.command)) {
                         self.fence(delivery)?;
                     }
-                    if recovery.command == Command::Sending && recovery.retry.is_none() {
+                    if recovery.command == Command::Sending && recovery.retry.is_none()
+                        && snapshot.as_ref().is_some_and(|snapshot| snapshot.rows.iter().any(|row| row.table == "queue_holds" && row.id == crate::queue_cause::key(delivery.node(), head)))
+                    {
                         recovery.retry =
                             self.queue_retry_binding(delivery, &fresh, &recovery.command_key)?;
                     }

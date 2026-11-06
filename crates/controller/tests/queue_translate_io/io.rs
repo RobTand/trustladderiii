@@ -108,8 +108,17 @@ pub(super) struct Commit {
     pub rows: Rows,
 }
 pub(super) struct Rows;
+pub(super) struct RecordedRow(Value);
+impl From<Value> for RecordedRow {fn from(value:Value) -> Self {Self(value)}}
+impl From<tl3_store::RowChange> for RecordedRow {
+    fn from(row:tl3_store::RowChange) -> Self {Self(match row {
+        tl3_store::RowChange::Put {table,id,value} => json!({"table":table,"id":id,"value":value}),
+        tl3_store::RowChange::Delete {table,id} => json!({"delete":table,"id":id}),
+    })}
+}
 impl Rows {
-    pub fn push(&mut self, row: Value) {
+    pub fn push(&mut self, row: impl Into<RecordedRow>) {
+        let row=row.into().0;
         call("row.push", row.clone());
         with(|r| r.run.rows.push(row));
     }
