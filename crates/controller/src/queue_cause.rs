@@ -194,12 +194,16 @@ impl Controller {
                     .as_ref()
                     .is_some_and(|witness| completed.is_some_and(|at| at > witness.at))
             });
-        let context = details.context.clone().map(|context| *context).unwrap_or(QueueContext {
-            base: String::new(),
-            branch: String::new(),
-            batch: None,
-            members: vec![],
-        });
+        let context = details
+            .context
+            .clone()
+            .map(|context| *context)
+            .unwrap_or(QueueContext {
+                base: String::new(),
+                branch: String::new(),
+                batch: None,
+                members: vec![],
+            });
         let matched = details.fingerprint.as_ref().and_then(|fingerprint| {
             snapshot.rows.iter().find(|row| {
                 if row.table != "queue_gates" || row.value["repository"] != json!(fact.repository) {
