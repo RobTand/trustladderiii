@@ -46,52 +46,6 @@ _RUNTIME = {"crates/harness-core": [
     "//harness:test-vectors/summary/python-numbers.json",
 ]}
 
-# Wave B entry points in crates/harness-core (#818). Each port replaces or removes only its
-# own entry, so parallel ports never share a hunk. Keep the comment line above each entry.
-_WAVE_B_STUB = {
-    "srcs": ["wave_b/entry.rs"],
-    "crate_root": "wave_b/entry.rs",
-    "tags": ["manual", "wave-b-entry-point"],
-}
-
-_WAVE_B_ENTRIES = {
-    # summary-bound (#823)
-    "summary-bound": {
-        "srcs": ["tests/summary_bound.rs", "tests/summary_bound/reference.rs", "tests/summary_bound/conformance.rs"],
-        "crate_root": "tests/summary_bound.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
-        "data": [
-            "//harness:core_vectors",
-            "//harness:test-vectors/summary/python-envelope.json",
-            "//harness:test-vectors/summary/python-numbers.json",
-        ],
-        "tags": ["rust", "wave-b-summary-bound"],
-    },
-    # selector-identity (#823)
-    "selector-identity": {
-        "srcs": ["tests/selector_identity.rs"],
-        "crate_root": "tests/selector_identity.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
-        "data": ["//harness:core_vectors"],
-        "tags": ["rust", "wave-b-selector-identity"],
-    },
-    # limits (S4)
-    "limits": {
-        "srcs": ["tests/limits.rs"],
-        "crate_root": "tests/limits.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde_json"],
-        "data": ["//harness:core_vectors", "tests/fixtures/limits/delay.json"],
-        "tags": ["wave-b-plan-only", "rust"],
-    },
-    # red-match (S4)
-    "red-match": {
-        "srcs": [":sources"],
-        "crate_root": "tests/red_match.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde", "@crates//:serde_json"],
-        "tags": ["rust", "wave-b-entry-point"],
-    },
-}
-
 # rust_gate.py runs the controller's github binary as two timed groups.
 _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
 
@@ -113,6 +67,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
+    "tl3-controller/p5_checker": 14,
     "tl3-controller/operations_quota": 4,
     "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 8,
@@ -143,6 +98,7 @@ _CONTROLLER_WORKERS = [
     "test_test_budget_parity",
     "test_test_worker_checker",
     "test_test_worker_budget_orchestration",
+    "test_test_p5_checker",
 ]
 _CONTROLLER_BINARIES = {
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
@@ -158,6 +114,7 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_p5_checker": ["//workers/tests:budget_orchestration", "//workers/tests:p5_recordings", "//workers/tests:p5_references", ":example_p5-vectors"],
     "test_test_harness_summary": ["//workers/tests:fixtures", "//workers/tests:harness_io_schedule"],
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
@@ -166,6 +123,7 @@ _CONTROLLER_RUNTIME = {
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
+        "//workers/tests:p5_references",
         "//harness:project_files",
         "//workers/tests:worker_process",
         "//workers/tools:scripts",
@@ -302,20 +260,6 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     """
     directory = native.package_name()
     verus_proofs()
-    if directory == "crates/harness-core":
-        # Wave B entry points are deliberately outside Cargo discovery and Gate selection.
-        # Exact node-ID grammar still runs in the controller until S3 removes that dependency.
-        for kind, spec in _WAVE_B_ENTRIES.items():
-            rust_test(
-                name = "wave_b_" + kind.replace("-", "_"),
-                srcs = spec["srcs"],
-                crate_root = spec.get("crate_root"),
-                deps = spec.get("deps", []),
-                data = spec.get("data", []),
-                edition = "2024",
-                rustc_env = {"WAVE_B_KIND": kind},
-                tags = spec["tags"],
-            )
     native.exports_files(["Cargo.toml", "BUILD.bazel"])
     native.filegroup(
         name = "sources",

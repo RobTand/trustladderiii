@@ -511,36 +511,42 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   - the maker or the fresh reviewer runs out of room, or the maker needs files that don't fit, instead of a split;
   - the planner says `cant_meet`, instead of a re-run on its next model. The planner worker reports a completed plan that breaks a rule as `cant_meet` too, so a rule-breaking completed plan also stops at once.
 
-  **Approved Q27/Q54 exception, Rob, 2026-11-03:**
-  [approval on #573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857)
-  enables #577's existing single tool-free planner correction in production
-  with `repair_plan_consistency: true`. Only an edited test missing
-  demonstrating coverage or a forced demonstrating selection absent from the
-  base may enter it, and only when there is no substantive violation. The
-  correction stays in the same worker run and accounting limits, uses only
-  already-read facts, and stays bound to the original draft's files, goals,
-  existing check kinds and forcings. It may only add missing demonstrating
-  coverage, swap forced non-base selections for base nodes, or drop an
-  uncovered unnecessary edit. An appended demonstrating check may have no
-  forcing or reuse a draft forcing unchanged. It may honestly return
-  `cant_meet`. Added files, a wider footprint, unrelated checks or edits,
-  changed forcings and new goals remain PlanCantMeet. A second inconsistent
-  reply ends correction with both named diagnostics. Substantive failures,
-  unsupported requirements, protected-path conflicts, out-of-room conditions
-  and actual work failures keep their existing paths. Q50 infrastructure
-  handling and Q55 base/head proof requirements are unchanged. This exception
-  adds no work generation, model-ladder retry or automatic restart. See the
-  authoritative Planning section in `docs/state-table.md`.
+  **Approved planner correction, #809 and #832:**
+  [#573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857)
+  enabled the existing tool-free correction in production with
+  `repair_plan_consistency: true`.
+  [#809](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239)
+  added named missing-goal citations.
+  [Rob's #832 Q27 decision](https://github.com/RobTand/trustladderiii/issues/832)
+  generalizes this to every named plan-check objection. One correction shares
+  the existing format-repair allowance, in the same run and accounting limits,
+  using already-read facts. A recheck compares raw drafts and permits only
+  the union of named field changes while satisfying every overlapping
+  constraint. Existing citations and all source obligations stay fixed;
+  coverage repair only adds the named missing IDs to existing checks.
+  [#843](https://github.com/RobTand/trustladderiii/issues/843),
+  Rob, Q27, 2026-11-05, also permits replacement of base-absent regression,
+  behavior-preserving and declared_symptom selections. Only the named
+  check's node_ids may change to already-read exact base controls supporting
+  the same goals and kind. Kind, goals, proof, forcing, symptom and files stay
+  fixed. With no suitable control, return `cant_meet`; a remaining objection
+  stops for TL3 review.
+  An honest `cant_meet` is permitted, retaining the original objections.
 
-  [Rob's Q27/Q54 approval on #809, 2026-11-05](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239)
-  adds missing citations of existing required maker or checking goals to this
-  exception. Review-verified goals still need check coverage. The repair may
-  only add the named uncovered goal ids to existing checks, preserving every
-  existing citation and every other declaration. It shares the same single
-  correction allowance, including format repair. Stop evidence retains the full
-  uncovered ids and descriptions and the correction attempt count. Only
-  descriptions may be clipped in the bounded repair message; if the ids and
-  instructions do not fit, correction is terminal.
+  There is no third final-reply invocation. Repair unavailability records
+  zero attempts and its reason. Otherwise stop evidence retains the one
+  attempt, both objection sets and any constrained-recheck failure. Only
+  optional descriptions may be clipped in the bounded repair message.
+  IDs, paths, rule codes, numeric limits and constraints stay complete.
+  Other-class or mixed objections stop for TL3 review under both `fail_fast`
+  settings. Size/execution-fit objections record required decomposition
+  and use the same question-free review stop; no child executes. Neither
+  ending spends credit, retries a generation or asks Rob to disregard an
+  objection. Provenance travels beside the model reply and leaves its
+  prompt schema unchanged. Genuine owner decisions, ordinary replies without
+  provenance, protected paths, credit and Q50 retain their existing handling.
+  The harness and reviewer still judge Q55 proof. See the authoritative
+  Planning section in `docs/state-table.md`.
 
   The recorded stop steps are `checks_failed`, `changes_requested`,
   `ci_failed`, `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,

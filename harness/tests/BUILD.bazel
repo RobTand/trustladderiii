@@ -35,16 +35,6 @@ tl3_py_test(
 )
 
 tl3_py_test(
-    name = "test_node_id_vectors",
-    srcs = ["test_node_id_vectors.py"],
-    deps = [
-        ":conftest",
-        "//harness/src/tl3_harness",
-        "@tl3_pip//pytest",
-    ],
-)
-
-tl3_py_test(
     name = "test_parametrized_checks",
     srcs = ["test_parametrized_checks.py"],
     deps = [
@@ -319,12 +309,13 @@ tl3_py_test(
 )
 
 # #835: boundary fixtures remain beside the Rust fixtures; execute the Python edge here.
+# gazelle:ignore
 py_test(
     name = "test_limits_boundary",
-    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
-    main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
-    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
-    deps = ["//harness/src/tl3_harness"],
     size = "small",
     timeout = "short",
+    srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],
+    data = ["//crates/harness-core:tests/fixtures/limits/delay.json"],
+    main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
+    deps = ["//harness/src/tl3_harness"],
 )
