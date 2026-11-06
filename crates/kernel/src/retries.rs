@@ -246,11 +246,19 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(port_review_retry::room); reveal(retry_bounds);] {
+] hide [settle_shape] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { room_question_id = w.next_question }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
+    kernel_snapshot! { room_node = *m }
     if fail_fast {
         stop_for_review(m, step);
+        kernel_proof! {
+            assert((*m, w.next_question) == port_review_retry::room(room_node@, fail_fast, room_question_id@, step)) by {
+                port_review_retry_lemmas::room_stop(room_node@, *m, room_question_id@, w.next_question, step);
+            }
+            port_review_retry_lemmas::room_shape(room_node@, *m, fail_fast, room_question_id@, w.next_question, step);
+        }
         return;
     }
     m.holds = false;
@@ -258,6 +266,12 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
         m.credit.spend(1);
         m.plan_retries = 0;
         set_phase(m, Phase::Planning { must_split: true });
+        kernel_proof! {
+            assert((*m, w.next_question) == port_review_retry::room(room_node@, fail_fast, room_question_id@, step)) by {
+                reveal(port_review_retry_lemmas::room_paid_frame);
+                port_review_retry_lemmas::room_paid(room_node@, *m, room_question_id@, w.next_question, step);
+            }
+        }
     } else {
         ask_rob(
             w,
@@ -267,6 +281,15 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
             1,
             out,
         );
+        kernel_proof! {
+            assert((w.nodes@[i as int], w.next_question) == port_review_retry::room(room_node@, fail_fast, room_question_id@, step)) by {
+                reveal(port_review_retry_lemmas::room_question_frame);
+                port_review_retry_lemmas::room_question(room_node@, w.nodes@[i as int], room_question_id@, w.next_question, step);
+            }
+        }
+    }
+    kernel_proof! {
+        port_review_retry_lemmas::room_shape(room_node@, w.nodes@[i as int], fail_fast, room_question_id@, w.next_question, step);
     }
 }
 }

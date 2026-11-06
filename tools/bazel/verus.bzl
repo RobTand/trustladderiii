@@ -661,6 +661,8 @@ def verus_proofs():
             "kernel::port_review_witness::case_reply": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_witness::cover_input": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_witness::cover_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry_lemmas::room_paid_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry_lemmas::room_question_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -937,6 +939,10 @@ def verus_proofs():
             "review_witness_cover": ("kernel::port_review_witness#cover", 1),
             "review_witness_changed_node": ("kernel::port_review_witness#changed_node", 1),
             "review_witness_changed_world": ("kernel::port_review_witness#changed_world", 1),
+            "review_retry_room_stop": ("kernel::port_review_retry_lemmas#room_stop", 1),
+            "review_retry_room_paid": ("kernel::port_review_retry_lemmas#room_paid", 1),
+            "review_retry_room_question": ("kernel::port_review_retry_lemmas#room_question", 1),
+            "review_retry_room_shape": ("kernel::port_review_retry_lemmas#room_shape", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

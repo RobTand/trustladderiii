@@ -339,6 +339,11 @@ CASES = {
         '    m.review_stop = None;',
         '//crates/kernel:verus_review_retry_stop'),
 
+    'review_room_credit': ('crates/kernel/src/retries.rs',
+        '        m.plan_retries = 0;\n        set_phase(m, Phase::Planning { must_split: true });',
+        '        m.plan_retries = 1;\n        set_phase(m, Phase::Planning { must_split: true });',
+        '//crates/kernel:verus_review_retry_room'),
+
 }
 
 
