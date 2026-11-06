@@ -1,6 +1,6 @@
 //! #806: parametric replacement of the original per-phase settle-step assertions.
-use super::*;
 use super::retirement::{accepted, bounded, domain};
+use super::*;
 
 verus! {
 /// #806: every assertion of the original check_nodes, for one corresponding node.
