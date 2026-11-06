@@ -8,6 +8,8 @@ mod ack_wait;
 mod check_reads;
 #[path = "mergify/ci_evidence.rs"]
 mod ci_evidence;
+#[path = "mergify/queue_entry.rs"]
+mod queue_entry;
 #[path = "mergify/classic_protection.rs"]
 mod classic_protection;
 #[path = "mergify/dequeue_followups.rs"]
@@ -146,6 +148,7 @@ struct State {
     body_patches: usize,
     failed_job_reruns: Vec<u64>,
     ci_fixture: Option<ci_evidence::Fixture>,
+    entry_fixture: Option<queue_entry::Fixture>,
 }
 impl State {
     fn new() -> Self {
@@ -205,6 +208,7 @@ impl State {
             body_patches: 0,
             failed_job_reruns: vec![],
             ci_fixture: None,
+            entry_fixture: None,
         }
     }
     fn checks(&self) -> Value {
@@ -307,6 +311,11 @@ impl Respond for Api {
             return ResponseTemplate::new(503);
         }
         if let Some(fixture) = &state.ci_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
+        }
+        if let Some(fixture) = &state.entry_fixture
             && let Some(response) = fixture.respond(path)
         {
             return response;
@@ -2701,6 +2710,15 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--queue-entry") {
+        let mut database = support::Database::start();
+        for mode in queue_entry::MODES {
+            queue_entry::scenario(&database.create(&format!("queue_entry_{mode}")), mode);
+        }
+        database.stop();
+        println!("{} Mergify scenarios passed; no skips", queue_entry::MODES.len());
+        return;
+    }
     match std::env::args().nth(1).as_deref() {
         Some("--ordering-crash-child") => {
             ordering::crash_child(Path::new(&std::env::args().nth(2).unwrap()));
@@ -2966,6 +2984,7 @@ fn main() {
         5, 28, 3, 8, 2, 6, 5, 9, 15, 47, 6, 5, 14, 4, 11, 4, 7, 6, 7, 28, 7, 35, 15, 21, 3, 18, 7,
         3, 55, 5, 23, 5, 7, 7, 2, 4, 46, 8, 85, 4, 15, 83, 21, 7, 5, 5, 4, 3, 8, 68, 1, 14, 5, 23,
         10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20,
+        10, 10, 10, 10, 10, 10, 10,
     ];
     let groups: Vec<_> = seconds
         .iter()
@@ -3314,6 +3333,12 @@ fn main() {
     for mode in ["unlabeled", "closed", "queue-label", "pending", "normal"] {
         scenario!(merge_closure::scenario(
             &database.create(&format!("merge_closure_{mode}")),
+            mode
+        ));
+    }
+    for mode in queue_entry::MODES {
+        scenario!(queue_entry::scenario(
+            &database.create(&format!("queue_entry_{mode}")),
             mode
         ));
     }
