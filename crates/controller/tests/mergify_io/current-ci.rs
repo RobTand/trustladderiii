@@ -144,20 +144,13 @@ pub(super) async fn read_checks(
         .collect();
     let mut details = QueueCiEvidence {
         complete: failed.len() <= 20 && !failed.is_empty(),
+        reporters_complete: !failed.is_empty() && failed.len() <= 128 && failed.iter().all(|check| check.app.is_some()),
+        reporters: failed.iter().take(128).filter_map(|check| check.app.as_ref().map(|app| crate::queue_cause::CheckIdentity {app:app.id,name:check.name.clone()})).collect(),
         ..Default::default()
     };
     let mut seen = BTreeSet::new();
     let mut fingerprint_parts = Vec::new();
-    let mut identified = true;
     for check in failed.into_iter().take(20) {
-        if let Some(app) = &check.app {
-            details.reporters.push(crate::queue_cause::CheckIdentity {
-                app: app.id,
-                name: check.name.clone(),
-            });
-        } else {
-            identified = false;
-        }
         let mut summary = vec![format!(
             "Conclusion: {}",
             check.conclusion.as_deref().unwrap_or("unknown")
@@ -222,7 +215,7 @@ pub(super) async fn read_checks(
             url: check.details_url.clone(),
         });
     }
-    if details.complete && identified {
+    if details.complete && details.reporters_complete {
         details.fingerprint = Some(crate::queue_cause::fingerprint(&mut fingerprint_parts));
     }
     bounded(details)

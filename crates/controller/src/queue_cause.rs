@@ -48,13 +48,9 @@ pub struct GateEvidence {
     pub passed: Vec<CheckIdentity>,
 }
 impl GateEvidence {
-    pub fn healthy_for(&self, reporters: &[CheckIdentity]) -> bool {
-        self.successful
-            && (self.context.batch.is_none()
-                || !reporters.is_empty()
-                    && reporters
-                        .iter()
-                        .all(|reporter| self.passed.contains(reporter)))
+    pub fn healthy_for(&self, reporters: &[CheckIdentity], complete: bool) -> bool {
+        decision::healthy(self.successful, self.context.batch.is_none(), complete,
+            !reporters.is_empty() && reporters.iter().all(|reporter| self.passed.contains(reporter)))
     }
 }
 
@@ -82,6 +78,8 @@ pub(crate) struct Hold {
     pub retry: Option<RetryTransition>,
     #[serde(default)]
     pub reporters: Vec<CheckIdentity>,
+    #[serde(default)]
+    pub reporters_complete: bool,
 }
 
 pub(crate) fn key(node: NodeId, head: &str) -> String {
@@ -145,7 +143,7 @@ impl Controller {
         gate: &GateEvidence,
         commit: &mut Commit,
     ) -> bool {
-            if !gate.healthy_for(&hold.reporters)
+            if !gate.healthy_for(&hold.reporters, hold.reporters_complete)
                 || hold.repository != *repository
                 || hold.context.branch != gate.context.branch
                 || hold.context.base == gate.context.base
@@ -302,6 +300,7 @@ impl Controller {
                 witness: None,
                 witnessed_ms: None,
                 retry: None,
+                reporters_complete: match &fact.evidence {Evidence::CiFailed {details,..}=>details.reporters_complete,_=>false},
                 reporters: match &fact.evidence {
                     Evidence::CiFailed { details, .. } => details.reporters.clone(),
                     _ => vec![],

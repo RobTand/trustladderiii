@@ -25,6 +25,8 @@ pub(crate) struct Hold {
     pub retry: Option<RetryTransition>,
     #[serde(default)]
     pub reporters: Vec<CheckIdentity>,
+    #[serde(default)]
+    pub reporters_complete: bool,
 }
 
 pub(crate) fn key(node: NodeId, head: &str) -> String {

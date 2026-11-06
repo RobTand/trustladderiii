@@ -41,6 +41,8 @@ pub struct QueueCiEvidence {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reporters: Vec<crate::queue_cause::CheckIdentity>,
     #[serde(default)]
+    pub reporters_complete: bool,
+    #[serde(default)]
     pub checks: Vec<CiFailure>,
     #[serde(default)]
     pub failed_tests: Vec<FailedTest>,

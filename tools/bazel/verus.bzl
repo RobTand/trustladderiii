@@ -237,7 +237,7 @@ def verus_proofs():
             name = "verus_queue_cause",
             src = "proofs/queue_cause.rs",
             srcs = ["src/queue_cause_decide.rs"],
-            expected_obligations = 9,
+            expected_obligations = 11,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",

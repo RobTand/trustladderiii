@@ -40,7 +40,7 @@ impl Shell<'_> {
         gate: &GateEvidence,
         commit: &mut Commit,
     ) -> bool {
-            if !gate.healthy_for(&hold.reporters)
+            if !gate.healthy_for(&hold.reporters, hold.reporters_complete)
                 || hold.repository != *repository
                 || hold.context.branch != gate.context.branch
                 || hold.context.base == gate.context.base
@@ -197,6 +197,7 @@ impl Shell<'_> {
                 witness: None,
                 witnessed_ms: None,
                 retry: None,
+                reporters_complete: match &fact.evidence {Evidence::CiFailed {details,..}=>details.reporters_complete,_=>false},
                 reporters: match &fact.evidence {
                     Evidence::CiFailed { details, .. } => details.reporters.clone(),
                     _ => vec![],

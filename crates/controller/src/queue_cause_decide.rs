@@ -80,3 +80,14 @@ pub fn failed_round(cause: Attribution) -> bool {
 pub fn retry_failure(dispatched: bool, seen_before: bool) -> bool {
     dispatched && !seen_before
 }
+
+/// #854b / Q50: a batch must cover the entire identified failure set; only a
+/// successful destination merge can witness health without those identities.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    ensures out == (successful && (destination_merge || (complete && all_passed))),
+        (out && !destination_merge) ==> (complete && all_passed),
+        out ==> successful,
+))]
+pub fn healthy(successful: bool, destination_merge: bool, complete: bool, all_passed: bool) -> bool {
+    successful && (destination_merge || (complete && all_passed))
+}

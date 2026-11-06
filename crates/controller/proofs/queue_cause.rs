@@ -12,6 +12,12 @@ fn attribution_witness() {
     let environment = attribute(false, true, false); assert(environment == Attribution::Environment);
     let second = attribute(false, true, true); assert(second == Attribution::Change);
 }
+fn health_witness() {
+    let partial = healthy(true, false, false, true); assert(!partial);
+    let lint = healthy(true, false, true, false); assert(!lint);
+    let batch = healthy(true, false, true, true); assert(batch);
+    let merge = healthy(true, true, false, false); assert(merge);
+}
 fn retry_witness() {
     let unsent = retry_failure(false, false); assert(!unsent);
     let old = retry_failure(true, true); assert(!old);
