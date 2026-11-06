@@ -1,2 +1,61 @@
-// Pending one-time remote order metadata extraction.
-pub const ORDER: &[tl3_contracts::render::ObjectOrder<'_>] = &[];
+// Order-only metadata; wire values derive from quota::QuotaEvent.
+pub const ORDER: &[tl3_contracts::render::ObjectOrder<'_>] = &[
+    (
+        "",
+        &[
+            "$schema",
+            "title",
+            "type",
+            "properties",
+            "additionalProperties",
+            "required",
+            "$defs",
+        ],
+    ),
+    ("/properties", &["event", "facts", "model", "role"]),
+    ("/properties/event", &["type"]),
+    ("/properties/facts", &["$ref"]),
+    ("/properties/model", &["type"]),
+    ("/properties/role", &["type"]),
+    ("/$defs", &["Facts", "Link"]),
+    (
+        "/$defs/Facts",
+        &["type", "properties", "additionalProperties", "required"],
+    ),
+    ("/$defs/Facts/properties", &["links", "now", "role"]),
+    ("/$defs/Facts/properties/links", &["type", "items"]),
+    ("/$defs/Facts/properties/links/items", &["$ref"]),
+    ("/$defs/Facts/properties/now", &["type"]),
+    ("/$defs/Facts/properties/role", &["type"]),
+    (
+        "/$defs/Link",
+        &["type", "properties", "additionalProperties", "required"],
+    ),
+    (
+        "/$defs/Link/properties",
+        &[
+            "api_code",
+            "api_status",
+            "grade_judge",
+            "headers",
+            "judge",
+            "judge_code",
+            "judge_status",
+            "response_status",
+        ],
+    ),
+    ("/$defs/Link/properties/api_code", &["type"]),
+    ("/$defs/Link/properties/api_status", &["type", "format"]),
+    ("/$defs/Link/properties/grade_judge", &["type"]),
+    (
+        "/$defs/Link/properties/headers",
+        &["type", "additionalProperties"],
+    ),
+    ("/$defs/Link/properties/judge", &["type"]),
+    ("/$defs/Link/properties/judge_code", &["type"]),
+    ("/$defs/Link/properties/judge_status", &["type", "format"]),
+    (
+        "/$defs/Link/properties/response_status",
+        &["type", "format"],
+    ),
+];

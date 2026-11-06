@@ -172,6 +172,7 @@
       ]
     },
     "FieldPointer": {
+      "pattern": "^(?:/(?:[^~]|~[01])*)?$",
       "type": "string"
     },
     "Name": {

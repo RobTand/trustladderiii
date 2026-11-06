@@ -19,8 +19,21 @@ pub fn generated() -> Vec<Generated> {
         .map(|(name, schema)| Generated {
             path: format!("{SCHEMA_DIRECTORY}/{name}.json"),
             text: if name == "quota-event" {
-                tl3_contracts::render::render("quota-event.json", &schema, &tl3_contracts::render::Layout { inline: quota_order::ORDER, shared: &[] }).expect("published quota key order is exhaustive")
-            } else { format!("{}\n", serde_json::to_string_pretty(&schema).expect("schema serializes")) },
+                tl3_contracts::render::render(
+                    "quota-event.json",
+                    &schema,
+                    &tl3_contracts::render::Layout {
+                        inline: quota_order::ORDER,
+                        shared: &[],
+                    },
+                )
+                .expect("published quota key order is exhaustive")
+            } else {
+                format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&schema).expect("schema serializes")
+                )
+            },
         }),
     );
     files
