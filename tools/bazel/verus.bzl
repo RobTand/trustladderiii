@@ -693,6 +693,11 @@ def verus_proofs():
             "kernel::reply_equivalence::every_reply_and_admission_branch_matches": "Test-only extraction equivalence support; absent from the Verus cfg and executed by lib_test_tl3_kernel.",
             "kernel::reply_equivalence::arbitrary_reply_state_matches": "Test-only extraction equivalence support; absent from the Verus cfg and executed by lib_test_tl3_kernel.",
             "kernel::port_replies_contracts::retry_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker::selected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker::work_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker::union_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker::files_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker::transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1005,6 +1010,12 @@ def verus_proofs():
             "review_admission_rejected": ("kernel::port_review_admission#rejected", 1),
             "review_admission_unselected": ("kernel::port_review_admission#unselected", 1),
             "review_admission_accepted": ("kernel::port_review_admission#accepted", 1),
+            "port_replies_maker_files_paid": ("kernel::port_replies_maker#files_paid", 1),
+            "port_replies_maker_files_ask": ("kernel::port_replies_maker#files_ask", 1),
+            "port_replies_maker_files_room": ("kernel::port_replies_maker#files_room", 1),
+            "port_replies_maker_union_intro": ("kernel::port_replies_maker#union_intro", 1),
+            "port_replies_maker_files_transport": ("kernel::port_replies_maker#files_transport", 1),
+            "port_replies_maker_transport": ("kernel::port_replies_maker#transport", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

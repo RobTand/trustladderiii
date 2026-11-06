@@ -2294,3 +2294,7 @@ mod port_review_admission;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker.rs"]
+mod port_replies_maker;

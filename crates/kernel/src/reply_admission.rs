@@ -271,8 +271,12 @@ fn admitted_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         }
     }    kernel_proof! {
         if let Reply::MakerNeedsFiles { .. } = reply {
-            port_review_admission::unselected(after_operation@, *w, i as int,
-                after_operation@.nodes@[i as int], reply, before_outputs@, *out);
+            assert(port_review_reply::transition_post(after_operation@, *w, i as int,
+                after_operation@.nodes@[i as int], reply, before_outputs@, *out)) by {
+                reveal(port_review_reply::transition_post);
+                reveal(port_replies_contracts::transition_post);
+                reveal(port_replies_maker::transition_post);
+            }
         }
         port_review_admission::accepted(before_reply@, after_operation@, *w, i as int,
             generation, reply, before_outputs@, *out);
@@ -316,23 +320,39 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        // #806 W1: opaque exact maker-file result, isolated from unrelated admission queries.
+        port_replies_maker::files_post(*old(w), *final(w), i as int, old(w).nodes@[i as int],
+            files, fits, *old(out), *final(out)),
         // #806 W1: generic output preservation for the separately owned file handler.
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
+] proof [reveal(retry_bounds);] {
     kernel_snapshot! { before_files = *w }
+    kernel_snapshot! { files_outputs = *out }
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
+        kernel_proof! {
+            port_replies_maker::union_intro(before_files@.file_sets@, w.file_sets@,
+                before_files@.nodes@[i as int].footprint, files, footprint);
+        }
         let m = &mut w.nodes[i];
         m.credit.spend(1);
         m.footprint = footprint;
         m.holds = false;
         set_phase(m, Phase::Ready(Resume::Making));
-        kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
+        kernel_proof! {
+            footprint::valid_under_table_growth(after_union@, *w, footprint);
+            progress_gate_contracts::table_order_frame(after_union@, *w);
+            port_replies_maker::files_paid(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
     } else if fits && !files.is_empty() && w.fail_fast {
         // Q54 stops retries, not credit decisions: Rob funds the extension.
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
+        kernel_proof! {
+            port_replies_maker::union_intro(before_files@.file_sets@, w.file_sets@,
+                before_files@.nodes@[i as int].footprint, files, footprint);
+        }
         w.nodes[i].footprint = footprint;
         ask_rob(
             w,
@@ -342,10 +362,18 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             1,
             out,
         );
-        kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
+        kernel_proof! {
+            footprint::valid_under_table_growth(after_union@, *w, footprint);
+            progress_gate_contracts::table_order_frame(after_union@, *w);
+            port_replies_maker::files_ask(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
     } else {
         out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
-        kernel_proof! { footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint); }
+        kernel_proof! {
+            footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint);
+            progress_gate_contracts::table_order_frame(before_files@, *w);
+            port_replies_maker::files_room(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
     }
     }
 }
@@ -385,7 +413,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
             old(w).nodes@[i as int], reply, *old(out), *final(out)),
 ] proof [reveal(port_review_reply::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);
     reveal(port_review_reply::accepted_reply);
-    reveal(port_replies_contracts::transition_post); reveal(reply_bounds);] {
+    reveal(port_replies_contracts::transition_post); reveal(port_replies_maker::transition_post); reveal(reply_bounds);] {
     kernel_snapshot! { worker_before = *w }
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees

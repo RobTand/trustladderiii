@@ -47,9 +47,9 @@ pub(super) proof fn rejected(before: World, after: World, i: int, generation: u6
 /// #806: the shared accepted relation is vacuous outside both selected families.
 pub(super) proof fn unselected(before: World, after: World, i: int, source: Node,
     reply: Reply, out_before: Outbox, out_after: Outbox)
-    requires !selected(reply), !port_replies_contracts::selected(reply),
+    requires !selected(reply), !port_replies_contracts::selected(reply), !port_replies_maker::selected(reply),
     ensures transition_post(before, after, i, source, reply, out_before, out_after),
-{ reveal(transition_post); reveal(port_replies_contracts::transition_post); }
+{ reveal(transition_post); reveal(port_replies_contracts::transition_post); reveal(port_replies_maker::transition_post); }
 
 /// State-table accepted rows: compose end_operation before the selected handler.
 pub(super) proof fn accepted(before: World, middle: World, after: World, i: int,
@@ -69,6 +69,15 @@ pub(super) proof fn accepted(before: World, middle: World, after: World, i: int,
         Reply::MakerNeedsFiles { files, .. } => footprint::storage_frame(before, middle, files, files),
         _ => {},
     }
+
+    if port_replies_maker::selected(reply) {
+        port_replies_maker::transport(before, middle, after, i, ended(before.nodes@[i]),
+            reply, out_before, out_after);
+    } else {
+        assert(port_replies_maker::transition_post(before, after, i, ended(before.nodes@[i]),
+            reply, out_before, out_after)) by { reveal(port_replies_maker::transition_post); }
+    }
+
 }
 /// #805 rebase rows: the exact accepted transition preserves the progress decrease.
 pub(super) proof fn rebase_progress(before: World, after: World, i: int,

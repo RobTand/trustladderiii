@@ -318,7 +318,7 @@ pub(super) open spec fn retry_post(before: World, after: World, i: int,
 #[verifier::opaque]
 pub(super) open spec fn transition_post(before: World, after: World, i: int,
     source: Node, reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
-    selected(reply) && before.dependencies@.len() == 0
+    (selected(reply) && before.dependencies@.len() == 0
         && port_review_reply::accepted_reply(before, source, reply) ==> {
         node_post(source, after.nodes@[i], before.next_question, before.fail_fast, reply)
             && after.next_question == (before.next_question
@@ -328,6 +328,6 @@ pub(super) open spec fn transition_post(before: World, after: World, i: int,
             && (reply == Reply::PlanCantMeet ==> port_failfast_diversion::plan_result(
                 source, after.nodes@[i], before.fail_fast, true,
                 before.next_question, after.next_question, out_before, out_after))
-    }
+    }) && port_replies_maker::transition_post(before, after, i, source, reply, out_before, out_after)
 }
 }
