@@ -318,14 +318,32 @@ impl Controller {
             return Ok(false);
         }
         let fact_identity = fact.identity();
-        if prior.is_none() {
-            let Evidence::CiFailed {
-                head, completed_at, ..
-            } = &fact.evidence
-            else {
-                unreachable!()
-            };
-            let mut hold = Hold {
+        let Evidence::CiFailed {
+            head, completed_at, details, ..
+        } = &fact.evidence
+        else {
+            unreachable!()
+        };
+        let mut hold = match prior {
+            Some(mut hold) => {
+                // #854b r2.A: later reports can only widen the failed set.
+                hold.reporters_complete &= details.reporters_complete;
+                for reporter in &details.reporters {
+                    if !hold.reporters.contains(reporter) {
+                        hold.reporters.push(reporter.clone());
+                    }
+                }
+                hold.reporters_complete &= hold.reporters.len() <= 128;
+                hold.reporters.truncate(128);
+                if hold.witness.as_ref().is_some_and(|gate| {
+                    !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+                }) {
+                    hold.witness = None;
+                    hold.witnessed_ms = None;
+                }
+                hold
+            }
+            None => Hold {
                 repository: fact.repository.clone(),
                 number: fact.number,
                 node,
@@ -340,40 +358,26 @@ impl Controller {
                 witness: None,
                 witnessed_ms: None,
                 retry: None,
-                reporters_complete: match &fact.evidence {
-                    Evidence::CiFailed { details, .. } => details.reporters_complete,
-                    _ => false,
-                },
-                reporters: match &fact.evidence {
-                    Evidence::CiFailed { details, .. } => details.reporters.clone(),
-                    _ => vec![],
-                },
-            };
-            // Catch-up can deliver T2 health before the delayed T1 failure.
-            // Reconcile the journal, without another upstream read.
-            for row in snapshot
-                .rows
-                .iter()
-                .filter(|row| row.table == "queue_gates")
-            {
+                reporters_complete: details.reporters_complete,
+                reporters: details.reporters.clone(),
+            },
+        };
+        // Catch-up can deliver T2 health before the delayed T1 failure.
+        // Reconcile the journal after evidence widens, without upstream reads.
+        let mut witnessed = false;
+        if hold.witness.is_none() {
+            for row in snapshot.rows.iter().filter(|row| row.table == "queue_gates") {
                 let gate_fact: QueueFact = decode_stored(row.value.clone())?;
                 if let Evidence::Gate(gate) = &gate_fact.evidence
-                    && self.queue_hold_witness(
-                        snapshot,
-                        &gate_fact.repository,
-                        &mut hold,
-                        gate,
-                        commit,
-                    )
+                    && self.queue_hold_witness(snapshot, &gate_fact.repository, &mut hold, gate, commit)
                 {
+                    witnessed = true;
                     break;
                 }
             }
-            if hold.witness.is_none() {
-                commit
-                    .rows
-                    .push(put("queue_holds", key(node, head), json!(hold)));
-            }
+        }
+        if !witnessed {
+            commit.rows.push(put("queue_holds", key(node, head), json!(hold)));
         }
         commit
             .rows
