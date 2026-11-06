@@ -1099,7 +1099,7 @@ fn r1_direct_conflict_repeats_after_same_head_rebase() {
         }
         if !controller.drive_once().unwrap() { break; }
     }
-    panic!("same-head second conflict never reached the kernel");
+    panic!("same-head second conflict never reached the kernel: world {:?}, events {:?}", controller.world().unwrap(), Store::open(&settings).unwrap().events_after(tl3_store::Revision::ZERO,4000).unwrap().iter().map(|event|event.receipt.result["kernel_event"].clone()).collect::<Vec<_>>());
 }
 
 /// #901 r1/N2: legacy inbox corruption must be rejected through the input-error path.
