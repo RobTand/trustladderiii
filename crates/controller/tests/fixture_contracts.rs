@@ -31,12 +31,6 @@ impl Executor for Spy {
     fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
         self.hit("quota_model_eligible", format!("{}:{model}", delivery.key))
     }
-    fn quota_candidates(
-        &mut self,
-        delivery: &Delivery,
-    ) -> Result<Vec<tl3_controller::looks::QuotaModel>> {
-        self.hit("quota_candidates", delivery.key.clone())
-    }
     fn configured_model(&self, model: &str) -> bool {
         let _: Result<()> = self.hit("configured_model", model.into());
         true
@@ -147,6 +141,12 @@ impl Executor for Spy {
     fn quota_resume_ms(&mut self, delivery: &Delivery, _: u64, _: u64) -> Result<u64> {
         self.hit("quota_resume_ms", delivery.key.clone())
     }
+    fn quota_candidates(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Vec<tl3_controller::looks::QuotaModel>> {
+        self.hit("quota_candidates", delivery.key.clone())
+    }
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.hit("stop_stalled", delivery.key.clone())
     }
@@ -253,7 +253,6 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 .quota_model_eligible(&delivery(Role::Make), "configured")
                 .is_err()
         );
-        assert!(router.quota_candidates(&delivery(Role::Make)).is_err());
         assert_eq!(router.implementation(), primary);
         assert_eq!(router.app_login(42).as_deref(), Some(primary));
         let question = tl3_controller::adoption::Clarification {
@@ -386,6 +385,7 @@ fn assert_delivery_methods(
     assert!(router.probe(d).is_err());
     assert!(router.resume_after_quota(d).is_err());
     assert!(router.quota_resume_ms(d, 0, 0).is_err());
+    assert!(router.quota_candidates(d).is_err());
     assert!(router.stop_stalled(d).is_err());
     assert!(router.watch_wait(d, None).is_err());
     assert!(router.retire_delivery(d).is_err());
@@ -401,6 +401,7 @@ fn assert_delivery_methods(
             "probe",
             "resume_after_quota",
             "quota_resume_ms",
+            "quota_candidates",
             "stop_stalled",
             "watch_wait",
             "retire_delivery"
