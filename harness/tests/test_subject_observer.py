@@ -257,15 +257,17 @@ def test_projection_cannot_name_an_outside_repository_subject():
         proof_type.parse({'subjects': ['../outside.py::helper'], 'observer_support': [], 'red_message': 'expected'})
 
 
-def test_new_fixture_support_uses_real_pytest_context(repository):
+def test_new_fixture_support_cannot_call_a_base_constructor(repository):
     proof = model.Proof(('tests/test_queue.py::_execute_mover',),
                         ('tests/test_queue.py::world',), 'diagnostic lacks failed outcome')
     support = '\nimport pytest\n@pytest.fixture\ndef world(tmp_path):\n    return Queue(tmp_path)\n'
     observer = OBSERVER.replace('test_diagnostic(tmp_path)', 'test_diagnostic(world)').replace('q = Queue(tmp_path)', 'q = world')
     results, _, _ = round_result(repository, {'tests/test_queue.py': BASE},
         {'tests/test_queue.py': HEAD + support + observer}, Check('fixture observer', Kind.DEMONSTRATING, (NODE,), proof=proof))
-    assert results[0].verdict == Verdict.PASS, results
-    assert results[0].proof['support_sha256']['tests/test_queue.py::world']
+    # #842 r2: the imported/base constructor is outside the support call allowlist.
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert results[0].tests[0].base == Outcome.UNCOLLECTED
 
 
 def test_existing_class_keeps_subject_and_accepts_new_observer_method(repository):
@@ -461,8 +463,14 @@ def test_review662_base_subject_can_update_state_during_import(repository, suppo
     check = Check('stateful import', Kind.DEMONSTRATING, (path + '::test_observer',),
                   proof=model.Proof((path + '::helper',), (path + '::TOKEN',) if support else (), 'old helper'))
     results, _, _ = round_result(repository, {path: before}, {path: after}, check)
-    assert results[0].verdict == Verdict.PASS, results
-    assert results[0].tests[0].base == Outcome.ASSERTION, results
+    if support:
+        # #842 r2: a support initializer cannot call into the base subject.
+        assert results[0].verdict == Verdict.FAIL, results
+        assert 'Proof assembly refused' in results[0].tests[0].message
+        assert results[0].tests[0].base == Outcome.UNCOLLECTED
+    else:
+        assert results[0].verdict == Verdict.PASS, results
+        assert results[0].tests[0].base == Outcome.ASSERTION, results
 
 
 @pytest.mark.parametrize('support', [
@@ -589,9 +597,10 @@ def test_t842_real_ops_proof_shapes(repository, case):
         assert 'immutable and bound exactly once' in results[0].tests[0].message
         assert results[0].tests[0].base == Outcome.UNCOLLECTED
         return
-    assert results[0].verdict == Verdict.PASS, results
-    assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
-    assert results[0].proof['rule'] == 'subject-observer-v1'
+    # #842 r2: replacing submit.PBRUN is runtime mutation of a loaded subject.
+    assert results[0].verdict == Verdict.FAIL, results
+    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert results[0].tests[0].base == Outcome.UNCOLLECTED
 
 
 def assemble_t842_case(tmp_path, case):
@@ -926,11 +935,13 @@ def test_t842_immutable_support_runs_the_same_observer_on_base_and_head(reposito
     assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
 
 
-def test_t842_module_import_of_unittest_mock_is_authenticated(tmp_path, t842_cases):
-    case = t842_cases[1]
-    path = 'tests/test_pb_duplicate_arms.py'
-    case['after'][path] = case['after'][path].replace('import unittest\n', '').replace(
-        'from unittest import mock', 'import unittest.mock').replace('mock.patch.object', 'unittest.mock.patch.object')
+@pytest.mark.parametrize('mock_import,patch', [('from unittest import mock', 'mock.patch.object'),
+                                             ('import unittest.mock', 'unittest.mock.patch.object')])
+def test_t842_module_import_of_unittest_mock_is_authenticated(tmp_path, mock_import, patch):
+    case = t842_safe_loader_case()
+    path = 'tests/test_observer.py'
+    case['after'][path] = case['after'][path].replace('from unittest import mock', mock_import).replace(
+        'mock.patch.object', patch)
     receipt, _, head, staged = assemble_t842_case(tmp_path, case)
     assert (staged / path).read_bytes() == (head / path).read_bytes()
     assert path in receipt['support_sha256']
@@ -1066,6 +1077,10 @@ def load_subject():
         if results[0].verdict == Verdict.PASS:
             assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
             accepted.append(name)
+        else:
+            assert results[0].verdict == Verdict.FAIL, results
+            assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
+            assert 'Proof assembly refused' in results[0].tests[0].message, results
     assert not accepted, 'Forged proofs accepted for unchanged subject behavior: ' + ', '.join(accepted)
 @pytest.mark.parametrize('shape', ['partial-constructor', 'formatter-without-loader'])
 def test_t842_r2_main_siblings(repository, shape):
@@ -1100,3 +1115,100 @@ def test_observer():
     assert results[0].verdict == Verdict.FAIL, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
     assert 'Proof assembly refused' in results[0].tests[0].message
+
+
+def t842_safe_loader_case():
+    source = '''from pathlib import Path
+import sys
+from unittest import mock
+
+def load_subject():
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "app.py"
+    spec = importlib.util.spec_from_file_location("subject", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+def test_observer():
+    with mock.patch.object(sys, "argv", []):
+        assert load_subject().value == 1, "bug"
+'''
+    return {'case': 'safe CLI loader', 'before': {'app.py': 'value = 0\n'},
+            'after': {'app.py': 'value = 1\n', 'tests/test_observer.py': source},
+            'tests': ['tests/test_observer.py::test_observer'],
+            'proof': {'subjects': ['app.py::value'], 'observer_support': ['tests/test_observer.py'],
+                      'red_message': 'bug'}}
+
+
+def test_t842_r2_safe_loader_and_cli_setup_still_demonstrate(repository):
+    case = t842_safe_loader_case()
+    check = Check(case['case'], Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+
+
+@pytest.mark.parametrize('extra', [
+    'with mock.patch.object(load_subject(), "value", 1): pass',
+    'subject = load_subject()\nwith mock.patch.object(subject, "dependency", 1): pass',
+    'import app\nwith mock.patch.object(app, "value", 1): pass',
+    'subject = load_subject()\nalias = subject.STATE\nalias.update(expected=0)',
+    'subject = load_subject()\nmutate = subject.STATE.update\nmutate(expected=0)',
+    'subject = load_subject()\ndef setup():\n    alias = subject.STATE\n    alias.clear()\nsetup()',
+    'from string import Formatter as F\nTOKEN = F().get_field("0.__dict__", (), {})',
+    'TOKEN = "{0.__globals__}".format(load_subject)',
+    'formatter = "{x}".format_map\nTOKEN = formatter({"x": 0})',
+    'subject = load_subject()\nTOKEN = "%(expected)s" % subject.STATE',
+    'TOKEN = "__%(x)s" % {"x": 0}',
+    'import unittest\nTOKEN = unittest.TestCase',
+    'import unittest\nTOKEN = unittest.main',
+    'from somewhere import mutate as len\nTOKEN = len(())',
+    'def helper(helper):\n    helper()\nhelper(load_subject)',
+    'import app\nTOKEN = sorted([{}], key=app.STATE.update)',
+    'import app\ncallback = app.STATE.update\nTOKEN = sorted([{}], key=callback)',
+    'import app\n@ app.replace_subject\ndef setup(): pass',
+    'import app\nclass Support(app.ReplacingBase): pass',
+    'import app\nwith app.replacing_context: pass',
+])
+def test_t842_r2_call_and_reflection_siblings_refuse(tmp_path, extra):
+    case = t842_safe_loader_case()
+    case['after']['tests/test_observer.py'] += '\n' + extra + '\n'
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('initializer', ['dict(expected=0)', 'list((0,))', 'set((0,))',
+                                        'tuple((0,))', 'frozenset((0,))', 'int(0)', 'factory()'])
+def test_t842_r2_partial_call_initializers_refuse(tmp_path, initializer):
+    case = t842_immutable_case('_DATA = ' + initializer)
+    case['proof']['observer_support'] = ['tests/test_observer.py::_DATA']
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+def test_t842_r2_pure_support_functions_and_builtins_are_supported(repository):
+    case = t842_immutable_case('def data():\n    return tuple(sorted(range(2)))[1]', 'data()')
+    case['proof']['observer_support'] = ['tests/test_observer.py::data']
+    check = Check(case['case'], Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    assert results[0].verdict == Verdict.PASS, results
+    assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+
+
+@pytest.mark.parametrize('shadow', ['len = lambda value: 1', 'from app import mutate as len'])
+def test_t842_r2_partial_support_cannot_trust_a_shadowed_builtin(tmp_path, shadow):
+    case = t842_immutable_case('def data():\n    return len(())', 'data()')
+    case['after']['tests/test_observer.py'] = shadow + '\n' + case['after']['tests/test_observer.py']
+    case['proof']['observer_support'] = ['tests/test_observer.py::data']
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('rebinding', ['data = lambda: 1', 'match 1:\n    case data: pass',
+                                     'def replace():\n    global data\n    data = lambda: 1'])
+def test_t842_r2_partial_function_cannot_omit_rebinding(tmp_path, rebinding):
+    case = t842_immutable_case('def data():\n    return 0\n' + rebinding, 'data()')
+    case['proof']['observer_support'] = ['tests/test_observer.py::data']
+    with pytest.raises(model.ProofRefusal):
+        assemble_t842_case(tmp_path, case)

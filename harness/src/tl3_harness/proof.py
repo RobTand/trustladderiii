@@ -112,12 +112,26 @@ def validate_partial_literal(source, module_source, module, symbol):
     """Only immutable, singly bound data can be copied without its context."""
     statements = ast.parse(textwrap.dedent(source)).body
     for statement in statements:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            class RemoveDefinition(ast.NodeTransformer):
+                removed = False
+                def visit(self, node):
+                    if not self.removed and ast.dump(node) == ast.dump(statement):
+                        self.removed = True
+                        return ast.copy_location(ast.Pass(), node)
+                    return super().visit(node)
+            remover = RemoveDefinition()
+            stripped = remover.visit(ast.parse(module_source))
+            if not remover.removed or statement.name in binding_names(ast.unparse(stripped)):
+                raise ProofRefusal('partial support definition must be bound exactly once; '
+                                   'remove later rebinding or move setup into the observer', module, statement.name)
         if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
             continue
         try:
             value = ast.literal_eval(statement.value)
         except (ValueError, TypeError, SyntaxError):
-            continue
+            raise ProofRefusal('partial support binding initializer must use immutable literal syntax, never calls; '
+                               'put initialization inside the observer or a new support factory', module, symbol) from None
         if not (len(statements) == 1 and isinstance(statement, ast.Assign)
                 and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name)):
             raise ProofRefusal('partial literal support must bind one plain name in a single assignment; '
@@ -149,29 +163,9 @@ def validate_partial_literal(source, module_source, module, symbol):
         validate_namespace_apis(ast.parse(module_source), module)
 
 
-def loader_result_names(tree, loaders):
-    """Find names bound only to fresh modules from the verified loaders."""
-    candidates = set()
-    class RemoveResults(ast.NodeTransformer):
-        def visit_Assign(self, node):
-            if (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                    and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
-                    and node.value.func.id in loaders and not node.value.args and not node.value.keywords):
-                candidates.add(node.targets[0].id)
-                return ast.copy_location(ast.Pass(), node)
-            return self.generic_visit(node)
-    stripped = RemoveResults().visit(ast.parse(ast.unparse(tree)))
-    try:
-        return candidates - binding_names(ast.unparse(stripped))
-    except SyntaxError:
-        # Removing an outer assignment can invalidate a nonlocal declaration.
-        # Such a captured module is outside this narrow loader exception.
-        return set()
-
-
 def observer_context_imports(tree, module, subjects):
     """Recognize the isolated script loader and CLI setup from tessera #1638."""
-    allowed, loaders = set(), set()
+    allowed = set()
     plain_path = (sole_import(tree, 'Path', 'from pathlib import Path')
                   and not binding_statements(tree, '__file__'))
     for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
@@ -191,11 +185,9 @@ def observer_context_imports(tree, module, subjects):
                     template.body[2].value.args[0] = call.args[0]
             if (ast.dump(function) == ast.dump(template)
                     and binding_statements(tree, function.name) == [function]):
-                allowed.add(id(function.body[0]))
-                loaders.add(function.name)
+                allowed.update(id(node) for node in ast.walk(function))
     parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     plain_sys = sole_import(tree, 'sys', 'import sys')
-    loaded_modules = loader_result_names(tree, loaders)
     mock_roots = set()
     if sole_import(tree, 'mock', 'from unittest import mock'):
         mock_roots.add('mock')
@@ -217,16 +209,13 @@ def observer_context_imports(tree, module, subjects):
         while isinstance(parents.get(id(root)), ast.Attribute):
             root = parents[id(root)]
         expression = ast.unparse(root)
-        if node.id == 'unittest' and expression in {'unittest.TestCase', 'unittest.main'}:
-            continue
         call = parents.get(id(root))
         if (expression in {name + '.patch.object' for name in mock_roots}
                 and isinstance(call, ast.Call) and call.func is root
                 and len(call.args) == 3 and not call.keywords
                 and isinstance(call.args[1], ast.Constant)
                 and isinstance(call.args[0], ast.Name)
-                and (call.args[0].id in loaded_modules
-                     or call.args[0].id == 'sys' and call.args[1].value == 'argv')
+                and plain_sys and call.args[0].id == 'sys' and call.args[1].value == 'argv'
                 and isinstance(parents.get(id(call)), ast.withitem)):
             continue
         mock_roots.clear()
@@ -241,7 +230,8 @@ def observer_context_imports(tree, module, subjects):
         if (isinstance(parent, ast.Call) and ast.unparse(parent.func) in {name + '.patch.object' for name in mock_roots}
                 and len(parent.args) == 3 and parent.args[0] is node
                 and isinstance(parent.args[1], ast.Constant) and parent.args[1].value == 'argv'
-                and not parent.keywords and isinstance(parents.get(id(parent)), ast.withitem)):
+                and plain_sys and not parent.keywords and isinstance(parents.get(id(parent)), ast.withitem)):
+            allowed.add(id(parent))
             continue
         break
     else:
@@ -276,11 +266,60 @@ def validate_namespace_apis(tree, module, allowed=()):
             raise ProofRefusal('dynamic namespace API in support can rebind base subjects', module, symbol)
 
 
-def validate_support(source, module, *, observer_context=False, subjects=()):
+def validate_support_calls(tree, module, allowed, context):
+    """#645: support cannot invoke imported objects, aliases or field evaluators."""
+    pure = {'abs', 'all', 'any', 'bool', 'bytes', 'enumerate', 'float', 'frozenset',
+            'int', 'len', 'max', 'min', 'range', 'repr', 'reversed', 'round',
+            'sorted', 'str', 'sum', 'tuple', 'zip'} - set().union(*(binding_names(source) for source in context))
+    functions = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 and binding_statements(tree, node.name) == [node]
+                 and node.name not in binding_names(ast.unparse(ast.Module(body=node.body, type_ignores=[])))
+                 and node.name not in {arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg)}}
+    def pure_value(node):
+        # Even sorted(key=...) and int(obj) can call arbitrary methods. Keep
+        # builtin inputs to literal data and results of the same pure calls.
+        try:
+            ast.literal_eval(node)
+            return not any(isinstance(child, ast.Call) for child in ast.walk(node))
+        except (ValueError, TypeError, SyntaxError):
+            return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in pure and not node.keywords
+                    and all(pure_value(arg) for arg in node.args))
+    for node in ast.walk(tree):
+        if id(node) in allowed:
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.decorator_list:
+            raise ProofRefusal('support decorators can call imported or base objects; move setup into the observer', module)
+        if isinstance(node, ast.ClassDef) and (node.bases or node.keywords):
+            raise ProofRefusal('support class construction can call imported or base objects', module, node.name)
+        if isinstance(node, (ast.With, ast.AsyncWith)) and any(id(item.context_expr) not in allowed for item in node.items):
+            raise ProofRefusal('support context managers can rebind existing objects; use authenticated scoped sys.argv setup', module)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and (node.func.id in functions or pure_value(node)):
+                continue
+            raise ProofRefusal('support cannot rebind or mutate existing objects; calls must use an unshadowed pure builtin '
+                               'or a function defined in support; move setup into the observer or use a supported loader',
+                               module, ast.unparse(node.func))
+        # Percent templates can dispatch to arbitrary mapping/operand methods.
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            try:
+                ast.literal_eval(node.left)
+                ast.literal_eval(node.right)
+                safe = isinstance(node.left, ast.Constant) and isinstance(node.left.value, (str, bytes))
+            except (ValueError, TypeError, SyntaxError):
+                safe = False
+            if not safe or '__' in str(node.left.value):
+                raise ProofRefusal('support format templates require literal operands without reflective fields', module)
+        if isinstance(node, ast.Attribute) and node.attr in {'format', 'format_map', 'Formatter', 'TestCase', 'main'}:
+            raise ProofRefusal('reflective or imported attribute access is unsupported in support', module, node.attr)
+
+
+def validate_support(source, module, *, observer_context=False, subjects=(), context=()):
     """Support adds plain bindings, never writes to existing objects or namespaces."""
     tree = ast.parse(textwrap.dedent(source))
     allowed = observer_context_imports(tree, module, subjects) if observer_context else set()
     validate_namespace_apis(tree, module, allowed)
+    validate_support_calls(tree, module, allowed, context or (source,))
     nodes = list(ast.walk(tree))
     for node in nodes:
         if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -362,7 +401,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         for item in requested:
             if item in support:
                 text, _ = source_unit(new, item)
-                validate_support(text, name, observer_context=observer_context and item == name, subjects=subjects)
+                validate_support(text, name, observer_context=observer_context and item == name, subjects=subjects, context=(old, new))
                 if old_path.exists() and '::' in item:
                     validate_partial_literal(text, new, name, item.split('::')[-1])
                 if item != name:
