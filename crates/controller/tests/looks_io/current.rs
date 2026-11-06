@@ -982,7 +982,7 @@ pub(crate) fn incident_summary(
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",
-        Upstream::Mergify => "Mergify",
+        Upstream::Delivery => "Mergify",
         Upstream::GitHub => "GitHub",
     };
     let reason = match signature.class.as_str() {
@@ -1090,7 +1090,7 @@ fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
     match source {
         Upstream::Workers => decisions::StallUpstream::Workers,
         Upstream::GitHub => decisions::StallUpstream::GitHub,
-        Upstream::Mergify => decisions::StallUpstream::Mergify,
+        Upstream::Delivery => decisions::StallUpstream::Delivery,
         Upstream::PrismaBuild => decisions::StallUpstream::PrismaBuild,
         Upstream::Worktrees => decisions::StallUpstream::Worktrees,
     }

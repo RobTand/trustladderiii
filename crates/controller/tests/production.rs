@@ -73,7 +73,7 @@ fn production_registers_every_real_adapter_and_source() {
             "tl3_controller::adapters::github::Adapter",
         ),
         (
-            Upstream::Mergify,
+            Upstream::Delivery,
             "tl3_controller::adapters::mergify::Adapter",
         ),
         (

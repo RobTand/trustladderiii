@@ -87,7 +87,7 @@ impl DirectFixture {
     }
     fn open_adapter(&self, settings: &tl3_config::Store, adapter: direct_merge::Adapter) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
-        registry.register(Upstream::Mergify, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), adapter, &[direct_repo()]));
+        registry.register(Upstream::Delivery, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), adapter, &[direct_repo()]));
         let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
         let mut allowances = tl3_config::Allowances::default();
         allowances.github_mergify.silence_secs = 1;
@@ -259,7 +259,7 @@ fn queue_repository_keeps_mergify() {
     let mut repo = direct_repo();
     repo.delivery = tl3_config::Delivery::Queue;
     let mut registry = adapters::simulation(fixture.root.path()).unwrap();
-    registry.register(Upstream::Mergify, Router::new(fixture.api.adapter(&fixture.root.path().join("mergify"), 0).with_store(settings.clone()), fixture.adapter(&settings), &[repo]));
+    registry.register(Upstream::Delivery, Router::new(fixture.api.adapter(&fixture.root.path().join("mergify"), 0).with_store(settings.clone()), fixture.adapter(&settings), &[repo]));
     let mut controller = Controller::open(Store::open(&settings).unwrap(), registry, bootstrap()).unwrap();
     controller.intake(LabelledIssue { delivery:"queue-control".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
     for _ in 0..100 {

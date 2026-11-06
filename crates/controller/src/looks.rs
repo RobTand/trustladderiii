@@ -170,7 +170,7 @@ impl Cause {
             Upstream::Worktrees => Cause::Tl3,
             // The trusted check harness is TL3's code, running inside a PrismaBuild action.
             Upstream::PrismaBuild if class == crate::adapters::prismabuild::HARNESS => Cause::Tl3,
-            Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
+            Upstream::GitHub | Upstream::Delivery | Upstream::PrismaBuild => Cause::Upstream,
         }
     }
 }
@@ -231,7 +231,7 @@ impl TryFrom<StoredSignature> for IncidentSignature {
                     .ok_or("invalid incident signature")?;
                 let upstream = [
                     Upstream::GitHub,
-                    Upstream::Mergify,
+                    Upstream::Delivery,
                     Upstream::PrismaBuild,
                     Upstream::Workers,
                     Upstream::Worktrees,
@@ -256,7 +256,7 @@ fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
     match source {
         Upstream::Workers => decisions::StallUpstream::Workers,
         Upstream::GitHub => decisions::StallUpstream::GitHub,
-        Upstream::Mergify => decisions::StallUpstream::Mergify,
+        Upstream::Delivery => decisions::StallUpstream::Delivery,
         Upstream::PrismaBuild => decisions::StallUpstream::PrismaBuild,
         Upstream::Worktrees => decisions::StallUpstream::Worktrees,
     }
@@ -587,7 +587,7 @@ impl Controller {
         match upstream(delivery.output) {
             Upstream::Workers => &self.allowances.agent_worker,
             Upstream::PrismaBuild => &self.allowances.prismabuild,
-            Upstream::GitHub | Upstream::Mergify => &self.allowances.github_mergify,
+            Upstream::GitHub | Upstream::Delivery => &self.allowances.github_mergify,
             Upstream::Worktrees => &self.allowances.worktrees,
         }
     }
@@ -738,7 +738,7 @@ impl Controller {
     /// requeued or sent to the kernel again.
     fn look_legacy_dequeue(&mut self, snapshot: &Snapshot, state: &AllowanceState) -> Result<bool> {
         use crate::adapters::mergify::{Evidence, QueueFact};
-        if upstream(state.delivery.output) != Upstream::Mergify {
+        if upstream(state.delivery.output) != Upstream::Delivery {
             return Ok(false);
         }
         let (Some(head), Some(number)) = (
@@ -800,7 +800,7 @@ impl Controller {
         state: &mut AllowanceState,
         now: u64,
     ) -> Result<bool> {
-        if upstream(state.delivery.output) != Upstream::Mergify {
+        if upstream(state.delivery.output) != Upstream::Delivery {
             return Ok(false);
         }
         let Some(head) = state.delivery.head_sha.as_deref() else {
@@ -899,7 +899,7 @@ impl Controller {
         let snapshot = self.store.load()?;
         let id = format!("queue-environment:{}:{}", hold.node.0, hold.head);
         let signature = IncidentSignature {
-            upstream: Upstream::Mergify,
+            upstream: Upstream::Delivery,
             class: "queue_environment".into(),
         };
         let checks = snapshot
@@ -2524,7 +2524,7 @@ pub(crate) fn incident_summary(
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",
-        Upstream::Mergify => "Mergify",
+        Upstream::Delivery => "Mergify",
         Upstream::GitHub => "GitHub",
     };
     let reason = match signature.class.as_str() {
@@ -3058,7 +3058,7 @@ impl Controller {
         let key = format!("incident:{id}:{}", snapshot.revision.get());
         let request = crate::request(snapshot, node)?;
         let signature = IncidentSignature {
-            upstream: Upstream::Mergify,
+            upstream: Upstream::Delivery,
             class: "setup".into(),
         };
         commit.rows.push(put(
@@ -3134,7 +3134,7 @@ mod summary_wording {
         incident_summary(
             "Fix the value",
             &IncidentSignature {
-                upstream: Upstream::Mergify,
+                upstream: Upstream::Delivery,
                 class: class.into(),
             },
             false,

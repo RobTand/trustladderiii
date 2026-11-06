@@ -16,13 +16,33 @@ mod boundary {
     include!("queue-fact-current.rs");
 }
 use boundary::{QueueFact, Evidence};
-enum Observation { Queue(QueueFact) }
+impl Evidence {
+    pub(crate) fn outcome(&self) -> Option<tl3_controller::outcome::Outcome> {
+        use tl3_controller::outcome::Outcome;
+        Some(match self {
+            Self::Merged { head, checks_passed } => Outcome::Merged { head: head.clone(), checks_passed: *checks_passed },
+            Self::CiFailed { head, infra, details, .. } => Outcome::CiFailed {
+                head: head.clone(), infra: *infra, failed_tests: details.failed_tests.clone(), evidence: details.clone(),
+            },
+            Self::Conflict { head, .. } => Outcome::Conflict { head: head.clone() },
+            Self::PushByOther { head } => Outcome::PushByOther { head: head.clone() },
+            Self::ClosedByPerson { .. } => Outcome::ClosedByPerson,
+            _ => return None,
+        })
+    }
+}
+
+enum Observation { Queue(QueueFact), Outcome { node: NodeId, outcome: tl3_controller::outcome::Outcome, receipt: Option<String> } }
+mod outcome { pub use tl3_controller::outcome::*; }
 
 struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> {type Target=Controller;fn deref(&self)->&Controller { self.0 }}
 impl std::ops::DerefMut for Shell<'_> {fn deref_mut(&mut self)->&mut Controller { self.0 }}
 impl Shell<'_> {
     fn translate(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit) -> Result<Option<Event>> {
+        let mut observation = observation;
+        let mut queue_receipt = None;
+        let event = loop {
         let event = match observation {
             Observation::Queue(mut fact) => {
                 if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
@@ -243,30 +263,61 @@ impl Shell<'_> {
                         ));
                     }
                 };
-                let fact = match (kernel, fact.evidence) {
-                    (KernelFact::PrMerged { checks_passed }, Evidence::Merged { head, .. }) => {
-                        Fact::PrMerged {
-                            head: self.head(node, &head)?,
-                            checks_passed,
+                if let Some(outcome) = fact.evidence.outcome() {
+                    queue_receipt = Some(put("queue_facts", identity, value));
+                    observation = Observation::Outcome { node, outcome, receipt: None };
+                    continue;
+                }
+                let fact = match kernel {
+                    KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
+                    _ => return Err(Error::Invalid("queue evidence routed to another kernel fact")),
+                };
+                commit.rows.push(put("queue_facts", identity, value));
+                Event::Fact { node, fact }
+            }
+            Observation::Outcome { node, outcome, receipt } => {
+                if receipt.as_ref().is_some_and(|id| snapshot.rows.iter().any(|row| {
+                    matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts") && row.id == *id
+                })) { return Ok(None); }
+                let recorded = json!({"node": node, "outcome": &outcome});
+                use outcome::Outcome;
+                let current = &world.nodes[node.0 as usize];
+                // A closed request accepts only its first observed merge.
+                if matches!(current.phase, tl3_kernel::Phase::Closed(_))
+                    && (!matches!(outcome, Outcome::Merged { .. }) || current.merged.is_some())
+                {
+                    return Ok(None);
+                }
+                let fact = match outcome {
+                    Outcome::Merged { head, checks_passed } => Fact::PrMerged {
+                        head: self.head(node, &head)?, checks_passed,
+                    },
+                    Outcome::CiFailed { head, infra, .. } => {
+                        if commit_sha(snapshot, current.head) != Some(head.as_str()) {
+                            return Ok(None);
                         }
-                    }
-                    (KernelFact::CiFailed { infra }, _) => Fact::CiFailed { infra },
-                    (KernelFact::Conflict, _) => Fact::Conflict,
-                    (KernelFact::PrDequeuedByPerson, _) => Fact::PrDequeuedByPerson,
-                    (KernelFact::PrClosedByPerson, _) => Fact::PrClosedByPerson,
-                    (KernelFact::PushByOther, Evidence::PushByOther { head }) => {
+                        Fact::CiFailed { infra }
+                    },
+                    Outcome::Conflict { head } => {
+                        if commit_sha(snapshot, current.head) != Some(head.as_str()) {
+                            return Ok(None);
+                        }
+                        Fact::Conflict
+                    },
+                    Outcome::ClosedByPerson => Fact::PrClosedByPerson,
+                    Outcome::PushByOther { head } => {
                         let commits: Vec<_> = snapshot
                             .interned
                             .iter()
-                            .map(|item| core::CommitRow {
+                            .map(|item| tl3_controller_core::translate::CommitRow {
                                 is_commit: item.kind == tl3_store::InternKind::Commit,
                                 id: item.id,
                             })
                             .collect();
                         let previous_sha =
-                            core::previous_commit(&commits, current.head.map(|head| head.0 as i64))
+                            tl3_controller_core::translate::previous_commit(&commits, current.head.map(|head| head.0 as i64))
                                 .map(|index| snapshot.interned[index].value.as_str());
-                        let carried = core::carry_plan(
+                        let carried = tl3_controller_core::translate::carry_plan(
                             node.0,
                             &head,
                             check_run(snapshot, node, previous_sha)?,
@@ -278,20 +329,19 @@ impl Shell<'_> {
                                 json!(carried.plan),
                             ));
                         }
-                        Fact::PushByOther {
-                            head: self.head(node, &head)?,
-                        }
-                    }
-                    _ => {
-                        return Err(Error::Invalid(
-                            "queue evidence routed to another kernel fact",
-                        ));
-                    }
+                        Fact::PushByOther { head: self.head(node, &head)? }
+                    },
                 };
-                commit.rows.push(put("queue_facts", identity, value));
+                if let Some(receipt) = receipt {
+                    commit.rows.push(put("delivery_outcomes", receipt, recorded));
+                }
                 Event::Fact { node, fact }
-            }
+            },
+
         };
+        break event;
+        };
+        if let Some(receipt) = queue_receipt { commit.rows.push(receipt); }
         Ok(Some(event))
     }
 }

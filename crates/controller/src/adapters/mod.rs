@@ -18,7 +18,7 @@ pub fn simulation(root: &Path) -> Result<Registry> {
     std::fs::create_dir_all(root)?;
     let mut adapters = Registry::default();
     adapters.register(Upstream::GitHub, github::Fake::new(root));
-    adapters.register(Upstream::Mergify, mergify::Fake::new(root));
+    adapters.register(Upstream::Delivery, mergify::Fake::new(root));
     adapters.register(Upstream::PrismaBuild, prismabuild::Fake::new(root));
     adapters.register(Upstream::Workers, workers::Fake::new(root));
     adapters.register(Upstream::Worktrees, worktrees::Fake::new(root));
