@@ -135,6 +135,9 @@
     },
     "publication_branch": {
       "$ref": "#/$defs/publication_branch"
+    },
+    "tests": {
+      "$ref": "maker-input.json#/properties/tests"
     }
   },
   "required": [
