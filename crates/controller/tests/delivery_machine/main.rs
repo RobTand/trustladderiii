@@ -268,3 +268,8 @@ fn owned_controller_io_shell_remains_verbatim() {
         );
     assert_eq!(restored, include_str!("base-approval.rs.txt"));
 }
+
+mod full;
+mod executor {
+    include!("conversions.rs");
+}
