@@ -184,6 +184,8 @@ class Violation:
             raise ValueError('role-dependent violation must use its evaluation role')
 
     def render(self, *, role, context="reply"):
+        if context not in ('reply', 'tool'):
+            raise ValueError('render context must be reply or tool')
         _require_role(self.rule, role)
         self._require_resolution_role(role)
         subjects = self.rule.names(self.facts)
@@ -200,6 +202,8 @@ class Violation:
                 text += f' Bad value: {shown}.'
         text += f' Allowed: {allowed.render()}.'
         if isinstance(repair, Edit):
+            if context == 'tool':
+                raise ValueError('Edit repair cannot render in tool context: there is no reply to edit')
             text += f' Permitted edit: {repair.op} {repair.pointer.render()}'
             if repair.allowed != allowed:
                 text += f'; allowed: {repair.allowed.render()}.'
@@ -210,7 +214,10 @@ class Violation:
         elif isinstance(repair, SourceEdit):
             text += f' Change {json.dumps(repair.path, ensure_ascii=False)}: {repair.instruction}'
         elif isinstance(repair, CantMeet) and repair.reason.strip():
-            text += f' {terminal_for(role).phrase} Reason: {repair.reason}'
+            if context == 'tool':
+                text += f' Reason: {repair.reason}'
+            else:
+                text += f' {terminal_for(role).phrase} Reason: {repair.reason}'
         else:
             raise ValueError('rule has no renderable repair')
         if self.rule.gating:
@@ -368,4 +375,4 @@ def register(rule, *, roles: Iterable[str]):
 
 
 def render_all(violations, *, role, context="reply"):
-    return '\n'.join(violation.render(role=role) for violation in violations)
+    return '\n'.join(violation.render(role=role, context=context) for violation in violations)
