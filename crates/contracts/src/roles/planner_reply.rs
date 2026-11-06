@@ -140,6 +140,7 @@ pub struct PlannerReplyLeaf {
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "List<BoundedText<1, UNBOUNDED>, 0, UNBOUNDED, true>", default)]
     #[schemars(description = "Existing tests, by pytest node ID, whose definitions the change modifies. Omit it when the change edits no existing test.")]
+    #[schemars(extend("minItems" = 0))]
     pub edits_tests: Option<List<BoundedText<1, UNBOUNDED>, 0, UNBOUNDED, true>>,
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Forecast", default)]

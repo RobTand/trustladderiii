@@ -9,3 +9,21 @@ fn complete_generated_inventory_and_bytes() {
     assert_eq!(schemas, names.iter().filter(|path| path.starts_with(tl3_contracts::SCHEMA_DIRECTORY)).map(|path| (*path).to_owned()).collect());
     for file in files { assert_eq!(file.text,std::fs::read_to_string(root.join(&file.path)).unwrap(),"{}",file.path); }
 }
+
+#[test]
+fn shared_role_suffix_and_generation_guidance_preserve_controller_bytes() {
+    use tl3_contracts::role_contract::*;
+    use serde_json::{Value,json};
+    fn check<C:RoleContract>(contract:C) {
+        for cpus in [1,7] {
+            let request=json!({"role":C::ROLE,"text":"","test_cpus":cpus});
+            let rendered=tl3_controller::prompt_render::render("role",&request.to_string()).unwrap();
+            let controller:Value=serde_json::from_str(&rendered).unwrap();
+            assert_eq!(contract.render(RenderOptions {test_cpus:cpus,generation:false}).unwrap().prompt_suffix,controller["text"],"{}",C::ROLE.as_str());
+        }
+    }
+    check(Ingest::<Value>{rules:vec![]});check(Audit::<Value>{rules:vec![]});check(Planner::<Value>{rules:vec![]});check(Maker::<Value>{rules:vec![]});
+    check(Reviewer::<Value>{rules:vec![]});check(Classifier::<Value>{rules:vec![]});check(Writer::<Value>{rules:vec![]});check(Postmortem::<Value>{rules:vec![]});
+    let generation:Value=serde_json::from_str(&tl3_controller::prompt_render::render("generation","{}").unwrap()).unwrap();
+    assert_eq!(generation["text"],guidance::GENERATION);
+}
