@@ -636,7 +636,20 @@ def verus_proofs():
             "kernel::port_review_reply::transition": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_reply::transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_reply::reply_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::port_advance_gate::gate_slot_count": "Logical recursive count; termination and scan use are checked with every selected gate proof, with no standalone obligation.",
+            "kernel::port_advance_world::inline_nodes": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_world::frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_node_rules::environment": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_slot": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_older": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_overlap": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_overlapping_before": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_eligible": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_line_prefix": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_line": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_slot_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_slot_ticket": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_slot_changed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_ready_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -903,6 +916,7 @@ def verus_proofs():
             "scheduler_earlier_in_pool": ("kernel::scheduler#earlier_in_pool", 1),
             "scheduler_older_overlap": ("kernel::scheduler#older_overlap", 2),
             "scheduler_first_in_line": ("kernel::scheduler#first_in_line", 3),
+            "port_advance_gate_slot_count": ("kernel::port_advance_gate#gate_slot_count", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
