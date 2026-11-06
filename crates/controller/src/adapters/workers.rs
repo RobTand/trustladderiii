@@ -28,6 +28,8 @@ mod source;
 mod source_error;
 #[cfg(test)]
 mod startup_tests;
+#[cfg(test)]
+mod feedback_tests;
 mod trace;
 #[cfg(test)]
 mod trace_tests;
