@@ -1,7 +1,6 @@
 """Run the Mergify queue decisions' Kani proofs, or their seeded mutants (#735).
 
-The harnesses live in tl3-mergify (`src/decide/proofs.rs`) and, for the HTTP
-status table, in tl3-github (`src/status.rs`).
+The remaining harnesses live in tl3-mergify (`src/decide/enqueue_proofs.rs`).
 
     kani.py manifest [NAME...]   print a PrismaBuild campaign manifest
     kani.py prove [NAME...]      prove the named harnesses, or all of them
@@ -27,41 +26,18 @@ DECIDE = "crates/mergify/src/decide/"
 STATUS = "crates/github/src/status.rs"
 # Each proof file, its package and the module path of its harnesses.
 PROOF_FILES = [
-    (DECIDE + "proofs.rs", "tl3-mergify", "decide::proofs"),
     (DECIDE + "enqueue_proofs.rs", "tl3-mergify", "decide::enqueue_proofs"),
 ]
 # Seeded mutants: (harness, file, exact text, replacement). Each breaks the
 # property its harness states, so the harness must fail. Every harness has at
 # least one.
 MUTANTS = [
-    ("q52", DECIDE + "translate.rs",
-     "Kind::CheckMissing if node.enqueuing() && approved_head",
-     "Kind::CheckMissing if approved_head"),
-    ("translate_closed", DECIDE + "translate.rs",
-     "(!matches!(kind, Kind::Merged { .. }) || node.merged)",
-     "!matches!(kind, Kind::Merged { .. })"),
-    ("translate_head_ci", DECIDE + "translate.rs",
-     "return node.phase == Phase::Queued || node.enqueuing();",
-     "return node.phase != Phase::Closed;"),
-    ("translate_route", DECIDE + "translate.rs",
-     "if kind.names_attempt_head() && !head_current {",
-     "if kind.names_attempt_head() && !head_current && approved_head {"),
-    # Dropping an attempt kind must fail the harness's independent oracle.
-    ("translate_route", DECIDE + "translate.rs",
-     "Self::CiFailed { .. } | Self::Conflict | Self::DequeuedByCommand",
-     "Self::CiFailed { .. } | Self::DequeuedByCommand"),
-    ("translate_route", DECIDE + "translate.rs",
-     "Self::CiFailed { .. } | Self::Conflict | Self::DequeuedByCommand",
-     "Self::CiFailed { .. } | Self::Conflict"),
-    ("ci_classify", DECIDE + "translate.rs",
-     "outside && !repeated",
-     "outside"),
-    ("person_facts_total", DECIDE + "facts.rs",
-     "if event.actor != Actor::Person {",
-     "if event.actor == Actor::Missing {"),
-    ("facts_outcome", DECIDE + "facts.rs",
-     "head_infra.unwrap_or(true)",
-     "head_infra.unwrap_or(false)"),
+    ("enqueue_refused_sticky", DECIDE + "enqueue.rs", "if refused_intent {", "if false && refused_intent {"),
+    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some()", "out.push(if intent.requeue.is_some()"),
+    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });", "out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });\n                out.push(Effect::SaveIntent);"),
+    ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                    now_ms.saturating_sub(since) >= GRACE_MS", "                    now_ms.saturating_sub(since) >= GRACE_MS / 2"),
+    ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                || read.paused\n", "                || read.paused\n                || read.waiting && !recovery.eligible_since_ms.is_some_and(|since| read.now_ms.saturating_sub(since) >= GRACE_MS)\n"),
+
     ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
 ]
 

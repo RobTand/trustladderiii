@@ -1,0 +1,11 @@
+            Observation::Made {
+                node,
+                generation,
+                sha,
+            } => Event::Reply {
+                node,
+                generation,
+                reply: Reply::MakerDone {
+                    head: self.head(node, &sha)?,
+                },
+            },

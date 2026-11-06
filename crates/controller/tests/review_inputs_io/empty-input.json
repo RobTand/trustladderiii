@@ -1,0 +1,24 @@
+{
+  "goals": [
+    {
+      "id": "goal-1",
+      "description": "Do work",
+      "verification": "test"
+    }
+  ],
+  "base_sha": "1111111111111111111111111111111111111111",
+  "check_base_sha": "1111111111111111111111111111111111111111",
+  "head_sha": "2222222222222222222222222222222222222222",
+  "diff": "diff",
+  "checks": [],
+  "standing_rules": [
+    {
+      "id": "test-report-integrity",
+      "description": "Protect test reports. Block code that writes directly to the test process's file descriptors, replaces its output streams, emits text shaped like test-report events, or reaches into pytest hooks, plugins, reporter or configuration internals. Ordinary output from the program under test is allowed. In-process report custody is accepted for slice one."
+    },
+    {
+      "id": "request-scope",
+      "description": "Keep edits within the supplied request goals. Block an unrelated edit, including inside a planned file, only when it serves none of the supplied goals. Necessary supporting code and tests are in scope. Imports, test fixtures, docstrings and type hints for new or changed code, formatting the change forces, and small helper refactors the change needs are in scope. When unsure whether an edit serves the goals, record a non-blocking finding instead of blocking. Cite this standing rule, identify the unrelated hunk and quote a whole changed diff line from that hunk on its own line in evidence, including its leading plus or minus, from scope_diff when supplied or otherwise diff. Explain why the hunk serves no supplied goal. The quoted changed content must have at least 8 non-whitespace characters; otherwise record a non-blocking finding. Do not invent goals or demand additional work."
+    }
+  ]
+}
