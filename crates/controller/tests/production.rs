@@ -61,6 +61,36 @@ fn fixture_credentials_are_fast_and_repeatable() {
 }
 
 #[test]
+fn flux_selection_holds_legacy_pb_bindings_without_reinterpreting_them() {
+    for suffix in ["job", "wait", "done"] {
+        for node in ["", "0"] {
+            let root = tempfile::tempdir().unwrap();
+            let mut config = config(root.path());
+            config.execution_backend = tl3_config::ExecutionBackend::Flux;
+            config.flux = Some(tl3_config::Flux {
+                instance_generation: "disposable-generation".into(),
+                executable: "/opt/flux/bin/flux".into(),
+                uri: "local:///run/flux/local-0".into(),
+                environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+                staging_root: "/mnt/shared/tl3-inputs".into(),
+                output_root: "/mnt/shared/flux-out/tl3".into(),
+                container_image: config.prismabuild.container_image.clone(),
+            });
+            let directory = config.workers.runs.join(".controller/prismabuild").join(node);
+            fs::create_dir_all(&directory).unwrap();
+            let binding = directory.join(format!("legacy.{suffix}"));
+            fs::write(&binding, "legacy PB evidence, deliberately not a Flux ID").unwrap();
+            let error = match production::register(&config) {
+                Ok(_) => panic!("Flux silently adopted legacy PB evidence"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("drain or explicitly hold"), "{error}");
+            assert_eq!(fs::read_to_string(binding).unwrap(), "legacy PB evidence, deliberately not a Flux ID");
+        }
+    }
+}
+
+#[test]
 fn production_registers_every_real_adapter_and_source() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
