@@ -88,6 +88,23 @@ def _parts(path):
     return parts
 
 
+def _undeclared_write(path, declared, limit=1000):
+    """The refusal for a write outside the plan, naming the declared files within limit characters."""
+    names = sorted(declared)
+    shown = []
+    for name in names:
+        if shown and len(", ".join([*shown, name])) > limit:
+            break
+        shown.append(name)
+    listed = ", ".join(shown)
+    if len(shown) < len(names):
+        listed += f", and {len(names) - len(shown)} more"
+    return (f"{path} is not a declared file, so it was not changed. write and edit change only the plan's "
+            f"declared files: {listed}. Scratch or diagnostic files are not allowed, and no tool can delete a file. "
+            "To investigate, use read, grep or diff, or run_tests on existing tests; put a new test in a declared "
+            "test file. If the change needs another file, reply needs_files with its path.")
+
+
 def _matching_lines(stream, pattern, regex=None, cut=None):
     """Yield (line number, preview, truncated) for matching lines.
 
@@ -363,6 +380,8 @@ class Worktree:
         self.generated_files = generated_files
         self.generator = generator
         self.protected_paths = ()
+        # The maker sets its plan's files; write and edit change nothing else (#875).
+        self.declared_files = None
         # Set by the runtime for roles without a blocked reply.
         self.environment_errors_end_run = False
 
@@ -386,6 +405,11 @@ class Worktree:
         return False
 
     def _check_write(self, path):
+        # No tool deletes a file, so a write outside the plan would stay for the
+        # rest of the request (#875, PQ #3312).
+        canonical = "/".join(_parts(path))
+        if self.declared_files is not None and canonical not in self.declared_files:
+            raise ValueError(_undeclared_write(canonical, self.declared_files))
         if PurePosixPath(path).name == ".tl3-generator-import":
             raise ValueError("Reserved generator import path")
         if any(PurePosixPath(path).full_match(pattern) for pattern in self.protected_paths):
