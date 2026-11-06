@@ -237,33 +237,53 @@ pub(super) fn sanitized_json_using(
     depth: usize,
     text: fn(&str) -> Result<String>,
 ) -> Result<()> {
-    if depth > 32 {
-        return Err(BackendError::invalid("evidence nesting exceeds bound"));
-    }
-    match value {
-        serde_json::Value::String(value) => *value = text(value)?,
-        serde_json::Value::Array(values) => {
-            if values.len() > 100_000 {
-                return Err(BackendError::invalid("evidence collection exceeds bound"));
-            }
-            for value in values {
-                sanitized_json_using(value, depth + 1, text)?;
-            }
+    fn visit(
+        value: &mut serde_json::Value,
+        depth: usize,
+        text: fn(&str) -> Result<String>,
+        strings: &mut std::collections::HashMap<String, String>,
+        names: &mut BTreeSet<String>,
+    ) -> Result<()> {
+        if depth > 32 {
+            return Err(BackendError::invalid("evidence nesting exceeds bound"));
         }
-        serde_json::Value::Object(values) => {
-            if values.len() > 256 {
-                return Err(BackendError::invalid("evidence fields exceed bound"));
-            }
-            for (name, value) in values {
-                if name.len() > 256 || safe(name)? != *name {
-                    return Err(BackendError::invalid("unsafe evidence field name"));
+        match value {
+            serde_json::Value::String(value) => {
+                if let Some(checked) = strings.get(value) {
+                    *value = checked.clone();
+                } else {
+                    let checked = text(value)?;
+                    strings.insert(value.clone(), checked.clone());
+                    *value = checked;
                 }
-                sanitized_json_using(value, depth + 1, text)?;
             }
+            serde_json::Value::Array(values) => {
+                if values.len() > 100_000 {
+                    return Err(BackendError::invalid("evidence collection exceeds bound"));
+                }
+                for value in values {
+                    visit(value, depth + 1, text, strings, names)?;
+                }
+            }
+            serde_json::Value::Object(values) => {
+                if values.len() > 256 {
+                    return Err(BackendError::invalid("evidence fields exceed bound"));
+                }
+                for (name, value) in values {
+                    if !names.contains(name) {
+                        if name.len() > 256 || safe(name)? != *name {
+                            return Err(BackendError::invalid("unsafe evidence field name"));
+                        }
+                        names.insert(name.clone());
+                    }
+                    visit(value, depth + 1, text, strings, names)?;
+                }
+            }
+            _ => {}
         }
-        _ => {}
+        Ok(())
     }
-    Ok(())
+    visit(value, depth, text, &mut std::collections::HashMap::new(), &mut BTreeSet::new())
 }
 
 fn daytime_payload(bytes: &[u8]) -> Result<crate::contracts::report::CheckReport> {
