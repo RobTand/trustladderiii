@@ -402,7 +402,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
                 reveal(retirement::fact_node);
             }
             retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
-            retirement_runtime::noop_frame(ci_world@, i, ci_out@);
+            reveal(retirement::fact_frame);
             retirement_runtime::ci_forward(ci_world@.nodes@[i as int], *m, infra,
                 ci_world@.fail_fast, ci_world@.next_question, w.next_question);
         }
