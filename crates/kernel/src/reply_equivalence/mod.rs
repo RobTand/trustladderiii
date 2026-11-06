@@ -262,7 +262,7 @@ fn compare(world: World, generation: u64, reply: Reply, out: Outbox) {
     }))
     .is_err();
     let actual_panicked = catch_unwind(AssertUnwindSafe(|| {
-        super::on_reply(&mut actual, 0, generation, reply, &mut actual_out);
+        super::on_reply(&mut actual, 0, generation, reply, &mut actual_out, &mut Report::new());
     }))
     .is_err();
     assert_eq!(actual_panicked, expected_panicked, "panic behavior differs");
