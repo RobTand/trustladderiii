@@ -629,6 +629,12 @@ CASES = {
                                 '    m.head = Some(head);\n    m.checked = None;',
                                 '    m.head = Some(head);\n    m.checked = None;\n    m.credit.spent = 1;',
                                 '//crates/kernel:verus_acknowledgements_adopt_proposed_worktree'),
+    # #806 W7 slice 2b: on_ack's out stutter is what W7 consumes for the retired out.is_empty() assert;
+    # W3's own on_ack group still verifies the weakened clause, so only the W7 obligation rejects it.
+    'w7_adoption_out_empty': ('crates/kernel/src/acknowledgements.rs',
+                              '            && (*final(out) == *old(out))\n',
+                              '            && (final(out).len >= old(out).len)\n',
+                              '//crates/kernel:verus_port_deps_2b_adoption'),
 
 }
 
