@@ -2,6 +2,7 @@
 //! receive the same changing reads and crash after every durable write.
 #![allow(dead_code)]
 
+use crate::executor;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner};
 use serde_json::{Value, json};
