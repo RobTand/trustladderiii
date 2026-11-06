@@ -118,3 +118,7 @@ pub fn command() -> crate::Result<()> {
     }
     Ok(())
 }
+
+pub fn read_scope_trims(_tx: &mut tl3_store::Transaction<'_>) -> crate::Result<serde_json::Value> {
+    todo!("#896: implement the explicit scope-trims export")
+}
