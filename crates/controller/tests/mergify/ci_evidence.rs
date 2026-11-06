@@ -259,7 +259,14 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         let details = &facts.last().unwrap()["evidence"]["CiFailed"]["details"];
         assert_eq!(details["cause"], "Unattributed");
         assert_eq!(details["checks"][0]["name"], "Bazel");
-        assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "queue_holds"));
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "queue_holds")
+        );
         println!("test ci_evidence_{mode} ... ok");
         return;
     }
