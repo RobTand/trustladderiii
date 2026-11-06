@@ -37,10 +37,16 @@ pub fn maker_witness() {
 }
 /// Base f5b0ba2f docs/state-table.md:574-575. Recording only code failures
 /// in Queued is preserved existing behaviour (no rule); no operation required.
+/// #862 (base 3587a599 docs/state-table.md:599): Enqueuing records them too.
 pub fn ci_witness() {
     let n = Some(Node {phase:Phase::Queued,generation:0,run:None,job:None});
     let code = finding(n,Input::CiFailed {infra:false},true);
     let infra = finding(n,Input::CiFailed {infra:true},false);
+    let e = Some(Node {phase:Phase::Enqueuing,generation:0,run:None,job:None});
+    let enqueuing = finding(e,Input::CiFailed {infra:false},false);
+    let enqueuing_infra = finding(e,Input::CiFailed {infra:true},false);
+    assert(enqueuing == Finding::Ci);
+    assert(enqueuing_infra == Finding::None);
     let wrong_phase = finding(Some(Node {phase:Phase::Checking,generation:0,run:None,job:None}),Input::CiFailed {infra:false},false);
     assert(code == Finding::Ci);
     assert(infra == Finding::None);
