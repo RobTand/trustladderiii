@@ -1114,6 +1114,7 @@ def verus_proofs():
             "port_answers_unclear_shape": ("kernel::port_answers_projection#unclear_shape", 1),
             "port_answers_seal_event": ("kernel::port_answers_command#seal_event", 1),
             "port_answers_open_event": ("kernel::port_answers_command#open_event", 1),
+            "port_acks_command_compose_apply": ("kernel::port_acks_commands#compose_apply", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

@@ -83,10 +83,14 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         },
         port_answers_command::event_post(*old(w), *final(w), event, *old(out), *final(out)),
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
-] hide [node_checked] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
-    kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
+    kernel_proof! {
+        if !matches!(event, Event::Ack { .. } | Event::Command { .. }) {
+            events_lemmas::selected_input(before_apply@, event);
+        }
+    }
     match event {
         Event::NewAdoption {
             repo,
@@ -135,17 +139,8 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
                 kernel_proof! {
-                    if port_acks_specs::owner_command(command) {
-                        port_acks_commands::finish_command(before_apply@, *w, i, id, command, before_apply_out@, *out);
-                    }
-                    if command == Command::Resume {
-                        progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
-                    }
-                    if progress_input(before_apply@, event) {
-                        assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
-                        progress::lift_node_progress(before_apply@, *w, i as int);
-                        dependencies::indexability_frame(before_apply@, *w);
-                    }
+                    port_acks_commands::compose_apply(before_apply@, *w, node, i, id,
+                        command, before_apply_out@, *out);
                 }
             }
         }
