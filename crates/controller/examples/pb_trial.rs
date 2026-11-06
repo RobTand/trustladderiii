@@ -75,7 +75,7 @@ fn fixture(root: &Path) -> Delivery {
         },
         issue: 62,
         pull_request: None,
-        paths: vec!["value.py".into()],
+        paths: tl3_contracts::footprint::Footprint::new(vec!["value.py".into()]).unwrap(),
         attempt: 1,
         round: 0,
         replanned: false,
