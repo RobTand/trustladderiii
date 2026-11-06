@@ -122,6 +122,13 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "progress_unplanned_waiting",
     ),
     ("fail_fast_plan_cant_meet", "port_failfast_apply_plan"),
+    // Q54 / #806 W5 slice 2: paired real apply for all generations and payloads.
+    ("fail_fast_maker_needs_files", "port_failfast_reply_apply"),
+    ("fail_fast_maker_cant_meet", "port_failfast_reply_apply"),
+    ("fail_fast_maker_out_of_room", "port_failfast_reply_apply"),
+    ("fail_fast_checks_done", "port_failfast_reply_apply"),
+    ("fail_fast_changes_requested", "port_failfast_reply_apply"),
+    ("fail_fast_reviewer_out_of_room", "port_failfast_reply_apply"),
     // #806 W1: real apply, complete checker and executable original-domain covers.
     ("apply_ingest_done", "port_replies_witness_cover"),
     ("apply_ingest_early_end", "port_replies_witness_cover"),

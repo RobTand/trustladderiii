@@ -1423,43 +1423,6 @@ proof!(apply_publishing_ci_tests, check_publishing_ci_tests());
 
 // Q54: one proof per event that can reach a retry, in the phase that accepts it.
 proof!(
-    fail_fast_maker_needs_files,
-    check_fail_fast_diverts(
-        Phase::Making,
-        reply(Reply::MakerNeedsFiles {
-            files: kani::any(),
-            fits: kani::any()
-        })
-    )
-);
-proof!(
-    fail_fast_maker_cant_meet,
-    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerCantMeet))
-);
-proof!(
-    fail_fast_maker_out_of_room,
-    check_fail_fast_diverts(Phase::Making, reply(Reply::MakerOutOfRoom))
-);
-proof!(
-    fail_fast_checks_done,
-    check_fail_fast_diverts(
-        Phase::Checking,
-        reply(Reply::ChecksDone {
-            report: kani::any(),
-            pass: kani::any(),
-            in_footprint: kani::any()
-        })
-    )
-);
-proof!(
-    fail_fast_changes_requested,
-    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ChangesRequested))
-);
-proof!(
-    fail_fast_reviewer_out_of_room,
-    check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ReviewerOutOfRoom))
-);
-proof!(
     fail_fast_ci_failed_queued,
     check_fail_fast_diverts(Phase::Queued, fact(Fact::CiFailed { infra: kani::any() }))
 );
