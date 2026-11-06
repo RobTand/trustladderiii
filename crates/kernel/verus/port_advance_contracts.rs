@@ -228,6 +228,27 @@ pub(super) proof fn node_frame(n: Node, ticket: u64, c: AdvanceContext)
     reveal(node_after);
 }
 
+/// #806 / Q18 / Q45: all shared check_nodes assertions follow from the exact step.
+pub(super) proof fn transition_rules(before: Node, after: Node, ticket_before: u64,
+    ticket_after: u64, c: AdvanceContext, out_before: Outbox, out_after: Outbox)
+    requires advance_pre(before, ticket_before, out_before.len),
+        exact(before, after, ticket_before, ticket_after, c, out_before, out_after),
+    ensures after.proposed == before.proposed, before.adopted ==> after.adopted,
+        after.next_seq >= before.next_seq,
+        before.phase is Closed ==> after.phase == before.phase,
+        after.credit.earned as int <= before.credit.earned as int + 1,
+        after.credit.earned > before.credit.earned
+            ==> !before.credit.merge_credited && after.credit.merge_credited,
+{
+    node_frame(before, ticket_before, c);
+    reveal(exact);
+    assert(after.next_seq >= before.next_seq) by { reveal(node_after); }
+    assert(before.phase is Closed ==> after.phase == before.phase) by { reveal(node_after); }
+    assert(after.credit.earned as int <= before.credit.earned as int + 1
+        && (after.credit.earned > before.credit.earned
+            ==> !before.credit.merge_credited && after.credit.merge_credited)) by { reveal(node_after); }
+}
+
 /// #806 / #693: successful admission records planning and releases withheld credit.
 pub(super) proof fn admission_frame(before: Node, after: Node, ticket_before: u64,
     ticket_after: u64, c: AdvanceContext, out_before: Outbox, out_after: Outbox, moved: bool)
