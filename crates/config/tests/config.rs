@@ -19,8 +19,8 @@ fn execution_backend_never_falls_back_from_missing_flux_settings() {
 
 fn flux_document() -> Value {
     let mut document: Value = EXAMPLE.parse().unwrap();
-    document["execution_backend"] = "flux".into();
-    document["flux"] = toml::toml! {
+    document.as_table_mut().unwrap().insert("execution_backend".into(), "flux".into());
+    document.as_table_mut().unwrap().insert("flux".into(), toml::toml! {
         instance_generation = "disposable-test-generation"
         executable = "/opt/flux/bin/flux"
         uri = "local:///run/flux/local-0"
@@ -28,7 +28,7 @@ fn flux_document() -> Value {
         staging_root = "/mnt/shared/tl3-inputs"
         output_root = "/mnt/shared/flux-out/tl3"
         container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    }.into();
+    }.into());
     document
 }
 
@@ -48,7 +48,7 @@ fn execution_selection_validates_only_the_selected_backend() {
     assert_eq!(serde_json::to_value(config.execution_backend).unwrap(), "flux");
     document["execution_backend"] = "prismabuild".into();
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
-    document["prismabuild"] = EXAMPLE.parse::<Value>().unwrap()["prismabuild"].clone();
+    document.as_table_mut().unwrap().insert("prismabuild".into(), EXAMPLE.parse::<Value>().unwrap()["prismabuild"].clone());
     document["flux"]["executable"] = "unavailable-relative-tool".into();
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_ok());
     document["execution_backend"] = "flux".into();
@@ -85,7 +85,7 @@ fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
 fn flux_environment_rejects_reserved_variables_and_never_displays_values() {
     for name in ["FLUX_URI", "FLUX_JOB_ID", "FLUX_SCRATCH", "OUT", "TL3_EXECUTION_BACKEND", "UNREVIEWED_SECRET"] {
         let mut document = flux_document();
-        document["flux"]["environment"][name] = "private-fixture-value".into();
+        document["flux"]["environment"].as_table_mut().unwrap().insert(name.into(), "private-fixture-value".into());
         let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
         assert!(error.contains("flux.environment"));
         assert!(!error.contains("private-fixture-value"));
