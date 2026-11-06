@@ -70,13 +70,15 @@ fn row(table: &str, id: impl ToString, value: Value) -> WorldRow {
     }
 }
 fn fixture_snapshot(config: Inputs) -> Snapshot {
-    let mut world = World::new(&[1], 1);
+    let mut world = World::new(&[3], 1);
     let mut rows = vec![];
     let mut interned = vec![];
     let mut pending = vec![];
     for i in 0..usize::from(config.nodes.min(2)) + 1 {
         let mut node = Node::new(RepoId(0));
-        node.phase = if config.closed {
+        node.phase = if config.merged {
+            Phase::Closed(tl3_kernel::Outcome::Merged)
+        } else if config.closed {
             Phase::Closed(tl3_kernel::Outcome::Stopped)
         } else {
             Phase::Queued
@@ -87,10 +89,12 @@ fn fixture_snapshot(config: Inputs) -> Snapshot {
         node.head = Some(HeadId(i as u64));
         node.checked = node.head;
         node.approved = node.head;
-        node.pr_open = !config.closed;
+        node.pr_open = !config.closed && !config.merged;
+        node.holds = !config.closed && !config.merged;
         node.had_pr = true;
         if config.merged {
             node.merged = node.head;
+            node.credit.merge_credited = true;
         }
         if config.approved_other {
             node.approved = Some(HeadId(i as u64 + 20));
@@ -106,6 +110,11 @@ fn fixture_snapshot(config: Inputs) -> Snapshot {
             node.head = None;
             node.checked = None;
             node.approved = None;
+            node.phase = Phase::Closed(tl3_kernel::Outcome::Stopped);
+            node.pr_open = false;
+            node.holds = false;
+            node.merged = None;
+            node.credit.merge_credited = false;
         }
         world.nodes.push(node);
         let mut repository = repo();
@@ -169,6 +178,7 @@ fn fixture_snapshot(config: Inputs) -> Snapshot {
             }
         }
     }
+    assert!(world.check().is_ok(), "invalid A3 fixture: {:?}: {config:?}", world.check());
     let Value::Object(mut fields) = serde_json::to_value(world).unwrap() else {
         unreachable!()
     };

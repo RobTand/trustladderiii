@@ -1628,7 +1628,7 @@ pub(super) fn a3_queue(unmet: bool) -> CheckRun {
         },
         true,
     );
-    let payload=json!({"version":1,"state":"waiting","required_conditions":[{"matched":!unmet,"description":"status-success=scope","note":"unmet"}]}).to_string();
+    let payload=json!({"version":1,"state":"waiting","required_conditions":[{"match":!unmet,"description":"status-success=scope","note":"unmet"}]}).to_string();
     value.output.as_mut().unwrap().summary = Some(format!(
         "<span itemprop=\"mergify.v1.{}\"></span>",
         base64(&payload)
