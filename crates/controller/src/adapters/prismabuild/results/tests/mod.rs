@@ -91,13 +91,10 @@ fn disagreement_uses_the_confirmed_harness_class() {
     assert_eq!(JUDGE_MISMATCH_CLASS, Some(HARNESS));
 }
 
-async fn mismatch_completion(base: &str, python_passed: bool) {
-    let (mut job, report) = fixture(base, "passed", python_passed, false);
-    job.delivery.checks = Some(job.run.clone());
+async fn fixture_completion(job: &Job, bytes: &[u8]) -> Completion {
     let directory = tempfile::tempdir().unwrap();
     let log = directory.path().join("stdout");
-    let bytes = raw(&report);
-    std::fs::write(&log, &bytes).unwrap();
+    std::fs::write(&log, bytes).unwrap();
     let response = json!({"schema":"prismabuild.endings.v1","complete":true,
         "endings":[{"action_key":job.action,"status":"executed","succeeded":true,"exit_code":0,
             "result":{"verified":true,"receipt_sha256":"c".repeat(64),"stdout":{
@@ -113,10 +110,16 @@ async fn mismatch_completion(base: &str, python_passed: bool) {
             path.into_os_string(),
         ],
     };
-    let completion = super::ending(&tool, &job, false, &tl3_prismabuild::RecordRead::Absent)
+    super::ending(&tool, job, false, &tl3_prismabuild::RecordRead::Absent)
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+}
+
+async fn mismatch_completion(base: &str, python_passed: bool) {
+    let (mut job, report) = fixture(base, "passed", python_passed, false);
+    job.delivery.checks = Some(job.run.clone());
+    let completion = fixture_completion(&job, &raw(&report)).await;
     assert!(matches!(completion.ack, tl3_kernel::Ack::Confirmed));
     assert_eq!(completion.failure_class.as_deref(), Some(HARNESS));
     let [
@@ -555,4 +558,73 @@ print(json.dumps({enum.__name__: [member.value for member in enum.__members__.va
             );
         }
     }
+}
+
+/// #848 review: a schema diagnostic must not persist rejected report values.
+#[tokio::test]
+async fn review_848_decode_diagnostic_never_persists_payload_values() {
+    const MARKER: &str = "t848-synthetic-secret-9c65f921e04a";
+    let (mut job, mut report) = fixture("passed", "passed", true, false);
+    job.delivery.checks = Some(job.run.clone());
+    report["results"][0]["tests"][0]["head"] = json!(MARKER);
+    let completion = fixture_completion(&job, &raw(&report)).await;
+    let persisted = serde_json::to_string(&completion).unwrap();
+    assert!(
+        !persisted.contains(MARKER),
+        "report payload value leaked into persisted completion"
+    );
+    assert!(matches!(completion.ack, tl3_kernel::Ack::Confirmed));
+    assert_eq!(completion.failure_class.as_deref(), Some(HARNESS));
+    let [
+        Observation::Checks {
+            report,
+            pass,
+            results,
+            failed_tests,
+            ..
+        },
+    ] = completion.observations.as_slice()
+    else {
+        panic!("expected exactly the persisted Checks observation")
+    };
+    assert!(!report && !pass && results.is_empty());
+    assert_eq!(failed_tests.len(), 1);
+    assert!(
+        failed_tests[0]
+            .message
+            .starts_with("report schema decode failed: data at line ")
+    );
+}
+
+/// #848 review: JSON framing failures keep the base's entire completion, schema failures do not.
+#[tokio::test]
+async fn review_848_syntax_failure_keeps_the_base_completion() {
+    let (mut job, mut report) = fixture("passed", "passed", true, false);
+    job.delivery.checks = Some(job.run.clone());
+    for bytes in [
+        br#"TL3_CHECKS {"schema":}"#.as_slice(),
+        br#"TL3_CHECKS {"schema":"tl3.checks.v1",}"#,
+        b"TL3_CHECKS [1,,2]",
+    ] {
+        let ((reported, passed, results, failed, class), _) = recorded_io::run(
+            vec![],
+            vec![recorded_io::Step::Bytes(bytes.to_vec())],
+            || before::run(ending(bytes), &job).unwrap(),
+        );
+        let mut base = completion(&job, reported, passed, results, failed).unwrap();
+        base.failure_class = class.map(Into::into);
+        let current = fixture_completion(&job, bytes).await;
+        assert_eq!(
+            serde_json::to_value(current).unwrap(),
+            serde_json::to_value(base).unwrap(),
+            "JSON syntax failure must keep its base-identical completion"
+        );
+    }
+    // Valid JSON reaches typed schema decoding and still gets the harness class.
+    report["results"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("verdict");
+    let schema_failure = fixture_completion(&job, &raw(&report)).await;
+    assert_eq!(schema_failure.failure_class.as_deref(), Some(HARNESS));
 }
