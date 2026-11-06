@@ -168,7 +168,7 @@ SCENARIOS['proof-refusal'] = dict(
     head={'product.py': PRODUCT.format(value=1), 'tests/test_value.py':
           'def first(value): return sorted(value)\ndef second(box): box["x"] = 1\ndef test_value(): assert True\n'},
     plan=[plan_check('complete proof rows', 'demonstrating', ['tests/test_value.py::test_value'],
-                    proof={'subjects': ['product.py::target'],
+                    proof={'subjects': ['product.py::value'],
                            'observer_support': ['tests/test_value.py::first', 'tests/test_value.py::second'],
                            'red_message': 'regression'})])
 
