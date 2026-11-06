@@ -81,6 +81,7 @@ impl Shell<'_> {
         q58: bool,
         commit: &mut Commit,
     ) -> Result<bool> {
+        let incoming_identity = fact.identity();
         let Evidence::CiFailed {
             head,
             head_check,
@@ -101,16 +102,9 @@ impl Shell<'_> {
                 && row.value["evidence"]["CiFailed"]["infra"] == true
                 && row.value["evidence"]["CiFailed"]["details"]["decision"] == "outside_change"
         });
-        let completed = completed_at
-            .as_ref()
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| at.with_timezone(&Utc));
+        let retry = prior.as_ref().and_then(|hold| hold.retry.as_ref());
         let retried = (q58_used && details.failed_tests.is_empty())
-            || prior.as_ref().is_some_and(|hold| {
-                hold.witness
-                    .as_ref()
-                    .is_some_and(|witness| completed.is_some_and(|at| at > witness.at))
-            });
+            || decision::retry_failure(retry.is_some(), retry.is_some_and(|retry| retry.before.contains(&incoming_identity)));
         let context = details
             .context
             .clone()
@@ -202,6 +196,7 @@ impl Shell<'_> {
                 since_ms: self.now_ms(),
                 witness: None,
                 witnessed_ms: None,
+                retry: None,
                 reporters: match &fact.evidence {
                     Evidence::CiFailed { details, .. } => details.reporters.clone(),
                     _ => vec![],

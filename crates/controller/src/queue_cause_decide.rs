@@ -69,3 +69,14 @@ pub fn hold(witness: bool, spent: bool, expired: bool) -> HoldAction {
 pub fn failed_round(cause: Attribution) -> bool {
     cause == Attribution::Change
 }
+
+/// #854b / Q50/Q54: only a new failure after the actual shared retry receipt
+/// belongs to a failed round. Wall-clock timestamps are not dispatch evidence.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    ensures out == (dispatched && !seen_before),
+        out ==> dispatched,
+        seen_before ==> !out,
+))]
+pub fn retry_failure(dispatched: bool, seen_before: bool) -> bool {
+    dispatched && !seen_before
+}

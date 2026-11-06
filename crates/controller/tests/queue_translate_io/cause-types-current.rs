@@ -1,6 +1,14 @@
 pub use tl3_controller::queue_cause::{CauseEvidence, QueueContext, GateEvidence, CheckIdentity};
 use super::*;
 use chrono::{DateTime, Utc};
+/// Captured in the shared command receipt before POST and published on Sent.
+/// Failure identities already observed at that fence cannot be retest results.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct RetryTransition {
+    pub command_key: String,
+    pub before: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Hold {
     pub repository: Repository,
@@ -13,6 +21,8 @@ pub(crate) struct Hold {
     pub since_ms: u64,
     pub witness: Option<GateEvidence>,
     pub witnessed_ms: Option<u64>,
+    #[serde(default)]
+    pub retry: Option<RetryTransition>,
     #[serde(default)]
     pub reporters: Vec<CheckIdentity>,
 }

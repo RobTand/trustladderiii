@@ -58,6 +58,14 @@ impl GateEvidence {
     }
 }
 
+/// Captured in the shared command receipt before POST and published on Sent.
+/// Failure identities already observed at that fence cannot be retest results.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct RetryTransition {
+    pub command_key: String,
+    pub before: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Hold {
     pub repository: Repository,
@@ -70,6 +78,8 @@ pub(crate) struct Hold {
     pub since_ms: u64,
     pub witness: Option<GateEvidence>,
     pub witnessed_ms: Option<u64>,
+    #[serde(default)]
+    pub retry: Option<RetryTransition>,
     #[serde(default)]
     pub reporters: Vec<CheckIdentity>,
 }
@@ -176,6 +186,7 @@ impl Controller {
         q58: bool,
         commit: &mut Commit,
     ) -> Result<bool> {
+        let incoming_identity = fact.identity();
         let Evidence::CiFailed {
             head,
             head_check,
@@ -196,16 +207,9 @@ impl Controller {
                 && row.value["evidence"]["CiFailed"]["infra"] == true
                 && row.value["evidence"]["CiFailed"]["details"]["decision"] == "outside_change"
         });
-        let completed = completed_at
-            .as_ref()
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| at.with_timezone(&Utc));
+        let retry = prior.as_ref().and_then(|hold| hold.retry.as_ref());
         let retried = (q58_used && details.failed_tests.is_empty())
-            || prior.as_ref().is_some_and(|hold| {
-                hold.witness
-                    .as_ref()
-                    .is_some_and(|witness| completed.is_some_and(|at| at > witness.at))
-            });
+            || decision::retry_failure(retry.is_some(), retry.is_some_and(|retry| retry.before.contains(&incoming_identity)));
         let context = details
             .context
             .clone()
@@ -297,6 +301,7 @@ impl Controller {
                 since_ms: self.now_ms(),
                 witness: None,
                 witnessed_ms: None,
+                retry: None,
                 reporters: match &fact.evidence {
                     Evidence::CiFailed { details, .. } => details.reporters.clone(),
                     _ => vec![],

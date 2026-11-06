@@ -12,6 +12,11 @@ fn attribution_witness() {
     let environment = attribute(false, true, false); assert(environment == Attribution::Environment);
     let second = attribute(false, true, true); assert(second == Attribution::Change);
 }
+fn retry_witness() {
+    let unsent = retry_failure(false, false); assert(!unsent);
+    let old = retry_failure(true, true); assert(!old);
+    let retest = retry_failure(true, false); assert(retest);
+}
 fn bounded_hold_witness() {
     let wait = hold(false, false, false); assert(wait == HoldAction::Wait);
     let requeue = hold(true, false, false); assert(requeue == HoldAction::Requeue);
