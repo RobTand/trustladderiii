@@ -470,6 +470,9 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             // T2 is delivered first; the later-delivered failed check completed at T1<T2.
             health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
             failure(&mut controller,&api,&config);
+            let snap = controller.snapshot().unwrap();
+            let hold = snap.rows.iter().find(|r| r.table == "queue_holds").expect("hold");
+            assert!(!hold.value["witness"].is_null(), "stored gates: {:?}, hold: {}", snap.rows.iter().filter(|r| r.table == "queue_gates").collect::<Vec<_>>(), hold.value);
             controller.look_now().unwrap();
             assert_eq!(api.state.lock().unwrap().requeues,1,"r1.1: journaled T2 witness must recover delayed T1 failure");
         }
