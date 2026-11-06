@@ -1,13 +1,11 @@
 //! #830: SHA-pinned direct delivery behind the kernel's existing Enqueue effect.
 pub mod decide;
 mod events;
-mod repository_config;
+pub(super) mod repository_config;
 pub use events::Translator;
 
-use super::{
-    mergify::{Evidence, QueueFact},
-    record::Records,
-};
+use super::record::Records;
+use crate::outcome::Outcome as DeliveryOutcome;
 use crate::{
     Error, Repository, Result,
     executor::{Completion, Delivery, Executor, Look, Observation, Output, Reconciliation},
@@ -26,6 +24,38 @@ use tl3_github::{GitHub, MergeMethod, PullRequest};
 use tl3_kernel::{EffectKind, Phase};
 use tl3_mergify::decide::enqueue as lifecycle;
 use tl3_store::{Snapshot, Store};
+
+fn head_failure(
+    head: &str,
+    infra: bool,
+    check: u64,
+    completed_at: Option<String>,
+) -> (DeliveryOutcome, String) {
+    let cause = crate::queue_cause::CauseEvidence::Change {
+        fingerprint: format!(
+            "queue:{head}:{}",
+            completed_at.as_deref().unwrap_or("unknown")
+        ),
+    };
+    let suffix = format!(
+        "head-ci:{check}{}",
+        completed_at
+            .map(|time| format!(":{time}"))
+            .unwrap_or_default()
+    );
+    (
+        DeliveryOutcome::CiFailed {
+            head: head.to_owned(),
+            infra,
+            failed_tests: vec![],
+            evidence: crate::findings::QueueCiEvidence {
+                cause: Some(Box::new(cause)),
+                ..Default::default()
+            },
+        },
+        suffix,
+    )
+}
 
 pub const VISIBILITY: &str = "delivered directly (CI bypassed by repo config)";
 
@@ -46,7 +76,7 @@ struct Merged {
 struct Read {
     pull: PullRequest,
     facts: Facts,
-    failure: Option<Evidence>,
+    failure: Option<(DeliveryOutcome, String)>,
     method: Option<MergeMethod>,
 }
 
@@ -471,14 +501,12 @@ impl Adapter {
                         required::Contribution::Tests | required::Contribution::Infrastructure
                     ) && (failure.is_none() || item == required::Contribution::Tests)
                     {
-                        failure = Some(Evidence::CiFailed {
-                            check: check.id,
-                            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                            head: pull.head.sha.clone(),
-                            infra: item == required::Contribution::Infrastructure,
-                            head_check: true,
-                            details: Default::default(),
-                        });
+                        failure = Some(head_failure(
+                            &pull.head.sha,
+                            item == required::Contribution::Infrastructure,
+                            check.id,
+                            check.completed_at.map(|time| time.to_rfc3339()),
+                        ));
                     }
                 }
                 if let Some(status) = status {
@@ -490,14 +518,12 @@ impl Adapter {
                     });
                     summary = required::record(summary, item);
                     if item == required::Contribution::Tests {
-                        failure = Some(Evidence::CiFailed {
-                            check: status.id,
-                            completed_at: status.updated_at.map(|time| time.to_rfc3339()),
-                            head: pull.head.sha.clone(),
-                            infra: false,
-                            head_check: true,
-                            details: Default::default(),
-                        });
+                        failure = Some(head_failure(
+                            &pull.head.sha,
+                            false,
+                            status.id,
+                            status.updated_at.map(|time| time.to_rfc3339()),
+                        ));
                     }
                 }
             }
@@ -564,16 +590,39 @@ impl Adapter {
             method,
         })
     }
-    fn fact(&self, d: &Delivery, evidence: Evidence) -> Result<Completion> {
-        let fact = QueueFact {
-            repository: d.repository.clone(),
-            number: number(d)?,
-            evidence,
+    fn fact(&self, d: &Delivery, outcome: DeliveryOutcome) -> Result<Completion> {
+        let suffix = match &outcome {
+            DeliveryOutcome::Merged { head, .. } => format!("merged:{head}"),
+            DeliveryOutcome::PushByOther { head } => format!("push:{head}"),
+            DeliveryOutcome::Conflict { .. } => {
+                return Ok(Completion::confirmed(vec![Observation::Outcome {
+                    node: d.node(),
+                    outcome,
+                    receipt: None,
+                }]));
+            }
+            DeliveryOutcome::ClosedByPerson => "closed".into(),
+            DeliveryOutcome::CiFailed { .. } => {
+                return Err(Error::Invalid("CI outcome needs a check receipt"));
+            }
         };
-        let observations = if fact.recorded(&self.snapshot()?)? {
+        self.fact_with_receipt(d, outcome, &suffix)
+    }
+    fn fact_with_receipt(
+        &self,
+        d: &Delivery,
+        outcome: DeliveryOutcome,
+        suffix: &str,
+    ) -> Result<Completion> {
+        let identity = crate::outcome::identity(&d.repository, number(d)?, suffix);
+        let observations = if crate::outcome::recorded(&self.snapshot()?, &identity) {
             vec![]
         } else {
-            vec![Observation::Queue(fact)]
+            vec![Observation::Outcome {
+                node: d.node(),
+                outcome,
+                receipt: Some(identity),
+            }]
         };
         Ok(Completion::confirmed(observations))
     }
@@ -589,7 +638,7 @@ impl Adapter {
             .remember_merged(d, &merged, |write, after| self.boundary(write, after))?;
         self.fact(
             d,
-            Evidence::Merged {
+            DeliveryOutcome::Merged {
                 head: merged.head,
                 checks_passed: merged.checks_passed,
             },
@@ -611,22 +660,23 @@ impl Adapter {
             }
             Outcome::Moved => self.fact(
                 d,
-                Evidence::PushByOther {
+                DeliveryOutcome::PushByOther {
                     head: read.pull.head.sha.clone(),
                 },
             )?,
-            Outcome::Conflict => {
-                Completion::confirmed(vec![Observation::Kernel(tl3_kernel::Event::Fact {
-                    node: d.node(),
-                    fact: tl3_kernel::Fact::Conflict,
-                })])
-            }
-            Outcome::Failed => self.fact(
+            Outcome::Conflict => self.fact(
                 d,
-                read.failure
-                    .clone()
-                    .ok_or(Error::Invalid("direct check failure lacks evidence"))?,
+                DeliveryOutcome::Conflict {
+                    head: read.pull.head.sha.clone(),
+                },
             )?,
+            Outcome::Failed => {
+                let (outcome, receipt) = read
+                    .failure
+                    .clone()
+                    .ok_or(Error::Invalid("direct check failure lacks evidence"))?;
+                self.fact_with_receipt(d, outcome, &receipt)?
+            }
             Outcome::Closed => Completion::permanent("direct_pr_closed"),
             Outcome::Wait => {
                 self.wakes.sleep(&d.key);
@@ -771,7 +821,7 @@ impl Adapter {
                                 }
                                 return self.fact(
                                     d,
-                                    Evidence::PushByOther {
+                                    DeliveryOutcome::PushByOther {
                                         head: current.head.sha,
                                     },
                                 );

@@ -5,17 +5,15 @@ use crate::{
 };
 use tl3_github::webhook::Event;
 
-/// Queue repositories keep the existing translator, including its read order and fact keys.
+/// Translate direct delivery evidence without queue mechanics.
 pub struct Translator {
     wakes: Wakes,
-    queue: super::super::mergify::Translator,
     clients: BTreeMap<u64, GitHub>,
 }
 impl Translator {
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
             wakes: Wakes::default(),
-            queue: super::super::mergify::Translator::new(clients.clone())?,
             clients,
         })
     }
@@ -48,7 +46,7 @@ impl Translator {
                 .get(node.0 as usize)
                 .ok_or(Error::Invalid("missing direct PR node"))?;
             let evidence = if pull.merged_at.is_some() {
-                Some(Evidence::Merged {
+                Some(DeliveryOutcome::Merged {
                     head: pull.head.sha.clone(),
                     checks_passed: crate::commit_sha(snapshot, n.approved)
                         == Some(pull.head.sha.as_str())
@@ -58,14 +56,14 @@ impl Translator {
             } else if synchronized
                 && crate::commit_sha(snapshot, n.head) != Some(pull.head.sha.as_str())
             {
-                Some(Evidence::PushByOther {
+                Some(DeliveryOutcome::PushByOther {
                     head: pull.head.sha.clone(),
                 })
             } else {
                 None
             };
             if let Some(evidence) = evidence {
-                if let Evidence::Merged {
+                if let DeliveryOutcome::Merged {
                     head,
                     checks_passed,
                 } = &evidence
@@ -105,15 +103,20 @@ impl Translator {
                         }
                     }
                 }
-                let fact = QueueFact {
-                    repository: repo.clone(),
-                    number: pull.number,
-                    evidence,
+                let suffix = match &evidence {
+                    DeliveryOutcome::Merged { head, .. } => format!("merged:{head}"),
+                    DeliveryOutcome::PushByOther { head } => format!("push:{head}"),
+                    _ => unreachable!("PR event outcome"),
                 };
-                if !fact.recorded(snapshot)? {
+                let identity = crate::outcome::identity(repo, pull.number, &suffix);
+                if !crate::outcome::recorded(snapshot, &identity) {
                     inputs.push(Input::Observation {
-                        key: format!("direct:{}", fact.identity()),
-                        observation: Observation::Queue(fact),
+                        key: format!("direct:{identity}"),
+                        observation: Observation::Outcome {
+                            node,
+                            outcome: evidence,
+                            receipt: Some(identity),
+                        },
                     });
                 }
             }
@@ -211,10 +214,10 @@ impl GitHubTranslator for Translator {
             GitHubDelivery::CatchUp { repository, .. } => Some(repository.clone()),
         };
         let Some(repo) = repo else {
-            return self.queue.translate(delivery, snapshot);
+            return Ok(vec![]);
         };
         if !repository_config::direct(snapshot, &repo)? {
-            return self.queue.translate(delivery, snapshot);
+            return Ok(vec![]);
         }
         match delivery {
             GitHubDelivery::Webhook(webhook) => match webhook.event.as_ref() {

@@ -155,7 +155,7 @@ fn queue_retirement(c: &mut Commit, d: &Delivery) {
             });
         }
     }
-    if executor::upstream(d.output) == Upstream::Mergify || approval_delivery::is_approval(d) {
+    if executor::upstream(d.output) == Upstream::Delivery || approval_delivery::is_approval(d) {
         c.rows
             .push(put("retiring_effects", d.key.clone(), json!(d)));
     }
