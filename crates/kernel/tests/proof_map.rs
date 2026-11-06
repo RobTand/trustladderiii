@@ -130,6 +130,20 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ),
     ("pool_grant_is_priority_ordered", "port_deps_pool_grant"),
     ("pool_order_is_strict_priority", "port_deps_pool_key"),
+    ("apply_dependency", "port_deps_s2_dependency_fact"),
+    (
+        "apply_dependency_registration",
+        "port_deps_s2_verify_registration",
+    ),
+    ("apply_dependency_remove", "port_deps_s2_removal"),
+    (
+        "apply_adoption_at_most_once",
+        "port_deps_s2_verify_adoption",
+    ),
+    (
+        "apply_adoption_has_no_maker_credit",
+        "port_deps_s2_verify_adoption",
+    ),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

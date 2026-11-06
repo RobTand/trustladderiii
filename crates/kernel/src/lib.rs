@@ -2263,6 +2263,13 @@ verus! {
 pub closed spec fn port_deps_checker_accepted(w: World) -> bool {
     port_deps_specs::checker_accepted(w)
 }
+
+/// #806: public ghost wrapper for the original full-counter single-root domain.
+pub closed spec fn port_deps_single_domain(w: World) -> bool { port_deps_single::domain(w) }
+
+/// #806: public ghost wrapper for complete single-root checker acceptance.
+pub closed spec fn port_deps_single_accepted(w: World) -> bool { port_deps_single::accepted(w) }
+
 /// #806 W7: bounded root representation of the real graph checker's result.
 pub closed spec fn port_deps_graph_result(w: World, result: bool) -> bool {
     w.nodes@.len() <= 64 ==> result == port_deps_graph::acyclic(w)
@@ -2347,8 +2354,26 @@ mod port_advance_step_frames;
 #[path = "../verus/port_deps_admission.rs"]
 mod port_deps_admission;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_adoption.rs"]
+mod port_deps_adoption;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_adoption_proof.rs"]
+mod port_deps_adoption_proof;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_apply.rs"]
+mod port_deps_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_apply_specs.rs"]
+mod port_deps_apply_specs;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_apply_witness.rs"]
+mod port_deps_apply_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/port_deps_pool_grant.rs"]
 mod port_deps_pool_grant;
 #[cfg(verus_keep_ghost)]
-#[path = "../verus/port_deps_slice2.rs"]
-mod port_deps_slice2;
+#[path = "../verus/port_deps_remove.rs"]
+mod port_deps_remove;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_single.rs"]
+mod port_deps_single;
