@@ -305,6 +305,41 @@ CASES = {
         '        m.pos += 1;\n        m.pos += 1;',
         '//crates/kernel:lib_test_tl3_kernel'),
 
+    'answer_refactor_stopping_repo': ('crates/kernel/src/answers.rs',
+        'Answer::Retry => w.nodes[i].question = None,',
+        'Answer::Retry => w.nodes[i].repo = RepoId(0),',
+        '//crates/kernel:verus_port_answers_stopping_handler'),
+    'answer_refactor_awaiting_repo': ('crates/kernel/src/answers.rs',
+        'w.next_question += 1;',
+        'w.next_question += 1; w.nodes[i].repo = RepoId(0);',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'answer_refactor_allocator_order': ('crates/kernel/src/answers.rs',
+        'let next = w.next_question;\n                    w.next_question += 1;',
+        'w.next_question += 1;\n                    let next = w.next_question;',
+        '//crates/kernel:lib_test_tl3_kernel'),
+
+    'port_answer_change_request': ('crates/kernel/src/answers.rs',
+        'enter_stopping(&mut w.nodes[i], Outcome::Replaced)',
+        'enter_stopping(&mut w.nodes[i], Outcome::Stopped)',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_stop': ('crates/kernel/src/answers.rs',
+        'enter_stopping(&mut w.nodes[i], Outcome::Stopped)',
+        'enter_stopping(&mut w.nodes[i], Outcome::Replaced)',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_unclear': ('crates/kernel/src/answers.rs',
+        'clarified: true,',
+        'clarified: false,',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_retry': ('crates/kernel/src/answers.rs',
+        'Answer::Retry => w.nodes[i].question = None,',
+        'Answer::Retry => { let _ = w.nodes[i].question; },',
+        '//crates/kernel:verus_port_answers_stopping_handler'),
+    'port_answer_stale_question': ('crates/kernel/src/answers.rs',
+        'if q.id != id {',
+        'if q.id == id {',
+        '//crates/kernel:verus_answers'),
+
+
 }
 
 

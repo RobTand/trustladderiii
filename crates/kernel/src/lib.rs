@@ -2262,3 +2262,19 @@ mod port_review_output;
 #[cfg(test)]
 #[path = "../tests/mark_handled_equivalence/cases.rs"]
 mod mark_handled_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_model.rs"]
+mod port_answers_model;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_frames.rs"]
+mod port_answers_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_apply.rs"]
+mod port_answers_apply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_handler.rs"]
+mod port_answers_handler;
