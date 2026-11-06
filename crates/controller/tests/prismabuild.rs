@@ -29,6 +29,8 @@ use tl3_controller::{
 };
 use tl3_kernel::{Command as Control, EffectKind, NodeId, Phase};
 use tl3_prismabuild::PrismaBuild;
+#[path = "prismabuild_fixture/incident_100060.rs"]
+mod incident_100060;
 mod prismabuild_fixture;
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -192,7 +194,17 @@ fn recorded_endings() {
         let delivery = run(root.path(), false);
         let mut adapter = fixture(root.path(), mode);
         assert!(adapter.execute(&delivery).unwrap().observations.is_empty());
-        let (report, pass, paths) = observed(completion(&mut adapter, &delivery));
+        let ended = completion(&mut adapter, &delivery);
+        assert_eq!(
+            ended.failure_class.as_deref(),
+            if matches!(mode, "infrastructure" | "bad_report") {
+                Some("harness")
+            } else {
+                None
+            },
+            "{mode}: only a parsed harness infrastructure outcome is TL3-side"
+        );
+        let (report, pass, paths) = observed(ended);
         assert_eq!((report, pass), expected, "{mode}");
         assert_eq!(paths, ["value.py"]);
         let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
@@ -231,7 +243,7 @@ fn harness_error_is_named_tl3_side() {
     let ended = completion(&mut adapter, &delivery);
     assert_eq!(ended.failure_class.as_deref(), Some("harness"));
     assert!(!observed(ended).0, "no check report");
-    for mode in ["failed", "no_report", "infrastructure"] {
+    for mode in ["failed", "no_report"] {
         let root = tempfile::tempdir().unwrap();
         let delivery = run(root.path(), false);
         let mut adapter = fixture(root.path(), mode);
@@ -2477,12 +2489,34 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
 
 /// #849 / Q51: the same retained PB ending has the same incident cause at every
 /// controller entry, and only a new release clears a TL3-side incident once.
-fn completion_failure_cause(settings: &tl3_config::Store, path: &str, harness: bool) {
-    struct Synchronous(Adapter, bool);
+fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str) {
+    let retained_results = matches!(mode, "retained_results" | "failed_retained_results");
+    let harness = matches!(mode, "harness_error" | "retained_results");
+    fn transport_error(root: &Path, retain_results: bool) {
+        let actions = fs::read_to_string(root.join("queue/publications")).unwrap();
+        let path = root.join(format!("queue/{}.ending", actions.lines().last().unwrap()));
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let ending = &mut value["endings"][0];
+        ending["status"] = "failed".into();
+        ending["succeeded"] = false.into();
+        ending["exit_code"] = 1.into();
+        if retain_results {
+            // A failed PB action may retain verified stdout without a success receipt.
+            ending["result"]["receipt_sha256"] = serde_json::Value::Null;
+        } else {
+            ending["result"] = serde_json::Value::Null;
+        }
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    struct Synchronous(Adapter, bool, Option<(PathBuf, bool)>);
     impl Executor for Synchronous {
         fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
             self.0.execute(delivery)?;
             if self.1 {
+                if let Some((root, retain_results)) = &self.2 {
+                    transport_error(root, *retain_results);
+                }
                 Ok(completion(&mut self.0, delivery))
             } else {
                 Ok(Completion::confirmed(vec![]))
@@ -2493,24 +2527,80 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, harness: b
         }
     }
     let root = tempfile::tempdir().unwrap();
-    let delivery = run(root.path(), false);
-    let mode = if harness {
-        "harness_error"
-    } else {
-        "no_report"
-    };
+    let mut delivery = run(root.path(), false);
+    let retained: Completion = serde_json::from_str(incident_100060::DONE).unwrap();
+    if retained_results {
+        let Observation::Checks {
+            results,
+            report,
+            pass,
+            ..
+        } = &retained.observations[0]
+        else {
+            panic!("retained completion has Checks evidence")
+        };
+        assert!(!report && !pass && retained.failure_class.is_none());
+        // Rebind only the outer job identity to the local fixture. Results and
+        // proof receipts remain byte-for-byte equivalent JSON from the live job.
+        delivery.checks.as_mut().unwrap().plan = results.iter().map(|result| {
+            let mut check = serde_json::json!({
+                "name": result["name"], "kind": result["kind"],
+                "tests": result["tests"].as_array().unwrap().iter().map(|t| &t["test"]).collect::<Vec<_>>(),
+            });
+            if let Some(proof) = result.get("proof") {
+                check["proof"] = proof["declaration"].clone();
+            }
+            serde_json::from_value(check).unwrap()
+        }).collect();
+        fs::create_dir_all(root.path().join("queue")).unwrap();
+        fs::write(
+            root.path().join("queue/recorded_results.json"),
+            serde_json::to_vec(results).unwrap(),
+        )
+        .unwrap();
+    }
     let adapter = fixture(root.path(), if path == "sync" { mode } else { "pending" });
     let mut source = adapter.source();
     let fakes = root.path().join("fakes");
     let registry = |adapter: Adapter, synchronous: bool| {
         let mut registry = adapters::simulation(&fakes).unwrap();
-        registry.register(Upstream::PrismaBuild, Synchronous(adapter, synchronous));
+        registry.register(
+            Upstream::PrismaBuild,
+            Synchronous(
+                adapter,
+                synchronous,
+                (!harness).then(|| (root.path().to_owned(), retained_results)),
+            ),
+        );
         registry.register(
             Upstream::Workers,
-            workers(
-                adapters::workers::Fake::new(&fakes),
-                delivery.head_sha.clone().unwrap(),
-            ),
+            support::workers::Workers::new(None, adapters::workers::Fake::new(&fakes), vec![], {
+                let head = delivery.head_sha.clone().unwrap();
+                let run = delivery.checks.clone().unwrap();
+                move |_, completion| {
+                    let mut made = None;
+                    for observation in &mut completion.observations {
+                        match observation {
+                            Observation::Made { node, sha, .. } => {
+                                *sha = head.clone();
+                                made = Some(*node);
+                            }
+                            Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+                            _ => {}
+                        }
+                    }
+                    if let Some(node) = made {
+                        completion.observations.insert(
+                            0,
+                            Observation::CheckPlan {
+                                node,
+                                sha: head.clone(),
+                                run: run.clone(),
+                            },
+                        );
+                    }
+                }
+            }),
         );
         registry
     };
@@ -2543,73 +2633,131 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, harness: b
         })
         .unwrap();
     while controller.drive_once().unwrap() {}
-    controller
-        .observe(
-            "check-plan",
-            Observation::CheckPlan {
-                node: NodeId(0),
-                sha: delivery.head_sha.clone().unwrap(),
-                run: delivery.checks.clone().unwrap(),
-            },
-        )
-        .unwrap();
-    while controller.drive_once().unwrap() {}
-    if path != "sync" {
-        for attempt in 0..2 {
-            let action = fs::read_to_string(root.path().join("queue/publications")).unwrap();
-            finish(root.path(), action.lines().last().unwrap(), mode);
-            let (sender, receiver) = mpsc::channel();
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            let delivered = (0..10).find_map(|_| {
-                let count = runtime
-                    .block_on(source.poll(&sender, Duration::from_secs(1)))
-                    .unwrap();
-                (count > 0).then_some(count)
-            });
-            assert_eq!(delivered, Some(1));
-            let inputs: Vec<_> = receiver.try_iter().collect();
-            assert!(!inputs.is_empty(), "source delivered the ending");
-            let snapshot = controller.snapshot().unwrap();
-            let watched = snapshot
+    for incident_round in 0..if retained_results { 2 } else { 1 } {
+        if incident_round == 1 {
+            let first = controller
+                .snapshot()
+                .unwrap()
                 .rows
-                .iter()
-                .find(|r| {
-                    r.table == "watches" && r.value["output"]["Effect"]["kind"] == "SubmitChecks"
-                })
+                .into_iter()
+                .find(|r| r.table == "incidents" && r.value["open"] == true)
                 .unwrap();
-            let key = watched.id.clone();
-            // The source has retained the complete .done before a restart loses its Input.
-            let mut retained = fixture(root.path(), "pending");
-            let watched: Delivery = serde_json::from_value(watched.value.clone()).unwrap();
-            assert_eq!(
-                completion(&mut retained, &watched).failure_class.as_deref(),
-                harness.then_some("harness")
-            );
-            match path {
-                "source" => {
-                    for input in inputs {
-                        tl3_controller::ingress::apply(&mut controller, input).unwrap();
-                    }
-                }
-                "watch" => {
-                    if attempt == 1 {
-                        drop(controller);
-                        controller = Controller::open(
-                            tl3_store::Store::open(settings).unwrap(),
-                            registry(retained, false),
-                            bootstrap.clone(),
-                        )
-                        .unwrap();
-                    }
-                    controller.drive_once().unwrap();
-                }
-                "allowance" => controller.look_key(&key).unwrap(),
-                _ => unreachable!(),
-            }
+            assert_eq!(first.value["needs_rob"], false);
+            controller
+                .observe(
+                    "clear-first",
+                    Observation::GitHubComment {
+                        repository: repository(),
+                        issue: 42,
+                        comment: tl3_github::Comment {
+                            id: 100,
+                            body: format!("clear incident {}", first.id),
+                            user: tl3_github::Actor {
+                                id: 1,
+                                login: "fixture".into(),
+                            },
+                            created_at: chrono::DateTime::UNIX_EPOCH,
+                            updated_at: chrono::DateTime::UNIX_EPOCH,
+                            issue_url: "https://api.github.com/repos/RobTand/tl3-sandbox/issues/42"
+                                .into(),
+                        },
+                    },
+                )
+                .unwrap();
             while controller.drive_once().unwrap() {}
+        }
+        if path != "sync" {
+            for attempt in 0..2 {
+                let action = fs::read_to_string(root.path().join("queue/publications")).unwrap();
+                finish(root.path(), action.lines().last().unwrap(), mode);
+                if !harness {
+                    transport_error(root.path(), retained_results);
+                }
+                let (sender, receiver) = mpsc::channel();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let delivered = (0..10).find_map(|_| {
+                    let count = runtime
+                        .block_on(source.poll(&sender, Duration::from_secs(1)))
+                        .unwrap();
+                    (count > 0).then_some(count)
+                });
+                assert_eq!(delivered, Some(1));
+                let inputs: Vec<_> = receiver.try_iter().collect();
+                assert!(!inputs.is_empty(), "source delivered the ending");
+                let snapshot = controller.snapshot().unwrap();
+                let watched = snapshot
+                    .rows
+                    .iter()
+                    .find(|r| {
+                        r.table == "watches"
+                            && r.value["output"]["Effect"]["kind"] == "SubmitChecks"
+                    })
+                    .unwrap();
+                let key = watched.id.clone();
+                // The source has retained the complete .done before a restart loses its Input.
+                let mut retained = fixture(root.path(), "pending");
+                let watched: Delivery = serde_json::from_value(watched.value.clone()).unwrap();
+                let ended = completion(&mut retained, &watched);
+                if retained_results {
+                    let Observation::Checks {
+                        results,
+                        failed_tests,
+                        report,
+                        pass,
+                        ..
+                    } = &ended.observations[0]
+                    else {
+                        panic!("adapter must retain parsed Checks")
+                    };
+                    let original: Completion = serde_json::from_str(incident_100060::DONE).unwrap();
+                    let Observation::Checks {
+                        results: expected,
+                        failed_tests: expected_failed,
+                        ..
+                    } = &original.observations[0]
+                    else {
+                        unreachable!()
+                    };
+                    assert_eq!(
+                        results, expected,
+                        "keep every parsed result and proof receipt"
+                    );
+                    assert_eq!(
+                        serde_json::to_value(failed_tests).unwrap(),
+                        serde_json::to_value(expected_failed).unwrap(),
+                        "keep maker feedback"
+                    );
+                    assert!(!report && !pass);
+                } else {
+                    assert_eq!(ended.failure_class.as_deref(), harness.then_some("harness"));
+                }
+                match path {
+                    "source" => {
+                        for input in inputs {
+                            tl3_controller::ingress::apply(&mut controller, input).unwrap();
+                        }
+                    }
+                    "watch" => {
+                        if attempt == 1 {
+                            drop(controller);
+                            source = retained.source();
+                            controller = Controller::open(
+                                tl3_store::Store::open(settings).unwrap(),
+                                registry(retained, false),
+                                bootstrap.clone(),
+                            )
+                            .unwrap();
+                        }
+                        controller.drive_once().unwrap();
+                    }
+                    "allowance" => controller.look_key(&key).unwrap(),
+                    _ => unreachable!(),
+                }
+                while controller.drive_once().unwrap() {}
+            }
         }
     }
     while controller.drive_once().unwrap() {}
@@ -2624,7 +2772,8 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, harness: b
     assert_eq!(
         incident.value["cause"],
         if harness { "tl3" } else { "upstream" },
-        "{path}: same cause as synchronous completion"
+        "{path}: same cause as synchronous completion, needs_rob={}",
+        incident.value["needs_rob"]
     );
     assert_eq!(
         incident.value["signature"]["class"],
@@ -2633,6 +2782,10 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, harness: b
         } else {
             "operation_failed"
         }
+    );
+    assert_eq!(
+        incident.value["needs_rob"], retained_results,
+        "Q7 retains first/later incident accounting; Q51 clears TL3 incidents either way"
     );
     assert!(
         controller.world().unwrap().nodes[0].waiting_incident,
@@ -2666,13 +2819,43 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, harness: b
     );
 }
 
+/// #849 extension / Q7 / Q51 / #817: successful PB no-report outcomes are TL3-side;
+/// failed PB endings retain Outside even with the live envelope (found by: review).
+fn retained_results_failure_causes(database: &mut support::Database, successful: bool) {
+    let mode = if successful {
+        "retained_results"
+    } else {
+        "failed_retained_results"
+    };
+    let mut failures = 0;
+    for path in ["sync", "source", "watch", "allowance"] {
+        let settings = database.create(&format!("pb_retained_{successful}_{path}"));
+        let result = std::panic::catch_unwind(|| completion_failure_cause(&settings, path, mode));
+        println!(
+            "test retained_results_failure_cause_{successful}_{path} ... {}",
+            if result.is_ok() { "ok" } else { "FAILED" }
+        );
+        failures += usize::from(result.is_err());
+    }
+    assert_eq!(failures, 0, "#849 real retained completion regressions");
+}
+
 fn completion_failure_causes(database: &mut support::Database) {
     let mut failures = 0;
     for path in ["sync", "source", "watch", "allowance"] {
         for harness in [true, false] {
             let settings = database.create(&format!("pb_cause_{path}_{harness}"));
-            let result =
-                std::panic::catch_unwind(|| completion_failure_cause(&settings, path, harness));
+            let result = std::panic::catch_unwind(|| {
+                completion_failure_cause(
+                    &settings,
+                    path,
+                    if harness {
+                        "harness_error"
+                    } else {
+                        "no_report"
+                    },
+                )
+            });
             println!(
                 "test completion_failure_cause_{path}_{harness} ... {}",
                 if result.is_ok() { "ok" } else { "FAILED" }
@@ -3021,6 +3204,23 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--failed-retained-results")
+    {
+        let mut database = support::Database::start();
+        retained_results_failure_causes(&mut database, false);
+        database.stop();
+        println!("4 failed retained results scenarios passed; no skips");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--retained-results") {
+        let mut database = support::Database::start();
+        retained_results_failure_causes(&mut database, true);
+        database.stop();
+        println!("4 retained results scenarios passed; no skips");
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--completion-causes") {
         let mut database = support::Database::start();
         completion_failure_causes(&mut database);
@@ -3298,13 +3498,15 @@ fn main() {
     println!("test quiet_alive_job_is_not_a_failed_read ... ok");
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
+    retained_results_failure_causes(&mut database, true);
+    retained_results_failure_causes(&mut database, false);
     completion_failure_causes(&mut database);
     first_pb_incident_probes_after_terminal_completion(&database.create("pb_incident_probe"));
     println!("test first_pb_incident_probes_after_terminal_completion ... ok");
     pb_probe_uses_delivery_class_and_fails_closed();
     println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
     database.stop();
-    println!("63 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("71 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
