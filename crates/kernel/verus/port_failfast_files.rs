@@ -29,6 +29,7 @@ pub(super) proof fn joined_funded(before: World, fast: World, off: World, on: Wo
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
     reveal(port_review_reply::reply_post);
     reveal(port_replies_maker::union_post);
+    reveal(retirement::accepted); reveal(retirement::node_rules);
     let left = choose|bits: u64| source.footprint == footprint::inline_footprint(bits);
     let right = choose|bits: u64| files == footprint::inline_footprint(bits);
     assert(on.nodes@[0].footprint == footprint::inline_footprint(left | right));
@@ -115,9 +116,7 @@ pub(super) proof fn room_side(w: World, after: World, generation: u64, files: Fo
     port_failfast_replies::admitted(w, after, generation, Reply::MakerNeedsFiles { files, fits }, initial, out);
     reveal(port_review_reply::accepted_reply);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
-    reveal(port_review_reply::reply_post);
-    port_failfast_replies::eta(port_review_retry::room(port_review_reply::ended(w.nodes@[0]),
-        w.fail_fast, w.next_question, ReviewStop::MakerNeedsFiles), after.nodes@[0], after.next_question);
+    reveal(port_review_reply::reply_post); reveal(port_review_retry::room);
 }
 
 /// Q54 MakerNeedsFiles non-fitting or empty input: the parametric room diversion.

@@ -117,8 +117,7 @@ pub(super) proof fn maker_room_side(w: World, after: World, generation: u64, rep
     admitted(w, after, generation, reply, initial, out);
     reveal(port_review_reply::reply_post); reveal(port_review_reply::accepted_reply);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
-    eta(port_review_retry::room(port_review_reply::ended(w.nodes@[0]), w.fail_fast, w.next_question, ReviewStop::MakerOutOfRoom),
-        after.nodes@[0], after.next_question);
+    reveal(port_review_retry::room);
 }
 
 /// Review fix-round row / Q54: ChangesRequested in one world.
@@ -132,8 +131,7 @@ pub(super) proof fn changes_side(w: World, after: World, generation: u64, reply:
 {
     admitted(w, after, generation, reply, initial, out);
     reveal(port_review_reply::reply_post); reveal(port_review_reply::transition);
-    eta(port_review_retry::round(port_review_reply::ended(w.nodes@[0]), w.fail_fast, w.next_question, ReviewStop::ChangesRequested),
-        after.nodes@[0], after.next_question);
+    reveal(port_review_retry::round); reveal(port_review_retry::rung);
 }
 
 /// Repeated reviewer exhaustion row / Q54: ReviewerOutOfRoom after a restart.
@@ -148,8 +146,7 @@ pub(super) proof fn reviewer_side(w: World, after: World, generation: u64, reply
 {
     admitted(w, after, generation, reply, initial, out);
     reveal(port_review_reply::reply_post); reveal(port_review_reply::transition);
-    eta(port_review_retry::room(port_review_reply::ended(w.nodes@[0]), w.fail_fast, w.next_question, ReviewStop::ReviewerOutOfRoom),
-        after.nodes@[0], after.next_question);
+    reveal(port_review_retry::room);
 }
 
 /// Failed checks row / Q54: ChecksDone without a pass in footprint, in one world.
