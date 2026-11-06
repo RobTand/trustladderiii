@@ -904,13 +904,17 @@ def test_exec_prose_goals_and_audit_objections(case):
     inputs = {'issue': {'body': case['route']}, 'tool_capabilities': []}
     rows = contract_violations(inputs, before)
     assert rows, 'route-only goals must move to context'
-    after = apply_edit(before, rows[0].repair, rows[0].repair.allowed.value)
+    after = copy.deepcopy(before)
+    for row in rows:
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
     assert after['goals'] == BRIEF['goals']
     assert case['route'] in after['brief']
     before = {'verdict': 'disagree', 'objections': [case['route']], 'evidence_contract': []}
     rows = contract_violations(inputs, before, role='audit')
     assert rows, 'route-only objections must not demand a new requirement'
-    after = apply_edit(before, rows[0].repair, rows[0].repair.allowed.value)
+    after = copy.deepcopy(before)
+    for row in rows:
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
     assert after == {'verdict': 'agree', 'objections': [], 'evidence_contract': []}
 
 
