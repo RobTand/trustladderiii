@@ -83,7 +83,7 @@ Token counts are o200k_base, measured by `workers/tools/measure_prompts.py`. Pri
 | # | Rule (paraphrase) | Class | Evidence / reason | Draft |
 |---|---|---|---|---|
 | M1 | Implement the brief and goals in the worktree. | b | Role statement. | Keep, one line. |
-| M2 | Edit only the plan's files; for another file, return needs_files with path and why. | b | Write tools check only protected and generated paths (`tools.py _check_write`); review's request-scope rule catches the rest later. | Keep. |
+| M2 | Edit only the plan's files; for another file, return needs_files with path and why. | b | Write, edit and delete share `tools.py check_change`, which checks reserved, protected, footprint and generated restrictions. | Keep. |
 | M3 | Each turn has a budget notice; use the latest; numbers only decrease, also after restart. | a | `exploration.py` builds the notice each turn. | One line: "Obey the latest TL3 budget notice." |
 | M4 | Start non-test implementation by `implementation_due_at_tool_turn`. | b | The notice carries the number; the prompt must say what it means. | Keep, short. |
 | M5 | Test-only edits do not count as progress. | a | `implementation_started` counts only non-test plan files. | Delete. The warning text teaches it. |

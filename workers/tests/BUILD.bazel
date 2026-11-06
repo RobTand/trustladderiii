@@ -56,6 +56,7 @@ tl3_py_test(
     srcs = ["test_file_tools.py"],
     deps = [
         ":conftest",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
     ],
