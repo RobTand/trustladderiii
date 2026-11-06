@@ -945,7 +945,6 @@ proof!(
 );
 
 // Applying each event variant.
-
 proof!(
     apply_ingest_done,
     check_apply(reply(Reply::IngestDone { size: kani::any() }))
@@ -1131,7 +1130,6 @@ proof!(apply_ack_body_policy_refused, {
         );
     }
 });
-
 proof!(apply_stop, check_apply(command(Command::Stop)));
 proof!(apply_pause, check_apply(command(Command::Pause)));
 proof!(apply_resume, check_apply(command(Command::Resume)));
