@@ -397,7 +397,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);] proof [reveal(port_review_reply::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
+] proof [reveal(port_review_reply::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
