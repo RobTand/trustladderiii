@@ -98,7 +98,6 @@ if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate"
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from tl3_workers import runtime
-from tl3_workers.roles.planner import Allowed
 
 
 class ConsistencyModel(FakeMessagesListChatModel):
@@ -121,7 +120,10 @@ class ConsistencyModel(FakeMessagesListChatModel):
             _, separator, rendered = refusal.partition(" Allowed: schema ")
             assert separator
             constraint, _ = json.JSONDecoder().raw_decode(rendered)
-            allowed = Allowed("schema", constraint)
+            from tl3_workers.roles.planner import coverage_allowed
+            original = json.loads(self.responses[0].content)
+            allowed = coverage_allowed(original, constraint["edits"], constraint["append_checks"]["items"],
+                                       constraint["append_checks"]["maximum_total"], rendered=True)
             repair = json.loads(self.responses[1].content)
             assert allowed.accepts(repair), "row allowed set must accept the scripted repair"
             unrelated = copy.deepcopy(repair)

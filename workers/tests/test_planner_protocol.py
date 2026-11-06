@@ -14,6 +14,8 @@ from planner_fixtures import (
     assert_rule_report,
     cache_tokenizer,  # noqa: F401
     planner_request,  # noqa: F401
+    request156,  # noqa: F401
+    request165,  # noqa: F401
     run_reply,
     run_reply_in_process,
     tool_capable_fake,  # noqa: F401
@@ -900,3 +902,32 @@ def test_rp_nonempty_and_unresolved_rows_remain_dormant():
     _, provenance = terminal(error, error, {**facts['draft'], **facts['completed']}, facts['draft'], attempted=True, unavailable=None)
     assert all(not item['allowed_empty'] for item in provenance['objections'])
     assert not wire(facts['diagnostics'][0])['allowed_empty']
+
+
+@pytest.mark.parametrize('fixture', ['request156', 'request165'])
+def test_r1_live_coverage_rendering_fits_and_preserves_membership(request, fixture):
+    import json
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import PlanConsistencyError, coverage_allowed
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES
+
+    draft = copy.deepcopy(request.getfixturevalue(fixture))
+    if fixture == 'request165':
+        draft['checks'][0]['node_ids'].remove(draft['edits_tests'][0])
+    inputs = request.getfixturevalue('planner_request')['inputs']
+    covered = {node for check in draft['checks'] if check['kind'] == 'demonstrating' for node in check['node_ids']}
+    missing = [node for node in draft['edits_tests'] if node not in covered]
+    assert missing
+    error = PlanConsistencyError(draft, draft, [named('edit.uncovered', '', {'nodes': missing})], inputs)
+    assert len(error.repair_text.encode()) <= REPAIR_MESSAGE_BYTES, error.repair_text
+    assert error.unavailable_reason is None
+    allowed = error.rule_violations[0].allowed
+    rendered, _ = json.JSONDecoder().raw_decode(allowed.render().removeprefix('schema '))
+    replay = coverage_allowed(draft, rendered['edits'], rendered['append_checks']['items'],
+                              rendered['append_checks']['maximum_total'], rendered=True)
+    assert replay.value == allowed.value
+    fixed = copy.deepcopy(draft)
+    fixed['checks'][0]['node_ids'].extend(missing)
+    assert allowed.accepts(fixed) and replay.accepts(fixed)
+    fixed['files'].append('unrelated.py')
+    assert not allowed.accepts(fixed) and not replay.accepts(fixed)

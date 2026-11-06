@@ -2,7 +2,7 @@
 
 import ast
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import cache
 import json
 from pathlib import Path, PurePosixPath
@@ -100,8 +100,9 @@ class Allowed(WorkerAllowed):
             if isinstance(value, dict):
                 return {key: compact(child) for key, child in value.items()}
             if isinstance(value, list):
-                preview = [compact(child) for child in value[:8]]
-                return preview + ([f'and {len(value) - 8} more (total {len(value)})'] if len(value) > 8 else [])
+                omitted = len(value) > 8 and len(json.dumps(value, ensure_ascii=False)) > 256
+                preview = [compact(child) for child in (value[:8] if omitted else value)]
+                return preview + ([f'and {len(value) - 8} more (total {len(value)})'] if omitted else [])
             return value
         text = f'{self.keyword} {json.dumps(compact(self.value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))}'
         if '"x-ordered"' in text:
@@ -113,6 +114,123 @@ class Allowed(WorkerAllowed):
     def accepts(self, value):
         constraint = self.value if self.keyword == 'schema' else {self.keyword: self.value}
         return StrictValidator(constraint).is_valid(value)
+
+
+def draft_references(value, draft):
+    """Render repeated captured values as pointers without changing membership."""
+    def encoded(item):
+        return json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+    references = {}
+
+    def index(item, pointer=''):
+        key = encoded(item)
+        reference = {'$draft': pointer}
+        if len(encoded(reference)) < len(key):
+            previous = references.get(key)
+            if previous is None or len(pointer) < len(previous['$draft']):
+                references[key] = reference
+        children = item.items() if isinstance(item, dict) else enumerate(item) if isinstance(item, list) else ()
+        for name, child in children:
+            index(child, pointer + '/' + str(name).replace('~', '~0').replace('/', '~1'))
+
+    def render(item):
+        if encoded(item) in references:
+            return references[encoded(item)]
+        if isinstance(item, dict):
+            if set(item) in ({'$draft'}, {'$literal'}):
+                return {'$literal': item}
+            return {key: render(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [render(child) for child in item]
+        return item
+
+    index(draft)
+    return render(value)
+
+
+def expand_draft_references(value, draft):
+    if isinstance(value, dict):
+        if set(value) == {'$literal'}:
+            return deepcopy(value['$literal'])
+        if set(value) == {'$draft'}:
+            return deepcopy(at(draft, value['$draft']))
+        return {key: expand_draft_references(child, draft) for key, child in value.items()}
+    if isinstance(value, list):
+        return [expand_draft_references(child, draft) for child in value]
+    return value
+
+
+@dataclass(frozen=True, eq=False)
+class DraftAllowed(Allowed):
+    draft: dict
+
+    def render(self):
+        text = Allowed(self.keyword, draft_references(self.value, self.draft)).render()
+        if '"$draft"' in text:
+            text += ' $draft names a JSON pointer in the original draft.'
+        if '"$literal"' in text:
+            text += ' $literal is verbatim JSON.'
+        return text
+
+
+@dataclass(frozen=True, eq=False)
+class CoverageAllowed(DraftAllowed):
+    changes: dict
+    appended: dict
+    maximum: int
+
+    def render(self):
+        description = {'edits': self.changes, 'append_checks': {
+            'maximum_total': self.maximum, 'items': self.appended}}
+        return (DraftAllowed('schema', description, self.draft).render()
+                + ' Apply edits to the original draft; preserve all other fields and existing check order.'
+                + ' Appended checks must satisfy items; optional proof/forcing must copy an original value.')
+
+
+@dataclass(frozen=True, eq=False)
+class SplitAllowed(DraftAllowed):
+    def render(self):
+        properties = self.value['properties']
+        piece = properties['pieces']['items']['properties']
+        values = {'reason': properties['reason']['enum'], 'files': piece['files']['items']['enum'],
+                  'goal_ids': piece['goal_ids']['items']['enum']}
+        remove = [key for key in self.draft if key not in properties]
+        return (DraftAllowed('schema', values, self.draft).render()
+                + ' Return split with >=2 reply-schema pieces using only these files/goal_ids.'
+                + " Cover each file; keep each original check's goals and test/proof paths together in one piece."
+                + ' Freeze other root fields; remove ' + json.dumps(remove, separators=(',', ':')) + '.')
+
+
+def coverage_allowed(draft, changes, appended, maximum, *, rendered=False):
+    """Expand the rendered changes against the captured draft for exact membership."""
+    if rendered:
+        changes = expand_draft_references(changes, draft)
+        appended = expand_draft_references(appended, draft)
+
+    def bounded(value, pointer=''):
+        if pointer in changes:
+            return changes[pointer]
+        if pointer != '/checks' and not any(path.startswith(pointer + '/') for path in changes):
+            return {'const': value}
+        if isinstance(value, dict):
+            properties = {key: bounded(child, pointer + '/' + key) for key, child in value.items()}
+            prefix = pointer + '/'
+            for path, constraint in changes.items():
+                suffix = path.removeprefix(prefix)
+                if path.startswith(prefix) and '/' not in suffix:
+                    properties[suffix] = constraint
+            return {'type': 'object', 'properties': properties,
+                    'required': [key for key, constraint in properties.items() if constraint is not False],
+                    'additionalProperties': False}
+        if isinstance(value, list):
+            return {'type': 'array', 'prefixItems': [bounded(child, pointer + f'/{i}') for i, child in enumerate(value)],
+                    'minItems': len(value), 'maxItems': len(value)}
+        return {'const': value}
+
+    constraint = bounded(draft)
+    constraint['properties']['checks'].update({'maxItems': maximum, 'items': appended})
+    return CoverageAllowed('schema', constraint, draft, changes, appended, maximum)
 
 
 def wire(diagnostic, row=None):
@@ -473,7 +591,7 @@ def lossless_split(f):
     frozen = {key: value for key, value in draft.items() if key not in {
         'kind', 'files', 'checks', 'edits_tests', 'no_design_questions', 'lands_on_its_own', 'pieces', 'reason'}}
     constraint = object_constraint(frozen, {'kind': {'const': 'split'}, 'pieces': bounded_pieces, 'reason': {'enum': choices}})
-    return [Edit(Name('field', ''), 'replace', Allowed('schema', constraint))]
+    return [Edit(Name('field', ''), 'replace', SplitAllowed('schema', constraint, draft))]
 
 
 def deduplicate(f):
@@ -525,27 +643,6 @@ def edit_coverage(f):
                 retained = changes.get(pointer, {}).get('const', check['node_ids'])
                 changes[pointer] = append_constraint(retained, nodes)
 
-    def bounded(value, pointer=''):
-        if pointer in changes:
-            return changes[pointer]
-        if pointer != '/checks' and not any(path.startswith(pointer + '/') for path in changes):
-            return {'const': value}
-        if isinstance(value, dict):
-            properties = {key: bounded(child, pointer + '/' + key) for key, child in value.items()}
-            prefix = pointer + '/'
-            for path, constraint in changes.items():
-                suffix = path.removeprefix(prefix)
-                if path.startswith(prefix) and '/' not in suffix:
-                    properties[suffix] = constraint
-            return {'type': 'object', 'properties': properties,
-                    'required': [key for key, constraint in properties.items() if constraint is not False],
-                    'additionalProperties': False}
-        if isinstance(value, list):
-            return {'type': 'array', 'prefixItems': [bounded(child, pointer + f'/{i}') for i, child in enumerate(value)],
-                    'minItems': len(value), 'maxItems': len(value)}
-        return {'const': value}
-
-    constraint = bounded(draft)
     original_checks = draft.get('checks', [])
     goals = unique(g for check in original_checks for g in check['goal_ids'])
     new_check = {'type': 'object', 'properties': {
@@ -555,14 +652,10 @@ def edit_coverage(f):
         'proof': {'enum': unique(check['proof'] for check in original_checks if 'proof' in check)},
         'forcing': {'enum': unique(check['forcing'] for check in original_checks if 'forcing' in check)}},
         'required': ['kind', 'node_ids', 'goal_ids'], 'additionalProperties': False}
-    checks = constraint['properties']['checks']
-    checks.pop('maxItems')
-    checks['maxItems'] = len(original_checks) + len(nodes)
-    checks['items'] = new_check
-    before = draft.get('edits_tests', [])
     if 'edits_tests' in draft:
-        constraint['properties']['edits_tests'] = ordered_constraint(before, removable=nodes)
-    return [Edit(Name('field', ''), 'replace', Allowed('schema', constraint))]
+        changes['/edits_tests'] = ordered_constraint(draft['edits_tests'], removable=nodes)
+    allowed = coverage_allowed(draft, changes, new_check, len(original_checks) + len(nodes))
+    return [Edit(Name('field', ''), 'replace', allowed)]
 
 
 def frozen_nodes(f):
@@ -671,6 +764,8 @@ def check_row(rule_id, facts):
         context = {**facts, 'items': item.items, 'footprint': inventory()[rule_id]['footprint']}
         repairs = REPAIRS[context['footprint']](context) if item.items else cannot_repair(context)
         for repair in repairs:
+            if isinstance(repair, Edit) and not isinstance(repair.allowed, DraftAllowed):
+                repair = replace(repair, allowed=DraftAllowed(repair.allowed.keyword, repair.allowed.value, facts['draft']))
             if facts['reply'] == facts['draft'] or not satisfied(facts['reply'], repair):
                 pointer = repair.pointer if isinstance(repair, Edit) else Name('field', subject_pointer(context))
                 yield {**context, 'repair': repair, 'subject': pointer,
@@ -695,7 +790,10 @@ def allowed(f):
 def row_names(f):
     names = [f['subject']]
     items = f['items']
-    for value in [*items.get('nodes', []), *items.get('subjects', []), items.get('node'), items.get('path')]:
+    values = [*items.get('nodes', []), *items.get('subjects', []), items.get('node'), items.get('path')]
+    if re.fullmatch(r'/checks/\d+/node_ids/\d+', f['subject'].value):
+        values = [at(f['draft'], f['subject'].value)]
+    for value in values:
         if not isinstance(value, str):
             continue
         path, separator, symbol = value.partition('::')
