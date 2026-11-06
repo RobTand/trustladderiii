@@ -74,7 +74,7 @@ impl Job {
             && self.delivery.repository == delivery.repository && self.delivery.issue == delivery.issue
             && self.delivery.pull_request == delivery.pull_request && self.delivery.round == delivery.round
             && self.delivery.paths == delivery.paths
-            && serde_json::to_value(&self.delivery.checks)? == serde_json::to_value(&delivery.checks)?
+            && (delivery.checks == self.delivery.checks || delivery.checks.as_ref() == Some(&self.run))
             && serde_json::to_value(self.delivery.output)? == serde_json::to_value(delivery.output)?)
     }
 }
@@ -353,7 +353,7 @@ impl Executor for Adapter {
                 _ => Look::Pending,
             });
         }
-        if matches!(live.authority, backend::ProgressAuthority::FreshNative | backend::ProgressAuthority::Historical) && live.evidence.is_some()
+        if live.authority == backend::ProgressAuthority::FreshNative && live.evidence.is_some()
             && current.binding.is_some() && live.observed_unix_ms > 0
             && matches!(live.phase, backend::NativePhase::Queued | backend::NativePhase::Running | backend::NativePhase::Finishing)
         {
