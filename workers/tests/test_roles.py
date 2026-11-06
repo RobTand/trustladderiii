@@ -81,6 +81,8 @@ def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monke
     monkeypatch.setitem(ROLES, role.name, role)
     target = tmp_path / "hello.txt"
     target.write_text("hello\n")
+    if "delete" in names:
+        (tmp_path / "obsolete.txt").write_text("remove me\n")
 
     class InspectModel(FakeMessagesListChatModel):
         def bind_tools(self, tools, **kwargs):
@@ -99,6 +101,7 @@ def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monke
             "read": {"path": "hello.txt"}, "glob": {"pattern": "*.txt"},
             "grep": {"pattern": "hello"}, "diff": {}, "write": {"path": "new.txt", "content": "hello"},
             "edit": {"path": "hello.txt", "old": "hello", "new": "edited"},
+            "delete": {"path": "obsolete.txt"},
         }[name]
         calls.append({"name": name, "args": args, "id": name, "type": "tool_call"})
     fake = InspectModel(responses=[AIMessage(content="", tool_calls=calls), AIMessage(content=json.dumps(REPLY))])

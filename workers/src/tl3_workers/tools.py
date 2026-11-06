@@ -1,6 +1,7 @@
 """TL3 file tools. Every filesystem access starts at an open worktree handle."""
 
 from contextlib import contextmanager, nullcontext
+from difflib import get_close_matches
 import errno
 import glob as globlib
 import hashlib
@@ -20,6 +21,8 @@ from tl3_workers.forcing_rehearsal import make_rehearsal_tool
 from tl3_workers.pb_generators import make_generator_tool
 from tl3_workers.recall import make_recall_tool
 from tl3_workers.memory import current
+from tl3_harness.rules import Allowed, CantMeet, Name, Rule, evaluate, register, render_all
+from tl3_harness.terminal_forms import MAKER
 
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep", "diff"})
@@ -28,7 +31,7 @@ LARGE_FILE_BYTES = 65_536
 # A generated read returns only a small region of the output.
 GENERATED_READ_BYTES = 3072
 GENERATED_READ_LINES = 40
-WRITE_TOOLS = frozenset({"write", "edit"})
+WRITE_TOOLS = frozenset({"write", "edit", "delete"})
 # Payload budgets leave room for pagination metadata and truncation notices.
 OUTPUT_LIMITS = {
     "bytes": 16_384,
@@ -88,21 +91,59 @@ def _parts(path):
     return parts
 
 
-def _undeclared_write(path, declared, limit=1000):
-    """The refusal for a write outside the plan, naming the declared files within limit characters."""
-    names = sorted(declared)
+def _visible_footprint(declared, limit=1000):
+    """Show complete declared paths within a bounded JSON representation."""
     shown = []
-    for name in names:
-        if shown and len(", ".join([*shown, name])) > limit:
+    for name in sorted(declared):
+        if len(json.dumps([*shown, name], ensure_ascii=False)) > limit:
             break
         shown.append(name)
-    listed = ", ".join(shown)
-    if len(shown) < len(names):
-        listed += f", and {len(names) - len(shown)} more"
-    return (f"{path} is not a declared file, so it was not changed. write and edit change only the plan's "
-            f"declared files: {listed}. Scratch or diagnostic files are not allowed, and no tool can delete a file. "
-            "To investigate, use read, grep or diff, or run_tests on existing tests; put a new test in a declared "
-            "test file. If the change needs another file, reply needs_files with its path.")
+    return shown
+
+
+def _change_repair(facts):
+    reasons = {
+        "reserved": "Reserved generator import path; only run_generator may manage it.",
+        "protected": "Cannot edit protected files; the repository protects this path.",
+        "footprint": (f"{facts['path']} is not a declared file, so it was not changed. "
+                      "write, edit and delete change only the plan's declared files. "
+                      "Scratch or diagnostic files are not allowed. Declare it via needs_files, "
+                      "or use run_tests, grep or read instead of a scratch file. "
+                      "Use read, grep or diff to investigate, run_tests on existing tests, "
+                      "or put a new test in a declared test file."),
+        "generated": "Cannot hand-edit generated outputs; use run_generator after changing declared generator inputs.",
+        "delete_target": f"Cannot delete {facts.get('target_kind', 'a non-file')}; delete requires an existing regular file with one link.",
+    }
+    omitted = len(facts['footprint']) - len(_visible_footprint(facts['footprint']))
+    context = f" Footprint has {omitted} more entries." if omitted else ""
+    nearest = get_close_matches(facts['path'], sorted(facts['footprint']), n=1, cutoff=0)
+    context += f" The nearest declared path is {json.dumps(nearest[0])}." if nearest else " The footprint is empty."
+    return CantMeet(reasons[facts['refusal']] + context)
+
+
+# #895: each refusal has one registered row; the tool boundary supplies facts.
+CHANGE_RULES = {
+    refusal: register(Rule(
+        id=f"worktree.change.{refusal}",
+        check=lambda facts, expected=refusal: (facts,) if facts['refusal'] == expected else (),
+        names=lambda facts: (Name('path', facts['path']),),
+        allowed=lambda facts: Allowed('enum', _visible_footprint(facts['footprint'])),
+        repair=_change_repair,
+        example={'reply': {}, 'refusal': refusal, 'path': 'src/cod.py',
+                 'footprint': ('src/code.py',), 'target_kind': 'a missing path'},
+        witness={'kind': 'cant_meet'},
+    ), roles={MAKER.role})
+    for refusal in ('reserved', 'protected', 'footprint', 'generated', 'delete_target')
+}
+
+
+class ChangeRefusal(ValueError):
+    def __init__(self, refusal, path, op, footprint, *, target_kind=None):
+        self.violations = evaluate((CHANGE_RULES[refusal],), {
+            'refusal': refusal, 'path': path, 'op': op, 'footprint': footprint or (),
+            'target_kind': target_kind,
+        }, role=MAKER.role)
+        super().__init__(render_all(self.violations, role=MAKER.role))
 
 
 def _matching_lines(stream, pattern, regex=None, cut=None):
@@ -405,18 +446,40 @@ class Worktree:
                 break
         return False
 
-    def _check_write(self, path):
-        # No tool deletes a file, so a write outside the plan would stay for the
-        # rest of the request (#875, PQ #3312).
+    def check_change(self, path, op):
+        """#895: the ordered gate for every file mutation, before filesystem effects."""
         canonical = "/".join(_parts(path))
+        if not canonical:
+            raise ValueError("Expected a file path")
+        if PurePosixPath(canonical).name == ".tl3-generator-import":
+            raise ChangeRefusal('reserved', canonical, op, self.declared_files)
+        if any(PurePosixPath(canonical).full_match(pattern) for pattern in self.protected_paths):
+            raise ChangeRefusal('protected', canonical, op, self.declared_files)
         if self.declared_files is not None and canonical not in self.declared_files:
-            raise ValueError(_undeclared_write(canonical, self.declared_files))
-        if PurePosixPath(path).name == ".tl3-generator-import":
-            raise ValueError("Reserved generator import path")
-        if any(PurePosixPath(path).full_match(pattern) for pattern in self.protected_paths):
-            raise ValueError("Cannot edit protected files")
-        if self.is_generated(path):
-            raise ValueError("Cannot hand-edit generated outputs; use run_generator")
+            raise ChangeRefusal('footprint', canonical, op, self.declared_files)
+        target_kind = self._delete_target(canonical) if op == 'delete' else None
+        generated = (any(PurePosixPath(canonical).full_match(pattern) for pattern in self.generated_files)
+                     if target_kind else self.is_generated(canonical))
+        if generated:
+            raise ChangeRefusal('generated', canonical, op, self.declared_files)
+        if target_kind:
+            raise ChangeRefusal('delete_target', canonical, op, self.declared_files, target_kind=target_kind)
+        return canonical
+
+    def _delete_target(self, path):
+        parts = _parts(path)
+        try:
+            with self._directory(parts[:-1]) as parent:
+                info = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return 'a missing path'
+        if stat.S_ISLNK(info.st_mode):
+            return 'a symbolic link'
+        if stat.S_ISDIR(info.st_mode):
+            return 'a directory'
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            return 'a non-regular or multiply linked file'
+        return None
 
     def generation_instruction(self):
         from tl3_workers.prompt_render import render
@@ -659,12 +722,16 @@ class Worktree:
         try:
             with self._file(path) as stream:
                 return hashlib.file_digest(stream.buffer, "sha256").hexdigest()
-        except (FileNotFoundError, MissingWorktreeFile):
+        except (FileNotFoundError, ValueError):
             return None
+        except OSError as error:
+            if error.errno in (errno.ELOOP, errno.ENOTDIR, errno.EISDIR):
+                return None
+            raise
 
     def write(self, path: str, content: str) -> str:
         """Write UTF-8 text, creating parent directories as needed."""
-        self._check_write(path)
+        path = self.check_change(path, 'write')
         content.encode("utf-8")
         with self._file(path, write=True, create=True) as stream:
             size = os.fstat(stream.fileno()).st_size
@@ -677,7 +744,7 @@ class Worktree:
 
     def edit(self, path: str, old: str, new: str, replace_all: bool = False) -> str:
         """Replace exact text. The match must be unique unless replace_all is true."""
-        self._check_write(path)
+        path = self.check_change(path, 'edit')
         new.encode("utf-8")
         if not old:
             raise ValueError("Expected nonempty text to replace")
@@ -693,6 +760,19 @@ class Worktree:
             stream.truncate()
         return f"Replaced {count} occurrence(s)."
 
+    def delete(self, path: str) -> str:
+        """Remove an existing declared regular file, without following links."""
+        path = self.check_change(path, 'delete')
+        parts = _parts(path)
+        with self._directory(parts[:-1]) as parent:
+            os.unlink(parts[-1], dir_fd=parent)
+        if self._memory is not None:
+            try:
+                self._memory.file(path, True)
+            except Exception:
+                pass
+        return "File deleted."
+
 
 # Never expose execute or a local shell.
 TOOL_FACTORIES = {
@@ -707,6 +787,7 @@ TOOL_FACTORIES = {
     "diff": lambda worktree: make_diff_tool(worktree, _parts, OUTPUT_LIMITS),
     "write": lambda worktree: worktree.write,
     "edit": lambda worktree: worktree.edit,
+    "delete": lambda worktree: worktree.delete,
 }
 
 
