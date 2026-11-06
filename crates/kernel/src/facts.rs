@@ -165,7 +165,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                     old(w).fail_fast, *old(out), *final(out)),
             _ => true,
         },
-] {
+] hide [settle_shape, current_item, items] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
