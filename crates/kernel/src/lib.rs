@@ -2210,6 +2210,10 @@ mod progress_unplanned_waiting;
 mod progress_unplanned_witness;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_contract_gaps.rs"]
+mod port_deps_contract_gaps;
+
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: the first Unplanned root wins the real selector's ordered outside branches.
 pub closed spec fn unplanned_first_selection(w: World, result: Option<Event>) -> bool {
