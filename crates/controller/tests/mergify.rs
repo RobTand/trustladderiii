@@ -24,6 +24,8 @@ mod missing_checks;
 mod ordering;
 #[path = "mergify/queue_entry.rs"]
 mod queue_entry;
+#[path = "mergify/queue_cause.rs"]
+mod queue_cause;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -149,6 +151,7 @@ struct State {
     failed_job_reruns: Vec<u64>,
     ci_fixture: Option<ci_evidence::Fixture>,
     entry_fixture: Option<queue_entry::Fixture>,
+    cause_fixture: Option<queue_cause::Fixture>,
 }
 impl State {
     fn new() -> Self {
@@ -209,6 +212,7 @@ impl State {
             failed_job_reruns: vec![],
             ci_fixture: None,
             entry_fixture: None,
+            cause_fixture: None,
         }
     }
     fn checks(&self) -> Value {
@@ -316,6 +320,11 @@ impl Respond for Api {
             return response;
         }
         if let Some(fixture) = &state.entry_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
+        }
+        if let Some(fixture) = &state.cause_fixture
             && let Some(response) = fixture.respond(path)
         {
             return response;
@@ -2768,6 +2777,12 @@ fn main() {
         database.stop();
         return;
     }
+    if std::env::args().nth(1).as_deref() == Some("--queue-cause") {
+        let mut database = support::Database::start();
+        queue_cause::scenario(&database.create("queue_cause"));
+        database.stop();
+        return;
+    }
     if let Some(mode) = std::env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--ci-evidence-").map(str::to_owned))
@@ -2993,6 +3008,7 @@ fn main() {
         .iter()
         .copied()
         .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
+        .chain(std::iter::once(10))
         .chain(seconds[tail..].iter().copied())
         .enumerate()
         .map(|(index, seconds)| (index, 1, seconds))
@@ -3348,6 +3364,7 @@ fn main() {
             mode
         ));
     }
+    scenario!(queue_cause::scenario(&database.create("queue_cause")));
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));
     scenario_count += 6;
