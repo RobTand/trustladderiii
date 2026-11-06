@@ -166,7 +166,7 @@ class Summary:
 
 
 def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None,
-                 declared_symptom=None, records=None):
+                 declared_symptom=None, records=None, proof_subjects=None):
     require_admission()
     summary = Summary(raw=declared_symptom is None) if summary is None else summary
     missing = {test for test in tests if not (tree / test.split("::", 1)[0]).exists()}
@@ -187,6 +187,8 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
             request = {'tests': tests, 'forcing': forcing.as_json() if forcing else {}}
             if declared_symptom is not None:
                 request['declared_symptom'] = declared_symptom
+        if proof_subjects:
+            request = {**(request if isinstance(request, dict) else {'tests': tests}), 'proof_subjects': proof_subjects}
         selection.write(json.dumps(request).encode())
         selection.seek(0)
         with Supervised(command, selection, tests) as process:
@@ -290,10 +292,10 @@ def _run_current(tree, container, tests, parallel=0, summary=None, *, forcing=No
 
 
 def run_current(tree, container, tests, parallel=0, summary=None, *, forcing=None,
-                declared_symptom=None, records=None):
+                declared_symptom=None, records=None, proof_subjects=None):
     try:
         result = _run_current(tree, container, tests, parallel, summary, forcing=forcing,
-                              declared_symptom=declared_symptom, records=records)
+                              declared_symptom=declared_symptom, records=records, proof_subjects=proof_subjects)
         return bounded(result) if declared_symptom is not None else result
     except ExecutionFailure as failure:
         failure.log()
@@ -352,7 +354,7 @@ def run(tree, container, tests, *, repeat=1, parallel=0, forcing=None):
     return summary.result
 
 
-def run_symptom(tree, container, tests, declaration, *, forcing=None):
+def run_symptom(tree, container, tests, declaration, *, forcing=None, proof_subjects=None):
     from .model import validate_symptom
     from .symptoms import receipt
     validate_symptom(declaration, tests)
@@ -360,7 +362,7 @@ def run_symptom(tree, container, tests, declaration, *, forcing=None):
     for number in range(1, declaration['repeat'] + 1):
         records = []
         result = run_current(tree, container, tests, declaration['parallel'], forcing=forcing,
-                             declared_symptom=declaration, records=records)
+                             declared_symptom=declaration, records=records, proof_subjects=proof_subjects)
         runs.append(receipt(records, result, declaration, number))
         if runs[-1]['outcome'] == 'unavailable':
             break

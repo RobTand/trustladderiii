@@ -28,6 +28,7 @@ py_library(
         "model.py",
         "node_ids.py",
         "proof.py",
+        "proof_rules.py",
         "red_message.py",
         "redaction.py",
         "report.py",
@@ -36,6 +37,7 @@ py_library(
         "scratch.py",
         "selection.py",
         "selector_identity.py",
+        "source_reads.py",
         "supervision.py",
         "symptoms.py",
         "terminal_forms.py",
@@ -50,6 +52,13 @@ py_library(
 py_binary(
     name = "generator",
     srcs = ["generator.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "proof_rules",
+    srcs = ["proof_rules.py"],
     imports = [".."],
     visibility = ["//visibility:public"],
 )

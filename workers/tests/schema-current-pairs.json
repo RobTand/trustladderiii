@@ -1,5 +1,5 @@
 {
-  "source": "Rust-generated #839, #894 and #910 schemas; frozen schema-base-pairs.json retained",
+  "source": "Rust-generated #839, #894, #910 and #899 schemas; frozen schema-base-pairs.json retained",
   "schemas": {
     "planner-input.json": [
       [
@@ -2526,7 +2526,8 @@
                 "enum",
                 [
                   "tl3.checks.v1",
-                  "tl3.checks.v2"
+                  "tl3.checks.v2",
+                  "tl3.checks.v3"
                 ]
               ],
               [
@@ -3995,6 +3996,27 @@
                     ]
                   ],
                   [
+                    "proof_refusal",
+                    [
+                      [
+                        "maxLength",
+                        65536
+                      ],
+                      [
+                        "minLength",
+                        1
+                      ],
+                      [
+                        "title",
+                        "899: additive v3 diagnostic; older reports retain the ordinary message."
+                      ],
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
                     "test",
                     [
                       [
@@ -4892,7 +4914,7 @@
                                       ],
                                       [
                                         "maxLength",
-                                        1000
+                                        65536
                                       ]
                                     ]
                                   ]

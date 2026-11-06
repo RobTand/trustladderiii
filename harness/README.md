@@ -571,6 +571,27 @@ a submission acknowledgement alone is not a result.
 Approved by [Rob, 2026-11-03](https://github.com/RobTand/trustladderiii/issues/645):
 "You may update the proof rule accordingly so that fixes to flaky tests are allowed."
 
+Under **Rob 2026-11-06, Q27 #855 option E**, the trusted pytest runner guards
+subject source reads during each proof test's call phase on both proof sides.
+The runner receives a per-selector mapping to the receipt's subject files.
+An observer or support read of those files or their compiled caches produces a
+non-assertion call error with the existing `Outcome.ERROR`. Its
+`subject_source_read` message names the file and nearest repository reader
+file:line, and says "assert on behaviour; don't read subject source".
+The runner records the violation and raises at call exit, so catching a read
+exception cannot hide it. Normal imports, subject self-source reads, pytest
+diagnostics, other pytest phases, and tests outside the proof selection remain
+allowed. The runner checks mmap and raw `os.read`-family reads, including raw
+descriptors opened during setup. Reads through file objects opened during setup
+are outside this call-phase guard. Each test starts with fresh guard state, including under
+xdist and declared-symptom reporting. A guard error cannot supply a declared
+symptom. This standard-library-only Python check belongs to the approved pytest
+runner adapter. It runs in the test process; code-object inspection and
+deliberate interpreter tampering still require independent review.
+
+Symmetric assembled GREEN is tracked separately in #932. The static support
+checker reduction is #934 and follows both #932 and #933.
+
 A subject is the code whose behavior changes. It may be production code, a test,
 a helper or a fixture. Observers are the assertions that demonstrate the bug.
 RED runs the head observer against the base subject and fails for the declared
@@ -611,3 +632,16 @@ separately from invocation counts. Frozen regression controls, protected paths
 and configuration review guards remain. No kernel transition, fail-fast, retry,
 credit or incident rule changes. This replaces the helper target/observer,
 literal argument, setup-function and fixture-injection encodings of #549.
+
+## Proof refusal rows
+
+`proof-rules.json` is the generated planner preflight export. Regenerate it with:
+
+```sh
+PYTHONPATH=harness/src python -m tl3_harness.proof_rules --output harness/proof-rules.json
+```
+
+Run this command on BuildBuddy when working on fleet hosts. The drift test rejects
+hand edits. `tests/fixtures/subject_observer/proof_verdicts.json` records outcomes
+from the main SHA named in the file. Its replay tests import only the current
+implementation; the historical source and recording script are not committed.

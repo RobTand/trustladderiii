@@ -257,7 +257,7 @@
                 },
                 "message": {
                   "$ref": "#/$defs/text",
-                  "maxLength": 1000
+                  "maxLength": 65536
                 }
               },
               "required": [
