@@ -1,0 +1,70 @@
+[
+  {
+    "path": "./x.py",
+    "canonical": "x.py"
+  },
+  {
+    "path": "a//b.py",
+    "canonical": "a/b.py"
+  },
+  {
+    "path": "a/./b.py",
+    "canonical": "a/b.py"
+  },
+  {
+    "path": "dir/",
+    "canonical": "dir"
+  },
+  {
+    "path": "x.py/",
+    "canonical": "x.py"
+  },
+  {
+    "path": "a\\b",
+    "canonical": null
+  },
+  {
+    "path": "a/../b",
+    "canonical": null
+  },
+  {
+    "path": "../x",
+    "canonical": null
+  },
+  {
+    "path": "/x",
+    "canonical": null
+  },
+  {
+    "path": "",
+    "canonical": null
+  },
+  {
+    "path": "x\u0000.py",
+    "canonical": null
+  },
+  {
+    "path": ".git/config",
+    "canonical": null
+  },
+  {
+    "path": "a/.git/b",
+    "canonical": null
+  },
+  {
+    "path": "é.py",
+    "canonical": "é.py"
+  },
+  {
+    "path": "é.py",
+    "canonical": "é.py"
+  },
+  {
+    "path": "X.py",
+    "canonical": "X.py"
+  },
+  {
+    "path": "x.py",
+    "canonical": "x.py"
+  }
+]

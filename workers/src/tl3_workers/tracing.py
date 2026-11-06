@@ -711,6 +711,7 @@ def failure_tags(error):
         "reply is not one JSON object", "reply has more than one JSON object",
         "ingest input exceeds exploration budget", "audit input exceeds exploration budget",
         "maker input exceeds exploration budget",
+        "maker worktree footprint does not match its input; reconstruct the Worktree with inputs.footprint",
         "declared files must use canonical relative paths",
         "declared file exceeds the 1048576-byte limit",
         "declared file must be UTF-8 text without binary control bytes",

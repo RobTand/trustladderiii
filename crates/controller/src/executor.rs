@@ -91,6 +91,17 @@ impl From<tl3_kernel::Out> for Output {
     }
 }
 
+// Stored tickets predate canonical footprints. The maker wire stays strict.
+fn canonical_delivery_paths<'de, D>(
+    deserializer: D,
+) -> std::result::Result<tl3_contracts::footprint::Footprint, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    tl3_contracts::footprint::Footprint::new(Vec::<String>::deserialize(deserializer)?)
+        .map_err(serde::de::Error::custom)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Adapter tickets add the payload fields their clients need here.
 pub struct Delivery {
@@ -104,7 +115,8 @@ pub struct Delivery {
     pub pull_request: Option<u64>,
     #[serde(default)]
     pub proposed: Option<crate::adoption::ProposedPullRequest>,
-    pub paths: Vec<String>,
+    #[serde(deserialize_with = "canonical_delivery_paths")]
+    pub paths: tl3_contracts::footprint::Footprint,
     pub attempt: u8,
     pub round: u8,
     #[serde(default)]

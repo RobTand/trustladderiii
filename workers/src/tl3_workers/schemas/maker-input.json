@@ -162,6 +162,18 @@
       ],
       "additionalProperties": false
     },
+    "footprint": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^/\\\\\\u0000]+(/[^/\\\\\\u0000]+)*$",
+        "not": {
+          "pattern": "(^|/)(\\.|\\.\\.|\\.git)(/|$)"
+        }
+      }
+    },
     "attempt": {
       "type": "integer",
       "minimum": 1,
@@ -381,6 +393,7 @@
     "brief",
     "goals",
     "plan",
+    "footprint",
     "attempt",
     "round",
     "tests",

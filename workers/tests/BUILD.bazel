@@ -1298,3 +1298,9 @@ py_binary(
         "@tl3_pip//pytest",
     ],
 )
+
+filegroup(
+    name = "footprint_paths",
+    srcs = ["fixtures/footprint-paths.json"],
+    visibility = ["//visibility:public"],
+)

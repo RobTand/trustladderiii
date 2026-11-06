@@ -155,7 +155,7 @@ impl Fixture {
             repository: identity(),
             issue: 42,
             pull_request: None,
-            paths: vec![],
+            paths: Default::default(),
             attempt: 1,
             round: 1,
             replanned: false,
