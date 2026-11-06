@@ -8,9 +8,14 @@ pub(super) struct Fixture {
 impl Fixture {
     pub(super) fn respond(&self, path: &str) -> Option<ResponseTemplate> {
         let body: Value = if path.ends_with("/pulls/3331") {
-            self.draft.clone().unwrap_or_else(|| serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft.json")).unwrap())
+            self.draft.clone().unwrap_or_else(|| {
+                serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft.json")).unwrap()
+            })
         } else if path.contains("/commits/4a3d6c618043e1875de665093edfe83f87f255ea/") {
-            self.checks.clone().unwrap_or_else(|| serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft-checks.json")).unwrap())
+            self.checks.clone().unwrap_or_else(|| {
+                serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft-checks.json"))
+                    .unwrap()
+            })
         } else if path.ends_with("/pulls/100/files") {
             json!([{"filename":"src/change.rs"}])
         } else if path.contains("/actions/jobs/") && path.ends_with("/logs") {
@@ -103,7 +108,15 @@ fn health(controller: &mut Controller, api: &Server, config: &Bootstrap, at: &st
     body["action"] = json!("closed");
     // Deliver this gate before allowing background watch reads. The next
     // queued failure can then be delivered explicitly by the test schedule.
-    for input in Translator::new(api.clients()).unwrap().webhook(&parsed("pull_request", body), &controller.snapshot().unwrap(), &config.repos).unwrap() {
+    for input in Translator::new(api.clients())
+        .unwrap()
+        .webhook(
+            &parsed("pull_request", body),
+            &controller.snapshot().unwrap(),
+            &config.repos,
+        )
+        .unwrap()
+    {
         ingress::apply(controller, input).unwrap();
     }
     controller.drive_once().unwrap();
@@ -443,23 +456,72 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     println!("test queue_cause_{mode} ... ok");
 }
 
-
 // Real independent-batch catch-up, with only the named check identities green.
-fn batch_health(controller: &mut Controller, api: &Server, config: &Bootstrap, names: &[&str], base: &str, branch: &str) {
-    let mut pulls: Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json")).unwrap();
+fn batch_health(
+    controller: &mut Controller,
+    api: &Server,
+    config: &Bootstrap,
+    names: &[&str],
+    base: &str,
+    branch: &str,
+) {
+    let mut pulls: Value =
+        serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json")).unwrap();
     for pull in pulls.as_array_mut().unwrap() {
-        pull["base"]["sha"]=json!(base); pull["base"]["ref"]=json!(branch);
-        pull["body"]=json!(pull["body"].as_str().unwrap().replace("ef817b9d48f4e2f55a3b7d8e83caef25573ad544",base));
+        pull["base"]["sha"] = json!(base);
+        pull["base"]["ref"] = json!(branch);
+        pull["body"] = json!(
+            pull["body"]
+                .as_str()
+                .unwrap()
+                .replace("ef817b9d48f4e2f55a3b7d8e83caef25573ad544", base)
+        );
     }
-    let checks:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json")).unwrap();
-    let template=checks["check_runs"].as_array().unwrap().iter().find(|c|c["conclusion"]=="failure").unwrap();
-    let checks:Vec<Value>=names.iter().enumerate().map(|(i,name)|{let mut c=template.clone();c["id"]=json!(900000+i);c["name"]=json!(name);c["status"]=json!("completed");c["conclusion"]=json!("success");c["completed_at"]=json!("2026-11-06T03:00:00Z");c}).collect();
+    let checks: Value =
+        serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json")).unwrap();
+    let template = checks["check_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["conclusion"] == "failure")
+        .unwrap();
+    let checks: Vec<Value> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mut c = template.clone();
+            c["id"] = json!(900000 + i);
+            c["name"] = json!(name);
+            c["status"] = json!("completed");
+            c["conclusion"] = json!("success");
+            c["completed_at"] = json!("2026-11-06T03:00:00Z");
+            c
+        })
+        .collect();
     let changes=serde_json::from_value(json!({"repository":"owner/sandbox","issues":[],"comments":[],"labels":[],"pull_requests":pulls,"check_runs":checks,"check_suites":[]})).unwrap();
-    for input in Translator::new(api.clients()).unwrap().catch_up(&config.repos[0],&changes,&controller.snapshot().unwrap()).unwrap() {ingress::apply(controller,input).unwrap();}
+    for input in Translator::new(api.clients())
+        .unwrap()
+        .catch_up(&config.repos[0], &changes, &controller.snapshot().unwrap())
+        .unwrap()
+    {
+        ingress::apply(controller, input).unwrap();
+    }
     controller.drive_once().unwrap();
 }
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow", "retargeted", "terminal-hold", "gate-retention", "retry-no-time-restart"];
+pub(super) const REVIEW_MODES: &[&str] = &[
+    "witness-before",
+    "before-post",
+    "paused-before-post",
+    "retry-no-time",
+    "incomplete-reporters",
+    "lint-only-health",
+    "reporter-overflow",
+    "retargeted",
+    "terminal-hold",
+    "gate-retention",
+    "retry-no-time-restart",
+];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -467,145 +529,372 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut config = bootstrap();
     config.fail_fast = true;
-    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now())));
-    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), Some(clock.clone()));
+    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
+        std::time::SystemTime::now(),
+    )));
+    let mut controller = queued_for_clock(
+        settings,
+        &api,
+        root.path(),
+        true,
+        &[],
+        config.clone(),
+        Some(clock.clone()),
+    );
     let snapshot = controller.snapshot().unwrap();
-    let row = snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == "0").unwrap();
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "nodes" && r.id == "0")
+        .unwrap();
     let mut value = row.value.clone();
     value["round"] = json!(1);
     let mut seed = tl3_store::Commit::new("r1-fix-round", json!({}), &snapshot);
-    seed.rows.push(tl3_store::RowChange::Put {table:"nodes".into(),id:"0".into(),value});
+    seed.rows.push(tl3_store::RowChange::Put {
+        table: "nodes".into(),
+        id: "0".into(),
+        value,
+    });
     Store::open(settings).unwrap().commit(&seed).unwrap();
     {
         let mut state = api.state.lock().unwrap();
         let head = state.pull["head"]["sha"].clone();
-        let mut checks:Value = serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json")).unwrap();
-        for check in checks["check_runs"].as_array_mut().unwrap() {check["head_sha"] = head.clone();check["pull_requests"] = json!([]);}
+        let mut checks: Value =
+            serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json")).unwrap();
+        for check in checks["check_runs"].as_array_mut().unwrap() {
+            check["head_sha"] = head.clone();
+            check["pull_requests"] = json!([]);
+        }
         state.checks = checks["check_runs"].clone();
         state.queue_rule["conclusion"] = json!("success");
         state.pull["base"]["sha"] = json!("ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
-        state.cause_fixture = Some(Fixture {parsed:false,draft:None,checks:None});
+        state.cause_fixture = Some(Fixture {
+            parsed: false,
+            draft: None,
+            checks: None,
+        });
     }
     match mode {
         "witness-before" => {
             // T2 is delivered first; the later-delivered failed check completed at T1<T2.
-            health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
-            failure(&mut controller,&api,&config);
+            health(
+                &mut controller,
+                &api,
+                &config,
+                "2026-11-06T03:00:00Z",
+                "ffffffffffffffffffffffffffffffffffffffff",
+            );
+            failure(&mut controller, &api, &config);
             let snap = controller.snapshot().unwrap();
-            let hold = snap.rows.iter().find(|r| r.table == "queue_holds").expect("hold");
-            assert!(!hold.value["witness"].is_null(), "stored T2 gate must witness the delayed T1 failure");
+            let hold = snap
+                .rows
+                .iter()
+                .find(|r| r.table == "queue_holds")
+                .expect("hold");
+            assert!(
+                !hold.value["witness"].is_null(),
+                "stored T2 gate must witness the delayed T1 failure"
+            );
             controller.look_now().unwrap();
             controller.look_now().unwrap();
-            assert_eq!(api.state.lock().unwrap().requeues,1,"r1.1: journaled T2 witness must recover delayed T1 failure");
+            assert_eq!(
+                api.state.lock().unwrap().requeues,
+                1,
+                "r1.1: journaled T2 witness must recover delayed T1 failure"
+            );
         }
         "before-post" | "paused-before-post" | "retry-no-time" | "retry-no-time-restart" => {
             failure(&mut controller, &api, &config);
             assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
             if mode == "paused-before-post" {
-                controller.observe("r1-pause", tl3_controller::executor::Observation::Steering {node:NodeId(0),command:tl3_kernel::Command::Pause}).unwrap();
-                for _ in 0..12 { controller.drive_once().unwrap(); }
+                controller
+                    .observe(
+                        "r1-pause",
+                        tl3_controller::executor::Observation::Steering {
+                            node: NodeId(0),
+                            command: tl3_kernel::Command::Pause,
+                        },
+                    )
+                    .unwrap();
+                for _ in 0..12 {
+                    controller.drive_once().unwrap();
+                }
                 assert!(controller.world().unwrap().nodes[0].paused);
             }
-            health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
+            health(
+                &mut controller,
+                &api,
+                &config,
+                "2026-11-06T03:00:00Z",
+                "ffffffffffffffffffffffffffffffffffffffff",
+            );
             if mode.starts_with("retry-no-time") {
-                controller.look_now().unwrap(); controller.look_now().unwrap();
-                assert_eq!(api.state.lock().unwrap().requeues,1,"test requires an actual POST");
-                let snap=controller.snapshot().unwrap();
-                assert!(snap.rows.iter().any(|r|r.table=="queue_holds"&&!r.value["retry"].is_null()),"Sent receipt must publish the retry transition");
+                controller.look_now().unwrap();
+                controller.look_now().unwrap();
+                assert_eq!(
+                    api.state.lock().unwrap().requeues,
+                    1,
+                    "test requires an actual POST"
+                );
+                let snap = controller.snapshot().unwrap();
+                assert!(
+                    snap.rows
+                        .iter()
+                        .any(|r| r.table == "queue_holds" && !r.value["retry"].is_null()),
+                    "Sent receipt must publish the retry transition"
+                );
                 if mode == "retry-no-time-restart" {
                     drop(controller);
-                    let mut registry=adapters::simulation(root.path()).unwrap();
-                    registry.register(Upstream::Mergify,api.adapter(&root.path().join("mergify"),0).with_store(settings.clone()).with_clock(clock.clone()));
-                    controller=Controller::open_with_clock(Store::open(settings).unwrap(),registry,config.clone(),clock.clone()).unwrap();
+                    let mut registry = adapters::simulation(root.path()).unwrap();
+                    registry.register(
+                        Upstream::Mergify,
+                        api.adapter(&root.path().join("mergify"), 0)
+                            .with_store(settings.clone())
+                            .with_clock(clock.clone()),
+                    );
+                    controller = Controller::open_with_clock(
+                        Store::open(settings).unwrap(),
+                        registry,
+                        config.clone(),
+                        clock.clone(),
+                    )
+                    .unwrap();
                 }
                 let mut state = api.state.lock().unwrap();
                 let head = state.pull["head"]["sha"].clone();
-                let captured:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json")).unwrap();
-                state.checks=captured["check_runs"].clone();
-                for check in state.checks.as_array_mut().unwrap() { check["head_sha"]=head.clone(); check["pull_requests"]=json!([]); }
-                state.queue_check_mut()["id"]=json!(99022);
-                state.queue_check_mut()["completed_at"]=Value::Null;
+                let captured: Value =
+                    serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json"))
+                        .unwrap();
+                state.checks = captured["check_runs"].clone();
+                for check in state.checks.as_array_mut().unwrap() {
+                    check["head_sha"] = head.clone();
+                    check["pull_requests"] = json!([]);
+                }
+                state.queue_check_mut()["id"] = json!(99022);
+                state.queue_check_mut()["completed_at"] = Value::Null;
             } else {
-                assert_eq!(api.state.lock().unwrap().requeues,0,"failure precedes our POST");
-                let mut state=api.state.lock().unwrap();
-                state.queue_check_mut()["id"]=json!(99021);
-                state.queue_check_mut()["completed_at"]=json!("2026-11-06T04:00:00Z");
+                assert_eq!(
+                    api.state.lock().unwrap().requeues,
+                    0,
+                    "failure precedes our POST"
+                );
+                let mut state = api.state.lock().unwrap();
+                state.queue_check_mut()["id"] = json!(99021);
+                state.queue_check_mut()["completed_at"] = json!("2026-11-06T04:00:00Z");
             }
-            failure(&mut controller,&api,&config);
-            if mode.starts_with("retry-no-time") { drain(&mut controller); }
-            assert_eq!(controller.world().unwrap().nodes[0].phase,
-                if mode.starts_with("retry-no-time") {Phase::Closed(Outcome::Stopped)} else {Phase::Queued},
-                "r1.2: only a failure bound to our dispatched retry is Change, regardless of timestamps");
+            failure(&mut controller, &api, &config);
+            if mode.starts_with("retry-no-time") {
+                drain(&mut controller);
+            }
+            assert_eq!(
+                controller.world().unwrap().nodes[0].phase,
+                if mode.starts_with("retry-no-time") {
+                    Phase::Closed(Outcome::Stopped)
+                } else {
+                    Phase::Queued
+                },
+                "r1.2: only a failure bound to our dispatched retry is Change, regardless of timestamps"
+            );
             if !mode.starts_with("retry-no-time") {
-                assert_eq!(api.state.lock().unwrap().requeues,0);
-                assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
+                assert_eq!(api.state.lock().unwrap().requeues, 0);
+                assert_eq!(controller.world().unwrap().nodes[0].credit.spent, 0);
             }
         }
         "incomplete-reporters" | "reporter-overflow" => {
             {
-                let mut checks:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft-checks.json")).unwrap();
-                let template=checks["check_runs"].as_array().unwrap().iter().find(|c|c["conclusion"]=="failure").unwrap().clone();
-                let mut a=template.clone();a["name"]=json!("A");
-                let mut b=template;b["name"]=json!("B");b["id"]=json!(99033);b["app"]=Value::Null;
-                checks["check_runs"]=if mode == "reporter-overflow" {json!((0..21).map(|i| {let mut c=a.clone();c["id"]=json!(99040+i);c["name"]=json!(format!("C{i:02}"));c}).collect::<Vec<_>>())} else {json!([a,b])};
-                api.state.lock().unwrap().cause_fixture.as_mut().unwrap().checks=Some(checks);
+                let mut checks: Value = serde_json::from_str(include_str!(
+                    "../fixtures/mergify/pq3221/draft-checks.json"
+                ))
+                .unwrap();
+                let template = checks["check_runs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|c| c["conclusion"] == "failure")
+                    .unwrap()
+                    .clone();
+                let mut a = template.clone();
+                a["name"] = json!("A");
+                let mut b = template;
+                b["name"] = json!("B");
+                b["id"] = json!(99033);
+                b["app"] = Value::Null;
+                checks["check_runs"] = if mode == "reporter-overflow" {
+                    json!(
+                        (0..21)
+                            .map(|i| {
+                                let mut c = a.clone();
+                                c["id"] = json!(99040 + i);
+                                c["name"] = json!(format!("C{i:02}"));
+                                c
+                            })
+                            .collect::<Vec<_>>()
+                    )
+                } else {
+                    json!([a, b])
+                };
+                api.state
+                    .lock()
+                    .unwrap()
+                    .cause_fixture
+                    .as_mut()
+                    .unwrap()
+                    .checks = Some(checks);
             }
-            failure(&mut controller,&api,&config);
-            let names: Vec<String>=if mode=="reporter-overflow" {(0..20).map(|i|format!("C{i:02}")).collect()} else {vec!["A".into()]};
-            batch_health(&mut controller,&api,&config,&names.iter().map(String::as_str).collect::<Vec<_>>(),"ffffffffffffffffffffffffffffffffffffffff","main");
-            controller.look_now().unwrap(); controller.look_now().unwrap();
-            assert_eq!(api.state.lock().unwrap().requeues,0,"r1.3: A-only batch cannot witness unidentified B");
-            let snap=controller.snapshot().unwrap();
-            let hold=snap.rows.iter().find(|r|r.table=="queue_holds").unwrap();
+            failure(&mut controller, &api, &config);
+            let names: Vec<String> = if mode == "reporter-overflow" {
+                (0..20).map(|i| format!("C{i:02}")).collect()
+            } else {
+                vec!["A".into()]
+            };
+            batch_health(
+                &mut controller,
+                &api,
+                &config,
+                &names.iter().map(String::as_str).collect::<Vec<_>>(),
+                "ffffffffffffffffffffffffffffffffffffffff",
+                "main",
+            );
+            controller.look_now().unwrap();
+            controller.look_now().unwrap();
+            assert_eq!(
+                api.state.lock().unwrap().requeues,
+                0,
+                "r1.3: A-only batch cannot witness unidentified B"
+            );
+            let snap = controller.snapshot().unwrap();
+            let hold = snap.rows.iter().find(|r| r.table == "queue_holds").unwrap();
             assert!(hold.value["witness"].is_null());
         }
         "lint-only-health" => {
-            batch_health(&mut controller,&api,&config,&["lint"],"ef817b9d48f4e2f55a3b7d8e83caef25573ad544","main");
-            failure(&mut controller,&api,&config);
-            assert_eq!(controller.world().unwrap().nodes[0].phase,Phase::Queued,"r1.4: lint does not prove our failing identities healthy");
-            assert_eq!(api.state.lock().unwrap().requeues,0);
-            assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
+            batch_health(
+                &mut controller,
+                &api,
+                &config,
+                &["lint"],
+                "ef817b9d48f4e2f55a3b7d8e83caef25573ad544",
+                "main",
+            );
+            failure(&mut controller, &api, &config);
+            assert_eq!(
+                controller.world().unwrap().nodes[0].phase,
+                Phase::Queued,
+                "r1.4: lint does not prove our failing identities healthy"
+            );
+            assert_eq!(api.state.lock().unwrap().requeues, 0);
+            assert_eq!(controller.world().unwrap().nodes[0].credit.spent, 0);
         }
         "retargeted" => {
             {
-                let mut state=api.state.lock().unwrap();
-                state.pull["base"]["ref"]=json!("release");
-                state.cause_fixture.as_mut().unwrap().parsed=true;
+                let mut state = api.state.lock().unwrap();
+                state.pull["base"]["ref"] = json!("release");
+                state.cause_fixture.as_mut().unwrap().parsed = true;
             }
-            let prior:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json")).unwrap();
-            let mut checks:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json")).unwrap();
-            for c in checks["check_runs"].as_array_mut().unwrap() {if c["conclusion"]=="failure" {c["output"]["summary"]=json!("FAILED: tests/queue_cause.py::test_gate");}}
+            let prior: Value =
+                serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json"))
+                    .unwrap();
+            let mut checks: Value =
+                serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json"))
+                    .unwrap();
+            for c in checks["check_runs"].as_array_mut().unwrap() {
+                if c["conclusion"] == "failure" {
+                    c["output"]["summary"] = json!("FAILED: tests/queue_cause.py::test_gate");
+                }
+            }
             let changes=serde_json::from_value(json!({"repository":"owner/sandbox","issues":[],"comments":[],"labels":[],"pull_requests":prior,"check_runs":checks["check_runs"],"check_suites":[]})).unwrap();
-            for input in Translator::new(api.clients()).unwrap().catch_up(&config.repos[0],&changes,&controller.snapshot().unwrap()).unwrap() {ingress::apply(&mut controller,input).unwrap();}
-            failure(&mut controller,&api,&config);
-            let facts=queue_facts(&mut controller);
-            let failed=facts.iter().find(|f| f["evidence"].get("CiFailed").is_some()).unwrap();
-            assert!(failed["evidence"]["CiFailed"]["details"]["cause"].get("Environment").is_none(),"r1.5: old-destination draft cannot select Environment");
-            assert_eq!(failed["evidence"]["CiFailed"]["details"]["context"]["branch"],"release");
-            health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
-            controller.look_now().unwrap();controller.look_now().unwrap();
-            assert_eq!(api.state.lock().unwrap().requeues,0,"old destination merge cannot authorize our retargeted PR");
+            for input in Translator::new(api.clients())
+                .unwrap()
+                .catch_up(&config.repos[0], &changes, &controller.snapshot().unwrap())
+                .unwrap()
+            {
+                ingress::apply(&mut controller, input).unwrap();
+            }
+            failure(&mut controller, &api, &config);
+            let facts = queue_facts(&mut controller);
+            let failed = facts
+                .iter()
+                .find(|f| f["evidence"].get("CiFailed").is_some())
+                .unwrap();
+            assert!(
+                failed["evidence"]["CiFailed"]["details"]["cause"]
+                    .get("Environment")
+                    .is_none(),
+                "r1.5: old-destination draft cannot select Environment"
+            );
+            assert_eq!(
+                failed["evidence"]["CiFailed"]["details"]["context"]["branch"],
+                "release"
+            );
+            health(
+                &mut controller,
+                &api,
+                &config,
+                "2026-11-06T03:00:00Z",
+                "ffffffffffffffffffffffffffffffffffffffff",
+            );
+            controller.look_now().unwrap();
+            controller.look_now().unwrap();
+            assert_eq!(
+                api.state.lock().unwrap().requeues,
+                0,
+                "old destination merge cannot authorize our retargeted PR"
+            );
         }
         "terminal-hold" => {
-            failure(&mut controller,&api,&config);
+            failure(&mut controller, &api, &config);
             {
-                let mut state=api.state.lock().unwrap();state.merged(false);
-                let head=state.pull["head"]["sha"].clone();state.checks=fixture("merged","checks");
-                for check in state.checks.as_array_mut().unwrap() {check["head_sha"]=head.clone();}
+                let mut state = api.state.lock().unwrap();
+                state.merged(false);
+                let head = state.pull["head"]["sha"].clone();
+                state.checks = fixture("merged", "checks");
+                for check in state.checks.as_array_mut().unwrap() {
+                    check["head_sha"] = head.clone();
+                }
             }
-            failure(&mut controller,&api,&config);drain(&mut controller);
-            assert_eq!(controller.world().unwrap().nodes[0].phase,Phase::Closed(Outcome::Merged));
-            assert!(!controller.snapshot().unwrap().rows.iter().any(|r|r.table=="queue_holds"),"r1.6: terminal cleanup must retire queue holds");
+            failure(&mut controller, &api, &config);
+            drain(&mut controller);
+            assert_eq!(
+                controller.world().unwrap().nodes[0].phase,
+                Phase::Closed(Outcome::Merged)
+            );
+            assert!(
+                !controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "queue_holds"),
+                "r1.6: terminal cleanup must retire queue holds"
+            );
         }
         "gate-retention" => {
-            failure(&mut controller,&api,&config);
+            failure(&mut controller, &api, &config);
             for i in 0..132 {
-                health(&mut controller,&api,&config,"2026-11-06T03:00:00Z",&format!("{:040x}",10000+i));
+                health(
+                    &mut controller,
+                    &api,
+                    &config,
+                    "2026-11-06T03:00:00Z",
+                    &format!("{:040x}", 10000 + i),
+                );
             }
-            let snapshot=controller.snapshot().unwrap();
-            let gates=snapshot.rows.iter().filter(|r|r.table=="queue_gates").count();
-            assert!(gates<=128,"r1.6: gate retention must be bounded; retained {gates}");
-            assert!(snapshot.rows.iter().any(|r|r.table=="queue_holds"&&!r.value["witness"].is_null()),"retention must preserve attached hold witnesses");
+            let snapshot = controller.snapshot().unwrap();
+            let gates = snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == "queue_gates")
+                .count();
+            assert!(
+                gates <= 128,
+                "r1.6: gate retention must be bounded; retained {gates}"
+            );
+            assert!(
+                snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "queue_holds" && !r.value["witness"].is_null()),
+                "retention must preserve attached hold witnesses"
+            );
         }
         _ => panic!("unknown review schedule {mode}"),
     }

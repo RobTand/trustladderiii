@@ -88,6 +88,11 @@ pub fn retry_failure(dispatched: bool, seen_before: bool) -> bool {
         (out && !destination_merge) ==> (complete && all_passed),
         out ==> successful,
 ))]
-pub fn healthy(successful: bool, destination_merge: bool, complete: bool, all_passed: bool) -> bool {
+pub fn healthy(
+    successful: bool,
+    destination_merge: bool,
+    complete: bool,
+    all_passed: bool,
+) -> bool {
     successful && (destination_merge || (complete && all_passed))
 }

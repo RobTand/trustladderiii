@@ -95,51 +95,113 @@ impl Adapter {
         Ok(())
     }
 
-    fn queue_retry_binding(&self, delivery: &Delivery, fresh: &tl3_mergify::Observation, command_key: &str) -> Result<Option<crate::queue_cause::RetryTransition>> {
-        let Some(snapshot) = self.snapshot()? else { return Ok(None) };
+    fn queue_retry_binding(
+        &self,
+        delivery: &Delivery,
+        fresh: &tl3_mergify::Observation,
+        command_key: &str,
+    ) -> Result<Option<crate::queue_cause::RetryTransition>> {
+        let Some(snapshot) = self.snapshot()? else {
+            return Ok(None);
+        };
         let (number, head) = enqueue(delivery)?;
-        let Some(hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else { return Ok(None) };
-        if hold.witness.is_none() { return Ok(None) }
+        let Some(hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {
+            return Ok(None);
+        };
+        if hold.witness.is_none() {
+            return Ok(None);
+        }
         let mut before = vec![hold.identity];
         for row in &snapshot.rows {
             let fact = if row.table == "queue_facts" {
                 Some(crate::decode_stored::<QueueFact>(row.value.clone())?)
             } else if row.table == "inbox" {
-                match crate::decode_stored::<Observation>(row.value.clone())? { Observation::Queue(fact) => Some(fact), _ => None }
-            } else { None };
+                match crate::decode_stored::<Observation>(row.value.clone())? {
+                    Observation::Queue(fact) => Some(fact),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             if let Some(fact) = fact
-                && fact.repository == delivery.repository && fact.number == number
+                && fact.repository == delivery.repository
+                && fact.number == number
                 && matches!(&fact.evidence, Evidence::CiFailed {head:failed,..} if failed == head)
-            { before.push(fact.identity()); }
+            {
+                before.push(fact.identity());
+            }
         }
         if let Some(check) = &fresh.check {
-            before.push(QueueFact {repository:delivery.repository.clone(),number,evidence:Evidence::CiFailed {
-                check:check.id,completed_at:check.completed_at.map(|at| at.to_rfc3339()),head:head.into(),head_check:false,infra:false,details:Default::default()
-            }}.identity());
+            before.push(
+                QueueFact {
+                    repository: delivery.repository.clone(),
+                    number,
+                    evidence: Evidence::CiFailed {
+                        check: check.id,
+                        completed_at: check.completed_at.map(|at| at.to_rfc3339()),
+                        head: head.into(),
+                        head_check: false,
+                        infra: false,
+                        details: Default::default(),
+                    },
+                }
+                .identity(),
+            );
         }
-        before.sort(); before.dedup();
-        Ok(Some(crate::queue_cause::RetryTransition {command_key:command_key.into(),before}))
+        before.sort();
+        before.dedup();
+        Ok(Some(crate::queue_cause::RetryTransition {
+            command_key: command_key.into(),
+            before,
+        }))
     }
 
     fn publish_queue_retry(&self, delivery: &Delivery, recovery: &Recovery) -> Result<()> {
-        let (Some(settings), Some(retry)) = (&self.store, &recovery.retry) else {return Ok(())};
+        let (Some(settings), Some(retry)) = (&self.store, &recovery.retry) else {
+            return Ok(());
+        };
         let mut store = tl3_store::Store::open(settings)?;
         let snapshot = store.load()?;
         let (number, head) = enqueue(delivery)?;
-        let Some(mut hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {return Ok(())};
-        if hold.retry.is_some() || hold.repository != delivery.repository || hold.number != number {return Ok(())}
+        let Some(mut hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {
+            return Ok(());
+        };
+        if hold.retry.is_some() || hold.repository != delivery.repository || hold.number != number {
+            return Ok(());
+        }
         hold.retry = Some(retry.clone());
-        let mut commit = tl3_store::Commit::new(format!("queue-retry:{}",retry.command_key), json!({"queue_retry":retry.command_key}), &snapshot);
-        commit.rows.push(crate::put("queue_holds", crate::queue_cause::key(hold.node, head), json!(hold)));
+        let mut commit = tl3_store::Commit::new(
+            format!("queue-retry:{}", retry.command_key),
+            json!({"queue_retry":retry.command_key}),
+            &snapshot,
+        );
+        commit.rows.push(crate::put(
+            "queue_holds",
+            crate::queue_cause::key(hold.node, head),
+            json!(hold),
+        ));
         // Recover a crash after the Sent receipt but before this publication.
         // Previously held post-dispatch reports must be classified again.
-        for row in snapshot.rows.iter().filter(|row| row.table == "queue_facts") {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
             let fact: QueueFact = crate::decode_stored(row.value.clone())?;
-            if fact.repository == delivery.repository && fact.number == number && !retry.before.contains(&fact.identity())
+            if fact.repository == delivery.repository
+                && fact.number == number
+                && !retry.before.contains(&fact.identity())
                 && matches!(&fact.evidence, Evidence::CiFailed {head:failed,details,..} if failed == head && !matches!(details.cause.as_deref(),Some(crate::queue_cause::CauseEvidence::Change {..})))
             {
-                commit.rows.push(tl3_store::RowChange::Delete {table:"queue_facts".into(),id:row.id.clone()});
-                commit.rows.push(crate::put("inbox",format!("retry:{}:{}",retry.command_key,row.id),json!(Observation::Queue(fact))));
+                commit.rows.push(tl3_store::RowChange::Delete {
+                    table: "queue_facts".into(),
+                    id: row.id.clone(),
+                });
+                commit.rows.push(crate::put(
+                    "inbox",
+                    format!("retry:{}:{}", retry.command_key, row.id),
+                    json!(Observation::Queue(fact)),
+                ));
             }
         }
         store.commit(&commit)?;
@@ -624,7 +686,8 @@ impl Adapter {
                         self.fence(delivery)?;
                     }
                     if recovery.command == Command::Sending && recovery.retry.is_none() {
-                        recovery.retry = self.queue_retry_binding(delivery, &fresh, &recovery.command_key)?;
+                        recovery.retry =
+                            self.queue_retry_binding(delivery, &fresh, &recovery.command_key)?;
                     }
                     self.save_recovery(delivery, &recovery)?;
                 }
@@ -692,7 +755,9 @@ impl Adapter {
             return Ok(());
         }
         let _ = self.queue_command(delivery, None)?;
-        if let Some(recovery) = self.recovery(delivery)? && recovery.command == Command::Sent {
+        if let Some(recovery) = self.recovery(delivery)?
+            && recovery.command == Command::Sent
+        {
             self.publish_queue_retry(delivery, &recovery)?;
         }
         Ok(())

@@ -144,8 +144,22 @@ pub(super) async fn read_checks(
         .collect();
     let mut details = QueueCiEvidence {
         complete: failed.len() <= 20 && !failed.is_empty(),
-        reporters_complete: !failed.is_empty() && failed.len() <= 128 && failed.iter().all(|check| check.app.is_some()),
-        reporters: failed.iter().take(128).filter_map(|check| check.app.as_ref().map(|app| crate::queue_cause::CheckIdentity {app:app.id,name:check.name.clone()})).collect(),
+        reporters_complete: !failed.is_empty()
+            && failed.len() <= 128
+            && failed.iter().all(|check| check.app.is_some()),
+        reporters: failed
+            .iter()
+            .take(128)
+            .filter_map(|check| {
+                check
+                    .app
+                    .as_ref()
+                    .map(|app| crate::queue_cause::CheckIdentity {
+                        app: app.id,
+                        name: check.name.clone(),
+                    })
+            })
+            .collect(),
         ..Default::default()
     };
     let mut seen = BTreeSet::new();
@@ -238,7 +252,10 @@ pub(super) async fn read_queue(
     let mut context = Some(queue_cause::context(&state.pull_request));
     let mut details = match draft {
         Some(number) => match github.pull_request(repo, number).await {
-            Ok(pull) if is_merge_queue_pr(&pull) && pull.base.branch == state.pull_request.base.branch => {
+            Ok(pull)
+                if is_merge_queue_pr(&pull)
+                    && pull.base.branch == state.pull_request.base.branch =>
+            {
                 if let Some(batch) = queue_cause::batch_context(&pull)
                     .filter(|context| context.members.contains(&state.pull_request.number))
                 {

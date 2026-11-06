@@ -2701,7 +2701,8 @@ impl Controller {
         let retired_hold = |value: &Value| -> Result<bool> {
             let hold: queue_cause::Hold = decode_stored(value.clone())?;
             Ok(world.nodes.get(hold.node.0 as usize).is_none_or(|node| {
-                matches!(node.phase, tl3_kernel::Phase::Closed(_)) || node.merged.is_some()
+                matches!(node.phase, tl3_kernel::Phase::Closed(_))
+                    || node.merged.is_some()
                     || commit_sha(snapshot, node.head) != Some(hold.head.as_str())
             }))
         };

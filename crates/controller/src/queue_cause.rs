@@ -49,8 +49,15 @@ pub struct GateEvidence {
 }
 impl GateEvidence {
     pub fn healthy_for(&self, reporters: &[CheckIdentity], complete: bool) -> bool {
-        decision::healthy(self.successful, self.context.batch.is_none(), complete,
-            !reporters.is_empty() && reporters.iter().all(|reporter| self.passed.contains(reporter)))
+        decision::healthy(
+            self.successful,
+            self.context.batch.is_none(),
+            complete,
+            !reporters.is_empty()
+                && reporters
+                    .iter()
+                    .all(|reporter| self.passed.contains(reporter)),
+        )
     }
 }
 
@@ -120,18 +127,29 @@ impl Controller {
         {
             return Ok(());
         }
-        commit.rows.push(put("queue_gates", identity.clone(), json!(fact)));
+        commit
+            .rows
+            .push(put("queue_gates", identity.clone(), json!(fact)));
         // Retain the newest 128 passive gates globally, ordered by event time
         // then identity. An attached witness is copied into its live hold.
         let mut gates = vec![(gate.at, identity)];
-        for row in snapshot.rows.iter().filter(|row| row.table == "queue_gates") {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_gates")
+        {
             let prior: QueueFact = decode_stored(row.value.clone())?;
-            if let Evidence::Gate(gate) = prior.evidence { gates.push((gate.at, row.id.clone())); }
+            if let Evidence::Gate(gate) = prior.evidence {
+                gates.push((gate.at, row.id.clone()));
+            }
         }
         gates.sort();
         let excess = gates.len().saturating_sub(128);
         for (_, id) in gates.into_iter().take(excess) {
-            commit.rows.push(tl3_store::RowChange::Delete {table:"queue_gates".into(),id});
+            commit.rows.push(tl3_store::RowChange::Delete {
+                table: "queue_gates".into(),
+                id,
+            });
         }
         if !gate.successful {
             return Ok(());
@@ -155,34 +173,33 @@ impl Controller {
         gate: &GateEvidence,
         commit: &mut Commit,
     ) -> bool {
-            if !gate.healthy_for(&hold.reporters, hold.reporters_complete)
-                || hold.repository != *repository
-                || hold.context.branch != gate.context.branch
-                || hold.context.base == gate.context.base
-                || decision::hold(true, hold.witness.is_some(), false)
-                    != decision::HoldAction::Requeue
-                || !hold.failed_at.is_some_and(|failed| gate.at > failed)
-            {
-                return false;
-            }
-            hold.witness = Some(gate.clone());
-            hold.witnessed_ms = Some(self.now_ms());
+        if !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+            || hold.repository != *repository
+            || hold.context.branch != gate.context.branch
+            || hold.context.base == gate.context.base
+            || decision::hold(true, hold.witness.is_some(), false) != decision::HoldAction::Requeue
+            || !hold.failed_at.is_some_and(|failed| gate.at > failed)
+        {
+            return false;
+        }
+        hold.witness = Some(gate.clone());
+        hold.witnessed_ms = Some(self.now_ms());
+        commit
+            .rows
+            .push(put("queue_holds", key(hold.node, &hold.head), json!(hold)));
+        // Wake an existing allowance, without creating a second timer.
+        for allowance in snapshot.rows.iter().filter(|row| {
+            row.table == "allowances"
+                && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
+                && row.value["delivery"]["output"]["Effect"]["node"] == hold.node.0
+                && row.value["delivery"]["head_sha"] == hold.head
+        }) {
+            let mut value = allowance.value.clone();
+            value["due_ms"] = json!(self.now_ms());
             commit
                 .rows
-                .push(put("queue_holds", key(hold.node, &hold.head), json!(hold)));
-            // Wake an existing allowance, without creating a second timer.
-            for allowance in snapshot.rows.iter().filter(|row| {
-                row.table == "allowances"
-                    && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
-                    && row.value["delivery"]["output"]["Effect"]["node"] == hold.node.0
-                    && row.value["delivery"]["head_sha"] == hold.head
-            }) {
-                let mut value = allowance.value.clone();
-                value["due_ms"] = json!(self.now_ms());
-                commit
-                    .rows
-                    .push(put("allowances", allowance.id.clone(), value));
-            }
+                .push(put("allowances", allowance.id.clone(), value));
+        }
         true
     }
 
@@ -220,7 +237,10 @@ impl Controller {
         });
         let retry = prior.as_ref().and_then(|hold| hold.retry.as_ref());
         let retried = (q58_used && details.failed_tests.is_empty())
-            || decision::retry_failure(retry.is_some(), retry.is_some_and(|retry| retry.before.contains(&incoming_identity)));
+            || decision::retry_failure(
+                retry.is_some(),
+                retry.is_some_and(|retry| retry.before.contains(&incoming_identity)),
+            );
         let context = details
             .context
             .clone()
@@ -254,12 +274,18 @@ impl Controller {
         });
         let healthy_base = !context.base.is_empty()
             && context.members == [fact.number]
-            && snapshot.rows.iter().filter(|row| row.table == "queue_gates")
+            && snapshot
+                .rows
+                .iter()
+                .filter(|row| row.table == "queue_gates")
                 .filter_map(|row| serde_json::from_value::<QueueFact>(row.value.clone()).ok())
                 .any(|fact| match &fact.evidence {
-                    Evidence::Gate(gate) => fact.repository == fact_repository
-                        && gate.context.base == context.base && gate.context.branch == context.branch
-                        && gate.healthy_for(&details.reporters, details.reporters_complete),
+                    Evidence::Gate(gate) => {
+                        fact.repository == fact_repository
+                            && gate.context.base == context.base
+                            && gate.context.branch == context.branch
+                            && gate.healthy_for(&details.reporters, details.reporters_complete)
+                    }
                     _ => false,
                 });
         let kind = decision::attribute(
@@ -314,7 +340,10 @@ impl Controller {
                 witness: None,
                 witnessed_ms: None,
                 retry: None,
-                reporters_complete: match &fact.evidence {Evidence::CiFailed {details,..}=>details.reporters_complete,_=>false},
+                reporters_complete: match &fact.evidence {
+                    Evidence::CiFailed { details, .. } => details.reporters_complete,
+                    _ => false,
+                },
                 reporters: match &fact.evidence {
                     Evidence::CiFailed { details, .. } => details.reporters.clone(),
                     _ => vec![],
@@ -322,16 +351,28 @@ impl Controller {
             };
             // Catch-up can deliver T2 health before the delayed T1 failure.
             // Reconcile the journal, without another upstream read.
-            for row in snapshot.rows.iter().filter(|row| row.table == "queue_gates") {
+            for row in snapshot
+                .rows
+                .iter()
+                .filter(|row| row.table == "queue_gates")
+            {
                 let gate_fact: QueueFact = decode_stored(row.value.clone())?;
                 if let Evidence::Gate(gate) = &gate_fact.evidence
-                    && self.queue_hold_witness(snapshot, &gate_fact.repository, &mut hold, gate, commit)
+                    && self.queue_hold_witness(
+                        snapshot,
+                        &gate_fact.repository,
+                        &mut hold,
+                        gate,
+                        commit,
+                    )
                 {
                     break;
                 }
             }
             if hold.witness.is_none() {
-                commit.rows.push(put("queue_holds", key(node, head), json!(hold)));
+                commit
+                    .rows
+                    .push(put("queue_holds", key(node, head), json!(hold)));
             }
         }
         commit

@@ -2868,7 +2868,10 @@ fn main() {
         );
         return;
     }
-    if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--queue-cause-r1-").map(str::to_owned)) {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--queue-cause-r1-").map(str::to_owned))
+    {
         let mut database = support::Database::start();
         queue_cause::review(&database.create("queue_cause_r1"), &mode);
         database.stop();
@@ -3476,7 +3479,10 @@ fn main() {
         ));
     }
     for mode in queue_cause::REVIEW_MODES {
-        scenario!(queue_cause::review(&database.create(&format!("queue_cause_r1_{mode}")), mode));
+        scenario!(queue_cause::review(
+            &database.create(&format!("queue_cause_r1_{mode}")),
+            mode
+        ));
     }
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));
