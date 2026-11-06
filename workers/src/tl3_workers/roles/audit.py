@@ -5,6 +5,16 @@ from tl3_workers.evidence import preflight
 from tl3_workers.ingest_retention import preserve_verbatim
 from tl3_workers.generated_scope import audit_generation_scope
 from tl3_workers.exploration import ExplorationBudget
+from tl3_workers.contracts import schema
+
+
+def ingest_reply_contract():
+    """#863: what an ingest reply can express, generated from its reply contract."""
+    definitions = schema("ingest-reply")["$defs"]
+    return ("Ingest reply contract, generated from ingest-reply.json. A proof_obligation has only these fields: "
+            + ", ".join(sorted(definitions["proof_obligation"]["properties"]))
+            + ". An evidence_contract entry has only these fields: "
+            + ", ".join(sorted(definitions["evidence_requirement"]["properties"])) + ".")
 
 
 def check_reply(inputs, reply):

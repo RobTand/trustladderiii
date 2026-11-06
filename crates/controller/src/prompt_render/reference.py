@@ -1,4 +1,4 @@
-"""P4 pre-extraction reference, verbatim from bff1b285 runtime.py. Test only."""
+"""P4 pre-extraction reference, verbatim from bff1b285 runtime.py, plus #863's audit contract. Test only."""
 # ruff: noqa: F821
 
 def role_prompt(role, *, text=None, test_cpus=None):
@@ -9,6 +9,8 @@ def role_prompt(role, *, text=None, test_cpus=None):
     if role.name == 'planner':
         from tl3_workers.forcing_rehearsal import GUIDANCE
         prompt += "\n\n" + GUIDANCE
+    if role.name == 'audit':
+        prompt += "\n\n" + ingest_reply_contract()
     return prompt
 
 

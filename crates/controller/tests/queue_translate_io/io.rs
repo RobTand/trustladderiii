@@ -108,8 +108,17 @@ pub(super) struct Commit {
     pub rows: Rows,
 }
 pub(super) struct Rows;
+pub(super) struct RecordedRow(Value);
+impl From<Value> for RecordedRow {fn from(value:Value) -> Self {Self(value)}}
+impl From<tl3_store::RowChange> for RecordedRow {
+    fn from(row:tl3_store::RowChange) -> Self {Self(match row {
+        tl3_store::RowChange::Put {table,id,value} => json!({"table":table,"id":id,"value":value}),
+        tl3_store::RowChange::Delete {table,id} => json!({"delete":table,"id":id}),
+    })}
+}
 impl Rows {
-    pub fn push(&mut self, row: Value) {
+    pub fn push(&mut self, row: impl Into<RecordedRow>) {
+        let row=row.into().0;
         call("row.push", row.clone());
         with(|r| r.run.rows.push(row));
     }
@@ -129,6 +138,7 @@ pub(super) fn check_run(_: &Snapshot, node: NodeId, sha: Option<&str>) -> Result
     })
 }
 impl Controller {
+    pub(super) fn now_ms(&self) -> u64 { call("clock.now", json!(0)); 0 }
     pub(super) fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
         tl3_worktrees::CommitId::new(sha)?;
         Ok(HeadId(self.store.intern_commit(&node.0.to_string(), sha)?))
@@ -325,16 +335,60 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
         recording.run
     })
 }
+// #854b adds typed attribution metadata. Keep the prior transition and every
+// prior row/call field in the differential; real Controller scenarios assert
+// the new hold/retest behavior and its durable metadata.
+fn prior_fields(value: &mut Value) {
+    match value {
+        Value::Array(values) => for value in values { prior_fields(value); },
+        Value::Object(fields) => {
+            if let Some(details) = fields.get_mut("CiFailed").and_then(|value| value.get_mut("details")).and_then(Value::as_object_mut) {
+                for key in ["cause", "context", "fingerprint", "reporters", "reporters_complete"] { details.remove(key); }
+            }
+            for value in fields.values_mut() { prior_fields(value); }
+        }
+        _ => {}
+    }
+}
+fn prior_run(mut run: Run) -> Run {
+    for value in run.calls.iter_mut().chain(run.rows.iter_mut()).chain(run.persisted_rows.iter_mut()) { prior_fields(value); }
+    run
+}
 pub(super) fn compare(s: &Schedule) -> Run {
-    let old = run(s, false, None);
-    let new = run(s, true, None);
+    let old = prior_run(run(s, false, None));
+    let new = prior_run(run(s, true, None));
+    if new.rows.iter().any(|row| row["table"] == "queue_holds") {
+        // Explicit #854 delta, not an equivalence projection: the opaque
+        // current-head failure stops before interning or emitting CiFailed.
+        let Evidence::CiFailed { head, head_check, completed_at, details, .. } = &s.fact.evidence else { panic!("hold without failure") };
+        assert!(!head_check && details.failed_tests.is_empty());
+        assert_eq!(head, OLD_HEAD);
+        assert!(!s.snapshot.rows.iter().any(|row| row.table == "queue_facts" && row.value["evidence"]["CiFailed"]["infra"] == true && row.value["evidence"]["CiFailed"]["details"]["decision"] == "outside_change" && row.value["repository"] == json!(s.fact.repository) && row.value["number"] == s.fact.number && row.value["evidence"]["CiFailed"]["head"] == *head));
+        let hold = put("queue_holds", format!("0:{head}"), json!({
+            "repository":s.fact.repository,"number":s.fact.number,"node":0,
+            "head":head,"identity":s.fact.identity(),
+            "context":{"base":"","branch":"","batch":null,"members":[]},
+            "failed_at":completed_at.as_ref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()).map(|at|at.with_timezone(&chrono::Utc)),
+            "since_ms":0,"witness":null,"witnessed_ms":null,"retry":null,"reporters":[],"reporters_complete":false
+        }));
+        let mut fact = json!(s.fact);
+        fact["evidence"]["CiFailed"]["details"]["decision"] = json!("upstream_classification");
+        prior_fields(&mut fact);
+        let fact = put("queue_facts", s.fact.identity(), fact);
+        let rows = vec![hold.clone(),fact.clone()];
+        let initial: BTreeMap<_,_> = s.snapshot.interned.iter().filter(|i| i.kind == InternKind::Commit).map(|i| ((i.scope.clone(),i.value.clone()),i.id as u64)).collect();
+        let mut calls: Vec<_> = old.calls.iter().take_while(|call| call["op"] == "check_run").cloned().collect();
+        calls.extend([json!({"op":"clock.now","args":0}),json!({"op":"row.push","args":hold}),json!({"op":"row.push","args":fact}),json!({"op":"transaction.commit","args":null})]);
+        assert_eq!(new, Run {calls,rows:rows.clone(),effects:vec![],result:json!({"event":null}),pending_intern:initial.clone(),persisted_intern:initial,persisted_rows:rows,writes:0}, "#854 opaque hold delta {s:?}");
+        return new;
+    }
     assert_eq!(old, new, "Queue I/O schedule {s:?}");
     for write in 0..old.writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
             assert_eq!(
-                run(s, false, cut),
-                run(s, true, cut),
+                prior_run(run(s, false, cut)),
+                prior_run(run(s, true, cut)),
                 "Queue crash {cut:?}, schedule {s:?}"
             );
         }

@@ -9,6 +9,8 @@ extern crate self as tl3_controller;
 pub mod adoption;
 mod approval_delivery;
 pub mod findings;
+pub mod queue_cause;
+mod queue_cause_decide;
 
 pub mod adapters;
 mod blocked;
@@ -2689,11 +2691,19 @@ impl Controller {
                 .node(snapshot)?
                 .is_some_and(|node| closed.contains(&node)))
         };
+        let retired_hold = |value: &Value| -> Result<bool> {
+            let hold: queue_cause::Hold = decode_stored(value.clone())?;
+            Ok(world.nodes.get(hold.node.0 as usize).is_none_or(|node| {
+                matches!(node.phase, tl3_kernel::Phase::Closed(_))
+                    || node.merged.is_some()
+                    || commit_sha(snapshot, node.head) != Some(hold.head.as_str())
+            }))
+        };
         let mut rows = Vec::new();
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
-                && table == "queue_facts"
-                && closed_fact(value)?
+                && ((table == "queue_facts" && closed_fact(value)?)
+                    || (table == "queue_holds" && retired_hold(value)?))
             {
                 continue;
             }
@@ -2723,6 +2733,7 @@ impl Controller {
                         node.merged.is_some() || matches!(node.phase, tl3_kernel::Phase::Closed(_))
                     });
             if discard_rebase_context
+                || (row.table == "queue_holds" && retired_hold(&row.value)?)
                 || row.table == "check_reports"
                     && row
                         .id
@@ -3033,6 +3044,10 @@ impl Controller {
                 return self.linked_request(snapshot, repository, issue, original, commit);
             }
             Observation::Queue(mut fact) => {
+                if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
+                    self.queue_gate(snapshot, &fact, gate, commit)?;
+                    return Ok(None);
+                }
                 let identity = fact.identity();
                 let Some(translation) =
                     tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
@@ -3065,7 +3080,10 @@ impl Controller {
                 };
                 // A closed node takes only a merge it has not recorded. A later
                 // active enqueue must still be able to consume head evidence.
-                if !queue::admit(fact.evidence.kind(), view) {
+                let Some(kind) = fact.evidence.kind() else {
+                    return Ok(None);
+                };
+                if !queue::admit(kind, view) {
                     return Ok(None);
                 }
                 if let Evidence::CiFailed {
@@ -3110,6 +3128,13 @@ impl Controller {
                     *infra = classified;
                     details.decision = Some(decision.as_str().into());
                 }
+                let q58 = matches!(&fact.evidence, Evidence::CiFailed { details, .. } if details.decision.as_deref() == Some("outside_change"));
+                let current_failure = matches!(&fact.evidence, Evidence::CiFailed { head, .. } if commit_sha(snapshot, current.head) == Some(head));
+                if current_failure
+                    && self.queue_failure_cause(snapshot, &mut fact, node, q58, commit)?
+                {
+                    return Ok(None);
+                }
                 let value = json!(&fact);
                 let head_current = match &fact.evidence {
                     Evidence::CiFailed { head, .. }
@@ -3126,25 +3151,29 @@ impl Controller {
                     }
                     _ => false,
                 };
-                let route =
-                    match queue::route(fact.evidence.kind(), view, head_current, approved_head) {
-                        queue::Route::Record => core::Route::Record,
-                        queue::Route::Skip => core::Route::Skip,
-                        queue::Route::SetupIncident
-                        | queue::Route::MissingIncident
-                        | queue::Route::BlockedIncident
-                        | queue::Route::ClearIncident => core::Route::Incident,
-                        queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
-                            queue::KernelFact::PrMerged { checks_passed } => {
-                                KernelFact::PrMerged { checks_passed }
-                            }
-                            queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
-                            queue::KernelFact::Conflict => KernelFact::Conflict,
-                            queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
-                            queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
-                            queue::KernelFact::PushByOther => KernelFact::PushByOther,
-                        }),
-                    };
+                let route = match queue::route(
+                    fact.evidence.kind().expect("queue evidence"),
+                    view,
+                    head_current,
+                    approved_head,
+                ) {
+                    queue::Route::Record => core::Route::Record,
+                    queue::Route::Skip => core::Route::Skip,
+                    queue::Route::SetupIncident
+                    | queue::Route::MissingIncident
+                    | queue::Route::BlockedIncident
+                    | queue::Route::ClearIncident => core::Route::Incident,
+                    queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
+                        queue::KernelFact::PrMerged { checks_passed } => {
+                            KernelFact::PrMerged { checks_passed }
+                        }
+                        queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
+                        queue::KernelFact::Conflict => KernelFact::Conflict,
+                        queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
+                        queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
+                        queue::KernelFact::PushByOther => KernelFact::PushByOther,
+                    }),
+                };
                 let kind = match &fact.evidence {
                     Evidence::ChecksUnavailable { .. } => core::EvidenceKind::Setup,
                     Evidence::CheckMissing { .. } => core::EvidenceKind::Missing,

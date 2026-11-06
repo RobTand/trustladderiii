@@ -1,5 +1,6 @@
 pub(crate) mod ci_evidence;
 mod head_checks;
+mod queue_cause;
 mod queue_entry;
 mod waiting_requeue;
 pub(crate) use waiting_requeue::PROGRESS_PREFIX as REQUEUE_PROGRESS_PREFIX;
@@ -105,6 +106,8 @@ impl RequiredCheck {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Evidence {
+    /// Passive main/queue health evidence. It never maps to a kernel fact.
+    Gate(crate::queue_cause::GateEvidence),
     ChecksUnavailable {
         permissions: Vec<String>,
     },
@@ -163,8 +166,9 @@ pub enum Evidence {
 }
 impl Evidence {
     /// The evidence without its payload, as the core decides on it.
-    pub(crate) fn kind(&self) -> Kind {
-        match self {
+    pub(crate) fn kind(&self) -> Option<Kind> {
+        Some(match self {
+            Self::Gate(_) => return None,
             Self::ChecksUnavailable { .. } => Kind::ChecksUnavailable,
             Self::CheckMissing { .. } => Kind::CheckMissing,
             Self::QueueBlocked { .. } => Kind::QueueBlocked,
@@ -183,7 +187,7 @@ impl Evidence {
             Self::DequeuedByPerson { .. } => Kind::DequeuedByPerson,
             Self::ClosedByPerson { .. } => Kind::ClosedByPerson,
             Self::PushByOther { .. } => Kind::PushByOther,
-        }
+        })
     }
 }
 
@@ -205,7 +209,7 @@ impl QueueFact {
     }
     /// Setup evidence is deduplicated against incidents, not observation receipts.
     pub(crate) fn setup(&self) -> bool {
-        self.evidence.kind().setup()
+        self.evidence.kind().is_some_and(Kind::setup)
     }
     pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
         if let Evidence::CheckMissing { head, required }
@@ -287,6 +291,12 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::Gate(gate) => format!(
+                "gate:{}:{}:{}",
+                gate.context.base,
+                gate.context.batch.as_deref().unwrap_or("main"),
+                gate.at
+            ),
             Evidence::ChecksUnavailable { permissions } => {
                 let mut gaps = permissions.clone();
                 gaps.sort();
@@ -653,6 +663,7 @@ impl Adapter {
             state.pull_request.draft,
             state.pull_request.body.as_deref().unwrap_or_default(),
         )?;
+        self.reconcile_queue_destination(delivery, &state, snapshot)?;
         let proof =
             crate::evidence::publication(delivery, delivery.request_text.as_deref().unwrap_or(""))?;
         let proof = if proof.is_empty() {
@@ -1255,6 +1266,7 @@ impl Executor for Adapter {
     /// no-progress allowance catches one that never comes. Only a read that
     /// errors is a failed look.
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        self.retest_hold(delivery)?;
         Ok(match self.read_enqueue(delivery)? {
             Reconciliation::Found(completion) => Look::Found(completion),
             Reconciliation::Absent => Look::Absent,
@@ -1821,6 +1833,7 @@ impl Translator {
         let mut wake = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
+                facts.extend(queue_cause::merge(repo, pull_request));
                 let binding = QueueFact {
                     repository: repo.clone(),
                     number: pull_request.number,
@@ -2002,6 +2015,10 @@ impl Translator {
             .get(&repo.installation)
             .ok_or(Error::Invalid("missing queue fact client"))?;
         let mut facts = Vec::new();
+        for pull in &changes.pull_requests {
+            facts.extend(queue_cause::merge(repo, pull));
+            facts.extend(queue_cause::batch(repo, pull, &changes.check_runs));
+        }
         let world: World = crate::snapshot::decode(snapshot)?;
         for pull in changes.pull_requests.iter().filter(|pull| {
             route::projection::catch_merged(pull.merged_at.is_some(), is_merge_queue_pr(pull))
@@ -2154,6 +2171,24 @@ impl GitHubTranslator for Translator {
 
 #[cfg(test)]
 mod kind_tests {
+    #[test]
+    fn incomplete_queue_membership_is_not_environment_evidence() {
+        let mut pull: tl3_github::PullRequest = serde_json::from_value(serde_json::json!({
+            "number":3331,"user":{"id":1,"login":"mergify[bot]"},"state":"open",
+            "head":{"ref":"mergify/merge-queue/main/pr-3330","sha":"2222222222222222222222222222222222222222"},
+            "base":{"ref":"main","sha":"1111111111111111111111111111111111111111"},
+            "updated_at":"2026-11-06T01:00:00Z",
+            "body":"```yaml\n---\nchecking_base_sha: 1111111111111111111111111111111111111111\npull_requests:\n  - number: 3330\n```"
+        })).unwrap();
+        assert!(super::queue_cause::batch_context(&pull).is_some());
+        let body = pull.body.as_ref().unwrap();
+        pull.body = Some(body.replace(
+            "\n```",
+            &format!("\n{}pull_requests:\n  - number: 100\n```", "\n".repeat(600)),
+        ));
+        assert!(super::queue_cause::batch_context(&pull).is_none());
+    }
+
     use super::*;
 
     /// `Evidence::kind` matches every variant with no wildcard, so the compiler
@@ -2244,7 +2279,7 @@ mod kind_tests {
         }
         assert_eq!(cases.len(), 15);
         for (evidence, kind) in cases {
-            assert_eq!(evidence.kind(), kind, "{evidence:?}");
+            assert_eq!(evidence.kind(), Some(kind), "{evidence:?}");
         }
     }
 }

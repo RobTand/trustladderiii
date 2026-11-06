@@ -168,7 +168,7 @@ fn fixture_snapshot(config: Inputs) -> Snapshot {
                 let fact = reference::QueueFact {
                     repository: repo(),
                     number: 100 + i as u64,
-                    evidence: Evidence::CiFailed {
+                    evidence: reference::Evidence::CiFailed {
                         check: id,
                         completed_at: None,
                         head: "head".into(),

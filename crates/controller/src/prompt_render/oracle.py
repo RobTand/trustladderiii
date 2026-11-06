@@ -30,6 +30,7 @@ def reference():
     definitions(workers / 'evidence.py', {'forcing_capabilities', 'forcing_guidance'}, namespace)
     definitions(workers / 'forcing_rehearsal.py', {'MAX_REHEARSALS', 'REHEARSAL_SECONDS', 'GUIDANCE'}, namespace)
     definitions(workers / 'roles/planner.py', {'EXPLORATION_DECLARATION'}, namespace)
+    definitions(workers / 'roles/audit.py', {'ingest_reply_contract'}, namespace)
     namespace.update(
         files=lambda _: workers,
         schema=lambda name: json.loads((workers / 'schemas' / (name + '.json')).read_text()),
