@@ -686,7 +686,10 @@ kernel_fn! {
                 kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
                 true
             }
-            _ => false,
+            _ => {
+                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+                false
+            },
         }
     }
 }

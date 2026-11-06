@@ -24,7 +24,7 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
     }
     let mut passes: u32 = 0;
     kernel_loop! { [
-        invariant report.entries@ == before_report@,
+        invariant before_report@ == old(report).entries@, report.entries@ == before_report@,
             forall|j: int| 0 <= j < w.nodes@.len() ==> report::terminal_phase_frame(baseline@.nodes@[j].phase, w.nodes@[j].phase),
             baseline@ == *old(w), settle_ready(*w), settle_chain(baseline@, *w),
             passes as int + potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n))
@@ -36,7 +36,7 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
         let mut changed = false;
         let mut i = 0;
         kernel_while! { (i < w.nodes.len()) [
-            invariant report.entries@ == before_report@,
+            invariant before_report@ == old(report).entries@, report.entries@ == before_report@,
                 forall|j: int| 0 <= j < w.nodes@.len() ==> report::terminal_phase_frame(baseline@.nodes@[j].phase, w.nodes@[j].phase),
                 i <= w.nodes.len(), baseline@ == *old(w),
                 settle_ready(*w), settle_chain(baseline@, *w),
