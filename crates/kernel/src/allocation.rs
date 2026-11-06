@@ -257,7 +257,7 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         holding(old(w).nodes@[i as int].phase) ==>
             old(w).nodes@[i as int].generation < u64::MAX,
-    ensures final(w).nodes@[i as int] == retirement::incident(old(w).nodes@[i as int], needs_rob),
+    ensures node_updates::incident_raised(old(w).nodes@[i as int], final(w).nodes@[i as int], needs_rob),
         node_updates::raised_incident(old(w).nodes@[i as int], final(w).nodes@[i as int], needs_rob),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
@@ -298,19 +298,13 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     if let Some(r) = m.phase.resume() {
         m.holds = false;
         set_phase(m, Phase::Ready(r));
-        kernel_proof! {
-            allocation_incident_lemmas::resumed_result(before_incident@, *m, needs_rob, r);
-        }
     }
     kernel_proof! {
-        if !holding(before_incident@.phase) {
-            allocation_incident_lemmas::waiting_result(before_incident@, w.nodes@[i as int], needs_rob);
-        }
+        node_updates::incident_result(before_incident@, w.nodes@[i as int], needs_rob);
     }
     notice(out, i, Notice::Incident { needs_rob });
     kernel_proof! {
-        allocation_incident_lemmas::incident_frame(before_incident@, w.nodes@[i as int], needs_rob);
-        node_updates::incident_views(before_incident@, w.nodes@[i as int], needs_rob);
+        node_updates::incident_facts(before_incident@, w.nodes@[i as int], needs_rob);
     }
 }
 }

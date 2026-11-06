@@ -178,12 +178,33 @@ pub(super) open spec fn raised_incident(b: Node, a: Node, needs_rob: bool) -> bo
     && a.question == b.question && a.priority == b.priority && a.waiting_prerequisite == b.waiting_prerequisite
 }
 
-/// Project an existing exact incident result once, outside its consumers.
-pub(super) proof fn incident_views(b: Node, a: Node, needs_rob: bool)
-    requires a == retirement::incident(b, needs_rob),
-    ensures raised_incident(b, a, needs_rob),
+#[verifier::opaque]
+pub(super) open spec fn incident_raised(b: Node, a: Node, needs_rob: bool) -> bool {
+    raised_incident(b, a, needs_rob)
+}
+
+pub(super) proof fn incident_result(b: Node, a: Node, needs_rob: bool)
+    requires raised_incident(b, a, needs_rob),
+    ensures incident_raised(b, a, needs_rob),
+{ reveal(incident_raised); }
+
+pub(super) proof fn incident_legacy(b: Node, a: Node, needs_rob: bool)
+    requires incident_raised(b, a, needs_rob),
+    ensures a == retirement::incident(b, needs_rob),
 {
+    reveal(incident_raised);
     reveal(retirement::incident);
+}
+
+/// Hand the executable helper its small safety facts without exposing its equation.
+pub(super) proof fn incident_facts(b: Node, a: Node, needs_rob: bool)
+    requires incident_raised(b, a, needs_rob),
+        holding(b.phase) ==> b.generation < u64::MAX,
+    ensures settle_shape(b) ==> settle_shape(a),
+        a.generation as int == b.generation as int + if holding(b.phase) { 1int } else { 0int },
+{
+    incident_legacy(b, a, needs_rob);
+    allocation_incident_lemmas::incident_frame(b, a, needs_rob);
 }
 
 

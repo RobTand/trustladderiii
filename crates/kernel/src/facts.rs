@@ -195,7 +195,9 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             m.run_incidents = (m.run_incidents + 1).min(2);
             let needs_rob = m.run_incidents >= 2;
+            kernel_snapshot! { before_raised = w.nodes@[i as int] }
             raise_incident(w, i, needs_rob, out);
+            kernel_proof! { node_updates::incident_legacy(before_raised@, w.nodes@[i as int], needs_rob); }
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
@@ -426,7 +428,9 @@ pub(super) fn ci_infrastructure(w: &mut World, i: usize, out: &mut Outbox) -> (r
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let escalation = infrastructure_retry(&mut w.nodes[i]);
     if let Some(needs_rob) = escalation {
+        kernel_snapshot! { before_raised = w.nodes@[i as int] }
         raise_incident(w, i, needs_rob, out);
+        kernel_proof! { node_updates::incident_legacy(before_raised@, w.nodes@[i as int], needs_rob); }
     }
     kernel_proof! {
         retirement::infrastructure_result(before_ci@, w.nodes@[i as int], escalation);
