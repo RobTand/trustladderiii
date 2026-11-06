@@ -1292,3 +1292,59 @@ def test_ep2_unknown_substantive_dimension_is_not_reporting(dimension, value):
     preflight({'tool_capabilities': [capability]}, reply)
     assert reply['evidence_contract'] == [entry]
     assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
+
+
+@pytest.mark.parametrize('guard,dimension,value', [
+    ('Tests must pass without skips.', 'artifacts', 'skips'),
+    ('Add no skips/retries/quarantine.', 'artifacts', 'skips'),
+    ('Existing skips are not evidence; add self-contained regressions.', 'artifacts', 'skips'),
+    ('The real missing tools must be installed to verify the wire.', 'artifacts', 'missing_tools'),
+    ('The new test must fail on base and pass on head.', 'runner_features', 'base_head'),
+    ('GPU and serving validation must establish numerical qualification.', 'artifacts', 'numerical_measurement'),
+])
+@pytest.mark.parametrize('role', ['ingest', 'audit', 'planner'])
+def test_ep2_reporting_clause_does_not_hide_verification_dimension(guard, dimension, value, role):
+    from tl3_workers.evidence import preflight
+
+    entry = route_requirement(guard + ' Record exit status, skips and missing tools.')
+    entry[dimension] = [value]
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': ['base_head'],
+                  'artifacts': ['cas_receipt', 'terminal_verdict', 'skips', 'missing_tools', 'numerical_measurement'],
+                  'methods': [], 'protected_files': []}
+    capability[dimension].remove(value)
+    if role == 'audit':
+        inputs = {'tool_capabilities': [capability], 'ingest': {'evidence_contract': [entry]}}
+        reply = dict(copy.deepcopy(AGREE), evidence_contract=[])
+    elif role == 'planner':
+        inputs = {'tool_capabilities': [capability], 'ingest': {'evidence_contract': [entry]}}
+        reply = {'kind': 'cant_meet', 'report': 'No plan.', 'evidence_contract': []}
+    else:
+        inputs = {'tool_capabilities': [capability]}
+        reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
+    preflight(inputs, reply, role=role)
+    assert reply['evidence_contract'] == [entry]
+    assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
+
+
+@pytest.mark.parametrize('dimension,value', [
+    ('artifacts', 'missing_tools'), ('artifacts', 'exit_status'), ('artifacts', 'skips'),
+    ('artifacts', 'terminal_records'), ('runner_features', 'priority'),
+    ('runner_features', 'resource_admission'), ('runner_features', 'worker_bound'),
+    ('runner_features', 'native_threads_2'),
+])
+def test_ep2_reporting_clause_does_not_hide_unknown_field_duty(dimension, value):
+    from tl3_workers.evidence import preflight
+
+    requirement = ('The verifier must emit and validate the ' + value + ' field. '
+                   'Record exit status, skips and missing tools. Keep priority -10. '
+                   'Reserve CPU and RAM before dispatch. Limit worker count and native thread count.')
+    entry = route_requirement(requirement)
+    entry[dimension] = [value]
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+                  'methods': [], 'protected_files': []}
+    reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
+    preflight({'tool_capabilities': [capability]}, reply)
+    assert reply['evidence_contract'] == [entry]
+    assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
