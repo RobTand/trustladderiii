@@ -2,7 +2,7 @@
   "crate:tl3-contracts": {
     "max_fanout": 90,
     "reason": "planner-contracts #730/#819: Rust-sourced wire contracts (tl3-contracts) linked by tl3-controller; schema generation adds contract sources",
-    "sources": 23
+    "sources": 24
   },
   "crate:tl3-controller-core": {
     "max_fanout": 95,

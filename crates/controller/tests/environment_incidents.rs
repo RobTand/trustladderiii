@@ -483,3 +483,54 @@ fn harness_rejecting_tl3_check_input_is_a_tl3_side_incident() {
     );
     db.stop();
 }
+
+/// #826: the real incident path cites only this check generation's operator diagnostic.
+#[test]
+fn check_incident_carries_stderr_without_test_feedback() {
+    struct StderrChecks(LostChecks);
+    impl Executor for StderrChecks {
+        fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+            let mut completion = self.0.execute(d)?;
+            if starts(d, EffectKind::SubmitChecks) {
+                let diagnostic = serde_json::from_value::<Observation>(
+                    json!({"CheckExecutionFailure": {
+                    "node":d.node(), "generation":d.generation, "action_key":KEY,
+                    "diagnostic":{"outcome":"setup_failure", "phase":"container_start",
+                        "termination_reason":"incomplete_report", "test_started":false,
+                        "stderr_tail":format!("{}container shim refused: pid limit reached ghp_abcdefghijklmnopqrstuvwxyz1234567890", "old line\n".repeat(80))}}}),
+                );
+                assert!(
+                    diagnostic.is_ok(),
+                    "launcher stderr has no operator evidence path: {diagnostic:?}"
+                );
+                completion.observations.insert(0, diagnostic.unwrap());
+            }
+            Ok(completion)
+        }
+        fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.0.reconcile(d)
+        }
+    }
+    let mut db = support::Database::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::PrismaBuild,
+        StderrChecks(LostChecks(
+            adapters::prismabuild::Fake::new(root.path()),
+            None,
+        )),
+    );
+    let mut c = open_registry(&db.create("stderr_incident"), registry, Some("release-1"));
+    let incidents = open_incidents(&mut c);
+    assert_eq!(incidents.len(), 1);
+    let summary = incidents[0]["summary"].as_str().unwrap();
+    assert!(summary.contains("pid limit reached"), "{summary}");
+    assert!(summary.contains(KEY), "{summary}");
+    assert!(
+        !summary.contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
+        "{summary}"
+    );
+    assert!(c.world().unwrap().valid());
+    db.stop();
+}

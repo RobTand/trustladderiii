@@ -319,3 +319,13 @@ native_py_test(
     main = "//crates/harness-core:tests/fixtures/limits/test_boundary.py",
     deps = ["//harness/src/tl3_harness"],
 )
+
+tl3_py_test(
+    name = "test_stderr_tail",
+    srcs = ["test_stderr_tail.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)

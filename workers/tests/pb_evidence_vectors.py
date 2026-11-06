@@ -872,7 +872,7 @@ BOUND_CASES = {'generator.budget: 1 <= cpus <= 16': ['generator-artifact/budget-
  'pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 2048)': ['ending-summary/action-summary-bytes-below',
                                                                     'ending-summary/action-summary-bytes-at',
                                                                     'ending-summary/action-summary-bytes-above'],
- 'pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 512)': ['ending-summary/summary-bytes-below',
+ 'pb_tests._summary: bounded(model_result(result), limit=SUMMARY_BYTES - 512)': ['ending-summary/summary-bytes-below',
                                                                    'ending-summary/summary-bytes-at',
                                                                    'ending-summary/summary-bytes-above'],
  'pb_tests._summary: count < 0': ['ending-summary/executed',

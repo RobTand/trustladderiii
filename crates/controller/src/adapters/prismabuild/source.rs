@@ -336,6 +336,38 @@ mod loom_tests;
 fn observation_key(key: &ActionKey, observation: &Observation) -> String {
     match observation {
         Observation::CheckPlan { .. } => format!("pb:{key}:plan"),
+        Observation::CheckExecutionFailure { .. } => format!("pb:{key}:execution"),
         _ => format!("pb:{key}"),
+    }
+}
+
+#[cfg(test)]
+mod execution_diagnostic_tests {
+    use super::*;
+
+    /// #826 / #378: storing a diagnostic must never deduplicate away its check verdict.
+    #[test]
+    fn diagnostic_has_its_own_stable_delivery_key() {
+        let key: ActionKey = "a".repeat(64).parse().unwrap();
+        let diagnostic: Observation = serde_json::from_value(serde_json::json!({
+            "CheckExecutionFailure":{"node":0,"generation":1,"action_key":key,
+                "diagnostic":{"outcome":"setup_failure","phase":"container_start",
+                    "termination_reason":"incomplete_report","test_started":false,
+                    "stderr_tail":"shim refused"}}}))
+        .unwrap();
+        assert_eq!(
+            observation_key(&key, &diagnostic),
+            format!("pb:{key}:execution")
+        );
+        let verdict = Observation::Kernel(tl3_kernel::Event::Reply {
+            node: NodeId(0),
+            generation: 1,
+            reply: tl3_kernel::Reply::RunFailed,
+        });
+        assert_eq!(observation_key(&key, &verdict), format!("pb:{key}"));
+        assert_ne!(
+            observation_key(&key, &diagnostic),
+            observation_key(&key, &verdict)
+        );
     }
 }
