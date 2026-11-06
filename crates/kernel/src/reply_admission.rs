@@ -104,6 +104,17 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+            && old(w).nodes@[i as int].run == Some(generation) ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
 ] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
@@ -285,6 +296,15 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && n.review_stop == Some(ReviewStop::PlanCantMeet)
                     && n.credit == old(w).nodes@[i as int].credit
                     && n.plan_retries == old(w).nodes@[i as int].plan_retries
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),

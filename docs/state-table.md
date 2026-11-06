@@ -330,7 +330,12 @@ protected-path handling and Q50 infrastructure recovery retain their paths.
 
 The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
 `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
-`reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+`reviewer_out_of_room`, `plan_cant_meet`, `publication_body`, and `audit_disagreement`.
+
+Q27, Rob, 2026-11-05: "832 a please." ([#832](https://github.com/RobTand/trustladderiii/issues/832))
+After one named ingest repair, a second audit disagreement stops for TL3 review
+at `audit_disagreement` under both `fail_fast` settings. It spends no credit,
+creates no question and retains both readings and the open named objections.
 
 **Publication body refusal** ([#629](https://github.com/RobTand/trustladderiii/issues/629)):
 only an `OpenPr` effect receiving `BodyPolicyRefused` stops for TL3 review at
@@ -371,10 +376,15 @@ An independent agent checks ingest's output against the original issue. It can b
 | Required protected edits confirmed (Q57) | From declared goals, footprint or audit evidence | Stopping(NotActionable) | No credit spent or Rob question; record reason `protected_paths` |
 | Audit agrees with the measures | | Unplanned | Post the measures to the issue in plain language |
 | Audit agrees with an early end | | Stopping(Duplicate, AlreadyDone or NotActionable) | |
-| Audit disagrees | First time | Ingesting | Re-run ingest with the audit's objections, in a new generation |
-| Audit disagrees | Second time | AwaitingRob(audit disagreement) | Ask Rob, showing both readings |
+| Audit disagrees | First time | Ingesting | Re-run ingest once with the audit's separately indexed `audit_objections` items, in a new generation |
+| Audit disagrees | Second time, either `fail_fast` value (#832-A) | Stopping(Stopped), stop for TL3 review | Record `audit_disagreement`, both readings and the open named objections. No question, notice asking Rob or credit spent. Intake has no split path. |
 
-If Rob keeps ingest's reading, the request continues to Unplanned when the dispute was about measures. When it was about an early end, it goes to Stopping with ingest's proposed outcome.
+Audit-disagreement questions already open when this change deploys remain answerable;
+no new question of this kind is created and no live question is migrated. If Rob
+keeps ingest's reading on an already-open question, the request continues to
+Unplanned when the dispute was about measures. When it was about an early end,
+it goes to Stopping with ingest's proposed outcome. Change and stop also keep
+their existing behavior.
 
 ### Unplanned
 
@@ -662,7 +672,7 @@ The node holds no slot and no files while it waits. Each question is in plain la
 
 | Question | Answers it offers |
 |---|---|
-| Audit disagreement | Continue (ingest's reading stands), change the request, stop |
+| Audit disagreement, already open before #832-A deployed only | Continue (ingest's reading stands), change the request, stop. No new question of this kind is created. |
 | Needs splitting (slice one only) | Change the request, stop |
 | Can't meet | Try again with guidance, change the request, stop |
 | Out of credit | Add credit, change the request, stop |

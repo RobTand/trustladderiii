@@ -37,7 +37,7 @@ macro_rules! worker_groups {
 worker_groups! {
     Router: 2,
     Waits: 6,
-    IngestMaterials: 4,
+    IngestMaterials: 6,
     IngestAudit: 2,
     LaunchKills: 2,
     Launch: 2,

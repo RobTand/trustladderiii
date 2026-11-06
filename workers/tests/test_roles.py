@@ -27,7 +27,9 @@ def test_discovered_roles_have_prompts_and_schemas_without_orphans():
     assert set(ROLES) == modules
     # check-report.json is generated from the controller's Rust contract types (#741).
     expected_schemas = {"request.json", "decision-context.json", "check-report.json",
-                        "budget-wire.json", "quota-event.json", "harness-wire.json"}
+                        "budget-wire.json", "quota-event.json", "harness-wire.json",
+                        # #832-K worker event contract, outside every model prompt.
+                        "plan-check-provenance.json"}
     Draft202012Validator.check_schema(schema("check-report"))
     Draft202012Validator.check_schema(schema("decision-context"))
     Draft202012Validator.check_schema(schema("budget-wire"))
