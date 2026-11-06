@@ -129,7 +129,7 @@ class Forcing:
                 raise HarnessInputError(named('forcing.literal_bytes', f"a patch literal is limited to {FORCING_LITERAL_BYTES} bytes of JSON", {}))
             value = json.loads(argument)
             if mode == "raises" and not (isinstance(value, str) and forced_exception(value)):
-                facts = {'reply': self.as_json(), 'field': f'/forcing/patches/{index}/raises'}
+                facts = {'reply': {'forcing': self.as_json()}, 'field': f'/forcing/patches/{index}/raises'}
                 raise ProofRefusal('forcing.raise_class', **facts)
             if mode == "delay_seconds" and (type(value) not in (int, float) or not 0 < value <= MAX_DELAY_SECONDS):
                 raise HarnessInputError(named('forcing.delay', f"delay_seconds must be above 0 and at most {MAX_DELAY_SECONDS}", {}))

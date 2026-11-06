@@ -496,7 +496,7 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
                 return validate(*args, **kwargs)
             except ProofRefusal as error:
                 if any(item.rule.gating for item in error.violations):
-                    raise
+                    raise ProofRefusal.from_violations([*violations, *error.violations]) from None
                 violations.extend(Violation(item.rule, {**item.facts, **({'field': field} if field else {})})
                                   for item in error.violations)
 
@@ -508,7 +508,10 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
         support_required = set()
         for item in requested:
             if item in support:
-                text, _ = source_unit(new, item)
+                try:
+                    text, _ = source_unit(new, item)
+                except ProofRefusal as error:
+                    raise ProofRefusal.from_violations([*violations, *error.violations]) from None
                 collect(validate_support, text, name, observer_context=observer_context and item == name, subjects=subjects, context=(old, new),
                         field=f'/proof/observer_support/{support.index(item)}')
                 if old_path.exists() and '::' in item:

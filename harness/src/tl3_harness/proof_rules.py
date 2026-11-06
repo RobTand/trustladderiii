@@ -228,4 +228,3 @@ def export_rows():
             data['names'] = [{'kind': name['kind'], 'value': '{' + name['kind'] + '}'} for name in data['names']]
             result.append(data)
     return result
-

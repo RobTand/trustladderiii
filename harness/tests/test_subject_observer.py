@@ -305,7 +305,7 @@ def test_new_observer_context_cannot_smuggle_a_declared_subject(repository, cont
     results, _, _ = round_result(repository, before, after,
         Check('smuggled context', Kind.DEMONSTRATING, (observer,), proof=proof))
     assert results[0].verdict == Verdict.FAIL
-    assert 'subject onto base' in results[0].tests[0].message
+    assert f'proof.observer.subject_{container}:' in results[0].tests[0].message
 
 
 def test_new_observer_class_carries_its_needed_decorator_import(repository):
@@ -320,19 +320,19 @@ def test_new_observer_class_carries_its_needed_decorator_import(repository):
     assert results[0].verdict == Verdict.PASS, results
 
 
-@pytest.mark.parametrize('support', [
-    'TOKEN = helper = lambda: ("new", VERSION)',
-    'TOKEN = "context"; helper = lambda: ("new", VERSION)',
-    '(TOKEN, helper) = ("context", lambda: ("new", VERSION))',
-    'TOKEN = "context"; globals()["helper"] = lambda: ("new", VERSION)',
-    'TOKEN = "context"; globals().update(helper=lambda: ("new", VERSION))',
-    'TOKEN = "context"; helper += ("new", VERSION)',
-    'TOKEN = "context"; import builtins as helper',
-    'TOKEN = "context"; globals().update(**{"helper": lambda: ("new", VERSION)})',
-    'def TOKEN():\n    global helper\n    def helper(): return ("new", VERSION)',
-    'class TOKEN:\n    global helper\n    class helper: pass',
+@pytest.mark.parametrize('support,rule', [
+    ('TOKEN = helper = lambda: ("new", VERSION)', 'proof.support.literal_initializer'),
+    ('TOKEN = "context"; helper = lambda: ("new", VERSION)', 'proof.support.literal_assignment'),
+    ('(TOKEN, helper) = ("context", lambda: ("new", VERSION))', 'proof.support.literal_initializer'),
+    ('TOKEN = "context"; globals()["helper"] = lambda: ("new", VERSION)', 'proof.support.namespace_api'),
+    ('TOKEN = "context"; globals().update(helper=lambda: ("new", VERSION))', 'proof.support.namespace_api'),
+    ('TOKEN = "context"; helper += ("new", VERSION)', 'proof.support.literal_assignment'),
+    ('TOKEN = "context"; import builtins as helper', 'proof.support.namespace_api'),
+    ('TOKEN = "context"; globals().update(**{"helper": lambda: ("new", VERSION)})', 'proof.support.namespace_api'),
+    ('def TOKEN():\n    global helper\n    def helper(): return ("new", VERSION)', 'proof.support.graft_binding'),
+    ('class TOKEN:\n    global helper\n    class helper: pass', 'proof.support.graft_binding'),
 ])
-def test_review662_support_cannot_rebind_base_subject(repository, support):
+def test_review662_support_cannot_rebind_base_subject(repository, support, rule):
     path = 'tests/test_subject.py'
     before = 'VERSION = 0\ndef helper(): return ("old", VERSION)\n'
     after = ('VERSION = 1\n' + support + '\n'
@@ -341,7 +341,7 @@ def test_review662_support_cannot_rebind_base_subject(repository, support):
     results, _, _ = round_result(repository, {path: before}, {path: after},
         Check('support rebind', Kind.DEMONSTRATING, (path + '::test_observer',), proof=proof))
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'bind' in results[0].tests[0].message, results
+    assert rule + ':' in results[0].tests[0].message, results
 
 
 def test_review662_inferred_proof_cannot_skip_assertion_reason(repository):
@@ -378,7 +378,7 @@ def test_rereview662_support_refuses_dynamic_namespace_apis(repository, support)
     results, _, _ = round_result(repository, {path: before}, {path: after},
         Check('namespace escape', Kind.DEMONSTRATING, (path + '::test_observer',), proof=proof))
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'dynamic namespace' in results[0].tests[0].message, results
+    assert 'proof.support.namespace_api:' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message, results
 
 
@@ -494,7 +494,7 @@ def test_final662_support_cannot_assign_or_delete_members(repository, support):
                   proof=model.Proof((path + '::World::helper',), (path + '::TOKEN',), 'declared result'))
     results, _, _ = round_result(repository, {path: before}, {path: after}, check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'plain names' in results[0].tests[0].message, results
+    assert 'proof.support.member_write:' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message and 'World' in results[0].tests[0].message, results
 
 
@@ -544,7 +544,7 @@ def test_final662_support_wildcard_import_cannot_replace_base_helper(repository)
     results, _, _ = round_result(repository, {path: before},
                                 {path: after, 'support_fix.py': 'def helper(): return "new"\n'}, check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'wildcard import' in results[0].tests[0].message, results
+    assert 'proof.support.wildcard_import:' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message and 'support_fix' in results[0].tests[0].message, results
 
 
@@ -595,7 +595,7 @@ def test_t842_real_ops_proof_shapes(repository, case):
         # Its mutable dictionary escapes into production code. Partial inference
         # cannot prove identical data; planner preflight must request a factory.
         assert results[0].verdict == Verdict.FAIL, results
-        assert 'immutable and bound exactly once' in results[0].tests[0].message
+        assert 'proof.support.literal_binding:' in results[0].tests[0].message
         assert results[0].tests[0].base == Outcome.UNCOLLECTED
         return
     # #842 r2: replacing submit.PBRUN is runtime mutation of a loaded subject.
