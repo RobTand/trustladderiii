@@ -69,6 +69,7 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
         retirement::domain(result.1.0), retirement::accepted(result.1.0), retirement::notices_only(result.1.1),
         port_failfast_replies::diverted(off, result.0.0, result.1.0, reply, result.1.1),
         forall|i: int| 0 <= i < 2 ==> port_failfast_safety::node_post(off.nodes@[i], result.1.0.nodes@[i]),
+        port_replies_maker_exec::funding(World { fail_fast: true, ..off }, result.1.0, generation, reply),
         !port_review_reply::active(off.nodes@[0], generation) ==>
             port_failfast_admission::same_world(result.0.0, result.1.0),
         port_review_reply::reply_post(off, result.0.0, 0, generation, reply,
@@ -76,7 +77,7 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
         port_review_reply::reply_post(World { fail_fast: true, ..off }, result.1.0, 0, generation, reply,
             Outbox { items: [None; OUTBOX], len: 0 }, result.1.1),
 ] proof [reveal(retirement_domain); reveal(retirement_accepted); reveal(empty_outbox);
-    reveal(retirement::notices_only);] {
+    reveal(retirement::notices_only); reveal(storage_ordered);] {
     kernel_snapshot! { before = off }
     let mut on = port_failfast_witness::fast_copy(&off);
     kernel_snapshot! { fast = on }
@@ -98,6 +99,14 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
     kernel_proof! {
         compare(before@, off, on, generation, reply, initial@, out_off, out_on);
         safe(fast@, on, generation, reply, initial_on@, out_on);
+        if let Reply::MakerNeedsFiles { files, fits } = reply {
+            let n = fast@.nodes@[0];
+            if current_item(n) == Some(Item::Await) && n.run == Some(generation)
+                && footprint::valid_footprint(fast@, files) && fits
+                && !footprint::footprint_empty(files) && !port_review_retry::funded(n) {
+                port_replies_maker_frames::funding(fast@, on, generation, files, fits, initial_on@, out_on);
+            }
+        }
         if !port_review_reply::active(before@.nodes@[0], generation) {
             port_failfast_admission::inactive_pair(before@, off, on, generation,
                 reply, initial@, out_off, out_on);

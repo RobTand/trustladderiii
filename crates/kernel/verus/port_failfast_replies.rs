@@ -86,6 +86,7 @@ pub(super) proof fn ordinary(before: World, off: World, on: World, generation: u
     ensures diverted(before, off, on, reply, on_out),
 {
     let fast = World { fail_fast: true, ..before };
+    reveal(port_review_reply::accepted_reply);
     admitted(before, off, generation, reply, initial, off_out);
     admitted(fast, on, generation, reply, initial, on_out);
     reveal(port_review_reply::accepted_reply);

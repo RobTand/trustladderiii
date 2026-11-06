@@ -21,6 +21,7 @@ pub(super) proof fn compare(before: World, off: World, on: World, generation: u6
     let reply = Reply::MakerNeedsFiles { files, fits };
     let source = port_review_reply::ended(before.nodes@[0]);
     reveal(port_review_reply::accepted_reply);
+    footprint::storage_frame(before, World { fail_fast: true, ..before }, files, files);
     port_failfast_replies::admitted(before, off, generation, reply, initial, off_out);
     port_failfast_replies::admitted(World { fail_fast: true, ..before }, on,
         generation, reply, initial, on_out);
