@@ -77,7 +77,7 @@ pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> 
 /// stopped. The summary has no decision for Rob, so none is kept.
 pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> {
     let found = match step {
-        ReviewStop::PlanCantMeet => planner(&(sources.fresh)("plans")?),
+        ReviewStop::PlanCantMeet => plan_check_stop(&(sources.fresh)("plans")?),
         ReviewStop::MakerOutOfRoom | ReviewStop::MakerNeedsFiles => {
             let reply = (sources.fresh)("maker_replies")?;
             reported("maker", reply["report"].as_str()?, CANT_MEET)
@@ -107,6 +107,33 @@ pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> 
 
 fn caused(report: &str) -> Option<Value> {
     Some(json!({"source": "credit", "report": report, "decision": CREDIT}))
+}
+
+fn plan_check_stop(plan: &Value) -> Option<Value> {
+    use crate::contracts::plan_check::{ObjectionClass, PlanCheckProvenance};
+    let Some(provenance) = plan.get("plan_check") else {
+        return planner(plan);
+    };
+    let provenance: PlanCheckProvenance = serde_json::from_value(provenance.clone()).ok()?;
+    let needs_split = provenance
+        .objections
+        .iter()
+        .all(|o| o.class == ObjectionClass::SizeExecutionFit);
+    let mut report = if needs_split {
+        "The request requires decomposition. The split requirement is recorded; no child executes."
+            .to_owned()
+    } else {
+        "The plan-check objections remain after the available correction.".to_owned()
+    };
+    for objection in &provenance.objections {
+        report.push_str(&format!(
+            "\n{} [{}]: {}",
+            objection.rule,
+            objection.items.join(", "),
+            objection.diagnostic
+        ));
+    }
+    Some(json!({"source":"planner", "report":clip(&report, REPORT_CHARS)}))
 }
 
 fn audit(sources: &Sources) -> Option<Value> {

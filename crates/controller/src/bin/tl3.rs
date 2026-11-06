@@ -17,6 +17,10 @@ fn main() {
         pb_evidence_cli::run(&args[1..])
     } else if std::env::args().nth(1).as_deref() == Some("check-budget") {
         tl3_controller::budget::check()
+    } else if std::env::args().nth(1).as_deref() == Some("check-inputs") {
+        tl3_controller::input_check::check(std::env::args().nth(2).as_deref())
+    } else if std::env::args().nth(1).as_deref() == Some("check-quota") {
+        tl3_controller::quota::check()
     } else if std::env::args().nth(1).as_deref() == Some("check-harness") {
         tl3_controller::check_harness::command(std::env::args().nth(2).as_deref())
     } else if std::env::args().nth(1).as_deref() == Some("check-reply") {
