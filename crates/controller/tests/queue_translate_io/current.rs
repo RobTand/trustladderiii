@@ -32,7 +32,7 @@ impl Evidence {
     }
 }
 
-enum Observation { Queue(QueueFact), Outcome { node: NodeId, outcome: tl3_controller::outcome::Outcome, receipt: Option<String> } }
+enum Observation { Queue(QueueFact), GitHubComment {}, Outcome { node: NodeId, outcome: tl3_controller::outcome::Outcome, receipt: Option<String> } }
 mod outcome { pub use tl3_controller::outcome::*; }
 
 struct Shell<'a>(&'a mut Controller);
@@ -288,6 +288,7 @@ impl Shell<'_> {
                 commit.rows.push(put("queue_facts", identity, value));
                 Event::Fact { node, fact }
             }
+            Observation::GitHubComment { .. } => unreachable!(),
             Observation::Outcome {
                 node,
                 outcome,
@@ -319,13 +320,13 @@ impl Shell<'_> {
                         checks_passed,
                     },
                     Outcome::CiFailed { head, infra, .. } => {
-                        if commit_sha(snapshot, current.head) != Some(head.as_str()) {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
                             return Ok(None);
                         }
                         Fact::CiFailed { infra }
                     }
                     Outcome::Conflict { head } => {
-                        if commit_sha(snapshot, current.head) != Some(head.as_str()) {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
                             return Ok(None);
                         }
                         Fact::Conflict

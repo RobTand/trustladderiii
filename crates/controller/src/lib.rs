@@ -3422,13 +3422,13 @@ impl Controller {
                         checks_passed,
                     },
                     Outcome::CiFailed { head, infra, .. } => {
-                        if commit_sha(snapshot, current.head) != Some(head.as_str()) {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
                             return Ok(None);
                         }
                         Fact::CiFailed { infra }
                     }
                     Outcome::Conflict { head } => {
-                        if commit_sha(snapshot, current.head) != Some(head.as_str()) {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
                             return Ok(None);
                         }
                         Fact::Conflict
