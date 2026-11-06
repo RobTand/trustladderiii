@@ -72,9 +72,9 @@ pub(super) open spec fn transition(n: Node, fail_fast: bool, id: u64, reply: Rep
     }
 }
 
-/// #806: accepted-handler relation; worker-family clauses are supplied by W1.
-#[verifier::opaque]
-pub(super) open spec fn transition_post(before: World, after: World, i: int, source: Node,
+/// #806: W2-selected handler relation, independent of worker-family clauses.
+#[verifier::inline]
+pub(super) open spec fn review_transition_post(before: World, after: World, i: int, source: Node,
     reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
     selected(reply) ==> after.nodes@[i] == transition(source, before.fail_fast, before.next_question, reply).0
         && after.next_question == transition(source, before.fail_fast, before.next_question, reply).1
@@ -90,6 +90,14 @@ pub(super) open spec fn transition_post(before: World, after: World, i: int, sou
             Reply::ChecksDone { pass: true, in_footprint: true, .. } => out_after == out_before,
             _ => true,
         })
+}
+
+
+/// #806: combined accepted-handler relation; W1 adds its unconditional worker conjunct here.
+#[verifier::opaque]
+pub(super) open spec fn transition_post(before: World, after: World, i: int, source: Node,
+    reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
+    review_transition_post(before, after, i, source, reply, out_before, out_after)
 }
 
 /// #806: exact per-branch reply result, isolated from common world frames.

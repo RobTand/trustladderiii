@@ -231,7 +231,7 @@ fn admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(port_review_reply::accepted_reply);] {
+] proof [reveal(port_review_reply::accepted_reply); reveal(port_review_reply::transition_post);] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     end_operation(&mut w.nodes[i]);
