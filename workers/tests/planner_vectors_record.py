@@ -589,10 +589,12 @@ def generate(selection=None):
     paths = [f'tests/test_{source}.py' for source in SOURCES if source not in ('workers', 'recall')]
     paths += ['tests/test_workers.py', 'tests/test_branch_publication.py']
     # Only the generated-scope and memory-citation scenarios belong to this slice.
+    # The #1574 footprint table reads this corpus, so recording it would never reach a fixed point.
     class Selection:
         def pytest_collection_modifyitems(self, items):
-            items[:] = [item for item in items if item.path.stem != 'test_workers' or
-                        any(word in item.name for word in ('generated', 'freeze', 'freezes', 'memories'))]
+            items[:] = [item for item in items if (item.path.stem != 'test_workers' or
+                        any(word in item.name for word in ('generated', 'freeze', 'freezes', 'memories')))
+                        and 'every_footprint_repair_line' not in item.name]
     # Fixture commits are facts too; fix their timestamps before setup creates them.
     dates = dict.fromkeys(('GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE'), '2000-01-01T00:00:00+00:00')
     with patch.dict(os.environ, dates):
