@@ -74,6 +74,7 @@ pub struct Plan {
 }
 
 /// #830 is the approved source of direct delivery and its retained approval check
+/// Line citations below use integration base b8ed296862.
 /// (called "Q44" in #830; canonical Q44 is reviewer context exhaustion).
 /// Exact-head approval is Q41, docs/state-machine.md:132,487; passed Checking and
 /// approval: docs/state-table.md:507,518; approval-check publishing step: :531.

@@ -1999,26 +1999,40 @@ mod router_queue {
     }
     #[test]
     fn router_source_pins_preserve_literal_whitespace() {
-        assert!(!pinned(r#"fn example() { "xy" }"#, r#"fn example() { "x y" }"#));
+        assert!(!pinned(
+            r#"fn example() { "xy" }"#,
+            r#"fn example() { "x y" }"#
+        ));
         let raw = "fn example() { r#\"} {\"# }";
         assert!(pinned(raw, raw));
     }
     #[test]
     fn router_queue_copies_are_complete_production_bodies() {
         let actual = include_str!("../../src/executor.rs");
-        let copy = include_str!("router_executor.rs").split_once('\n').unwrap().1;
+        let copy = include_str!("router_executor.rs")
+            .split_once('\n')
+            .unwrap()
+            .1;
         let (look, rest) = copy.split_once("\n\npub enum WaitRecord {").unwrap();
         let (wait, executor) = rest.split_once("\n\npub trait Executor {").unwrap();
         assert!(pinned(actual, look));
         assert!(pinned(actual, &format!("pub enum WaitRecord {{{wait}")));
         assert!(pinned(actual, &format!("pub trait Executor {{{executor}")));
         let actual = include_str!("../../src/adapters/mergify.rs");
-        let copy = include_str!("router_current_executor.rs").split_once('\n').unwrap().1
-            .strip_prefix("impl executor::Executor for Adapter {\n").unwrap()
-            .strip_suffix("\n}\n").unwrap();
+        let copy = include_str!("router_current_executor.rs")
+            .split_once('\n')
+            .unwrap()
+            .1
+            .strip_prefix("impl executor::Executor for Adapter {\n")
+            .unwrap()
+            .strip_suffix("\n}\n")
+            .unwrap();
         let (execute, reconcile) = copy.split_once("\n\n    fn reconcile(").unwrap();
         assert!(pinned(actual, execute), "complete execute body drifted");
-        assert!(pinned(actual, &format!("    fn reconcile({reconcile}")), "complete reconcile body drifted");
+        assert!(
+            pinned(actual, &format!("    fn reconcile({reconcile}")),
+            "complete reconcile body drifted"
+        );
     }
 }
 

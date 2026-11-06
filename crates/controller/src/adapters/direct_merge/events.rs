@@ -212,8 +212,14 @@ impl GitHubTranslator for Translator {
                     let number = row.value["number"]
                         .as_u64()
                         .ok_or(Error::Invalid("invalid direct PR number"))?;
-                    let n = world.nodes.get(node.0 as usize).ok_or(Error::Invalid("missing direct catch-up node"))?;
-                    let changed = changes.pull_requests.iter().any(|pull| pull.number == number)
+                    let n = world
+                        .nodes
+                        .get(node.0 as usize)
+                        .ok_or(Error::Invalid("missing direct catch-up node"))?;
+                    let changed = changes
+                        .pull_requests
+                        .iter()
+                        .any(|pull| pull.number == number)
                         || changes.closed.iter().any(|(closed, _)| *closed == number)
                         || changes.check_runs.iter().any(|check| {
                             Some(check.head_sha.as_str()) == crate::commit_sha(snapshot, n.head)
@@ -221,7 +227,9 @@ impl GitHubTranslator for Translator {
                         || changes.check_suites.iter().any(|check| {
                             Some(check.head_sha.as_str()) == crate::commit_sha(snapshot, n.head)
                         });
-                    if matches!(n.phase, Phase::Closed(_)) && !changed { continue; }
+                    if matches!(n.phase, Phase::Closed(_)) && !changed {
+                        continue;
+                    }
                     let pull = crate::executor::runtime()?
                         .block_on(client.pull_request(&full_name(&repo), number))?;
                     inputs.extend(self.input(snapshot, &repo, &pull, true)?);

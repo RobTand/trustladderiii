@@ -23,7 +23,7 @@ use std::{
 };
 use tl3_github::{GitHub, MergeMethod, PullRequest};
 use tl3_kernel::{EffectKind, Phase};
-use tl3_mergify::decide::{required, enqueue as lifecycle};
+use tl3_mergify::decide::{enqueue as lifecycle, required};
 use tl3_store::{Snapshot, Store};
 
 pub const VISIBILITY: &str = "delivered directly (CI bypassed by repo config)";
@@ -287,45 +287,77 @@ impl Adapter {
             } else {
                 vec![]
             };
-            let mut summary = required::Summary { ready: true, failure: required::Failure::None };
+            let mut summary = required::Summary {
+                ready: true,
+                failure: required::Failure::None,
+            };
             for rule in required.checks {
-                let matching: Vec<_> = latest.values().filter(|check| {
-                    required::rule_matches(check.name == rule.context, rule.integration_id,
-                        check.app.as_ref().map(|app| app.id))
-                }).collect();
-                let status = rule.integration_id.is_none().then(|| {
-                    statuses.iter().filter(|status| status.context == rule.context).max_by_key(|status| status.id)
-                }).flatten();
+                let matching: Vec<_> = latest
+                    .values()
+                    .filter(|check| {
+                        required::rule_matches(
+                            check.name == rule.context,
+                            rule.integration_id,
+                            check.app.as_ref().map(|app| app.id),
+                        )
+                    })
+                    .collect();
+                let status = rule
+                    .integration_id
+                    .is_none()
+                    .then(|| {
+                        statuses
+                            .iter()
+                            .filter(|status| status.context == rule.context)
+                            .max_by_key(|status| status.id)
+                    })
+                    .flatten();
                 if matching.is_empty() && status.is_none() {
                     summary = required::record(summary, required::Contribution::Pending);
                 }
                 // Q47, docs/state-machine.md:681-689 on b8ed2968; #830 preserves required protection.
                 // C1's record folds EVERY report conjunctively, including a same-name legacy status.
                 for check in matching {
-                    let view = tl3_mergify::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)[0];
+                    let view =
+                        tl3_mergify::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)
+                            [0];
                     let runner = if required::needs_annotations(
                         view.status == tl3_mergify::decide::Status::Completed,
                         view.app == tl3_mergify::decide::App::Actions,
                         view.conclusion == Some(tl3_mergify::decide::Conclusion::Failure),
                     ) {
-                        let annotations = self.runtime.block_on(github.check_annotations(&repo, check.id))?;
-                        required::runner_failure(&annotations.iter().map(annotation_class).collect::<Vec<_>>())
-                    } else { false };
+                        let annotations = self
+                            .runtime
+                            .block_on(github.check_annotations(&repo, check.id))?;
+                        required::runner_failure(
+                            &annotations.iter().map(annotation_class).collect::<Vec<_>>(),
+                        )
+                    } else {
+                        false
+                    };
                     let item = match lifecycle::required_check(view, runner) {
                         lifecycle::RequiredState::Passed => required::Contribution::Passed,
-                        lifecycle::RequiredState::Infrastructure => required::Contribution::Infrastructure,
+                        lifecycle::RequiredState::Infrastructure => {
+                            required::Contribution::Infrastructure
+                        }
                         lifecycle::RequiredState::Tests => required::Contribution::Tests,
-                        lifecycle::RequiredState::Pending | lifecycle::RequiredState::Unknown => required::Contribution::Pending,
+                        lifecycle::RequiredState::Pending | lifecycle::RequiredState::Unknown => {
+                            required::Contribution::Pending
+                        }
                     };
                     summary = required::record(summary, item);
-                    if matches!(item, required::Contribution::Tests | required::Contribution::Infrastructure)
-                        && (failure.is_none() || item == required::Contribution::Tests) {
+                    if matches!(
+                        item,
+                        required::Contribution::Tests | required::Contribution::Infrastructure
+                    ) && (failure.is_none() || item == required::Contribution::Tests)
+                    {
                         failure = Some(Evidence::CiFailed {
                             check: check.id,
                             completed_at: check.completed_at.map(|time| time.to_rfc3339()),
                             head: pull.head.sha.clone(),
                             infra: item == required::Contribution::Infrastructure,
-                            head_check: true, details: Default::default(),
+                            head_check: true,
+                            details: Default::default(),
                         });
                     }
                 }
@@ -338,14 +370,24 @@ impl Adapter {
                     });
                     summary = required::record(summary, item);
                     if item == required::Contribution::Tests {
-                        failure = Some(Evidence::CiFailed { check: status.id,
-                            completed_at: status.updated_at.map(|time|time.to_rfc3339()),
-                            head: pull.head.sha.clone(), infra: false, head_check: true, details:Default::default() });
+                        failure = Some(Evidence::CiFailed {
+                            check: status.id,
+                            completed_at: status.updated_at.map(|time| time.to_rfc3339()),
+                            head: pull.head.sha.clone(),
+                            infra: false,
+                            head_check: true,
+                            details: Default::default(),
+                        });
                     }
                 }
             }
-            checks = if summary.failure != required::Failure::None { Checks::Failed }
-                else if summary.ready { Checks::Passed } else { Checks::Pending };
+            checks = if summary.failure != required::Failure::None {
+                Checks::Failed
+            } else if summary.ready {
+                Checks::Passed
+            } else {
+                Checks::Pending
+            };
             let checked_base = pull.base.branch.clone();
             // A later read can differ. Never cache the first PR read across check/settings I/O.
             pull = self
@@ -416,7 +458,8 @@ impl Adapter {
         Ok(Completion::confirmed(observations))
     }
     fn remember_delivery(&self, d: &Delivery, merged: &Merged) -> Result<()> {
-        let intent: Option<Intent> = read_file(&self.records.path(&d.key).with_extension("intent"))?;
+        let intent: Option<Intent> =
+            read_file(&self.records.path(&d.key).with_extension("intent"))?;
         if !intent.is_some_and(|intent| intent.action == "Merge" && intent.head == merged.head) {
             return Ok(());
         }
@@ -424,7 +467,11 @@ impl Adapter {
         let snapshot = store.load()?;
         let id = d.node().0.to_string();
         let value = serde_json::json!({"delivery":d.key,"head":merged.head,"mode":"direct","number":number(d)?});
-        if snapshot.rows.iter().any(|r|r.table == "delivery_history" && r.id == id && r.value == value) {
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "delivery_history" && r.id == id && r.value == value)
+        {
             return Ok(());
         }
         if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
@@ -433,8 +480,14 @@ impl Adapter {
         self.records.fence(self.epoch)?;
         let mut commit = tl3_store::Commit::new(
             format!("direct-history:{}:{}", d.key, snapshot.revision.get()),
-            serde_json::json!({"direct_delivery":d.key}), &snapshot);
-        commit.rows.push(tl3_store::RowChange::Put { table:"delivery_history".into(), id, value });
+            serde_json::json!({"direct_delivery":d.key}),
+            &snapshot,
+        );
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "delivery_history".into(),
+            id,
+            value,
+        });
         self.boundary(Write::History, false);
         store.commit(&commit)?;
         self.boundary(Write::History, true);
@@ -442,9 +495,17 @@ impl Adapter {
     }
     fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
         self.remember_delivery(d, &merged)?;
-        let fact = QueueFact { repository:d.repository.clone(), number:number(d)?,
-            evidence:Evidence::Merged {head:merged.head.clone(),checks_passed:merged.checks_passed} };
-        if fact.recorded(&self.snapshot()?)? { return self.fact(d, fact.evidence); }
+        let fact = QueueFact {
+            repository: d.repository.clone(),
+            number: number(d)?,
+            evidence: Evidence::Merged {
+                head: merged.head.clone(),
+                checks_passed: merged.checks_passed,
+            },
+        };
+        if fact.recorded(&self.snapshot()?)? {
+            return self.fact(d, fact.evidence);
+        }
         self.write(
             Write::Receipt,
             &self.receipt_path(d)?,
@@ -458,16 +519,34 @@ impl Adapter {
             },
         )
     }
-    fn result(&self, d: &Delivery, read: &Read, plan: &Plan, remember: bool) -> Result<Option<Completion>> {
+    fn result(
+        &self,
+        d: &Delivery,
+        read: &Read,
+        plan: &Plan,
+        remember: bool,
+    ) -> Result<Option<Completion>> {
         Ok(Some(match plan.outcome {
             Outcome::Merged => {
                 let matched = read.facts.observed == read.facts.approved
                     && read.facts.checking
                     && read.facts.checked == read.facts.approved;
                 if remember {
-                    self.merged(d, Merged { head: read.pull.head.sha.clone(), checks_passed: matched })?
+                    self.merged(
+                        d,
+                        Merged {
+                            head: read.pull.head.sha.clone(),
+                            checks_passed: matched,
+                        },
+                    )?
                 } else {
-                    self.fact(d, Evidence::Merged { head: read.pull.head.sha.clone(), checks_passed: matched })?
+                    self.fact(
+                        d,
+                        Evidence::Merged {
+                            head: read.pull.head.sha.clone(),
+                            checks_passed: matched,
+                        },
+                    )?
                 }
             }
             Outcome::Moved => self.fact(
@@ -685,8 +764,11 @@ impl Executor for Adapter {
             });
         }
         let observations = self.observations(d)?;
-        Ok(if observations.is_empty() { Look::Pending }
-            else { Look::Found(Box::new(Completion::confirmed(observations))) })
+        Ok(if observations.is_empty() {
+            Look::Pending
+        } else {
+            Look::Found(Box::new(Completion::confirmed(observations)))
+        })
     }
     fn reconcile_cancellation(&mut self, d: &Delivery) -> Result<Reconciliation> {
         let github = self.client(d)?;
@@ -711,30 +793,62 @@ impl Executor for Adapter {
         // Retirement stores the original effect payload, before PR hydration.
         // Recover its binding from the same durable snapshot as terminal evidence.
         let mut hydrated = d.clone();
-        hydrated.pull_request = hydrated.pull_request.or_else(|| snapshot.rows.iter()
-            .find(|r| r.table == "pull_requests" && r.id == d.node().0.to_string())
-            .and_then(|r| r.value["number"].as_u64()));
+        hydrated.pull_request = hydrated.pull_request.or_else(|| {
+            snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "pull_requests" && r.id == d.node().0.to_string())
+                .and_then(|r| r.value["number"].as_u64())
+        });
         let d = &hydrated;
         let world = crate::snapshot::decode(&snapshot)?;
-        let n = world.nodes.get(d.node().0 as usize).ok_or(Error::Invalid("missing retired direct node"))?;
+        let n = world
+            .nodes
+            .get(d.node().0 as usize)
+            .ok_or(Error::Invalid("missing retired direct node"))?;
         // The controller invokes this hook after the terminal effect's dispatch/watch
         // retirement is durable. The consumed merged fact protects against late retries.
-        let retiring = snapshot.rows.iter().any(|r| r.table == "retiring_effects" && r.id == d.key);
-        let unsettled = snapshot.pending_effects.iter().any(|effect| effect.key == d.key)
-            || snapshot.rows.iter().any(|r| matches!(r.table.as_str(), "watches" | "dispatches") && r.id == d.key);
-        if retiring && !unsettled && matches!(n.phase,
-            Phase::Stopping(tl3_kernel::Outcome::Merged) | Phase::Closed(tl3_kernel::Outcome::Merged)) {
+        let retiring = snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "retiring_effects" && r.id == d.key);
+        let unsettled = snapshot
+            .pending_effects
+            .iter()
+            .any(|effect| effect.key == d.key)
+            || snapshot
+                .rows
+                .iter()
+                .any(|r| matches!(r.table.as_str(), "watches" | "dispatches") && r.id == d.key);
+        if retiring
+            && !unsettled
+            && matches!(
+                n.phase,
+                Phase::Stopping(tl3_kernel::Outcome::Merged)
+                    | Phase::Closed(tl3_kernel::Outcome::Merged)
+            )
+        {
             if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
                 return Err(Error::Invalid("direct retirement epoch is fenced"));
             }
-            let head = crate::commit_sha(&snapshot, n.merged).ok_or(Error::Invalid("missing consumed merged head"))?;
-            self.remember_delivery(d, &Merged {head:head.into(), checks_passed:n.checked == n.merged})?;
+            let head = crate::commit_sha(&snapshot, n.merged)
+                .ok_or(Error::Invalid("missing consumed merged head"))?;
+            self.remember_delivery(
+                d,
+                &Merged {
+                    head: head.into(),
+                    checks_passed: n.checked == n.merged,
+                },
+            )?;
             self.records.fence(self.epoch)?;
-            for path in [self.records.path(&d.key).with_extension("intent"), self.receipt_path(d)?] {
+            for path in [
+                self.records.path(&d.key).with_extension("intent"),
+                self.receipt_path(d)?,
+            ] {
                 self.boundary(Write::Reclaim, false);
                 match fs::remove_file(&path) {
                     Ok(()) => std::fs::File::open(path.parent().unwrap())?.sync_all()?,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error.into()),
                 }
                 self.boundary(Write::Reclaim, true);
@@ -771,14 +885,22 @@ fn number(d: &Delivery) -> Result<u64> {
 }
 // Parse the upstream annotation wording at this boundary; C1 owns aggregation/classification.
 fn annotation_class(annotation: &tl3_github::CheckAnnotation) -> required::Annotation {
-    if annotation.annotation_level != "failure" { return required::Annotation::Ignore; }
-    if ["The runner has lost communication with the server",
+    if annotation.annotation_level != "failure" {
+        return required::Annotation::Ignore;
+    }
+    if [
+        "The runner has lost communication with the server",
         "The job was not acquired by Runner of type",
         "The job was abandoned as the runner did not pick it up",
-        "The job was not started because recent account payments have failed"]
-        .iter().any(|prefix| annotation.message.starts_with(prefix)) {
+        "The job was not started because recent account payments have failed",
+    ]
+    .iter()
+    .any(|prefix| annotation.message.starts_with(prefix))
+    {
         required::Annotation::RunnerFailure
-    } else { required::Annotation::OtherFailure }
+    } else {
+        required::Annotation::OtherFailure
+    }
 }
 fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)

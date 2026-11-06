@@ -6,6 +6,7 @@ use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 verus! {
 /// #830's approved direct-delivery rule; its "Q44 approval check" wording refers
+/// Line citations below use integration base b8ed296862.
 /// to the retained publishing step at docs/state-table.md:531. Exact-head
 /// approval is Q41 (docs/state-machine.md:132,487), not canonical Q44 (:495).
 /// Publishing/Queued docs/state-table.md:526,570; outside push :667; epoch :755.

@@ -911,21 +911,25 @@ impl Rows {
                 node: *node,
                 repo: format!("{}/{}", request.repo.owner, request.repo.name),
                 direct_delivery: if matches!(node.phase, Phase::Closed(_) | Phase::Stopping(_)) {
-                    snapshot.rows.iter().any(|row|row.table == "delivery_history"
-                        && row.id == id.0.to_string() && row.value["mode"] == "direct"
-                        && row.value["head"].as_str() == crate::commit_sha(&snapshot, node.merged))
+                    snapshot.rows.iter().any(|row| {
+                        row.table == "delivery_history"
+                            && row.id == id.0.to_string()
+                            && row.value["mode"] == "direct"
+                            && row.value["head"].as_str()
+                                == crate::commit_sha(&snapshot, node.merged)
+                    })
                 } else {
                     snapshot.rows.iter().any(|row| {
-                    row.table == "repos"
-                        && row.value["delivery"] == "direct"
-                        && row.value["installation"].as_u64() == Some(request.repo.installation)
-                        && row.value["owner"]
-                            .as_str()
-                            .is_some_and(|owner| owner.eq_ignore_ascii_case(&request.repo.owner))
-                        && row.value["name"]
-                            .as_str()
-                            .is_some_and(|name| name.eq_ignore_ascii_case(&request.repo.name))
-                })
+                        row.table == "repos"
+                            && row.value["delivery"] == "direct"
+                            && row.value["installation"].as_u64() == Some(request.repo.installation)
+                            && row.value["owner"].as_str().is_some_and(|owner| {
+                                owner.eq_ignore_ascii_case(&request.repo.owner)
+                            })
+                            && row.value["name"]
+                                .as_str()
+                                .is_some_and(|name| name.eq_ignore_ascii_case(&request.repo.name))
+                    })
                 },
                 issue: request.issue,
                 title: request.title,
