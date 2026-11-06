@@ -439,7 +439,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
 }
 
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before"];
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time"];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -477,6 +477,40 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             controller.look_now().unwrap();
             controller.look_now().unwrap();
             assert_eq!(api.state.lock().unwrap().requeues,1,"r1.1: journaled T2 witness must recover delayed T1 failure; node {:?}; rows {:?}", controller.world().unwrap().nodes[0], controller.snapshot().unwrap().rows.iter().filter(|r| ["queue_holds","allowances"].contains(&r.table.as_str())).collect::<Vec<_>>());
+        }
+        "before-post" | "paused-before-post" | "retry-no-time" => {
+            failure(&mut controller, &api, &config);
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            if mode == "paused-before-post" {
+                controller.observe("r1-pause", tl3_controller::executor::Observation::Steering {node:NodeId(0),command:tl3_kernel::Command::Pause}).unwrap();
+                for _ in 0..12 { controller.drive_once().unwrap(); }
+                assert!(controller.world().unwrap().nodes[0].paused);
+            }
+            health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
+            if mode == "retry-no-time" {
+                controller.look_now().unwrap(); controller.look_now().unwrap();
+                assert_eq!(api.state.lock().unwrap().requeues,1,"test requires an actual POST");
+                let mut state = api.state.lock().unwrap();
+                let head = state.pull["head"]["sha"].clone();
+                let captured:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json")).unwrap();
+                state.checks=captured["check_runs"].clone();
+                for check in state.checks.as_array_mut().unwrap() { check["head_sha"]=head.clone(); check["pull_requests"]=json!([]); }
+                state.queue_check_mut()["id"]=json!(99022);
+                state.queue_check_mut()["completed_at"]=Value::Null;
+            } else {
+                assert_eq!(api.state.lock().unwrap().requeues,0,"failure precedes our POST");
+                let mut state=api.state.lock().unwrap();
+                state.queue_check_mut()["id"]=json!(99021);
+                state.queue_check_mut()["completed_at"]=json!("2026-11-06T04:00:00Z");
+            }
+            failure(&mut controller,&api,&config);
+            assert_eq!(controller.world().unwrap().nodes[0].phase,
+                if mode=="retry-no-time" {Phase::Closed(Outcome::Stopped)} else {Phase::Queued},
+                "r1.2: only a failure bound to our dispatched retry is Change, regardless of timestamps");
+            if mode != "retry-no-time" {
+                assert_eq!(api.state.lock().unwrap().requeues,0);
+                assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
+            }
         }
         _ => panic!("unknown review schedule {mode}"),
     }
