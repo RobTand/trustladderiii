@@ -12,7 +12,8 @@ pub(super) proof fn rank(n: Node, ticket: u64, c: AdvanceContext, out_len: usize
         advance_enabled(n, c)),
 {
     reveal(advance_post); reveal(distance);
-    let Phase::Ready(r) = n.phase else { assert(false); return; };
+    assert(n.phase is Ready);
+    let r = match n.phase { Phase::Ready(r) => r, _ => Resume::Making };
     let after = port_advance_contracts::slot_after(n, ticket, c);
     let ticket_after = (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64;
     if n.paused {
