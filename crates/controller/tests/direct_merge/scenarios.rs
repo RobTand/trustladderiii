@@ -860,12 +860,21 @@ fn r3_b_unmasked_controller_recovery_keeps_history_before_merged_fact() {
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
     assert!(!Store::open(&settings).unwrap().load().unwrap().rows.iter().any(|r|r.table == "delivery_history"));
     fixture.wakes = direct_merge::Wakes::default();
-    let mut recovered = fixture.open(&settings);
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let observed_writes = writes.clone();
+    let adapter = fixture.adapter(&settings).with_write_boundary(move |boundary| {
+        observed_writes.lock().unwrap().push(boundary);
+    });
+    let mut recovered = fixture.open_adapter(&settings, adapter);
     // No adapter reconciliation preparation, no webhook and no ingress delivery.
     drain(&mut recovered);
     assert!(matches!(recovered.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
     assert!(recovered.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"),
         "observations() must persist direct history before its terminal fact retires the intent");
+    let writes = writes.lock().unwrap();
+    let position = |write, after| writes.iter().position(|boundary| *boundary == direct_merge::WriteBoundary {write, after}).unwrap();
+    assert!(position(direct_merge::Write::History, true) < position(direct_merge::Write::Receipt, false));
+    assert!(position(direct_merge::Write::Receipt, true) < position(direct_merge::Write::Reclaim, false));
     let mut reader = Store::open(&settings).unwrap().reader().unwrap();
     let mut tx = reader.transaction().unwrap();
     let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
