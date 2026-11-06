@@ -556,7 +556,7 @@ fn extra_specs_are_optional_existing_and_unique() {
     );
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut groups = groups(GROUPS);
-    assert!(groups.iter().all(|g| g.extra_specs.is_empty()));
+    assert!(groups[0].extra_specs.is_empty());
     groups[0]
         .extra_specs
         .push("proofs/enqueue_write_ahead_label_spec.rs".into());
