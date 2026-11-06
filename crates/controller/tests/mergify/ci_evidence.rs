@@ -52,7 +52,11 @@ impl Fixture {
                 &self.checks
             }
             "/repos/owner/sandbox/actions/jobs/125552384811/logs" => {
-                return Some(ResponseTemplate::new(200).set_body_string(self.gate_log.as_deref().unwrap_or("Gate verdict: failed")));
+                return Some(
+                    ResponseTemplate::new(200).set_body_string(
+                        self.gate_log.as_deref().unwrap_or("Gate verdict: failed"),
+                    ),
+                );
             }
             "/repos/owner/sandbox/actions/jobs/125550020549/logs" => {
                 if self.log == "range-truncated" {
@@ -99,8 +103,14 @@ fn retained_pattern(line: &str, offset: usize, number: usize, size: usize) -> St
     log
 }
 fn assert_golden(text: &str) {
-    let missing: Vec<_> = [REPAIR, GATE].into_iter().filter(|line| !text.contains(line)).collect();
-    assert!(missing.is_empty(), "missing diagnostics {missing:?}: {text}");
+    let missing: Vec<_> = [REPAIR, GATE]
+        .into_iter()
+        .filter(|line| !text.contains(line))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing diagnostics {missing:?}: {text}"
+    );
     assert!(!text.contains("full target lists differ from live query"));
 }
 
@@ -219,7 +229,10 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
         gate_log: matches!(mode, "diagnostics-golden" | "diagnostics-feedback")
             .then(|| retained_pattern(GATE, 11199, 164, 13457)),
     });
-    if matches!(mode, "aggregate" | "compile" | "lint" | "diagnostics-golden" | "diagnostics-feedback") {
+    if matches!(
+        mode,
+        "aggregate" | "compile" | "lint" | "diagnostics-golden" | "diagnostics-feedback"
+    ) {
         state.ci_fixture.as_mut().unwrap().checks["check_runs"].as_array_mut().unwrap().push(json!({
             "id":125552384811_u64,"name":"gate","head_sha":gate["head"],"status":"completed","conclusion":"failure",
             "app":{"id":15368,"slug":"github-actions"},"output":{"title":"Gate verdict failed","summary":"Bazel failed"}
@@ -317,8 +330,13 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         if mode == "diagnostics-golden" {
             assert_eq!(details["complete"], false);
             assert!(details["failed_tests"].as_array().unwrap().is_empty());
-            let summaries = details["checks"].as_array().unwrap().iter()
-                .map(|check| check["summary"].as_str().unwrap()).collect::<Vec<_>>().join("\n");
+            let summaries = details["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|check| check["summary"].as_str().unwrap())
+                .collect::<Vec<_>>()
+                .join("\n");
             assert_golden(&summaries);
         }
         assert_eq!(details["checks"][0]["name"], "Bazel");
@@ -430,20 +448,29 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     if mode == "diagnostics-feedback" {
         let facts = queue_facts(&mut controller);
         let details: tl3_controller::findings::QueueCiEvidence = serde_json::from_value(
-            facts.last().unwrap()["evidence"]["CiFailed"]["details"].clone()
-        ).unwrap();
+            facts.last().unwrap()["evidence"]["CiFailed"]["details"].clone(),
+        )
+        .unwrap();
         // An explicit change-attributed delivery exercises the shared feedback
         // consumer. The GitHub-only capture above remains an unattributed hold.
-        controller.observe("ci1-change-attributed-fixture", tl3_controller::executor::Observation::Outcome {
-            node: NodeId(0),
-            outcome: tl3_controller::outcome::Outcome::CiFailed {
-                head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
-                infra: false,
-                failed_tests: details.failed_tests.clone(),
-                evidence: details,
-            },
-            receipt: None,
-        }).unwrap();
+        controller
+            .observe(
+                "ci1-change-attributed-fixture",
+                tl3_controller::executor::Observation::Outcome {
+                    node: NodeId(0),
+                    outcome: tl3_controller::outcome::Outcome::CiFailed {
+                        head: api.state.lock().unwrap().pull["head"]["sha"]
+                            .as_str()
+                            .unwrap()
+                            .into(),
+                        infra: false,
+                        failed_tests: details.failed_tests.clone(),
+                        evidence: details,
+                    },
+                    receipt: None,
+                },
+            )
+            .unwrap();
         controller.drive_once().unwrap();
     }
     assert_eq!(
@@ -462,12 +489,20 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let report = finding["report"].as_str().unwrap();
     assert!(!report.contains("no check details"));
     assert!(report.contains("Gate failed"));
-    if !matches!(mode, "unparsed" | "logs-unavailable" | "diagnostics-feedback") {
+    if !matches!(
+        mode,
+        "unparsed" | "logs-unavailable" | "diagnostics-feedback"
+    ) {
         assert!(!finding["failed_tests"].as_array().unwrap().is_empty());
     }
     if mode.starts_with("diagnostics-") {
-        let summaries = finding["ci_checks"].as_array().unwrap().iter()
-            .map(|check| check["summary"].as_str().unwrap()).collect::<Vec<_>>().join("\n");
+        let summaries = finding["ci_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|check| check["summary"].as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(report.chars().count() <= 16000);
         for check in finding["ci_checks"].as_array().unwrap() {
             assert!(check["summary"].as_str().unwrap().chars().count() <= 1000);
@@ -480,26 +515,51 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             }
             "diagnostics-categories" => {
                 let mut last = 0;
-                for fragment in ["::error::annotation diagnostic", "Traceback (most recent call last):", "ValueError: invalid fixture inventory", "ERROR: /workspace/BUILD:7: missing input", "gate failed; fix with tools/regenerate.sh"] {
-                    let index = summaries.find(fragment).unwrap_or_else(|| panic!("missing {fragment}: {summaries}"));
+                for fragment in [
+                    "::error::annotation diagnostic",
+                    "Traceback (most recent call last):",
+                    "ValueError: invalid fixture inventory",
+                    "ERROR: /workspace/BUILD:7: missing input",
+                    "gate failed; fix with tools/regenerate.sh",
+                ] {
+                    let index = summaries
+                        .find(fragment)
+                        .unwrap_or_else(|| panic!("missing {fragment}: {summaries}"));
                     assert!(index >= last, "source order: {summaries}");
                     assert_eq!(summaries.matches(fragment).count(), 1, "dedupe {fragment}");
                     last = index;
                 }
                 assert!(summaries.contains("FAILED: //tests:test_action_resource_profile"));
                 let facts = queue_facts(&mut controller);
-                assert_eq!(facts.last().unwrap()["evidence"]["CiFailed"]["details"]["complete"], true);
+                assert_eq!(
+                    facts.last().unwrap()["evidence"]["CiFailed"]["details"]["complete"],
+                    true
+                );
             }
             "diagnostics-rust" => {
-                for fragment in ["panicked at src/resources.rs:42:9", "CPU reservation exceeded", "left: 8", "right: 4"] {
-                    assert!(summaries.contains(fragment), "missing {fragment}: {summaries}");
+                for fragment in [
+                    "panicked at src/resources.rs:42:9",
+                    "CPU reservation exceeded",
+                    "left: 8",
+                    "right: 4",
+                ] {
+                    assert!(
+                        summaries.contains(fragment),
+                        "missing {fragment}: {summaries}"
+                    );
                 }
             }
             "diagnostics-limits" => {
                 assert!(summaries.contains("[diagnostics omitted]"), "{summaries}");
                 assert!(summaries.contains("[diagnostic clipped]"), "{summaries}");
                 assert!(summaries.len() <= 1000);
-                assert!(summaries.lines().filter(|line| line.starts_with("ERROR:")).count() <= 8);
+                assert!(
+                    summaries
+                        .lines()
+                        .filter(|line| line.starts_with("ERROR:"))
+                        .count()
+                        <= 8
+                );
                 assert!(summaries.contains("FAILED: //tests:test_action_resource_profile"));
             }
             "diagnostics-hostile" => {
@@ -507,7 +567,11 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 for secret in ["planted-password", "planted-bearer", "ghp_planted123456789"] {
                     assert!(!finding.to_string().contains(secret));
                 }
-                assert!(summaries.chars().all(|ch| !ch.is_control() || matches!(ch, '\n' | '\t')));
+                assert!(
+                    summaries
+                        .chars()
+                        .all(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+                );
             }
             _ => unreachable!(),
         }

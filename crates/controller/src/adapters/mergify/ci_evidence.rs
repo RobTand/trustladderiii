@@ -129,16 +129,16 @@ fn byte_excerpt(text: &str, cap: usize, marker: &str) -> String {
 }
 
 fn log_line(line: &str) -> &str {
-    static TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^\d{4}-\d{2}-\d{2}T[0-9:.]+Z ").unwrap()
-    });
-    TIMESTAMP.find(line).map_or(line, |prefix| &line[prefix.end()..])
+    static TIMESTAMP: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}T[0-9:.]+Z ").unwrap());
+    TIMESTAMP
+        .find(line)
+        .map_or(line, |prefix| &line[prefix.end()..])
 }
 
 fn diagnostic_lines(text: &str) -> Vec<String> {
-    static EXCEPTION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*(?::|$)").unwrap()
-    });
+    static EXCEPTION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*(?::|$)").unwrap());
     let mut traceback = false;
     let mut panic_context: usize = 0;
     let mut seen = BTreeSet::new();
@@ -151,14 +151,19 @@ fn diagnostic_lines(text: &str) -> Vec<String> {
         let exception = traceback && EXCEPTION.is_match(line) && !python_header;
         let panic = message.starts_with("thread ") && message.contains(" panicked at ");
         let rust_context = panic_context > 0 && !message.is_empty();
-        if python_header || exception || panic || rust_context
+        if python_header
+            || exception
+            || panic
+            || rust_context
             || message.contains("::error::")
             || message.contains("::error ")
             || message.contains("##[error]")
             || message.starts_with("ERROR:")
             || lower.contains("fix with ")
-            || (lower.contains("gate") && (lower.contains("failed")
-                || lower.contains("failure") || lower.contains("did not finish")))
+            || (lower.contains("gate")
+                && (lower.contains("failed")
+                    || lower.contains("failure")
+                    || lower.contains("did not finish")))
         {
             if seen.insert(message.to_owned()) {
                 diagnostics.push(message.to_owned());
@@ -169,7 +174,11 @@ fn diagnostic_lines(text: &str) -> Vec<String> {
         } else if exception {
             traceback = false;
         }
-        panic_context = if panic { 3 } else { panic_context.saturating_sub(1) };
+        panic_context = if panic {
+            3
+        } else {
+            panic_context.saturating_sub(1)
+        };
     }
     diagnostics
 }
@@ -179,23 +188,38 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
     // clipping a credential first can leave a fragment the redactor cannot see.
     let text = crate::memory::redact_text(&terminal_text(text));
     let diagnostics = diagnostic_lines(&text);
-    let log_lines = parsed.iter().map(|test| test.message.as_str()).collect::<Vec<_>>().join("\n");
-    let tail = text.chars().rev().take(1000).collect::<String>()
-        .chars().rev().collect::<String>();
+    let log_lines = parsed
+        .iter()
+        .map(|test| test.message.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tail = text
+        .chars()
+        .rev()
+        .take(1000)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
     if diagnostics.is_empty() {
         return format!("{}\n{log_lines}\n{tail}", summary.join("\n"));
     }
     let mut excerpt = String::new();
     let mut count = 0;
     for line in &diagnostics {
-        let remaining = MAX_DIAGNOSTICS_BYTES.saturating_sub(excerpt.len() + DIAGNOSTICS_OMITTED.len() + 2);
+        let remaining =
+            MAX_DIAGNOSTICS_BYTES.saturating_sub(excerpt.len() + DIAGNOSTICS_OMITTED.len() + 2);
         if count == MAX_DIAGNOSTICS || remaining < "[diagnostic clipped]".len() + 1 {
             break;
         }
         if !excerpt.is_empty() {
             excerpt.push('\n');
         }
-        excerpt.push_str(&byte_excerpt(line, MAX_DIAGNOSTIC_BYTES.min(remaining), "[diagnostic clipped]"));
+        excerpt.push_str(&byte_excerpt(
+            line,
+            MAX_DIAGNOSTIC_BYTES.min(remaining),
+            "[diagnostic clipped]",
+        ));
         count += 1;
     }
     if count < diagnostics.len() {
@@ -210,10 +234,13 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
     // Keep target lines and the existing suffix, without re-emitting diagnostics
     // already selected above. Drop the suffix's potentially partial first line.
     let context = crate::memory::redact_text(&terminal_text(&log_lines));
-    let context = context.lines().chain(tail.lines().skip(1))
+    let context = context
+        .lines()
+        .chain(tail.lines().skip(1))
         .map(|line| log_line(line).trim())
         .filter(|line| !line.is_empty() && seen.insert((*line).to_owned()))
-        .collect::<Vec<_>>().join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
     if !context.is_empty() {
         result.push('\n');
         let remaining = findings::MAX_MESSAGE_CHARS - result.len();
