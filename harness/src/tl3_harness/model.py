@@ -1,10 +1,33 @@
 from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
 from .red_message import RedMessageMatch
 import builtins
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
 import json
 import re
+
+
+class Diagnostic(str):
+    def __new__(cls, text, rule, items):
+        value = super().__new__(cls, text)
+        value.rule = rule
+        value.items = deepcopy(items)
+        return value
+
+    def __reduce__(self):
+        return Diagnostic, (str(self), self.rule, self.items)
+
+
+def named(rule, text, items):
+    return Diagnostic(str(text), rule, items)
+
+
+def contextual(error, **items):
+    text = error.args[0] if isinstance(error, Exception) else error
+    if not isinstance(text, Diagnostic):
+        raise TypeError('A plan diagnostic must name its rule at the emission site.')
+    return named(text.rule, str(error), {**text.items, **items})
 
 
 ALWAYS_CHECK = "Repository always tests"
@@ -25,8 +48,8 @@ def validate_symptom(value, tests):
                 'Exception', 'BaseException', 'AssertionError', 'ForcingError', 'ForcingTampered')
             or type(value.get('repeat')) is not int or not 1 <= value['repeat'] <= 10
             or type(value.get('parallel')) is not int or value['parallel'] not in (0, 2, 3, 4)):
-        raise HarnessInputError('A declared symptom needs one exact node, a qualified exception class, '
-                                'call/setup phase, repeat 1 to 10 and parallel 0 or 2 to 4.')
+        raise HarnessInputError(named('symptom.invalid', 'A declared symptom needs one exact node, a qualified exception class, '
+                                'call/setup phase, repeat 1 to 10 and parallel 0 or 2 to 4.', {}))
 
 
 class Kind(StrEnum):
@@ -113,52 +136,52 @@ class Forcing:
 
     def __post_init__(self):
         if not isinstance(self.symptom, str) or not self.symptom.strip() or len(self.symptom) > FORCING_TEXT:
-            raise HarnessInputError(f"a forcing needs a symptom of 1 to {FORCING_TEXT} characters")
+            raise HarnessInputError(named('forcing.symptom_text', f"a forcing needs a symptom of 1 to {FORCING_TEXT} characters", {}))
         if not self.environment and not self.patches:
-            raise HarnessInputError("a forcing needs at least one environment variable or patch")
+            raise HarnessInputError(named('forcing.empty', "a forcing needs at least one environment variable or patch", {}))
         if len(self.environment) > FORCING_LIMIT or len(self.patches) > FORCING_LIMIT:
-            raise HarnessInputError(f"a forcing has at most {FORCING_LIMIT} variables and {FORCING_LIMIT} patches")
+            raise HarnessInputError(named('forcing.count', f"a forcing has at most {FORCING_LIMIT} variables and {FORCING_LIMIT} patches", {}))
         for name, value in self.environment:
             if (not isinstance(name, str) or not ENVIRONMENT_NAME.fullmatch(name) or name in RESERVED_ENVIRONMENT
                     or name.startswith(RESERVED_PREFIXES)):
                 detail = (f"; {name} is a runner-owned native-thread bound set by the configured CPU demand"
                           if isinstance(name, str) and name in NATIVE_THREAD_ENVIRONMENT else "")
-                raise HarnessInputError(f"a forcing can't set the environment variable {name!r}{detail}")
+                raise HarnessInputError(named('forcing.environment_name', f"a forcing can't set the environment variable {name!r}{detail}", {}))
             if not isinstance(value, str) or len(value) > FORCING_TEXT or "\x00" in value:
-                raise HarnessInputError(f"{name} needs a string value of at most {FORCING_TEXT} characters")
+                raise HarnessInputError(named('forcing.environment_value', f"{name} needs a string value of at most {FORCING_TEXT} characters", {}))
         for target, mode, argument in self.patches:
             if not isinstance(target, str) or len(target) > 200 or not TARGET.fullmatch(target):
-                raise HarnessInputError(f"a patch target must be a dotted module attribute: {target!r}")
+                raise HarnessInputError(named('forcing.patch_target', f"a patch target must be a dotted module attribute: {target!r}", {}))
             if mode not in PATCH_MODES:
-                raise HarnessInputError(f"a patch has exactly one of {', '.join(PATCH_MODES)}")
+                raise HarnessInputError(named('forcing.patch_mode', f"a patch has exactly one of {', '.join(PATCH_MODES)}", {}))
             if len(argument.encode()) > FORCING_LITERAL_BYTES:
-                raise HarnessInputError(f"a patch literal is limited to {FORCING_LITERAL_BYTES} bytes of JSON")
+                raise HarnessInputError(named('forcing.literal_bytes', f"a patch literal is limited to {FORCING_LITERAL_BYTES} bytes of JSON", {}))
             value = json.loads(argument)
             if mode == "raises" and not (isinstance(value, str) and forced_exception(value)):
-                raise HarnessInputError(f"a forcing can raise only a builtin Exception other than AssertionError: "
-                                        f"{value!r}")
+                raise HarnessInputError(named('forcing.raise_class', f"a forcing can raise only a builtin Exception other than AssertionError: "
+                                        f"{value!r}", {}))
             if mode == "delay_seconds" and (type(value) not in (int, float) or not 0 < value <= MAX_DELAY_SECONDS):
-                raise HarnessInputError(f"delay_seconds must be above 0 and at most {MAX_DELAY_SECONDS}")
+                raise HarnessInputError(named('forcing.delay', f"delay_seconds must be above 0 and at most {MAX_DELAY_SECONDS}", {}))
 
     @classmethod
     def parse(cls, data) -> "Forcing":
         if not isinstance(data, dict) or set(data) - {"symptom", "environment", "patches"}:
             extra = sorted(set(data) - {"symptom", "environment", "patches"}) if isinstance(data, dict) else []
-            raise HarnessInputError(f"a forcing has only symptom, environment and patches; not {', '.join(extra)}")
+            raise HarnessInputError(named('forcing.extra_keys', f"a forcing has only symptom, environment and patches; not {', '.join(extra)}", {}))
         environment, patches = data.get("environment", {}), data.get("patches", [])
         if not isinstance(environment, dict) or not isinstance(patches, list):
-            raise HarnessInputError("a forcing's environment is an object and its patches a list")
+            raise HarnessInputError(named('forcing.shape', "a forcing's environment is an object and its patches a list", {}))
         parsed = []
         for patch in patches:
             if not isinstance(patch, dict) or "target" not in patch:
-                raise HarnessInputError("each patch names a dotted target")
+                raise HarnessInputError(named('forcing.patch_target_missing', "each patch names a dotted target", {}))
             modes = [mode for mode in patch if mode != "target"]
             if len(modes) != 1 or modes[0] not in PATCH_MODES:
-                raise HarnessInputError(f"a patch has exactly one of {', '.join(PATCH_MODES)}")
+                raise HarnessInputError(named('forcing.patch_mode', f"a patch has exactly one of {', '.join(PATCH_MODES)}", {}))
             try:
                 argument = json.dumps(patch[modes[0]], sort_keys=True, separators=(",", ":"), allow_nan=False)
             except (TypeError, ValueError) as error:
-                raise HarnessInputError("a patch's argument must be a JSON literal") from error
+                raise HarnessInputError(named('forcing.literal_json', "a patch's argument must be a JSON literal", {})) from error
             parsed.append((patch["target"], modes[0], argument))
         return cls(data.get("symptom"), tuple(sorted(environment.items())), tuple(parsed))
 
@@ -184,24 +207,24 @@ class Proof:
 
     def __post_init__(self):
         if len(self.subjects) > 16 or len(self.observer_support) > 16:
-            raise HarnessInputError('A proof names at most 16 subject units and at most 16 observer support units.')
+            raise HarnessInputError(named('proof.units_limit', 'A proof names at most 16 subject units and at most 16 observer support units.', {}))
         for unit in (*self.subjects, *self.observer_support):
             parts = unit.split('::') if isinstance(unit, str) else []
             if (not parts or len(unit) > 1000 or not parts[0].endswith('.py')
                     or parts[0].startswith(('/', '-')) or any(p in ('..', '.git', '') for p in parts[0].split('/'))
                     or any(c in unit for c in ('\\', '\x00', '\n', '\r'))
                     or any(not name.isidentifier() for name in parts[1:])):
-                raise HarnessInputError('Proof units need a relative Python path and optional qualified definition.')
+                raise HarnessInputError(named('proof.unit_grammar', 'Proof units need a relative Python path and optional qualified definition.', {}))
         if len(set(self.subjects)) != len(self.subjects) or len(set(self.observer_support)) != len(self.observer_support):
-            raise HarnessInputError('A proof cannot repeat source units.')
+            raise HarnessInputError(named('proof.units_repeat', 'A proof cannot repeat source units.', {}))
         if not isinstance(self.red_message, str) or not 1 <= len(self.red_message) <= 160:
-            raise HarnessInputError('A proof declares the exact assertion message supplying RED, 1 to 160 characters.')
+            raise HarnessInputError(named('proof.red_invalid', 'A proof declares the exact assertion message supplying RED, 1 to 160 characters.', {}))
 
     @classmethod
     def parse(cls, value):
         if (not isinstance(value, dict) or set(value) != {'subjects', 'observer_support', 'red_message'}
                 or not isinstance(value['subjects'], list) or not isinstance(value['observer_support'], list)):
-            raise HarnessInputError('A proof needs subjects, observer_support and red_message.')
+            raise HarnessInputError(named('proof.shape', 'A proof needs subjects, observer_support and red_message.', {}))
         return cls(tuple(value['subjects']), tuple(value['observer_support']), value['red_message'])
 
     def as_json(self):
@@ -222,22 +245,22 @@ class Check:
         if self.declared_symptom is not None:
             validate_symptom(self.declared_symptom, self.tests)
             if self.kind != Kind.DEMONSTRATING:
-                raise HarnessInputError('A declared symptom requires a demonstrating check with the original test subject.')
+                raise HarnessInputError(named('symptom.kind', 'A declared symptom requires a demonstrating check with the original test subject.', {}))
         if self.proof is not None and (self.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        or not isinstance(self.proof, Proof)):
-            raise HarnessInputError('A subject/observer proof requires a demonstrating or reproducing check.')
+            raise HarnessInputError(named('proof.kind', 'A subject/observer proof requires a demonstrating or reproducing check.', {}))
         if not self.name or not isinstance(self.kind, Kind) or not self.tests:
-            raise HarnessInputError("a check needs a name, a kind and named tests")
+            raise HarnessInputError(named('check.shape', "a check needs a name, a kind and named tests", {}))
         if self.forcing is not None and (self.kind != Kind.DEMONSTRATING or not isinstance(self.forcing, Forcing)):
-            raise HarnessInputError("only a demonstrating check takes a forcing")
+            raise HarnessInputError(named('check.forcing_kind_harness', "only a demonstrating check takes a forcing", {}))
         if len(set(self.tests)) != len(self.tests):
-            raise HarnessInputError("a check repeats a test")
+            raise HarnessInputError(named('check.duplicate', "a check repeats a test", {}))
         for test in self.tests:
             path, *names = test.split("::")
             if (not names and (self.kind != Kind.REGRESSION or self.name not in (ALWAYS_CHECK, SELECTED_CHECK)) or not all(names) or not path.endswith(".py")
                     or path.startswith(("/", "-")) or ".." in path.split("/")
                     or "\\" in path or "\x00" in test):
-                raise HarnessInputError(f"not a pytest selector: {test!r}")
+                raise HarnessInputError(named('check.node_grammar', f"not a pytest selector: {test!r}", {}))
 
 
 @dataclass(frozen=True)
