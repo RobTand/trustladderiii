@@ -17,7 +17,7 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn respond(&self, path: &str) -> Option<ResponseTemplate> {
-        if path.ends_with("/branches/main") {
+        if path.ends_with("/branches/main") && !path.contains("/rules/") {
             return Some(ResponseTemplate::new(200).set_body_json(json!({
                 "protection":{"required_status_checks":{
                     "contexts":["branch rule"],
