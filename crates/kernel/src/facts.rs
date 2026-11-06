@@ -448,15 +448,26 @@ fn infrastructure_retry(m: &mut Node) -> (result: Option<bool>) [
     requires node_headroom(*old(m)), arithmetic_consistent(*old(m)),
     ensures (*final(m), result) == retirement::infrastructure_retry(*old(m)),
         final(m).generation as int <= old(m).generation as int + 1,
-] proof [reveal(retirement::infrastructure_retry);] {
+] {
+    kernel_snapshot! { before_retry = *m }
     m.run_failures += 1;
     if m.run_failures < 2 {
         set_phase(m, Phase::Publishing); // enqueue again
+        kernel_proof! {
+            assert((*m, None::<bool>) == retirement::infrastructure_retry(before_retry@)) by {
+                reveal(retirement::infrastructure_retry);
+            }
+        }
         None
     } else {
         m.run_failures = 0;
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
+        kernel_proof! {
+            assert((*m, Some(needs_rob)) == retirement::infrastructure_retry(before_retry@)) by {
+                reveal(retirement::infrastructure_retry);
+            }
+        }
         Some(needs_rob)
     }
 }
