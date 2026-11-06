@@ -94,7 +94,7 @@ fn production_registers_every_real_adapter_and_source() {
     assert!(std::any::type_name_of_val(&registered.bell).contains("prismabuild::source::Source"));
     assert!(
         std::any::type_name_of_val(&registered.mergify)
-            .ends_with("direct_merge::events::Translator")
+            .ends_with("delivery_events::Translator")
     );
     assert!(registered.webhooks.address().ip().is_loopback());
     drop(registered);
