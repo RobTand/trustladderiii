@@ -99,7 +99,6 @@ kernel_fn! {
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -112,8 +111,9 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int] == retirement_retry::rung(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
         final(w).next_question as int == old(w).next_question as int + if retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retry_bounds);] {
+] {
     kernel_snapshot! { before_rung = *w }
+    kernel_snapshot! { out_before_rung = *out }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
@@ -160,6 +160,7 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         assert(w.nodes@[i as int] == retirement_retry::rung(before_rung@.nodes@[i as int], before_rung@.fail_fast, before_rung@.next_question, step)) by {
             reveal(retirement_retry::rung);
         }
+        retirement_runtime::rung_bounds(before_rung@, *w, i as int, step, out_before_rung@.len, out.len);
     }
 
 }
@@ -235,7 +236,6 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
 kernel_fn! {
 /// Recheck rows / #771: a new head or reviewer uses the same free allowance.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     out: &mut Outbox) -> (result: ()) [
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -248,14 +248,13 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        (target == Phase::Ready(Resume::Checking) && retirement_retry::published_source(old(w).nodes@[i as int]))
-            ==> final(w).nodes@[i as int]
-            == retirement_retry::rechecked(old(w).nodes@[i as int], target, old(w).next_question),
+        final(w).nodes@[i as int] == retirement_retry::rechecked(old(w).nodes@[i as int], target, old(w).next_question),
         final(w).next_question as int == old(w).next_question as int
             + if old(w).nodes@[i as int].rechecks >= FREE_RECHECKS && !retirement_retry::can_pay(old(w).nodes@[i as int]) { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
- ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);reveal(retirement_retry::rechecked); reveal(retirement_retry::recheck_core); reveal(retirement_retry::continued);] {
+] {
     kernel_snapshot! { before_recheck = *w }
+    kernel_snapshot! { out_before_recheck = *out }
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
@@ -290,6 +289,16 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         assert(w.nodes@[i as int].credit.spent as int
             <= before_recheck@.nodes@[i as int].credit.spent as int + 1);
         assert(w.next_question as int <= before_recheck@.next_question as int + 1);
+    }
+
+    kernel_proof! {
+        assert(w.nodes@[i as int] == retirement_retry::rechecked(before_recheck@.nodes@[i as int], target, before_recheck@.next_question)) by {
+            reveal(retirement_retry::rechecked); reveal(retirement_retry::recheck_core); reveal(retirement_retry::continued);
+        }
+        retirement_runtime::recheck_bounds(before_recheck@, *w, i as int, target, out_before_recheck@.len, out.len);
+        if ordinary_await(before_recheck@.nodes@[i as int]) && before_recheck@.nodes@[i as int].phase == Phase::Rebasing && target == Phase::Checking {
+            retirement_runtime::rechecked_distance(before_recheck@.nodes@[i as int], before_recheck@.next_question);
+        }
     }
 
 }

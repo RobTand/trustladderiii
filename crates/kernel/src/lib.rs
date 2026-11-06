@@ -2266,3 +2266,7 @@ mod facts_merge_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_node_lemmas.rs"]
 mod retirement_node_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_runtime.rs"]
+mod retirement_runtime;

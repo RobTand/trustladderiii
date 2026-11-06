@@ -96,7 +96,6 @@ kernel_fn! {
 /// generation, one question and one paid credit, and emit at most two notices.
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
@@ -206,14 +205,15 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::UpstreamStalled => {
-            kernel_proof! { reveal(retirement::fact_node); reveal(retirement::incident); }
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued || m.waiting_incident {
+                kernel_proof! { retirement_runtime::upstream_noop(before_transition@.nodes@[i as int]); }
                 return;
             }
             m.run_incidents = (m.run_incidents + 1).min(2);
             let needs_rob = m.run_incidents >= 2;
             raise_incident(w, i, needs_rob, out);
+            kernel_proof! { retirement_runtime::upstream_result(before_transition@.nodes@[i as int]); }
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
@@ -363,7 +363,6 @@ kernel_fn! {
 /// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),

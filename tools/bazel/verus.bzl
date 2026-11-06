@@ -900,6 +900,11 @@ def verus_proofs():
             "retirement_wide_verify_new_apply": ("kernel::retirement_wide#verify_new_apply", 1),
             "retirement_node_lemmas_rules": ("kernel::retirement_node_lemmas#rules", 1),
             "retirement_node_lemmas_frame": ("kernel::retirement_node_lemmas#frame", 1),
+            "retirement_runtime_upstream_noop": ("kernel::retirement_runtime#upstream_noop", 1),
+            "retirement_runtime_upstream_result": ("kernel::retirement_runtime#upstream_result", 1),
+            "retirement_runtime_rung_bounds": ("kernel::retirement_runtime#rung_bounds", 1),
+            "retirement_runtime_recheck_bounds": ("kernel::retirement_runtime#recheck_bounds", 1),
+            "retirement_runtime_rechecked_distance": ("kernel::retirement_runtime#rechecked_distance", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
