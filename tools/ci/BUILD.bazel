@@ -364,5 +364,4 @@ tl3_py_test(
 tl3_py_test(
     name = "test_bbrun_cancel",
     srcs = ["test_bbrun_cancel.py"],
-    data = ["bbrun.py"],
 )
