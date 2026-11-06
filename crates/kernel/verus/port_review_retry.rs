@@ -26,6 +26,7 @@ pub(super) open spec fn review_stopped(n: Node, step: ReviewStop) -> Node {
 }
 
 /// State-table failed-round ladder: exact attempt, re-plan, credit and question fields.
+#[verifier::opaque]
 pub(super) open spec fn rung(n: Node, fail_fast: bool, id: u64, step: ReviewStop) -> (Node, u64) {
     if fail_fast { (review_stopped(n, step), id) }
     else if n.attempt < 3 {
@@ -41,12 +42,14 @@ pub(super) open spec fn rung(n: Node, fail_fast: bool, id: u64, step: ReviewStop
 }
 
 /// State-table failed round: the first fix is free, even under fail_fast.
+#[verifier::opaque]
 pub(super) open spec fn round(n: Node, fail_fast: bool, id: u64, step: ReviewStop) -> (Node, u64) {
     if n.round == 0 { (retirement::phased(Node { round: 1, ..n }, Phase::Making), id) }
     else { rung(n, fail_fast, id, step) }
 }
 
 /// State-table exhaustion rows and Q54: split, request credit, or stop for review.
+#[verifier::opaque]
 pub(super) open spec fn room(n: Node, fail_fast: bool, id: u64, step: ReviewStop) -> (Node, u64) {
     if fail_fast { (review_stopped(n, step), id) }
     else {
@@ -58,6 +61,7 @@ pub(super) open spec fn room(n: Node, fail_fast: bool, id: u64, step: ReviewStop
 }
 
 /// State-table recheck allowance: saturating u8 count, then one credit or a question.
+#[verifier::opaque]
 pub(super) open spec fn rechecked(n: Node, target: Phase, id: u64) -> (Node, u64) {
     let count = if n.rechecks < u8::MAX { (n.rechecks + 1) as u8 } else { u8::MAX };
     let m = Node { rechecks: count, ..n };
@@ -80,6 +84,7 @@ pub(super) open spec fn abandoned(n: Node) -> Node {
 }
 
 /// State-table failed run: restart once, then raise the saturating incident.
+#[verifier::opaque]
 pub(super) open spec fn failed_run(n: Node) -> Node {
     let m = Node { pos: if n.phase == Phase::Making { 1u8 } else { 0u8 },
         generation: (n.generation + 1) as u64,
