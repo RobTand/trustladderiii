@@ -3,6 +3,42 @@ use tl3_kernel::{Ack, EffectKind, Event, HeadId, NodeId, Notice};
 
 use crate::Result;
 
+/// Boundary conversion for the dependency-free delivery machine.
+pub(crate) fn delivery_state(state: tl3_store::EffectState) -> tl3_delivery::State {
+    use tl3_store::EffectState as S;
+    match state {
+        S::Intended => tl3_delivery::State::Intended,
+        S::Sent => tl3_delivery::State::Sent,
+        S::Uncertain => tl3_delivery::State::Uncertain,
+        S::Confirmed => tl3_delivery::State::Confirmed,
+        S::Failed => tl3_delivery::State::Failed,
+        S::Cancelling => tl3_delivery::State::Cancelling,
+        S::Cancelled => tl3_delivery::State::Cancelled,
+    }
+}
+
+pub(crate) fn stored_state(state: tl3_delivery::State) -> tl3_store::EffectState {
+    use tl3_delivery::State as S;
+    match state {
+        S::Intended => tl3_store::EffectState::Intended,
+        S::Sent => tl3_store::EffectState::Sent,
+        S::Uncertain => tl3_store::EffectState::Uncertain,
+        S::Confirmed => tl3_store::EffectState::Confirmed,
+        S::Failed => tl3_store::EffectState::Failed,
+        S::Cancelling => tl3_store::EffectState::Cancelling,
+        S::Cancelled => tl3_store::EffectState::Cancelled,
+    }
+}
+
+pub(crate) fn delivery_ack(ack: Ack) -> tl3_delivery::Ack {
+    match ack {
+        Ack::Confirmed => tl3_delivery::Ack::Confirmed,
+        Ack::Retryable => tl3_delivery::Ack::Retryable,
+        Ack::Permanent => tl3_delivery::Ack::Permanent,
+        Ack::BodyPolicyRefused => tl3_delivery::Ack::BodyPolicyRefused,
+    }
+}
+
 /// Deliveries include ingress work that never enters the kernel.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Output {
@@ -122,6 +158,13 @@ impl Delivery {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
     Prerequisite(crate::merge_dependencies::ExternalFact),
+    /// One bounded prerequisite read queued by controller open (#839).
+    PrerequisiteRead {
+        node: NodeId,
+        repository: crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    },
     ScratchSaved {
         node: NodeId,
         reference: String,
@@ -209,6 +252,12 @@ pub enum Observation {
         node: NodeId,
         sha: String,
         run: crate::adapters::prismabuild::CheckRun,
+    },
+    CheckExecutionFailure {
+        node: NodeId,
+        generation: u64,
+        action_key: String,
+        diagnostic: crate::check_execution::Diagnostic,
     },
     Checks {
         node: NodeId,
@@ -413,6 +462,23 @@ pub trait Executor {
         Err(crate::Error::Invalid(
             "adapter cannot read merge prerequisites",
         ))
+    }
+    /// #839: the same prerequisite read also preserves the upstream closure reason.
+    fn prerequisite_detail(
+        &mut self,
+        repository: &crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<crate::merge_dependencies::ExternalFact> {
+        let status = self.prerequisite(repository, kind, number)?;
+        Ok(crate::merge_dependencies::ExternalFact {
+            updated_at: None,
+            repository: repository.clone(),
+            kind,
+            number,
+            status,
+            reason: None,
+        })
     }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()

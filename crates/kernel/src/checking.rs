@@ -44,9 +44,10 @@ impl World {
     /// #771: successful executable consistency checking supplies the exact
     /// progress invariants used by the source-connected theorem.
     pub fn consistent(&self) -> (result: bool) [
-        requires world_headroom(*self), storage_ordered(*self),
+        requires world_headroom(*self) || dependency_retirement_domain(*self), storage_ordered(*self),
         ensures result ==> world_checked(*self),
-    ] proof [reveal(storage_ordered);] {
+            dependency_retirement_domain(*self) ==> result == dependency_retirement_accepted(*self),
+    ] proof [reveal(storage_ordered); reveal(dependency_retirement_domain); reveal(dependency_retirement_accepted);] {
         self.check().is_ok()
     }
     }
@@ -55,8 +56,9 @@ impl World {
     /// #771: the real world checker establishes positive capacities and the
     /// per-node and prerequisite facts, without changing any acceptance rule.
     pub fn check(&self) -> (result: Result<(), Broken>) [
-        requires world_headroom(*self), storage_ordered(*self),
+        requires world_headroom(*self) || dependency_retirement_domain(*self), storage_ordered(*self),
         ensures result.is_ok() ==> world_checked(*self),
+            dependency_retirement_domain(*self) ==> result.is_ok() == dependency_retirement_accepted(*self),
             retirement_domain(*self) ==> result.is_ok() == retirement_accepted(*self),
             retirement_wide_domain(*self) ==> result.is_ok() == retirement_wide_accepted(*self),
             progress_gate_check_result(*self, result.is_ok()),
@@ -64,6 +66,8 @@ impl World {
             unplanned_check_domain(*self)
                 ==> result.is_ok() == retirement_accepted(*self),
     ] proof [reveal(world_headroom); reveal(world_checked); reveal(storage_ordered);
+        reveal(dependency_retirement_domain); reveal(dependency_retirement_accepted);
+        reveal_with_fuel(open_prefix, 2); reveal_with_fuel(potential_prefix, 2);
         reveal(progress_gate_check_result); reveal(progress_gate_contracts::checked);
         reveal(unplanned_check_domain); reveal(retirement_domain); reveal(retirement_accepted); reveal(retirement::accepted); reveal(retirement_wide::accepted); reveal(retirement_wide_domain); reveal(retirement_wide_accepted);
         reveal(progress_gate::accepted); reveal(progress_gate_apply::accepted); reveal(gate_apply_checker_domain); reveal(gate_apply_checker_accepted); reveal_with_fuel(potential_prefix, 5);] {

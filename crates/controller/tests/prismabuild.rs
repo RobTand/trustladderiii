@@ -710,6 +710,66 @@ fn phase_evidence_survives_exact_head_receipts() {
     }
 }
 
+/// #826: a verified action log carries launcher diagnostics separately from test feedback.
+fn container_stderr_is_operator_evidence() {
+    for mode in ["infrastructure", "done"] {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let mut adapter = fixture(root.path(), mode);
+        fs::write(
+            root.path().join("queue/recorded_execution.json"),
+            serde_json::to_vec(
+                &serde_json::json!({"outcome":"setup_failure", "phase":"container_start",
+                "termination_reason":"incomplete_report", "test_started":false,
+                "stderr_tail":"container shim refused: pid limit reached"}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        adapter.execute(&delivery).unwrap();
+        let result = completion(&mut adapter, &delivery);
+        let encoded = serde_json::to_value(&result).unwrap();
+        let diagnostics: Vec<_> = encoded["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.get("CheckExecutionFailure"))
+            .collect();
+        if mode == "done" {
+            assert!(diagnostics.is_empty(), "successful reports keep no stderr");
+        } else {
+            assert_eq!(
+                result.failure_class.as_deref(),
+                Some("harness"),
+                "#849: a successful PB NoReport remains TL3-side with stderr"
+            );
+            assert_eq!(
+                diagnostics.len(),
+                1,
+                "the verified failure log lost its cause"
+            );
+            assert_eq!(
+                diagnostics[0]["diagnostic"]["stderr_tail"],
+                "container shim refused: pid limit reached"
+            );
+        }
+        for observation in &result.observations {
+            if let Observation::Checks {
+                results,
+                failed_tests,
+                ..
+            } = observation
+            {
+                assert!(
+                    !serde_json::to_string(&(results, failed_tests))
+                        .unwrap()
+                        .contains("pid limit reached")
+                );
+            }
+        }
+    }
+}
+
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -3372,6 +3432,12 @@ fn main() {
         println!("2 prismabuild scenarios passed");
         return;
     }
+    if args.get(1).is_some_and(|arg| arg == "--stderr-tail") {
+        container_stderr_is_operator_evidence();
+        println!("test container_stderr_is_operator_evidence ... ok");
+        println!("1 prismabuild scenarios passed");
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--failure-phases") {
         phase_evidence_survives_exact_head_receipts();
         println!("test phase_evidence_survives_exact_head_receipts ... ok");
@@ -3568,6 +3634,10 @@ fn main() {
         ),
         ("bounded_failure_details", bounded_failure_details),
         (
+            "container_stderr_is_operator_evidence",
+            container_stderr_is_operator_evidence,
+        ),
+        (
             "stale_always_test_notes_survive_controller_evidence",
             stale_always_test_notes_survive_controller_evidence,
         ),
@@ -3677,7 +3747,7 @@ fn main() {
     pb_probe_uses_delivery_class_and_fails_closed();
     println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
     database.stop();
-    println!("73 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("74 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

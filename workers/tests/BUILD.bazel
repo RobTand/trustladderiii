@@ -1061,6 +1061,8 @@ tl3_py_test(
     srcs = ["test_redaction_policy.py"],
     deps = [
         ":conftest",
+        ":redaction_branches",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
     ],

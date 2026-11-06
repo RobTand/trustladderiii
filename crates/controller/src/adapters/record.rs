@@ -46,12 +46,17 @@ impl Records {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
             Err(e) => return Err(e.into()),
         };
-        if incoming < epoch {
+        let order = match incoming.cmp(&epoch) {
+            std::cmp::Ordering::Less => tl3_delivery::EpochOrder::Older,
+            std::cmp::Ordering::Equal => tl3_delivery::EpochOrder::Current,
+            std::cmp::Ordering::Greater => tl3_delivery::EpochOrder::Newer,
+        };
+        if !tl3_delivery::accepts_fence(order) {
             return Err(crate::Error::Adapter(Box::new(std::io::Error::other(
                 "upstream refused an older controller epoch",
             ))));
         }
-        if incoming > epoch || !fence.exists() {
+        if tl3_delivery::advances_fence(order) || !fence.exists() {
             self.write(&fence, &serde_json::to_vec(&incoming)?)?;
         }
         Ok(())

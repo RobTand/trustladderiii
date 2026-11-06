@@ -67,7 +67,8 @@ pub(super) fn abandon_operation(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// #771: successful completion resets failures and preserves allocation counters.
 pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
-    ensures *final(m) == (Node { run: None, job: None, pool: false,
+    ensures port_t860_contracts::ended_post(*old(m), *final(m)),
+        *final(m) == (Node { run: None, job: None, pool: false,
         run_failures: 0, run_incidents: 0,
         effect: match old(m).effect {
             Some(e) => Some(InFlight { cancelling: e.cancelling
@@ -88,7 +89,7 @@ pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
         final(m).fx_failures == old(m).fx_failures,
         final(m).fx_incidents == old(m).fx_incidents,
 
-] {
+] proof [reveal(port_t860_contracts::ended_post); reveal(port_t860_contracts::ended);] {
     abandon_operation(m);
     m.run_failures = 0;
     m.run_incidents = 0;

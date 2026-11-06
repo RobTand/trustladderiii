@@ -11,6 +11,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         old(w).nodes@[i as int].run_incidents <= 2,
     ensures final(w).nodes@[i as int] == port_review_retry::failed_run(old(w).nodes@[i as int]),
         (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        port_t860_contracts::failed_post(old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -33,7 +34,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    kernel_snapshot! { failed_before = w.nodes@[i as int] }
+    kernel_snapshot! { before_failed = w.nodes@[i as int] }
+    kernel_snapshot! { before_failed_out = *out }
     let m = &mut w.nodes[i];
     abandon_operation(m);
     m.pos = operation_start(m.phase);
@@ -45,19 +47,23 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
         kernel_proof! {
-            assert(retirement::incident(*m, needs_rob) == port_review_retry::failed_run(failed_before@)) by {
+            assert(retirement::incident(*m, needs_rob) == port_review_retry::failed_run(before_failed@)) by {
                 reveal(port_review_retry::abandoned);
-                port_review_failure::incident(failed_before@, *m, needs_rob);
+                port_review_failure::incident(before_failed@, *m, needs_rob);
             }
         }
         raise_incident(w, i, needs_rob, out);
     }
     kernel_proof! {
-        if failed_before@.run_failures == 0 {
-            assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
+        if before_failed@.run_failures == 0 {
+            assert(w.nodes@[i as int] == port_review_retry::failed_run(before_failed@)) by {
                 reveal(port_review_retry::abandoned);
-                port_review_failure::restarted(failed_before@, w.nodes@[i as int]);
+                port_review_failure::restarted(before_failed@, w.nodes@[i as int]);
             }
+        }
+        assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
+            reveal(port_t860_contracts::failed_post);
+            reveal(port_t860_contracts::failed_node);
         }
     }
 }

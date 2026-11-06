@@ -1,9 +1,8 @@
 //! #806: full-state parity for the standing-rule accepted-reply extraction.
-use super::*;
+use super::reference;
+use crate::*;
 use proptest::prelude::*;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-
-mod reference;
 
 fn phases() -> [Phase; 23] {
     [
@@ -79,7 +78,7 @@ fn compare(world: &World, i: usize, generation: u64, reply: Reply, outputs: Outb
     }))
     .is_ok();
     let expected_ok = catch_unwind(AssertUnwindSafe(|| {
-        reference::reference_on_reply(&mut expected, i, generation, reply, &mut expected_out);
+        reference::on_reply(&mut expected, i, generation, reply, &mut expected_out);
     }))
     .is_ok();
     assert_eq!(actual_ok, expected_ok, "panic parity for {reply:?}");

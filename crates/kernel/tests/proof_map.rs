@@ -66,6 +66,11 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_upstream_stalled", "retirement_verify_selected_apply"),
     ("gate_grant_w2", "retirement_gate_verify_grant"),
     ("gate_grant_w3", "retirement_gate_verify_grant"),
+    ("apply_dependency", "dependency_retirement_fact"),
+    (
+        "dependency_abandoned_never_releases",
+        "dependency_retirement_abandoned",
+    ),
     // #832: new semantic replies are covered by Verus; Kani stays frozen.
     ("apply_plan_check_rejected", "plan_check_witness"),
     ("apply_plan_check_needs_split", "plan_check_witness"),
@@ -138,6 +143,7 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_rebase_clean", "review_world_verify_apply"),
     ("apply_rebase_needs_changes", "review_world_verify_apply"),
     ("apply_run_failed", "review_world_verify_apply"),
+    ("apply_audit_disagrees", "port_t860_apply"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

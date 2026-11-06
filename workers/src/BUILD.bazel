@@ -64,6 +64,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":src",
+        "//harness/src/tl3_harness",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
         "@tl3_pip//mlflow_skinny",

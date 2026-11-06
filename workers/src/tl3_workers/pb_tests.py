@@ -17,7 +17,7 @@ from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, Check, Kind, Proof, Pro
 from tl3_harness.proof import assemble_proof
 from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.node_ids import selects
-from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
+from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome, model_result
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, infrastructure, options
 from tl3_harness.trees import export, configuration
 from tl3_workers import reply_check
@@ -353,7 +353,7 @@ def _summary(ending, key):
         generation = (ending.get("publication") or {}).get("generation")
         if isinstance(generation, str) and re.fullmatch("[0-9a-f]{64}", generation):
             receipt["generation"] = generation
-        return bounded(result, limit=SUMMARY_BYTES - 512)
+        return bounded(model_result(result), limit=SUMMARY_BYTES - 512)
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", cause) from error
 
