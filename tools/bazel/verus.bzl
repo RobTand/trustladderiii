@@ -503,7 +503,6 @@ def verus_proofs():
             "kernel::gate_apply_checker_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::unplanned_first_selection": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::unplanned_check_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::pool_key": "Diagnostic pool-order tuple; real scheduling and its order predicates are verified.",
             "kernel::Phase::name": "Read-only phase label; ordinary Rust outside the scoped Verus core.",
             "kernel::Priority::is_unranked": "Read-only classification API; ordinary Rust outside the scoped Verus core.",
             "kernel::Outbox::get": "Read-only outbox inspection used by tests and adapters.",
@@ -1000,6 +999,7 @@ def verus_proofs():
             "port_deps_pool_grant": ("kernel::port_deps_pool_grant#pool_grant", 1),
             "port_deps_grant_cover": ("kernel::port_deps_pool_grant#grant_cover", 1),
             "port_deps_grant_is_checked": ("kernel::port_deps_pool_grant#grant_is_checked", 1),
+            "port_deps_pool_key": ("kernel#pool_key", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

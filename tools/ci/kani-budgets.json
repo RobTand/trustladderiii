@@ -434,34 +434,6 @@
    "seconds": 2290.1,
    "tier": "nightly"
   },
-  "dependency_abandoned_never_releases": {
-   "cpu_seconds": 212.8,
-   "invocation": "https://app.buildbuddy.io/invocation/7d1ff4a3-0a83-4c42-8e4b-2c037f3dbfa3",
-   "peak_gb": 13.65,
-   "seconds": 215.6,
-   "tier": "pr"
-  },
-  "dependency_delivered_releases": {
-   "cpu_seconds": 133.3,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 4.87,
-   "seconds": 135.1,
-   "tier": "pr"
-  },
-  "dependency_no_cycle": {
-   "cpu_seconds": 208.1,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 10.19,
-   "seconds": 207.1,
-   "tier": "pr"
-  },
-  "dependency_waiting_holds_nothing": {
-   "cpu_seconds": 40.7,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 0.95,
-   "seconds": 40.5,
-   "tier": "pr"
-  },
   "fail_fast_changes_requested": {
    "cpu_seconds": 178.3,
    "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
@@ -569,20 +541,6 @@
    "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
    "peak_gb": 2.6,
    "seconds": 243.1,
-   "tier": "pr"
-  },
-  "pool_grant_is_priority_ordered": {
-   "cpu_seconds": 187.3,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 1.81,
-   "seconds": 184.6,
-   "tier": "pr"
-  },
-  "pool_order_is_strict_priority": {
-   "cpu_seconds": 1.7,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 0.19,
-   "seconds": 2.0,
    "tier": "pr"
   }
  },

@@ -121,6 +121,15 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "progress_from_unplanned_waiting_one",
         "progress_unplanned_waiting",
     ),
+    ("dependency_no_cycle", "port_deps_register_preserves"),
+    ("dependency_waiting_holds_nothing", "port_deps_terminal"),
+    ("dependency_delivered_releases", "port_deps_delivery_cover"),
+    (
+        "dependency_abandoned_never_releases",
+        "port_deps_abandoned_cover",
+    ),
+    ("pool_grant_is_priority_ordered", "port_deps_pool_grant"),
+    ("pool_order_is_strict_priority", "port_deps_pool_key"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

@@ -357,6 +357,14 @@ CASES = {
                               'a.priority.rank() < b.priority.rank()',
                               'a.priority.rank() > b.priority.rank()',
                               '//crates/kernel:verus_scheduler_earlier_in_pool'),
+    'w7_pool_key': ('crates/kernel/src/lib.rs',
+                    '    Some((n.priority, ticket))',
+                    '    Some((Priority::Unranked, ticket))',
+                    '//crates/kernel:verus_port_deps_pool_key'),
+    'w7_priority_order': ('crates/kernel/src/lib.rs',
+                          'pub enum Priority {\n    P0,\n    P1,',
+                          'pub enum Priority {\n    P1,\n    P0,',
+                          '//crates/kernel:test_test_pool_order'),
 }
 
 
