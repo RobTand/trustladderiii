@@ -138,6 +138,17 @@ def test_a_declared_file_absent_on_base_can_still_be_created(maker_request, monk
     assert (root / "tests/test_new_reporter.py").read_text() == "def test_new(): pass\n"
 
 
+@pytest.mark.parametrize(("declared", "written"), [
+    ("./x.py", "x.py"), ("a//b.py", "a/b.py"), ("x.py", "./x.py"),
+    ("a/./b.py", "a/b.py"), ("dir/", "dir"),
+])
+def test_canonical_plan_paths_allow_declared_writes(maker_request, monkeypatch, declared, written):
+    with _pq3312_tools(maker_request, monkeypatch, extra_files=[declared]) as (root, call):
+        result = call("write", path=written, content="# declared\n")
+    assert result.text == "File written.", result.text
+    assert (root / written).read_text() == "# declared\n"
+
+
 def test_long_declared_lists_are_truncated_in_the_refusal(maker_request, monkeypatch):
     many = [f"pkg/module_{index:03}.py" for index in range(200)]
     with _pq3312_tools(maker_request, monkeypatch, extra_files=many) as (_, call):
