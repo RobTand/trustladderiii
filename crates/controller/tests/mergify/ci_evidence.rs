@@ -331,6 +331,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         assert_eq!(details["cause"], "Unattributed");
         if mode == "diagnostics-golden" {
             assert_eq!(details["complete"], false);
+            assert!(details["fingerprint"].is_null());
             assert!(details["failed_tests"].as_array().unwrap().is_empty());
             let summaries = details["checks"]
                 .as_array()
