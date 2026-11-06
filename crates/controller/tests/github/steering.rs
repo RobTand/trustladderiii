@@ -302,6 +302,8 @@ impl Daemon {
         stdin.flush().unwrap();
     }
     fn restart(&mut self) {
+        let retained = fixture_lifecycle::RetainedOwner::start(&self.store_settings());
+        let rejected = retained.as_ref().map(|owner| owner.rejection_signal());
         self.child.kill().unwrap();
         self.child.wait().unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_tl3d"))
@@ -326,6 +328,7 @@ impl Daemon {
             for line in BufReader::new(stderr).lines() {
                 let line = line.unwrap();
                 eprintln!("recovered steering daemon: {line}");
+                fixture_lifecycle::rejected(&rejected, &line);
                 if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
                     let _ = tx.send(address.parse().unwrap());
                 }
@@ -347,6 +350,11 @@ impl Daemon {
                 })
         });
     }
+}
+pub(super) fn restart_owner_probe(settings: &tl3_config::Store) {
+    let mut daemon = Daemon::start(settings, "steering-commands");
+    daemon.restart();
+    assert!(daemon.child.try_wait().unwrap().is_none());
 }
 impl Drop for Daemon {
     fn drop(&mut self) {
