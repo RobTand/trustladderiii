@@ -1129,6 +1129,7 @@ impl Supervisor {
                     generation: delivery.generation,
                     role: role.into(),
                     reply,
+                    plan_check: None,
                     model: None,
                 }]),
             );

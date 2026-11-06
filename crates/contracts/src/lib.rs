@@ -65,6 +65,15 @@ pub fn generated() -> Vec<Generated> {
         .into_iter()
         .map(|file| file.unwrap_or_else(|error| panic!("{error}"))),
     );
+    files.push(Generated {
+        path: format!("{SCHEMA_DIRECTORY}/plan-check-provenance.json"),
+        text: render(
+            &SchemaSettings::draft2020_12()
+                .into_generator()
+                .into_root_schema_for::<plan_check::PlanCheckProvenance>()
+                .to_value(),
+        ),
+    });
     files
 }
 
@@ -118,3 +127,5 @@ pub mod decision_context;
 
 pub mod request;
 pub mod roles;
+
+pub mod plan_check;

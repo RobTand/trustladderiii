@@ -3528,6 +3528,7 @@ impl Controller {
                 role,
                 mut reply,
                 model,
+                plan_check,
             } => {
                 use tl3_controller_core::translate_worker as worker;
                 let n = world
@@ -3559,7 +3560,11 @@ impl Controller {
                     _ => worker::Role::Unknown,
                 };
                 let valid_role = worker::valid_role(phase, worker_role);
-                let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                let mut mapped = match adapters::workers::protocol::map_reply_with_plan_check(
+                    &role,
+                    &reply,
+                    plan_check.as_ref(),
+                ) {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         return Ok(Some(Event::Reply {
@@ -3577,7 +3582,7 @@ impl Controller {
                 {
                     mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
                 }
-                if role == "planner" && reply["kind"] == "leaf" {
+                if role == "planner" && reply["kind"] == "leaf" && plan_check.is_none() {
                     let checks = reply["checks"]
                         .as_array()
                         .ok_or(Error::Invalid("planner checks must be an array"))?
@@ -3778,9 +3783,11 @@ impl Controller {
                 }
                 let checkpoint = commit.rows.len();
                 if let Some(document) = document {
-                    commit
-                        .rows
-                        .push(put(document, node.0.to_string(), reply.clone()));
+                    let mut stored = reply.clone();
+                    if let Some(provenance) = plan_check {
+                        stored["plan_check"] = serde_json::to_value(provenance)?;
+                    }
+                    commit.rows.push(put(document, node.0.to_string(), stored));
                 }
                 if role == "ingest"
                     && reply["kind"] == "brief"
