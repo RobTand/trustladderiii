@@ -137,7 +137,13 @@ impl Fixture {
             self.controller.snapshot().unwrap().revision.get()
         );
         self.controller.observe(&key, observation).unwrap();
-        assert!(self.controller.drive_once().unwrap());
+        for _ in 0..32 {
+            assert!(self.controller.drive_once().unwrap());
+            if !crate::input_errors::kernel_backlog(&self.controller.snapshot().unwrap()) {
+                return;
+            }
+        }
+        panic!("the observation must drain through the controller");
     }
 
     fn change(&mut self, change: impl FnOnce(&mut tl3_kernel::World)) {
@@ -557,7 +563,7 @@ fn legacy_rows_survive_the_first_canonical_feedback_write() {
 #[test]
 fn infrastructure_ci_failure_creates_no_maker_feedback() {
     let mut f = Fixture::new();
-    f.seed(Phase::Queued, 3);
+    f.seed(Phase::Queued, 0);
     f.observe(Observation::CiFailed {
         node: NodeId(0),
         infra: true,
