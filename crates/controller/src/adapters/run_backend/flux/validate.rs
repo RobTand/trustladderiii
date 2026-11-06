@@ -119,8 +119,9 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
         || (matches!(request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) && !preflight.image_present) {
         return Err(BackendError::invalid("runtime/image identity or architecture is missing or unqualified"));
     }
-    if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime {
-        if !trusted_root.join("runner.py").is_file() { return Err(BackendError::invalid("trusted_root must directly contain runner.py")); }
+    if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime
+        && !trusted_root.join("runner.py").is_file() {
+        return Err(BackendError::invalid("trusted_root must directly contain runner.py"));
     }
     for (path, expected) in [(&request.tree.manifest, &request.tree.input_digest), (&request.runner.executable, &request.runner.executable_digest),
         (&request.runner.manifest, &request.runner.manifest_digest), (&request.runtime.manifest, &request.runtime.manifest_digest)] {

@@ -209,8 +209,36 @@ impl Flux {
         let Some((ending, reason)) = classify(&record, report.as_ref()) else {
             return Ok(Observation::Unknown { binding: Some(binding), reason: "native completion lacks semantic report or authoritative cleanup/loss evidence".into() });
         };
-        let terminal = self.terminal(owner, ending, reason, evidence)?;
+        let report_ref = if report.is_some() {
+            Some(blob(&record.intent.output_dir.join("retained-report.json"), &serde_json::to_vec(&report)?)?)
+        } else { None };
+        let terminal = self.terminal(owner, ending, reason, evidence, report_ref)?;
         Ok(Observation::Terminal { binding: Some(binding), terminal })
+    }
+
+    pub(super) fn verified_daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
+        let record = self.journal.load(owner)?;
+        let invalid = || BackendError { code: ErrorCode::EvidenceInvalid, message: "terminal has no verified daytime payload for this durable owner".into() };
+        if record.terminal.as_ref() != Some(terminal) || terminal.ending != Ending::Passed
+            || !matches!(record.request.suite, Suite::DaytimeChecks { .. }) { return Err(invalid()); }
+        let receipt: Receipt = serde_json::from_slice(&checked_blob(&terminal.receipt, &record.intent.output_dir)?)?;
+        if receipt.schema != "tl3.run_receipt.v1" || receipt.issuer != ReceiptIssuer::Tl3
+            || receipt.intent != record.intent || receipt.binding != record.binding
+            || receipt.tree != record.request.tree || receipt.runner != record.request.runner
+            || receipt.runtime != record.request.runtime || receipt.reservation != record.request.reservation
+            || receipt.ending != terminal.ending || receipt.reason != terminal.reason || receipt.native_events != record.events {
+            return Err(invalid());
+        }
+        let retained_request: Request = serde_json::from_slice(&checked_blob(&receipt.request, &record.intent.output_dir)?)?;
+        if retained_request != record.request { return Err(invalid()); }
+        let binding = record.binding.as_ref().ok_or_else(invalid)?;
+        let reference = receipt.report.as_ref().ok_or_else(invalid)?;
+        let report: RunnerReport = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
+        if !self.report_identity(&record, binding, &report)? || report.outcome != ReportOutcome::ChecksCompleted || !report.complete || !report.cleanup_complete {
+            return Err(invalid());
+        }
+        let payload = report.payload.as_ref().ok_or_else(invalid)?;
+        Ok(serde_json::from_slice(&checked_blob(payload, &record.intent.output_dir)?)?)
     }
 
     fn report_identity(&self, record: &Record, binding: &RunBinding, report: &RunnerReport) -> Result<bool> {

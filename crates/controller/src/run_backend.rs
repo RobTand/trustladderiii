@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+pub use tl3_config::ContainerMode;
 
 pub mod durable;
 
@@ -143,9 +144,6 @@ pub enum ExecutionRuntime {
     },
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ContainerMode { InJob, OwnScope }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -333,6 +331,7 @@ pub struct Receipt {
     pub reason: String,
     pub native_events: Vec<Event>,
     pub evidence: Vec<BlobRef>,
+    pub report: Option<BlobRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -448,6 +447,7 @@ pub trait RunBackend {
     fn cancel(&self, owner: &Owner) -> Result<CancelAck>;
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe>;
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext>;
+    fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport>;
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
