@@ -2683,6 +2683,331 @@ fn completion_failure_causes(database: &mut support::Database) {
     assert_eq!(failures, 0, "#849 completion cause regressions");
 }
 
+/// Q7 / #850: status transport, schema, fleet health and delivery capacity all matter.
+fn pb_probe_uses_delivery_class_and_fails_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    probe_status(root.path(), true);
+    let mut adapter = probe_adapter(root.path());
+    assert!(
+        adapter.probe(&delivery).unwrap(),
+        "a live CPU fleet can serve this check"
+    );
+    let healthy: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.path().join("status.json")).unwrap()).unwrap();
+    for (pointer, value) in [
+        ("/schema", serde_json::json!("wrong")),
+        ("/transport", serde_json::json!("slurm")),
+        ("/complete", serde_json::json!(false)),
+        ("/pool/complete", serde_json::json!(false)),
+        ("/queue_space/state", serde_json::json!("critical")),
+        ("/nodes/0/healthy", serde_json::json!(false)),
+        ("/nodes/0/state", serde_json::json!("held")),
+        ("/nodes/0/state", serde_json::json!("draining")),
+        ("/nodes/0/state", serde_json::json!("stale")),
+        ("/nodes/0/capacity/cpu", serde_json::json!(0)),
+        ("/nodes/0/capacity/mem_gb", serde_json::json!(1)),
+        ("/nodes", serde_json::json!([])),
+    ] {
+        let mut status = healthy.clone();
+        *status.pointer_mut(pointer).unwrap() = value;
+        fs::write(
+            root.path().join("status.json"),
+            serde_json::to_vec(&status).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !adapter.probe(&delivery).unwrap(),
+            "{pointer} must fail closed"
+        );
+    }
+    for raw in ["not json", "{}"] {
+        fs::write(root.path().join("status.json"), raw).unwrap();
+        assert!(
+            !adapter.probe(&delivery).unwrap(),
+            "malformed status keeps incident"
+        );
+    }
+    fs::remove_file(root.path().join("status.json")).unwrap();
+    assert!(
+        !adapter.probe(&delivery).unwrap(),
+        "a tool failure is a failed probe"
+    );
+    probe_status(root.path(), true);
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    let repo = &mut config.github.repos[0];
+    repo.owner = delivery.repository.owner.clone();
+    repo.name = delivery.repository.name.clone();
+    repo.installation_id = delivery.repository.installation;
+    repo.test_demand = Some(tl3_config::TestDemand {
+        cpus: 1,
+        mem_gb: 65,
+    });
+    adapter = adapter.with_repositories(&config.github.repos);
+    assert!(
+        !adapter.probe(&delivery).unwrap(),
+        "probe must fit repository check demand"
+    );
+}
+
+fn probe_status_tool(root: &Path) -> tl3_prismabuild::Tool {
+    tl3_prismabuild::Tool {
+        program: "python3".into(),
+        args: vec![
+            "-c".into(),
+            "import pathlib,sys; p=pathlib.Path(sys.argv[1]); print(p.read_text())".into(),
+            root.join("status.json").into(),
+        ],
+    }
+}
+fn probe_status(root: &Path, healthy: bool) {
+    fs::write(
+        root.join("status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema":"prismabuild.pbstatus.v1", "transport":"pool", "complete":true,
+            "queue_space":{"state":"ok"}, "pool":{"complete":true},
+            "nodes":[{"healthy":healthy,"state":"live", "capacity":{"cpu":16,"mem_gb":64},
+                "admission":{"cpu":{"state":"fresh"}}}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+fn probe_adapter(root: &Path) -> Adapter {
+    let (client, settings) = fixture_settings(root, "pending", "http://127.0.0.1:9/");
+    Adapter::new(
+        client.with_status_tool(probe_status_tool(root)),
+        settings,
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap()
+}
+
+/// Q7 / #850: probe the upstream after an acknowledged, terminal check;
+/// restart and release redelivery preserve one clearance and Rob-only later incidents.
+fn first_pb_incident_probes_after_terminal_completion(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    probe_status(root.path(), false);
+    let open = || {
+        let fakes = root.path().join("fakes");
+        let mut registry = adapters::simulation(&fakes).unwrap();
+        registry.register(Upstream::PrismaBuild, probe_adapter(root.path()));
+        registry.register(
+            Upstream::Workers,
+            workers(
+                adapters::workers::Fake::new(&fakes),
+                delivery.head_sha.clone().unwrap(),
+            ),
+        );
+        let mut c = Controller::open_with_clock(
+            tl3_store::Store::open(settings).unwrap(),
+            registry,
+            Bootstrap {
+                operations: None,
+                repos: vec![repository()],
+                rob: 1,
+                slots: 1,
+                pool: 1,
+                fail_fast: false,
+            },
+            clock.clone(),
+        )
+        .unwrap();
+        let mut a = tl3_config::Allowances::default();
+        a.prismabuild.silence_secs = 1;
+        a.prismabuild.no_progress_secs = 3;
+        c.set_allowances(a);
+        c
+    };
+    let drain = |c: &mut Controller| {
+        for _ in 0..100 {
+            if !c.drive_once().unwrap() {
+                return;
+            }
+        }
+        panic!("controller did not settle");
+    };
+    let fail = |c: &mut Controller, n: u32| {
+        c.observe(
+            &format!("probe-plan-{n}"),
+            Observation::CheckPlan {
+                node: NodeId(0),
+                sha: delivery.head_sha.clone().unwrap(),
+                run: delivery.checks.clone().unwrap(),
+            },
+        )
+        .unwrap();
+        drain(c);
+        let watched = c
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.table == "watches" && r.value["output"]["Effect"]["kind"] == "SubmitChecks")
+            .unwrap();
+        assert_eq!(
+            c.effect(&watched.id).unwrap().unwrap().state,
+            tl3_store::EffectState::Confirmed,
+            "check dispatch was acknowledged before the terminal result"
+        );
+        let key = fs::read_to_string(root.path().join("queue/publications"))
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap()
+            .to_owned();
+        finish(root.path(), &key, "no_report");
+        let (tx, rx) = mpsc::channel();
+        let adapter = probe_adapter(root.path());
+        let running = adapter.source().spawn(tx);
+        let first = rx.recv_timeout(SIGNAL_WAIT).unwrap();
+        drop(running);
+        let mut observations = vec![first];
+        observations.extend(rx.try_iter());
+        for input in observations {
+            let tl3_controller::cli::Input::Observation { key, observation } = input else {
+                panic!("check completion");
+            };
+            c.observe(&key, observation).unwrap();
+            drain(c);
+        }
+        let snapshot = c.snapshot().unwrap();
+        assert!(
+            !c.world().unwrap().nodes[0].waiting_incident
+                || !snapshot.rows.iter().any(|r| r.table == "watches"
+                    && r.value["output"]["Effect"]["kind"] == "SubmitChecks"),
+            "terminal checks have no watch"
+        );
+        assert!(
+            record_path(root.path(), &watched.id, "done").is_file(),
+            "durable terminal marker for the acknowledged effect"
+        );
+    };
+    let incident = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| {
+                r.table == "incidents" && r.value["open"] == true && r.value["blocking"] == true
+            })
+            .unwrap()
+    };
+    let clears = || {
+        tl3_store::Store::open(settings)
+            .unwrap()
+            .events_after(tl3_store::Revision::ZERO, 10000)
+            .unwrap()
+            .into_iter()
+            .filter(|e| {
+                e.key.starts_with("consume:")
+                    && matches!(
+                        serde_json::from_value::<Observation>(e.payload.clone()),
+                        Ok(Observation::Kernel(tl3_kernel::Event::Fact {
+                            fact: tl3_kernel::Fact::IncidentCleared { by_rob: false },
+                            ..
+                        }))
+                    )
+            })
+            .count()
+    };
+    let mut c = open();
+    c.intake(LabelledIssue {
+        delivery: "probe-intake".into(),
+        owner: "RobTand".into(),
+        repo: "tl3-sandbox".into(),
+        installation: 1,
+        number: 42,
+        title: "PB probe".into(),
+        actor: 1,
+        label: "tl3".into(),
+        labels: vec![],
+    })
+    .unwrap();
+    drain(&mut c);
+    fail(&mut c, 1);
+    fail(&mut c, 2);
+    let first = incident(&mut c);
+    assert_eq!(
+        first.value["signature"]["upstream"], "PrismaBuild",
+        "incident must belong to PB: {}",
+        first.value
+    );
+    assert_eq!(first.value["needs_rob"], false);
+    assert!(first.value["effect"].is_null());
+    assert!(c.world().unwrap().nodes[0].waiting_incident);
+    for release in ["probe-release-a", "probe-release-a", "probe-release-b"] {
+        c.start_release(release).unwrap();
+        drop(c);
+        c = open();
+        clock.0.set(clock.0.get() + 10_000);
+        c.look_due().unwrap();
+        drain(&mut c);
+        assert_eq!(
+            incident(&mut c).id,
+            first.id,
+            "failed probe preserves incident across deploys"
+        );
+        assert_eq!(clears(), 0);
+        assert!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "allowances"
+                    && r.value["incident"] == first.id
+                    && r.value["due_ms"]
+                        .as_u64()
+                        .is_some_and(|due| due > clock.0.get())),
+            "the incident's own allowance has a durable future deadline"
+        );
+        assert!(
+            c.next_look_in().unwrap().is_some(),
+            "failed probe retains durable deadline"
+        );
+    }
+    probe_status(root.path(), true);
+    clock.0.set(clock.0.get() + 10_000);
+    c.look_due().unwrap();
+    drain(&mut c);
+    assert!(
+        !c.world().unwrap().nodes[0].waiting_incident,
+        "a healthy PB probe must clear the first null-effect incident"
+    );
+    assert_eq!(clears(), 1, "one automatic IncidentCleared fact");
+    for release in ["probe-release-b", "probe-release-c", "probe-release-c"] {
+        c.start_release(release).unwrap();
+        drop(c);
+        c = open();
+        clock.0.set(clock.0.get() + 10_000);
+        c.look_due().unwrap();
+        drain(&mut c);
+        assert_eq!(clears(), 1, "deploys cannot double-clear");
+    }
+    fail(&mut c, 3);
+    fail(&mut c, 4);
+    let second = incident(&mut c);
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.value["needs_rob"], true);
+    for release in ["probe-release-d", "probe-release-d"] {
+        c.start_release(release).unwrap();
+        drop(c);
+        c = open();
+        clock.0.set(clock.0.get() + 10_000);
+        c.look_due().unwrap();
+        drain(&mut c);
+        assert_eq!(
+            incident(&mut c).id,
+            second.id,
+            "Q7 later incidents need Rob even with PB healthy"
+        );
+        assert!(c.world().unwrap().nodes[0].waiting_incident);
+        assert_eq!(clears(), 1);
+    }
+}
+
 fn main() {
     if std::env::args().len() == 1
         || std::env::args().nth(1).as_deref() == Some("--router-regression")
@@ -2701,6 +3026,16 @@ fn main() {
         completion_failure_causes(&mut database);
         database.stop();
         println!("8 completion cause scenarios passed; no skips");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--incident-probe") {
+        let mut database = support::Database::start();
+        first_pb_incident_probes_after_terminal_completion(&database.create("pb_incident_probe"));
+        database.stop();
+        println!("test first_pb_incident_probes_after_terminal_completion ... ok");
+        pb_probe_uses_delivery_class_and_fails_closed();
+        println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
+        println!("2 prismabuild scenarios passed");
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--failure-phases") {
@@ -2964,8 +3299,12 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     completion_failure_causes(&mut database);
+    first_pb_incident_probes_after_terminal_completion(&database.create("pb_incident_probe"));
+    println!("test first_pb_incident_probes_after_terminal_completion ... ok");
+    pb_probe_uses_delivery_class_and_fails_closed();
+    println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
     database.stop();
-    println!("61 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("63 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

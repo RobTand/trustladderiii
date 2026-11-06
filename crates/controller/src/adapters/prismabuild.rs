@@ -663,6 +663,37 @@ impl Adapter {
 }
 
 impl Executor for Adapter {
+    /// Q7 / #850: a terminal check says nothing about current PB service health.
+    fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
+        let mut demand = self.images.test_demand(&delivery.repository).map_or_else(
+            || self.settings.demand.clone(),
+            |demand| Demand {
+                cpus: demand
+                    .cpus
+                    .try_into()
+                    .expect("validated positive test demand"),
+                mem_gb: demand.mem_gb,
+                gpu: false,
+            },
+        );
+        let parallel = delivery
+            .checks
+            .as_ref()
+            .into_iter()
+            .flat_map(|run| &run.plan)
+            .filter_map(|check| Some(check.declared_symptom.as_ref()?.parallel.get()))
+            .max()
+            .unwrap_or(0)
+            .clamp(1, 4) as u32;
+        demand.cpus = std::num::NonZeroU32::new(demand.cpus.get().max(parallel)).unwrap();
+        demand.mem_gb = demand.mem_gb.saturating_mul(parallel);
+        // Failed health reads keep the incident and its existing allowance.
+        Ok(self
+            .runtime
+            .block_on(self.client.can_serve(&demand))
+            .unwrap_or(false))
+    }
+
     fn watch_wait(
         &mut self,
         delivery: &Delivery,
