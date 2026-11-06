@@ -7,7 +7,7 @@ fn open(
     clock: head_checks::Clock,
 ) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
-    registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
+    registry.register(Upstream::Delivery, api.adapter(&root.join("mergify"), 0));
     let mut controller =
         Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock)
             .unwrap();

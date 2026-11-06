@@ -237,7 +237,7 @@ fn serialized_names_match_store_sql() {
     assert_eq!(json!(Upstream::Workers), "Workers");
     for upstream in [
         Upstream::GitHub,
-        Upstream::Mergify,
+        Upstream::Delivery,
         Upstream::PrismaBuild,
         Upstream::Workers,
         Upstream::Worktrees,

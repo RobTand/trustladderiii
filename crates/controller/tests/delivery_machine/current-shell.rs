@@ -1,7 +1,7 @@
 impl Controller {
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
         let delivery: Delivery = decode_stored(row.value.clone())?;
-        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+        if executor::upstream(delivery.output) == executor::Upstream::Delivery
             || approval_delivery::is_approval(&delivery)
         {
             self.adapters

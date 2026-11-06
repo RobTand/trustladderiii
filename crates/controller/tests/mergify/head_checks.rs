@@ -156,7 +156,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         drop(controller);
         let mut registry = adapters::simulation(root.path()).unwrap();
         registry.register(
-            Upstream::Mergify,
+            Upstream::Delivery,
             api.adapter(&root.path().join("mergify"), 0),
         );
         controller =
@@ -184,7 +184,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.head_checks[0]["id"] = json!(901);
         state.head_checks[0]["conclusion"] = json!("success");
     }
-    controller.retry_held_effects(Upstream::Mergify);
+    controller.retry_held_effects(Upstream::Delivery);
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().posts,
@@ -238,7 +238,7 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
     )));
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.path().join("mergify"), 0),
     );
     let mut controller = Controller::open_with_clock(

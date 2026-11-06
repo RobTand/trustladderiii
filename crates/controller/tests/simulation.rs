@@ -624,7 +624,7 @@ fn assert_finished(controller: &mut Controller, root: &Path, settings: &tl3_conf
         upstreams,
         BTreeSet::from([
             Upstream::GitHub,
-            Upstream::Mergify,
+            Upstream::Delivery,
             Upstream::PrismaBuild,
             Upstream::Workers,
             Upstream::Worktrees
@@ -1735,7 +1735,7 @@ fn watches_and_pending(settings: &tl3_config::Store) {
             Box::new(adapters::worktrees::Fake::new(root.path())) as Box<dyn Executor>,
         ),
         (
-            Upstream::Mergify,
+            Upstream::Delivery,
             EffectKind::Enqueue,
             Box::new(adapters::mergify::Fake::new(root.path())) as Box<dyn Executor>,
         ),
@@ -2506,7 +2506,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
         },
     );
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         ConflictQueue {
             fake: adapters::mergify::Fake::new(&records),
             root: root.path().into(),

@@ -10,7 +10,7 @@ impl Fixture {
     fn open(&self, settings: &tl3_config::Store) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
         registry.register(
-            Upstream::Mergify,
+            Upstream::Delivery,
             self.api.adapter(&self.root.path().join("mergify"), 0),
         );
         let mut controller = Controller::open_with_clock(

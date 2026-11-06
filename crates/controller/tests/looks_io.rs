@@ -195,7 +195,7 @@ macro_rules! controller {
                 match upstream(d.output) {
                     Upstream::Workers => &self.allowances.agent_worker,
                     Upstream::PrismaBuild => &self.allowances.prismabuild,
-                    Upstream::GitHub | Upstream::Mergify => &self.allowances.github_mergify,
+                    Upstream::GitHub | Upstream::Delivery => &self.allowances.github_mergify,
                     Upstream::Worktrees => &self.allowances.worktrees,
                 }
             }
