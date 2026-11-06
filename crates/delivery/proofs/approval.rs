@@ -44,7 +44,7 @@ fn delayed_patch_is_idempotent(copy:CopyState, conclusion:u64, output:u64, other
 }
 
 fn history_predecessor_cannot_issue(v: DeliveryView, evidence: Evidence)
-    requires v.state == State::Intended, v.approval == ApprovalGate::Prior { predecessor: true },
+    requires v.state == State::Intended, v.approval == (ApprovalGate::Prior { predecessor: true }),
         v.fence == Fence::Live, !v.waits.outage,
 {
     let first = action(v, Input::Start);
@@ -60,7 +60,7 @@ fn history_predecessor_cannot_issue(v: DeliveryView, evidence: Evidence)
 }
 
 fn pending_history_cannot_issue(v: DeliveryView)
-    requires v.state == State::Intended, v.approval == ApprovalGate::Prior { predecessor: false },
+    requires v.state == State::Intended, v.approval == (ApprovalGate::Prior { predecessor: false }),
         v.fence == Fence::Live, !v.waits.outage,
 {
     let first = action(v, Input::Start);
@@ -82,7 +82,7 @@ fn grant_spent_at_sent(v: DeliveryView)
     assert(matches!(next, Action::CommitSent { spend_grant: true, .. }));
     // The interpreter commits Intended->Sent and grant deletion atomically.
     // A restart has no continuation, so Start from durable Sent cannot issue.
-    let restarted = action(DeliveryView { state: State::Sent, approval: ApprovalGate::Prior { predecessor: false }, ..v }, Input::Start);
+    let restarted = action(DeliveryView { state: State::Sent, approval: (ApprovalGate::Prior { predecessor: false }), ..v }, Input::Start);
     assert(!matches!(restarted, Action::CommitSent { .. } | Action::Execute(_)));
 }
 

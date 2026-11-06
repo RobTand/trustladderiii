@@ -222,7 +222,7 @@ pub enum Outcome { Acknowledged(Ack), Ambiguous, Unanswered }
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Stage {
+pub enum Stage {
     History, SentExecute, SentFound(Ack), SentAmbiguous,
     ObserveExecute, ObserveReconcile, Execute, Reconcile,
 }
@@ -519,14 +519,19 @@ pub fn action<'a>(view: DeliveryView<'a>, input: Input<'a>) -> Action<'a> {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+pub closed spec fn permission_key(p: Continuation) -> Seq<u8> { p.key@ }
+pub closed spec fn permission_epoch(p: Continuation) -> u64 { p.epoch }
+pub closed spec fn permission_revision(p: Continuation) -> u64 { p.revision }
+pub closed spec fn permission_stage(p: Continuation) -> Stage { p.stage }
+
 pub open spec fn permission_at(p: Continuation, v: DeliveryView) -> bool {
-    p.key@ == v.key@ && p.epoch == v.epoch && p.revision == v.revision
+    permission_key(p) == v.key@ && permission_epoch(p) == v.epoch && permission_revision(p) == v.revision
 }
 
 pub open spec fn sent_action(v: DeliveryView, stage: Stage, out: Action) -> bool {
     match out {
         Action::CommitSent { spend_grant, then } => spend_grant == (v.approval != ApprovalGate::Ordinary)
-            && permission_at(then, v) && then.stage == stage,
+            && permission_at(then, v) && permission_stage(then) == stage,
         _ => false,
     }
 }
@@ -538,13 +543,13 @@ pub open spec fn start_contract(v: DeliveryView, out: Action) -> bool {
     } else if v.waits.outage && v.fence == Fence::Live { matches!(out, Action::Wait) }
     else { match v.state {
         State::Intended => match v.approval {
-            ApprovalGate::Prior { .. } => match out { Action::ReadHistory(p) => permission_at(p, v) && p.stage == Stage::History, _ => false },
+            ApprovalGate::Prior { .. } => match out { Action::ReadHistory(p) => permission_at(p, v) && permission_stage(p) == Stage::History, _ => false },
             _ => sent_action(v, Stage::SentExecute, out),
         },
         State::Sent => matches!(out, Action::Transition(State::Uncertain)),
         State::Uncertain | State::Cancelling => match out {
-            Action::Observe(p) => v.fence == Fence::Live && permission_at(p, v) && p.stage == Stage::ObserveReconcile,
-            Action::Reconcile(p) => v.fence == Fence::Retiring && !v.waits.quota && permission_at(p, v) && p.stage == Stage::Reconcile,
+            Action::Observe(p) => v.fence == Fence::Live && permission_at(p, v) && permission_stage(p) == Stage::ObserveReconcile,
+            Action::Reconcile(p) => v.fence == Fence::Retiring && !v.waits.quota && permission_at(p, v) && permission_stage(p) == Stage::Reconcile,
             Action::Wait => v.fence == Fence::Retiring && v.waits.quota,
             _ => false,
         },
@@ -553,7 +558,7 @@ pub open spec fn start_contract(v: DeliveryView, out: Action) -> bool {
 }
 
 pub open spec fn history_contract(v: DeliveryView, p: Continuation, e: Evidence, out: Action) -> bool {
-    if permission_at(p, v) && p.stage == Stage::History && v.state == State::Intended
+    if permission_at(p, v) && permission_stage(p) == Stage::History && v.state == State::Intended
         && v.fence == Fence::Live && !v.waits.outage {
         match v.approval {
             ApprovalGate::Prior { predecessor } => sent_action(v,
@@ -568,9 +573,9 @@ pub open spec fn history_contract(v: DeliveryView, p: Continuation, e: Evidence,
 }
 
 pub open spec fn sent_contract(v: DeliveryView, p: Continuation, out: Action) -> bool {
-    if v.key@ == p.key@ && v.epoch == p.epoch && v.revision >= p.revision && v.state == State::Sent {
-        match p.stage {
-            Stage::SentExecute => match out { Action::Observe(next) => permission_at(next, v) && next.stage == Stage::ObserveExecute, _ => false },
+    if v.key@ == permission_key(p) && v.epoch == permission_epoch(p) && v.revision >= permission_revision(p) && v.state == State::Sent {
+        match permission_stage(p) {
+            Stage::SentExecute => match out { Action::Observe(next) => permission_at(next, v) && permission_stage(next) == Stage::ObserveExecute, _ => false },
             Stage::SentFound(ack) => matches!(out, Action::EnqueueCompletion(a) if a == ack),
             Stage::SentAmbiguous => matches!(out, Action::RecordAmbiguity { stop: true }),
             _ => matches!(out, Action::Wait),
@@ -579,20 +584,20 @@ pub open spec fn sent_contract(v: DeliveryView, p: Continuation, out: Action) ->
 }
 
 pub open spec fn observed_contract(v: DeliveryView, p: Continuation, changed: bool, out: Action) -> bool {
-    if !permission_at(p, v) || !matches!(p.stage, Stage::ObserveExecute | Stage::ObserveReconcile) { matches!(out, Action::Wait) }
+    if !permission_at(p, v) || !matches!(permission_stage(p), Stage::ObserveExecute | Stage::ObserveReconcile) { matches!(out, Action::Wait) }
     else if changed { matches!(out, Action::Return) }
-    else { match p.stage {
+    else { match permission_stage(p) {
         Stage::ObserveExecute => if v.state == State::Sent {
-            match out { Action::Execute(next) => permission_at(next, v) && next.stage == Stage::Execute, _ => false }
+            match out { Action::Execute(next) => permission_at(next, v) && permission_stage(next) == Stage::Execute, _ => false }
         } else { matches!(out, Action::Wait) },
         _ => if matches!(v.state, State::Uncertain | State::Cancelling) && !v.waits.quota {
-            match out { Action::Reconcile(next) => permission_at(next, v) && next.stage == Stage::Reconcile, _ => false }
+            match out { Action::Reconcile(next) => permission_at(next, v) && permission_stage(next) == Stage::Reconcile, _ => false }
         } else { matches!(out, Action::Wait) },
     }}
 }
 
 pub open spec fn executed_contract(v: DeliveryView, p: Continuation, outcome: Outcome, out: Action) -> bool {
-    if permission_at(p, v) && p.stage == Stage::Execute && v.state == State::Sent {
+    if permission_at(p, v) && permission_stage(p) == Stage::Execute && v.state == State::Sent {
         match outcome {
             Outcome::Acknowledged(ack) => matches!(out, Action::EnqueueCompletion(a) if a == ack),
             Outcome::Ambiguous => matches!(out, Action::RecordAmbiguity { stop: true }),
@@ -602,7 +607,7 @@ pub open spec fn executed_contract(v: DeliveryView, p: Continuation, outcome: Ou
 }
 
 pub open spec fn reconciled_contract(v: DeliveryView, p: Continuation, e: Evidence, out: Action) -> bool {
-    if permission_at(p, v) && p.stage == Stage::Reconcile && matches!(v.state, State::Uncertain | State::Cancelling) {
+    if permission_at(p, v) && permission_stage(p) == Stage::Reconcile && matches!(v.state, State::Uncertain | State::Cancelling) {
         match e {
             Evidence::Found(ack) => matches!(out, Action::EnqueueCompletion(a) if a == ack),
             Evidence::Absent => if v.state == State::Cancelling { matches!(out, Action::CancelAbsent) }

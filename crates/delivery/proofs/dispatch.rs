@@ -40,8 +40,8 @@ fn changed_binding_discards_permission(v: DeliveryView, old: DeliveryView, pendi
 
 fn no_permission_before_sent(v: DeliveryView)
     requires v.state == State::Intended, v.fence == Fence::Live, !v.waits.outage,
-        v.approval != ApprovalGate::Prior { predecessor: false },
-        v.approval != ApprovalGate::Prior { predecessor: true },
+        v.approval != (ApprovalGate::Prior { predecessor: false }),
+        v.approval != (ApprovalGate::Prior { predecessor: true }),
 {
     let next = action(v, Input::Start);
     assert(matches!(next, Action::CommitSent { .. }));
