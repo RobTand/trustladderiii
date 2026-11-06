@@ -788,3 +788,58 @@ fn r2_c_healthy_event_wait_never_accumulates_read_outages() {
     drain(&mut controller);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
+
+fn direct_intent_path(fixture: &DirectFixture) -> std::path::PathBuf {
+    let paths: Vec<_> = std::fs::read_dir(fixture.root.path().join("direct")).unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext|ext == "intent")).collect();
+    assert_eq!(paths.len(), 1);
+    paths[0].clone()
+}
+
+#[test]
+fn r3_a_annotation_crash_preserves_legacy_and_current_merge_attempts() {
+    let mut database = support::Database::start();
+    for legacy in [true, false] {
+        let settings = database.create(if legacy {"direct_r3_legacy"} else {"direct_r3_current"});
+        let mut fixture = DirectFixture::new();
+        fixture.check(Some("success"));
+        fixture.direct.lock().unwrap().status = Some(503);
+        let (controller, _) = fixture.start(&settings);
+        assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+        drop(controller);
+        let path = direct_intent_path(&fixture);
+        let mut intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(intent["action"], "Merge");
+        if legacy { intent.as_object_mut().unwrap().remove("consumed_through"); }
+        std::fs::write(&path, serde_json::to_vec(&intent).unwrap()).unwrap();
+        {
+            let mut state = fixture.api.state.lock().unwrap();
+            state.pull["body"] = json!(state.pull["body"].as_str().unwrap().replace(direct_merge::VISIBILITY, ""));
+        }
+        fixture.wakes = direct_merge::Wakes::default();
+        let adapter = fixture.adapter(&settings).with_write_boundary(|boundary| {
+            if boundary == (direct_merge::WriteBoundary {write:direct_merge::Write::Annotation, after:true}) {
+                panic!("crash after annotation before the next Merge intent");
+            }
+        });
+        let mut controller = fixture.open_adapter(&settings, adapter);
+        store_direct_check_event(&fixture, &settings, "authorize-annotation");
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ingress::drain(&mut controller))).is_err());
+        let intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(intent["action"], "Annotate");
+        assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+        drop(controller);
+        fixture.wakes = direct_merge::Wakes::default();
+        fixture.direct.lock().unwrap().status = None;
+        let mut recovered = fixture.open(&settings);
+        drain(&mut recovered);
+        assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1,
+            "annotation must not erase a prior Merge attempt, legacy={legacy}; recovery needs new ingress");
+        store_direct_check_event(&fixture, &settings, "post-annotation-recovery");
+        drain(&mut recovered);
+        assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
+        assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+        assert!(matches!(recovered.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+    }
+}
