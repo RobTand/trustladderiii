@@ -97,11 +97,12 @@ pub(super) proof fn ordinary(before: World, off: World, on: World, generation: u
     if (reply == Reply::ReviewerOutOfRoom && !source.review_restarted)
         || (match reply { Reply::ChecksDone { pass, in_footprint, .. } => pass && in_footprint, _ => false }) {
         assert(off.nodes@ =~= on.nodes@);
+        assert(port_failfast_admission::same_world(off, on));
     } else {
         let kind = if reply == Reply::MakerCantMeet { 0u8 }
             else if matches!(reply, Reply::MakerOutOfRoom | Reply::ReviewerOutOfRoom) { 1u8 }
             else { 3u8 };
-        reveal(port_review_retry::rung);
+        reveal(port_review_retry::rung); reveal(retirement::stopped);
         port_failfast_pair_frame::compare(before, off, on, source, kind, reason(reply), on_out);
     }
 }

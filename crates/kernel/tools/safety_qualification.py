@@ -471,6 +471,13 @@ CASES = {
         '    m.run = None;\n    if m.run == Some(generation) {\n        m.run = None;\n        m.pool = false;\n    }',
         '//crates/kernel:lib_test_tl3_kernel'),
 
+    # Q54 W5 slice 2: the shared exhaustion diversion reads the actual flag.
+    'port_failfast_room_diversion': (
+        'crates/kernel/src/retries.rs',
+        '    let fail_fast = w.fail_fast;\n    let m = &mut w.nodes[i];\n    kernel_snapshot! { room_node = *m }',
+        '    let fail_fast = false;\n    let m = &mut w.nodes[i];\n    kernel_snapshot! { room_node = *m }',
+        '//crates/kernel:verus_review_retry_room'),
+
 }
 
 

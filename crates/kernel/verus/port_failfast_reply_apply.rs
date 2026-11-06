@@ -26,6 +26,58 @@ pub(super) proof fn compare(before: World, off: World, on: World, generation: u6
     }
 }
 
+/// #832-A / Q54: these six reply families introduce no flag-off review stop.
+/// This implies the current PublicationBody/AuditDisagreement/plan-check rule,
+/// without assuming the old blanket rule for other event families.
+pub(super) proof fn off_stops(before: World, after: World, generation: u64, reply: Reply,
+    initial: Outbox, out: Outbox)
+    requires retirement::domain(before), !before.fail_fast,
+        port_failfast_replies::selected(before.nodes@[0], reply),
+        port_review_reply::reply_post(before, after, 0, generation, reply, initial, out),
+    ensures forall|i: int| 0 <= i < 2 ==>
+        port_failfast_replies::stop_rule(before.nodes@[i], after.nodes@[i], false, reply),
+{
+    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result);
+    reveal(port_review_reply::accepted_reply);
+    reveal(port_review_retry::failed_run); reveal(retirement::incident);
+    if port_review_reply::active(before.nodes@[0], generation)
+        && port_review_reply::accepted_reply(before, before.nodes@[0], reply) {
+        port_failfast_replies::admitted(before, after, generation, reply, initial, out);
+        reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
+        reveal(port_replies_maker::files_post); reveal(port_review_reply::transition);
+        reveal(port_review_retry::rung); reveal(port_review_retry::room);
+        reveal(port_review_retry::round); reveal(port_review_retry::rechecked);
+    }
+    assert forall|i: int| 0 <= i < 2 implies after.nodes@[i].review_stop == before.nodes@[i].review_stop by {
+        assert(i == 0 || i == 1);
+    }
+}
+
+/// #806 / Q54: one reply leaves the complete checker enough arithmetic headroom.
+/// Only actor equations are opened; global checker composition stays in safe.
+pub(super) proof fn headroom(before: World, after: World, generation: u64, reply: Reply,
+    initial: Outbox, out: Outbox)
+    requires retirement::domain(before), retirement::accepted(before), retirement::bounded(before),
+        before.fail_fast, port_failfast_replies::selected(before.nodes@[0], reply),
+        port_review_reply::reply_post(before, after, 0, generation, reply, initial, out),
+    ensures world_headroom(after),
+{
+    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result);
+    reveal(port_review_reply::accepted_reply); reveal(retirement::bounded);
+    if port_review_reply::active(before.nodes@[0], generation)
+        && port_review_reply::accepted_reply(before, before.nodes@[0], reply) {
+        port_failfast_replies::admitted(before, after, generation, reply, initial, out);
+        reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
+        reveal(port_replies_maker::files_post); reveal(port_review_reply::transition);
+        reveal(port_review_retry::round); reveal(port_review_retry::rung);
+        reveal(port_review_retry::room); reveal(port_review_retry::rechecked);
+        reveal(retirement::stopped);
+    } else {
+        reveal(port_review_retry::failed_run); reveal(retirement::incident);
+    }
+    port_replies_safety::checker_headroom(before, after);
+}
+
 /// Q54 / #832-A: lift each published safety frame to the current shared stop rule.
 pub(super) proof fn safe(before: World, after: World, generation: u64, reply: Reply,
     initial: Outbox, out: Outbox)
@@ -69,6 +121,8 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
         retirement::domain(result.1.0), retirement::accepted(result.1.0), retirement::notices_only(result.1.1),
         port_failfast_replies::diverted(off, result.0.0, result.1.0, reply, result.1.1),
         forall|i: int| 0 <= i < 2 ==> port_failfast_safety::node_post(off.nodes@[i], result.1.0.nodes@[i]),
+        forall|i: int| 0 <= i < 2 ==>
+            port_failfast_replies::stop_rule(off.nodes@[i], result.0.0.nodes@[i], false, reply),
         port_replies_maker_exec::funding(World { fail_fast: true, ..off }, result.1.0, generation, reply),
         !port_review_reply::active(off.nodes@[0], generation) ==>
             port_failfast_admission::same_world(result.0.0, result.1.0),
@@ -77,7 +131,7 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
         port_review_reply::reply_post(World { fail_fast: true, ..off }, result.1.0, 0, generation, reply,
             Outbox { items: [None; OUTBOX], len: 0 }, result.1.1),
 ] proof [reveal(retirement_domain); reveal(retirement_accepted); reveal(empty_outbox);
-    reveal(retirement::notices_only); reveal(storage_ordered);] {
+    reveal(retirement::notices_only); reveal(storage_ordered); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before = off }
     let mut on = port_failfast_witness::fast_copy(&off);
     kernel_snapshot! { fast = on }
@@ -98,6 +152,7 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
     apply(&mut on, Event::Reply { node: NodeId(0), generation, reply }, &mut out_on);
     kernel_proof! {
         compare(before@, off, on, generation, reply, initial@, out_off, out_on);
+        off_stops(before@, off, generation, reply, initial@, out_off);
         safe(fast@, on, generation, reply, initial_on@, out_on);
         if let Reply::MakerNeedsFiles { files, fits } = reply {
             let n = fast@.nodes@[0];
@@ -111,14 +166,7 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
             port_failfast_admission::inactive_pair(before@, off, on, generation,
                 reply, initial@, out_off, out_on);
         }
-        reveal(port_review_reply::reply_post);
-        reveal(port_review_reply::reply_result); reveal(port_review_reply::transition_post);
-        reveal(port_replies_contracts::transition_post); reveal(port_replies_maker::transition_post);
-        reveal(port_replies_maker::files_post); reveal(port_replies_maker::work_result);
-        reveal(port_review_reply::transition); reveal(port_review_retry::round);
-        reveal(port_review_retry::rung); reveal(port_review_retry::room); reveal(port_review_retry::rechecked);
-        reveal(port_review_retry::failed_run); reveal(retirement::incident); reveal(retirement::stopped);
-        port_replies_safety::checker_headroom(fast@, on);
+        headroom(fast@, on, generation, reply, initial_on@, out_on);
     }
     let checked_after = on.check();
     assert!(checked_after.is_ok());

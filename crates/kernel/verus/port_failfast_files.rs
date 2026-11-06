@@ -35,12 +35,16 @@ pub(super) proof fn compare(before: World, off: World, on: World, generation: u6
         if port_review_retry::funded(source) {
             assert(off.nodes@[0].footprint == on.nodes@[0].footprint);
             assert(off.nodes@ =~= on.nodes@);
+            assert(port_failfast_admission::same_world(off, on));
         } else {
             port_failfast_pair::funding(source, on.nodes@[0].footprint, before.next_question);
             reveal(port_review_retry::room);
+            assert(on.nodes@[0].credit == before.nodes@[0].credit);
+            assert(port_failfast_pair::retried(before.nodes@[0], off.nodes@[0]));
         }
     } else {
         port_failfast_pair_frame::compare(before, off, on, source, 1, ReviewStop::MakerNeedsFiles, on_out);
+        reveal(port_review_retry::room); reveal(retirement::stopped);
     }
 }
 }

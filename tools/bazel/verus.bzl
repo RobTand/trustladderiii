@@ -763,6 +763,12 @@ def verus_proofs():
             "kernel::port_review_retry_lemmas::room_question_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_admission::stopping_reference::reference_on_reply": "Test-only stopping extraction reference; absent from the Verus cfg and exercised by every reply equivalence comparison.",
             "kernel::port_review_reply::review_transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_replies::selected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_replies::reason": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_replies::diverted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_replies::stop_rule": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_reply_witness::case_reply": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_reply_witness::input": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1171,6 +1177,11 @@ def verus_proofs():
             "port_failfast_reply_compare": ("kernel::port_failfast_reply_apply#compare", 1),
             "port_failfast_reply_safe": ("kernel::port_failfast_reply_apply#safe", 1),
             "port_failfast_reply_apply": ("kernel::port_failfast_reply_apply#verify_reply_apply", 1),
+            "port_failfast_reply_headroom": ("kernel::port_failfast_reply_apply#headroom", 1),
+            "port_failfast_reply_off_stops": ("kernel::port_failfast_reply_apply#off_stops", 1),
+            "port_failfast_reply_witness_changed": ("kernel::port_failfast_reply_witness#changed", 1),
+            "port_failfast_reply_witness_world": ("kernel::port_failfast_reply_witness#world", 1),
+            "port_failfast_reply_witness_cover": ("kernel::port_failfast_reply_witness#cover", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
