@@ -375,6 +375,7 @@ impl World {
     kernel_fn! {
     /// File extension rows / #771: the merge consumes one input on every pass.
     /// Only the append-only file table changes; all allocation ledgers are framed.
+    /// Q54 / #440: inline extensions preserve storage and retain every input bit.
     pub(super) fn union_footprints(&mut self, a: Footprint, b: Footprint) -> (result: Footprint) [
         requires valid_footprint(*old(self), a), valid_footprint(*old(self), b),
             ordered_table(*old(self)),
@@ -389,8 +390,16 @@ impl World {
             final(self).pool_capacity == old(self).pool_capacity,
             final(self).fail_fast == old(self).fail_fast,
             final(self).dependencies@ == old(self).dependencies@,
-    ] proof [reveal(valid_footprint); reveal(ordered_table);] {
+            forall|a_bits: u64, b_bits: u64|
+                a == inline_footprint(a_bits) && b == inline_footprint(b_bits) ==> {
+                    result == inline_footprint(a_bits | b_bits)
+                        && final(self).file_sets@ == old(self).file_sets@
+                        && (!footprint_empty(a) || !footprint_empty(b) ==> !footprint_empty(result))
+                },
+    ] proof [reveal(valid_footprint); reveal(ordered_table);
+        reveal(inline_footprint); reveal(footprint_empty);] {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
+            kernel_proof! { assert(a != 0 || b != 0 ==> a | b != 0) by (bit_vector); }
             return Footprint::inline(a | b);
         }
         #[cfg(kani)]

@@ -809,7 +809,7 @@ def verus_proofs():
             "ranks_settle_rank": ("kernel::ranks#Node::settle_rank", 1),
             "ranks_settle_reserve_totals": ("kernel::ranks#settle_reserve_totals", 1),
             "ranks_sum_update": ("kernel::ranks#sum_update", 1),
-            "footprint": ("kernel::footprint", 23),
+            "footprint": ("kernel::footprint", 24),
             "ranks_node_distance_definition": ("kernel::ranks#node_distance_definition", 1),
             "ids": ("kernel::ids", 6),
             "controller_boundary": ("controller_boundary", 2),

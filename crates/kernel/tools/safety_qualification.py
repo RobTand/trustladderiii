@@ -306,6 +306,11 @@ CASES = {
         '    m.plan_retries = m.plan_retries.saturating_add(1);',
         '    m.plan_retries = m.plan_retries.saturating_add(0);',
         '//crates/kernel:verus_review_retry_plan'),
+    'port_failfast_inline_union': (
+        'crates/kernel/src/footprint.rs',
+        '            return Footprint::inline(a | b);',
+        '            return Footprint::inline(a & b);',
+        '//crates/kernel:verus_footprint'),
 }
 
 
