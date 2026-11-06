@@ -222,11 +222,12 @@ pub(super) fn verify_grant(mut w: World) -> (result: (World, Outbox, bool)) [
     kernel_proof! { node_distance_definition(w.nodes@[0]); }
     let before_rank = w.nodes[0].settle_rank();
     let mut out = Outbox::new();
+    kernel_snapshot! { grant_out = out }
     let changed = advance(&mut w, 0, &mut out);
     kernel_proof! {
         retirement_gate_bridge::queries(before@, 0);
         retirement_gate_bridge::post(before@.nodes@[0], w.nodes@[0], before@.next_ticket,
-            w.next_ticket, slot(before@, 0) && line(before@, 0), changed, empty_outbox(), out);
+            w.next_ticket, slot(before@, 0) && line(before@, 0), changed, grant_out@, out);
         node_distance_definition(w.nodes@[0]);
     }
     let after_rank = w.nodes[0].settle_rank();
