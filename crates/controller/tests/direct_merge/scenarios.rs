@@ -937,7 +937,10 @@ fn fake_and_production_merge_outcomes_have_identical_receipts() {
             .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
             .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].as_object().cloned())
             .map(Value::Object).collect();
-        results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap()));
+        let rows = r1_delivery_rows(&mut controller);
+        // Closed nodes retire delivery receipts; both paths must also drain their inbox.
+        assert!(rows.is_empty(), "closed outcome paths retain no delivery or inbox rows: {rows:?}");
+        results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), rows));
     }
     assert_eq!(results[0], results[1], "fake and production must apply identical facts and world rows");
 }
@@ -1014,6 +1017,12 @@ fn fake_and_production_ci_outcomes_have_identical_findings() {
                     },
                 })
             };
+            let expected_receipts = if let Observation::Queue(fact) = &observation {
+                let mut value = json!(fact);
+                let head = value["evidence"]["CiFailed"]["head"].as_str().unwrap().to_owned();
+                value["evidence"]["CiFailed"]["details"]["cause"] = json!({"Change":{"fingerprint":format!("queue:{head}:unknown")}});
+                vec![("queue_facts".into(), "owner/sandbox/3/100/head-ci:1001".into(), value)]
+            } else { vec![] };
             controller.observe("same-ci-outcome", observation).unwrap();
             assert!(controller.drive_once().unwrap());
             let facts: Vec<_> = Store::open(&settings).unwrap()
@@ -1022,11 +1031,22 @@ fn fake_and_production_ci_outcomes_have_identical_findings() {
             let findings: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
                 .filter(|row| matches!(row.table.as_str(), "maker_findings" | "findings"))
                 .map(|row| (row.table, row.id, row.value)).collect();
+            // Production has an external check identity and retains precisely its queue receipt.
+            // The legacy fake has no such identity, so it has no receipt. Neither retains inbox rows.
+            assert_eq!(r1_delivery_rows(&mut controller), expected_receipts);
             assert_eq!(facts, vec![json!({"infra":infra})]);
             results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), findings));
         }
         assert_eq!(results[0], results[1], "CI classification {infra} must share facts, world rows and findings");
     }
+}
+
+fn r1_delivery_rows(controller: &mut Controller) -> Vec<(String, String, Value)> {
+    let mut rows: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row|matches!(row.table.as_str(), "queue_facts" | "delivery_outcomes" | "inbox"))
+        .map(|row|(row.table,row.id,row.value)).collect();
+    rows.sort_by(|a,b|(&a.0,&a.1).cmp(&(&b.0,&b.1)));
+    rows
 }
 
 fn r1_adapter(fixture: &DirectFixture, settings: &tl3_config::Store) -> direct_merge::Adapter {
@@ -1150,7 +1170,7 @@ fn r1_legacy_direct_receipts_deduplicate_after_restart() {
         let mut database=support::Database::start();
         let settings=database.create(if ci {"r1_upgrade_ci"} else {"r1_upgrade_push"});
         let fixture=DirectFixture::new(); fixture.check(None);
-        let (controller,delivery)=fixture.start(&settings);
+        let (mut controller,delivery)=fixture.start(&settings);
         let head=if ci {delivery.head_sha.clone().unwrap()} else {"b".repeat(40)};
         let suffix=if ci {"head-ci:1100".to_owned()} else {format!("push:{head}")};
         let identity=format!("owner/sandbox/3/100/{suffix}");
