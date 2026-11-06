@@ -1,5 +1,6 @@
 // Current production evidence shell. before.rs remains the frozen extraction reference.
 use super::super::*;
+use super::before::CheckEvidence;
 use super::recorded_io::File;
 
 // BEGIN BODY
