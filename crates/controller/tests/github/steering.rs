@@ -308,6 +308,9 @@ impl Daemon {
         let rejected = retained.as_ref().map(|owner| owner.rejection_signal());
         self.child.kill().unwrap();
         self.child.wait().unwrap();
+        let mut connection = fixture_lifecycle::connect(&self.store_settings());
+        support::controller_restart::wait_for_owner_release(&mut connection);
+        drop(connection);
         let mut child = Command::new(env!("CARGO_BIN_EXE_tl3d"))
             .arg("--config")
             .arg(self.root.path().join("config.toml"))
