@@ -976,6 +976,10 @@ impl Controller {
                         if action == state_decisions::FoundAction::Complete {
                             self.complete(&effect.key, completion)?;
                         } else {
+                            // The final save must retain the class recorded with the observations.
+                            if let Some(class) = &completion.failure_class {
+                                state.failure = Some(class.clone());
+                            }
                             self.look_observations(&state.delivery, completion)?;
                         }
                     }
@@ -1429,7 +1433,11 @@ impl Controller {
         Ok(())
     }
 
-    fn look_observations(&mut self, delivery: &Delivery, completion: Completion) -> Result<()> {
+    pub(crate) fn look_observations(
+        &mut self,
+        delivery: &Delivery,
+        completion: Completion,
+    ) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut commit = Commit::new(
             format!(
@@ -1442,6 +1450,9 @@ impl Controller {
         );
         self.release_terminal_model_probes(&snapshot, &mut commit, None)?;
         self.retire_completed_model_attempts(&snapshot, &mut commit)?;
+        if let Some(class) = completion.failure_class.as_deref() {
+            self.failure_allowance(&snapshot, &delivery.key, class, &mut commit)?;
+        }
         for (index, observation) in completion.observations.iter().enumerate() {
             self.queue_observation(&snapshot, &mut commit, &delivery.key, index, observation)?;
             if let Some(source) = crate::observation_upstream(&snapshot, observation)? {

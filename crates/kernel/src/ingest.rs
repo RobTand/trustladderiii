@@ -64,13 +64,23 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         old(w).next_question < u64::MAX,
         matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)
             | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+    ensures port_t860_contracts::transition_post(*old(w), *final(w), i as int, reply, *old(out), *final(out)),
+        (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
+] proof [reveal(port_t860_contracts::transition_post); reveal(reply_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);
@@ -78,28 +88,33 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         Reply::IngestEarlyEnd(e) => {
             finish_ingest(w, i, 1, Some(e));
         }
-        Reply::AuditAgrees => match w.nodes[i].early_end {
+        Reply::AuditAgrees => {
+            kernel_proof! { reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); }
+            match w.nodes[i].early_end {
             Some(e) => enter_stopping(&mut w.nodes[i], e.outcome()),
             None => {
                 notice(out, i, Notice::MeasuresPosted);
                 set_phase(&mut w.nodes[i], Phase::Unplanned);
             }
+            }
         },
         Reply::AuditDisagrees => {
+            kernel_snapshot! { before_audit = w.nodes@[i as int] }
             let m = &mut w.nodes[i];
             m.audit_rounds = m.audit_rounds.saturating_add(1);
             if m.audit_rounds < 2 {
                 // Ingest revises once with the audit's objections.
                 set_phase(m, Phase::Ingesting);
             } else {
-                let cont = match m.early_end {
-                    Some(e) => Cont::Stop(e.outcome()),
-                    None => Cont::Unplanned,
-                };
-                ask_rob(w, i, QKind::AuditDisagreement, cont, 0, out);
+                // Q27, #832-A: intake cannot split. The one repair is spent.
+                stop_for_review(m, ReviewStop::AuditDisagreement);
             }
+            kernel_proof! { port_t860_link::audit_finished(before_audit@, w.nodes@[i as int]); }
         }
-        Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
+        Reply::ProtectedPaths => {
+            kernel_proof! { reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); }
+            enter_stopping(&mut w.nodes[i], Outcome::NotActionable);
+        },
         _ => {}
     }
 }

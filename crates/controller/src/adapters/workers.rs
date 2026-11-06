@@ -9,6 +9,7 @@ mod contract_vector_tests;
 #[cfg(test)]
 mod dispatch_conformance_tests;
 mod evidence;
+pub use evidence::check_ingest_reply;
 mod facts;
 mod fake;
 #[cfg(test)]
@@ -521,6 +522,10 @@ impl Supervisor {
                 .worker_document(&node, "findings")?
                 .unwrap_or(json!([]));
             inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
+            let closures = crate::merge_dependencies::closures(snapshot, delivery.node())?;
+            if !closures.is_empty() {
+                inputs["prerequisite_closures"] = json!(closures);
+            }
             inputs["repair_plan_consistency"] = json!(true);
             if let Some(base) = materials.get("base_checkout") {
                 inputs["base_sha"] = base["commit"].clone();

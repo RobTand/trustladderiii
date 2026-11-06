@@ -66,7 +66,7 @@ proptest! {
         let map=JsonObject(serde_json::Map::from_iter([("anything".into(),contents.clone())]));
         let context=PostmortemInput {
             record:Record {id:Natural::new(id).unwrap(),trigger:nonempty.clone(),reason:nonempty.clone()},
-            case:Case {request:map.clone(),outcome:nonempty.clone(),grades:JsonArray(entries.clone()),phases:JsonArray(entries.clone()),questions:JsonArray(entries.clone()),incidents:JsonArray(entries),plan:Some(contents.clone()),brief:Some(contents.clone()),audit:None,findings:Some(contents),release:String::new()},
+            case:Case {prerequisite_closures:Vec::new(),request:map.clone(),outcome:nonempty.clone(),grades:JsonArray(entries.clone()),phases:JsonArray(entries.clone()),questions:JsonArray(entries.clone()),incidents:JsonArray(entries),plan:Some(contents.clone()),brief:Some(contents.clone()),audit:None,findings:Some(contents),release:String::new()},
             rubric:Rubric::new(Natural::new(id).unwrap(),map),release:String::new(),grade_model:nonempty,deadline_secs:Natural::new(id).unwrap(),
             trace_tags:TraceTags {node:DecimalText::new(n.to_string()).unwrap(),request:DecimalText::new(n.to_string()).unwrap(),issue:DecimalText::new(n.to_string()).unwrap(),repo:RepositoryName::new("owner/repo").unwrap()}
         };

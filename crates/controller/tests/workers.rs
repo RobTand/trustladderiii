@@ -6,6 +6,8 @@ const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 
 #[path = "workers/classifier.rs"]
 mod classifier;
+#[path = "workers/ingest_verbatim.rs"]
+mod ingest_verbatim;
 mod maker;
 #[path = "workers/postmortem.rs"]
 mod postmortem_reply;
@@ -374,10 +376,11 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
 /// Set on child processes of a run that already prepared the worker runtime.
 const PREPARED: &str = "TL3_TEST_WORKERS_PREPARED";
 
-const PLANNING_MODES: [&str; 6] = [
+const PLANNING_MODES: [&str; 7] = [
     "normal",
     "plan-split",
     "plan-invalid",
+    "plan-size",
     "plan-cant-meet",
     "plan-bad-split",
     "plan-bad-schema",
@@ -554,6 +557,7 @@ fn main() {
         println!("test real_worker_contract_ingest_audit ... ok");
         planning::planning(&database.create("contract_planner"), "normal");
         planning::planning(&database.create("contract_planner_reject"), "plan-invalid");
+        planning::planning(&database.create("contract_planner_size"), "plan-size");
         println!("test real_worker_contract_planner ... ok");
         maker::reproducing_rebase_contract(&database.create("contract_maker_reviewer"));
         println!("test real_worker_contract_maker_reviewer ... ok");
@@ -3010,7 +3014,9 @@ fn run_default() {
         finish_fixture("worker_waits");
     });
     shard.run(WorkerGroup::IngestMaterials, || {
+        ingest_verbatim::run();
         let database = fixture.database();
+        ingest_verbatim::stored_reply(&database.create("stored_ingest_verbatim"));
         for wrapped in [false, true] {
             linked_materials(
                 &database.create(&format!("linked_materials_{wrapped}")),

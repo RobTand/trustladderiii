@@ -529,8 +529,8 @@ def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monk
     assert result['origin'] == 'test_run'
     assert result['execution'] == {'outcome': 'unknown_incomplete', 'phase': 'unknown',
                                    'termination_reason': 'incomplete_report', 'test_started': False}
-    from tl3_harness.selector_identity import selection_matches
-    assert selection_matches(result['selectors'], selected)
+    from tl3_harness.selector_identity import selector_identity
+    assert result['selectors'] == selector_identity(selected)
     assert len(json.dumps(result).encode()) <= SUMMARY_BYTES
     assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
 
@@ -576,3 +576,162 @@ def test_request199_complete_summary_envelope_keeps_exact_retained_evidence(subm
     assert 'Truncated' in result['note']
     from tl3_workers.forcing_rehearsal import unusable
     assert unusable(result, [NODE], 'failed') == 'incomplete node results'
+
+
+# #826 review: redaction must see the label before any capture/display boundary.
+@pytest.mark.parametrize('boundary', ['line', 'total', 'raw'])
+def test_stderr_capture_redacts_before_clipping_and_trace(boundary, tmp_path, monkeypatch, capsys):
+    from tl3_harness import supervision, test_tool
+    from tl3_workers.tracing import Redactor
+    secret = 'zE9!pR4#cV7$' if boundary != 'raw' else 'v' * 128
+    payloads = {
+        'line': 'password: ' + secret + ' ' + '.' * 499,
+        'total': 'password: ' + secret + '\n' + '.' * 505 + '\n' + '.' * 504,
+        'raw': 'password: ' + 'v' * 40000 + '\ncontainer shim refused\n',
+    }
+    if boundary != 'raw':
+        assert secret not in supervision._redactor.window(payloads[boundary], 0, len(payloads[boundary]))
+    path = tmp_path / 'stderr.bin'
+    path.write_text(payloads[boundary])
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
+    monkeypatch.setattr(test_tool, 'container_command', lambda *args: [sys.executable, '-I', '-B', '-c',
+        f'import os; os.write(2, open({str(path)!r}, "rb").read()); os._exit(125)'])
+    result = test_tool.run_current(tmp_path, execution_container(), ())
+    records = [json.loads(line.removeprefix(supervision.FAILURE_PREFIX))
+               for line in capsys.readouterr().out.splitlines() if line.startswith(supervision.FAILURE_PREFIX)]
+    assert records, 'operator diagnostic was lost'
+    from tl3_workers.contracts import validate
+    for record in records:
+        validate('execution-failure', record)
+    assert secret not in json.dumps(records), 'capture clipping erased the credential label'
+    assert secret not in Redactor(None).text(json.dumps(records)), 'trace sees an unlabeled secret'
+    assert 'stderr_tail' not in json.dumps(result), 'operator stderr reached a model-facing summary'
+
+
+def execution_container():
+    from tl3_harness.execution import Container
+    return Container(IMAGE)
+
+
+# #826 review: both action-log serializations must exclude unredacted stderr.
+def test_both_stderr_log_prefixes_are_redacted(tmp_path, monkeypatch, capsys):
+    from tl3_harness import supervision, test_tool
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    failure = supervision.ExecutionFailure(supervision.ExecutionOutcome.SETUP_FAILURE,
+        'container_start', 'incomplete_report', stderr_tail='password: zE9!pR4#cV7$')
+    failure.log()
+    result = infrastructure(failure.message())
+    result['execution'] = {**failure.as_json(), 'stderr_tail': failure.stderr_tail}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['test_tool', IMAGE, '[]'])
+    monkeypatch.setattr(test_tool, 'run', lambda *args, **kwargs: result)
+    test_tool.main()
+    output = capsys.readouterr().out
+    assert 'TL3_EXECUTION_FAILURE ' in output and 'TL3_TEST_SUMMARY ' in output
+    for prefix in (supervision.FAILURE_PREFIX, test_tool.PREFIX):
+        records = [line for line in output.splitlines() if line.startswith(prefix)]
+        assert records
+        assert all('zE9!pR4#cV7$' not in line for line in records)
+
+
+# #826 review: the real StructuredTool boundary excludes diagnostics in every shape.
+@pytest.mark.parametrize('mode', ['plain', 'base', 'repeat', 'nested'])
+def test_run_tests_tool_never_returns_operator_stderr(submission, mode):
+    result = infrastructure('Container failed.')
+    result['execution'] = {'outcome': 'setup_failure', 'phase': 'container_start',
+        'termination_reason': 'incomplete_report', 'test_started': False,
+        'stderr_tail': 'operator-only instruction from stderr'}
+    if mode == 'nested':
+        nested = deepcopy(result)
+        result.update(groups=[nested], runs=[nested], base=nested)
+    args = {'tests': ['test_code.py::test_value']}
+    if mode == 'base':
+        prepare_base_submission(submission)
+        args['base'] = True
+    if mode == 'repeat':
+        args['repeat'] = 2
+    observed, _ = invoke(submission, result, args)
+    assert 'stderr_tail' not in json.dumps(observed)
+    assert 'operator-only instruction' not in json.dumps(observed)
+
+
+@pytest.mark.parametrize('context_kind', ['ini', 'csv', 'private-key'])
+def test_stderr_raw_boundary_keeps_section_context_before_redaction(context_kind, monkeypatch, capsys):
+    """#826: dropping an incomplete first line must not erase a retained credential section."""
+    from tl3_harness.supervision import Supervised, ExecutionOutcome, MAX_STDERR_BYTES
+    from tl3_workers.tracing import Redactor
+    from tl3_harness import supervision
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    secret = 'k' * 64 if context_kind == 'private-key' else 'zE9!pR4#cV7$'
+    if context_kind == 'ini':
+        header = b'[passwords]\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header))
+        value = 'value = ' + secret
+    elif context_kind == 'csv':
+        header = b'name,password\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header) - 2) + b',x'
+        value = 'account,' + secret
+    else:
+        header = b'-----BEGIN PRIVATE KEY-----\n'
+        first = (header + (b'A' * 64 + b'\n') * 256)[:MAX_STDERR_BYTES]
+        value = secret + '\n-----END PRIVATE KEY-----'
+    later = ('\n' + value + '\ncontainer shim refused\n').encode()
+    assert secret not in supervision._redactor.window((first + later).decode(), 0, len(first + later))
+    # Both the exact review sequence and the earlier incomplete-boundary regression.
+    for prefix in (b'', b'x' * MAX_STDERR_BYTES):
+        process = Supervised([], None, ())
+        for chunk in (prefix, first, later, b'\n'):
+            if chunk:
+                assert len(chunk) <= MAX_STDERR_BYTES
+                process.capture_stderr(chunk)
+        failure = process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report')
+        diagnostic = failure.operator_json()
+        failure.log()
+        output = capsys.readouterr().out
+        assert 'TL3_EXECUTION_FAILURE ' in output
+        assert secret not in output, 'later raw cut re-exposed a redacted secret in the PB log'
+        assert secret not in json.dumps(diagnostic), 'later raw cut replaced redaction with a secret'
+        assert secret not in Redactor(None).text(json.dumps(diagnostic))
+        assert diagnostic['stderr_tail'] == 'stderr withheld: redaction context lost'
+
+
+@pytest.mark.parametrize('context_kind', ['ini', 'csv', 'private-key'])
+def test_new_stderr_secret_after_context_eviction(context_kind, monkeypatch, capsys):
+    """#826 review3: new bytes remain secret after their governing header is evicted."""
+    from tl3_harness import supervision
+    from tl3_harness.supervision import Supervised, ExecutionOutcome, MAX_STDERR_BYTES
+    from tl3_workers.tracing import Redactor
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    secret = 'k' * 64 if context_kind == 'private-key' else 'zE9!pR4#cV7$'
+    if context_kind == 'ini':
+        header = b'[passwords]\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header))
+        advance = b'\n'
+        value = 'value = ' + secret
+    elif context_kind == 'csv':
+        header = b'name,password\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header) - 2) + b',x'
+        advance = b'\nother,x'
+        value = 'account,' + secret
+    else:
+        header = b'-----BEGIN PRIVATE KEY-----\n'
+        first = (header + (b'A' * 64 + b'\n') * 256)[:MAX_STDERR_BYTES]
+        advance = b'\n' + b'A' * 64 + b'\n'
+        value = secret + '\n-----END PRIVATE KEY-----'
+    chunks = (first, advance, ('\n' + value + '\ncontainer shim refused\n').encode(), b'\n')
+    whole = b''.join(chunks).decode()
+    assert secret not in supervision._redactor.window(whole, 0, len(whole))
+    process = Supervised([], None, ())
+    for chunk in chunks:
+        assert len(chunk) <= MAX_STDERR_BYTES
+        process.capture_stderr(chunk)
+    failure = process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report')
+    diagnostic = failure.operator_json()
+    failure.log()
+    output = capsys.readouterr().out
+    assert 'TL3_EXECUTION_FAILURE ' in output
+    assert secret not in output, 'new secret after context eviction leaked into the PB log'
+    assert secret not in json.dumps(diagnostic), 'operator JSON leaked a new secret after context eviction'
+    assert secret not in Redactor(None).text(json.dumps(diagnostic))
+    assert diagnostic['stderr_tail'] == 'stderr withheld: redaction context lost'

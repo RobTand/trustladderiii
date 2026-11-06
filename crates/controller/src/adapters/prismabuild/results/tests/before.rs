@@ -3,6 +3,15 @@
 use super::super::*;
 use super::recorded_io::File;
 
+// #826 keeps the reference's original result shape as diagnostics extend production.
+pub(super) type CheckEvidence = (
+    bool,
+    bool,
+    Vec<serde_json::Value>,
+    Vec<FailedTest>,
+    Option<&'static str>,
+);
+
 // #819 preserves omission in the shared wire type. Keep the frozen bodies below
 // verbatim while providing their former empty-default view in this test only.
 trait LegacyMessage {

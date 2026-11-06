@@ -1,5 +1,33 @@
-"""Report budgets shared by planning, collection and the trusted reader."""
+"""Report budgets shared by planning, collection and the trusted reader.
+
+The in-container runner loads this file by path without the tl3_harness
+package (#858): keep it standard-library only.
+"""
+
+from copy import deepcopy
 import json
+
+
+class Diagnostic(str):
+    def __new__(cls, text, rule, items):
+        value = super().__new__(cls, text)
+        value.rule = rule
+        value.items = deepcopy(items)
+        return value
+
+    def __reduce__(self):
+        return Diagnostic, (str(self), self.rule, self.items)
+
+
+def named(rule, text, items):
+    return Diagnostic(str(text), rule, items)
+
+
+def contextual(error, **items):
+    text = error.args[0] if isinstance(error, Exception) else error
+    if not isinstance(text, Diagnostic):
+        raise TypeError('A plan diagnostic must name its rule at the emission site.')
+    return named(text.rule, str(error), {**text.items, **items})
 
 
 MAX_REPORT_LINE_BYTES = 4 * 1024 * 1024
@@ -10,8 +38,8 @@ MAX_DETAILED_FAILURES = 20
 MAX_MESSAGE_CHARS = 1000
 # Three phases, each with at most 200 Unicode exception-class characters.
 PHASE_RUN_BYTES = 3 * (200 * 12 + 100) + 100
-PLAN_SIZE_ERROR = f'Check plan exceeds the {MAX_REPORT_LINE_BYTES}-byte report limit; reduce the selected tests or parameter cases.'
-RESULT_SIZE_ERROR = f'Check plan exceeds the {MAX_RESULT_BYTES}-byte result limit; reduce the selected tests or checks.'
+PLAN_SIZE_ERROR = named('size.report', f'Check plan exceeds the {MAX_REPORT_LINE_BYTES}-byte report limit; reduce the selected tests or parameter cases.', {})
+RESULT_SIZE_ERROR = named('size.result', f'Check plan exceeds the {MAX_RESULT_BYTES}-byte result limit; reduce the selected tests or checks.', {})
 
 
 def validate_check_plan(plan):
@@ -41,7 +69,7 @@ def validate_check_plan(plan):
             sides = 3 if 'forcing' in header else 2
             size += sides * (PHASE_RUN_BYTES + len(json.dumps(test)))
         if size > MAX_RESULT_BYTES:
-            raise ValueError(RESULT_SIZE_ERROR)
+            raise ValueError(named('size.result', RESULT_SIZE_ERROR, dict(bytes=size, limit=MAX_RESULT_BYTES)))
 
 
 def validate_plan_size(tests):
@@ -52,4 +80,4 @@ def validate_plan_size(tests):
     largest_phase = max((len(json.dumps(test, ensure_ascii=False).encode(errors='backslashreplace')) + 8192
                          for test in tests), default=0)
     if max(size, largest_phase) > MAX_REPORT_LINE_BYTES:
-        raise ValueError(PLAN_SIZE_ERROR)
+        raise ValueError(named('size.report', PLAN_SIZE_ERROR, dict(bytes=max(size, largest_phase), limit=MAX_REPORT_LINE_BYTES)))

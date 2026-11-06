@@ -22,6 +22,8 @@ mod merge_closure;
 mod missing_checks;
 #[path = "mergify/ordering.rs"]
 mod ordering;
+#[path = "mergify/queue_entry.rs"]
+mod queue_entry;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -146,6 +148,7 @@ struct State {
     body_patches: usize,
     failed_job_reruns: Vec<u64>,
     ci_fixture: Option<ci_evidence::Fixture>,
+    entry_fixture: Option<queue_entry::Fixture>,
 }
 impl State {
     fn new() -> Self {
@@ -205,6 +208,7 @@ impl State {
             body_patches: 0,
             failed_job_reruns: vec![],
             ci_fixture: None,
+            entry_fixture: None,
         }
     }
     fn checks(&self) -> Value {
@@ -307,6 +311,11 @@ impl Respond for Api {
             return ResponseTemplate::new(503);
         }
         if let Some(fixture) = &state.ci_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
+        }
+        if let Some(fixture) = &state.entry_fixture
             && let Some(response) = fixture.respond(path)
         {
             return response;
@@ -1116,7 +1125,9 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     }
     ingress::drain(&mut controller).unwrap();
     // Consume just the queue fact. Subsequent maker/rebase work is outside this scenario.
-    assert!(controller.drive_once().unwrap());
+    while queue_facts(&mut controller).is_empty() {
+        assert!(controller.drive_once().unwrap());
+    }
     let facts = queue_facts(&mut controller);
     assert_eq!(facts.len(), 1);
     assert_kernel_facts(settings, 1);
@@ -1253,7 +1264,9 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
         ingress::apply(&mut controller, input).unwrap();
     }
     ingress::drain(&mut controller).unwrap();
-    controller.drive_once().unwrap();
+    while queue_facts(&mut controller).is_empty() {
+        assert!(controller.drive_once().unwrap());
+    }
     assert_eq!(queue_facts(&mut controller).len(), 1);
     assert_kernel_facts(settings, 1);
     if action == "unlabeled" {
@@ -2701,6 +2714,18 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--queue-entry") {
+        let mut database = support::Database::start();
+        for mode in queue_entry::MODES {
+            queue_entry::scenario(&database.create(&format!("queue_entry_{mode}")), mode);
+        }
+        database.stop();
+        println!(
+            "{} Mergify scenarios passed; no skips",
+            queue_entry::MODES.len()
+        );
+        return;
+    }
     match std::env::args().nth(1).as_deref() {
         Some("--ordering-crash-child") => {
             ordering::crash_child(Path::new(&std::env::args().nth(2).unwrap()));
@@ -2957,7 +2982,7 @@ fn main() {
     }
     // Maximum group/case times from red 375b069c and load trials
     // 57b14abe, 20611f93 and 3359391c, rounded up to seconds.
-    // The final nine entries are individually sharded waiting-requeue cases.
+    // The final eleven entries are waiting-requeue and ordering cases.
     let seconds = [
         1, 14, 2, 3, 14, 2, 44, 22, 14, 15, 3, 29, 2, 26, 9, 45, 43, 25, 9, 27, 8, 4, 3, 7, 3, 17,
         5, 6, 10, 5, 10, 15, 5, 8, 2, 2, 18, 3, 2, 4, 24, 7, 44, 31, 8, 24, 3, 2, 26, 6, 8, 9, 13,
@@ -2967,10 +2992,14 @@ fn main() {
         3, 55, 5, 23, 5, 7, 7, 2, 4, 46, 8, 85, 4, 15, 83, 21, 7, 5, 5, 4, 3, 8, 68, 1, 14, 5, 23,
         10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20,
     ];
-    let groups: Vec<_> = seconds
+    let tail = seconds.len() - 11;
+    let groups: Vec<_> = seconds[..tail]
         .iter()
+        .copied()
+        .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
+        .chain(seconds[tail..].iter().copied())
         .enumerate()
-        .map(|(index, seconds)| (index, 1, *seconds))
+        .map(|(index, seconds)| (index, 1, seconds))
         .collect();
     let mut shard = support::scenario_shard::Shard::from_groups(&groups);
     let mut scenario_count = 0;
@@ -3314,6 +3343,12 @@ fn main() {
     for mode in ["unlabeled", "closed", "queue-label", "pending", "normal"] {
         scenario!(merge_closure::scenario(
             &database.create(&format!("merge_closure_{mode}")),
+            mode
+        ));
+    }
+    for mode in queue_entry::MODES {
+        scenario!(queue_entry::scenario(
+            &database.create(&format!("queue_entry_{mode}")),
             mode
         ));
     }

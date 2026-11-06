@@ -511,49 +511,42 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   - the maker or the fresh reviewer runs out of room, or the maker needs files that don't fit, instead of a split;
   - the planner says `cant_meet`, instead of a re-run on its next model. The planner worker reports a completed plan that breaks a rule as `cant_meet` too, so a rule-breaking completed plan also stops at once.
 
-  **Approved Q27/Q54 exception, Rob, 2026-11-03:**
-  [approval on #573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857)
-  enables #577's existing single tool-free planner correction in production
-  with `repair_plan_consistency: true`. Only an edited test missing
-  demonstrating coverage or a forced demonstrating selection absent from the
-  base may enter it, and only when there is no substantive violation. The
-  correction stays in the same worker run and accounting limits, uses only
-  already-read facts, and stays bound to the original draft's files, goals,
-  existing check kinds and forcings. It may only add missing demonstrating
-  coverage, swap forced non-base selections for base nodes, or drop an
-  uncovered unnecessary edit. An appended demonstrating check may have no
-  forcing or reuse a draft forcing unchanged. It may honestly return
-  `cant_meet`. Added files, a wider footprint, unrelated checks or edits,
-  changed forcings and new goals remain PlanCantMeet. A second inconsistent
-  reply ends correction with both named diagnostics. Substantive failures,
-  unsupported requirements, protected-path conflicts, out-of-room conditions
-  and actual work failures keep their existing paths. Q50 infrastructure
-  handling and Q55 base/head proof requirements are unchanged. This exception
-  adds no work generation, model-ladder retry or automatic restart. See the
-  authoritative Planning section in `docs/state-table.md`.
+  **Approved planner correction, #809 and #832:**
+  [#573](https://github.com/RobTand/trustladderiii/issues/573#issuecomment-6602791857)
+  enabled the existing tool-free correction in production with
+  `repair_plan_consistency: true`.
+  [#809](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239)
+  added named missing-goal citations.
+  [Rob's #832 Q27 decision](https://github.com/RobTand/trustladderiii/issues/832)
+  generalizes this to every named plan-check objection. One correction shares
+  the existing format-repair allowance, in the same run and accounting limits,
+  using already-read facts. A recheck compares raw drafts and permits only
+  the union of named field changes while satisfying every overlapping
+  constraint. Existing citations and all source obligations stay fixed;
+  coverage repair only adds the named missing IDs to existing checks.
+  [#843](https://github.com/RobTand/trustladderiii/issues/843),
+  Rob, Q27, 2026-11-05, also permits replacement of base-absent regression,
+  behavior-preserving and declared_symptom selections. Only the named
+  check's node_ids may change to already-read exact base controls supporting
+  the same goals and kind. Kind, goals, proof, forcing, symptom and files stay
+  fixed. With no suitable control, return `cant_meet`; a remaining objection
+  stops for TL3 review.
+  An honest `cant_meet` is permitted, retaining the original objections.
 
-  [Rob's Q27/Q54 approval on #809, 2026-11-05](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239)
-  adds missing citations of existing required maker or checking goals to this
-  exception. Review-verified goals still need check coverage. The repair may
-  only add the named uncovered goal ids to existing checks, preserving every
-  existing citation and every other declaration. It shares the same single
-  correction allowance, including format repair. Stop evidence retains the full
-  uncovered ids and descriptions and the correction attempt count. Only
-  descriptions may be clipped in the bounded repair message; if the ids and
-  instructions do not fit, correction is terminal.
-
-  **Approved #832 endings, Rob, 2026-11-05:**
-  [Q27 approval](https://github.com/RobTand/trustladderiii/issues/832) adds
-  question-free endings for completed plan-check objections with code-owned
-  objection classes and repair-attempt records. Remaining non-size or mixed
-  objections stop for TL3 review under both `fail_fast` settings. In part 1,
-  size/execution-fit objections record required decomposition and use the same
-  review stop; no child executes. Both preserve evidence, spend no credit and
-  allocate no question. The mapping stays dormant until worker code emits
-  provenance outside the model reply schema. Ordinary PlanSplit, PlanLeaf and
-  PlanCantMeet, owner decisions, Q27, protected paths, credit and Q50 retain
-  their existing handling. The approved #809 correction runs before this mapping.
-  The broader #832 worker implementation follows in part 2.
+  There is no third final-reply invocation. Repair unavailability records
+  zero attempts and its reason. Otherwise stop evidence retains the one
+  attempt, both objection sets and any constrained-recheck failure. Only
+  optional descriptions may be clipped in the bounded repair message.
+  IDs, paths, rule codes, numeric limits and constraints stay complete.
+  Other-class or mixed objections stop for TL3 review under both `fail_fast`
+  settings. Size/execution-fit objections record required decomposition
+  and use the same question-free review stop; no child executes. Neither
+  ending spends credit, retries a generation or asks Rob to disregard an
+  objection. Provenance travels beside the model reply and leaves its
+  prompt schema unchanged. Genuine owner decisions, ordinary replies without
+  provenance, protected paths, credit and Q50 retain their existing handling.
+  The harness and reviewer still judge Q55 proof. See the authoritative
+  Planning section in `docs/state-table.md`.
 
   The recorded stop steps are `checks_failed`, `changes_requested`,
   `ci_failed`, `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
@@ -666,6 +659,7 @@ incident also needed Rob's `clear incident`, even after the fix was deployed.
   incident cites the worker-recorded facts only, never the maker's report.
   Unsupported evidence makes the reply `cant_meet`. Only the maker has
   `run_tests`, so only the maker has `blocked`.
+- Queue or required-check failures established as repo-wide or infrastructure failures are Q50 environment blockers: keep the PR open, never fail_fast or Rob-only, and requeue once main is healthy. #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules).
 - **Q51 Releases clear TL3-side incidents:** each incident records whether an
   upstream or TL3 caused it. tl3d records the release it last started with.
   The first start under a new release clears each open TL3-side incident that
@@ -964,18 +958,33 @@ prerequisite does not make the request not actionable. After ingest and audit,
 the root waits in Unplanned until every prerequisite is delivered. The wait
 holds no slot, file lock or spendable credit, and avoids planner and maker cost.
 
-Each declaration names an active TL3 request root or an external merge fact.
-A merged PR, an issue closed as completed, or a TL3 request closed as done
-delivers. A stopped request with an open issue stays pending and can later
-restart. An issue closed as not planned abandons, posts one note, and keeps
-the waiting request blocked until Rob changes or stops it. Status says
-"waiting for #N to merge". Planning after release uses current main.
+Each declaration names an active TL3 request root or an external prerequisite fact.
+Rob, 2026-11-05, #839 (Q27): 'If it's truly closed, the prerequisite should just continue.' [Decision](https://github.com/RobTand/trustladderiii/issues/839#issuecomment-6671251113).
+Any truly closed issue or PR delivers, whether merged, completed, not planned,
+or closed by TL3 as not actionable. A stopped request with an open issue stays
+pending and restartable under Q49; status says "waiting for #N: stopped".
+The dependent retains typed closure-without-merge evidence naming the prerequisite
+and its reason. Both its planner input and postmortem input carry that record.
+No additional gate is added; the planner's normal checks catch missing code.
+Planning after release uses current main. Each chain link proceeds only when its
+own prerequisite resolves; closing an ancestor does not resolve open successors.
+"Truly closed" means currently closed. Reopening a prerequisite retracts its
+provisional delivery while the dependent has not started planning. A second
+closure can deliver it again. The existing `planning_started` admission boundary
+remains final for that attempt: a reopen does not roll back a dependent that
+already entered Planning. Its retained closure record remains historical evidence
+for its plan and postmortem.
+Startup invalidates unconsumed delivery snapshots and performs one bounded current
+read per unstarted prerequisite identity, including previously closed prerequisites.
+It supersedes queued old closure observations rather than replaying terminal facts.
+This discovers pre-deploy closures and reopens without a request restart or periodic
+rescan. Webhooks and catch-up include open/reopened issue and PR state. Older
+versioned observations cannot overwrite a newer prerequisite state.
 
-Facts are never stale or dropped and update dependencies in every phase.
-Declarations reconcile retained terminal facts before waiting, even when an
-active prerequisite root still exists. Re-ingest retains terminal outcomes and
-announcement identities for unchanged targets. A stop is announced once even
-when its issue stays open and its dependency status remains pending.
+Declarations read authoritative current state before waiting. Re-ingest keeps
+historical closure records and announcement identities for unchanged targets,
+but does not use an old closure as current admission evidence. A stop is announced
+once even when its issue stays open and its dependency status remains pending.
 No request gains prerequisites after it first starts planning. Cycles across
 requests are rejected with a plain note, and every ending is announced to
 waiters. These root merge prerequisites move from slice two into slice one.

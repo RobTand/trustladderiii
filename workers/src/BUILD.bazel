@@ -30,6 +30,7 @@ filegroup(
         "tl3_workers/prompts/*.md",
         "tl3_workers/evaluation/*.json",
         "tl3_workers/policy.json",
+        "tl3_workers/plan_rules.json",
     ]) + [":schemas"],
     visibility = ["//visibility:public"],
 )
@@ -63,6 +64,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":src",
+        "//harness/src/tl3_harness",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
         "@tl3_pip//mlflow_skinny",
@@ -90,6 +92,7 @@ py_library(
         "tl3_workers/forcing_rehearsal.py",
         "tl3_workers/forecast.py",
         "tl3_workers/generated_scope.py",
+        "tl3_workers/ingest_retention.py",
         "tl3_workers/judges.py",
         "tl3_workers/memory.py",
         "tl3_workers/pb_generators.py",

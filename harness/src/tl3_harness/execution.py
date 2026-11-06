@@ -174,17 +174,21 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                         progress.commit(record.get("test", ""))
                 exit_code = process.exit_code
         except ExecutionFailure as failure:
+            failure.log()
             if messages is not None:
                 messages.update(dict.fromkeys(tests, failure.message()))
             # UNCOLLECTED cannot be assertion RED, GREEN, or an allowed pre-existing error.
             outcome = Outcome.UNCOLLECTED if failure.outcome == ExecutionOutcome.TEST_TIMEOUT else Outcome.NO_REPORT
             return dict.fromkeys(tests, outcome)
         except ValueError:
+            process.incomplete().log()
             return dict.fromkeys(tests, Outcome.NO_REPORT)
     try:
         if invalid:
             raise InvalidReport("invalid report stream")
         outcomes = parse(records, tests, missing, exit_code, additions, messages=messages)
+        if Outcome.NO_REPORT in outcomes.values():
+            process.incomplete().log()
         if selected is not None:
             selected.collected = tuple(test for record in records if record.get("event") == "collection"
                                        for test in record["tests"])
@@ -194,6 +198,7 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                                         if record.get("event") == "collection" and "saturation" in record), None)
         return outcomes
     except InvalidReport:
+        process.incomplete().log()
         return dict.fromkeys(tests, Outcome.NO_REPORT)
 
 
@@ -323,9 +328,6 @@ def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config
             if (set(group) <= named_files and not known_failure) or tool.changed_existing_tests(old, new, group):
                 continue
             candidates.append(group)
-        if candidates:
-            validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
-                                             tuple(member for group in candidates for member in group)),))
     except (RecursionError, MemoryError):
         return ()
     except ValueError as error:
@@ -610,6 +612,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         selected_before, selection_receipt = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config,
                                                           tuple(group for group in candidates if any(
                                                               test.split("::", 1)[0] in group for test in selected_failures)))
+        if selected_before:
+            try:
+                # Discovery can exceed the envelope; only admitted complete units produce results.
+                validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
+                                                 tuple(member for group in selected_before for member in group)),))
+            except ValueError as error:
+                raise HarnessInputError(f"Selected execution groups exceed report limits: {error}") from error
         # Filter complete units: no head run may lose a fixture companion.
         kept = tuple(group for group in selected_before
                      if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))

@@ -29,6 +29,8 @@ use tl3_controller::{
 };
 use tl3_kernel::{Command as Control, EffectKind, NodeId, Phase};
 use tl3_prismabuild::PrismaBuild;
+#[path = "prismabuild_fixture/incident_100060.rs"]
+mod incident_100060;
 mod prismabuild_fixture;
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -192,7 +194,17 @@ fn recorded_endings() {
         let delivery = run(root.path(), false);
         let mut adapter = fixture(root.path(), mode);
         assert!(adapter.execute(&delivery).unwrap().observations.is_empty());
-        let (report, pass, paths) = observed(completion(&mut adapter, &delivery));
+        let ended = completion(&mut adapter, &delivery);
+        assert_eq!(
+            ended.failure_class.as_deref(),
+            if matches!(mode, "infrastructure" | "bad_report") {
+                Some("harness")
+            } else {
+                None
+            },
+            "{mode}: only a parsed harness infrastructure outcome is TL3-side"
+        );
+        let (report, pass, paths) = observed(ended);
         assert_eq!((report, pass), expected, "{mode}");
         assert_eq!(paths, ["value.py"]);
         let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
@@ -231,7 +243,7 @@ fn harness_error_is_named_tl3_side() {
     let ended = completion(&mut adapter, &delivery);
     assert_eq!(ended.failure_class.as_deref(), Some("harness"));
     assert!(!observed(ended).0, "no check report");
-    for mode in ["failed", "no_report", "infrastructure"] {
+    for mode in ["failed", "no_report"] {
         let root = tempfile::tempdir().unwrap();
         let delivery = run(root.path(), false);
         let mut adapter = fixture(root.path(), mode);
@@ -694,6 +706,66 @@ fn phase_evidence_survives_exact_head_receipts() {
                 }
             }
             other => panic!("expected check evidence, got {other:?}"),
+        }
+    }
+}
+
+/// #826: a verified action log carries launcher diagnostics separately from test feedback.
+fn container_stderr_is_operator_evidence() {
+    for mode in ["infrastructure", "done"] {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let mut adapter = fixture(root.path(), mode);
+        fs::write(
+            root.path().join("queue/recorded_execution.json"),
+            serde_json::to_vec(
+                &serde_json::json!({"outcome":"setup_failure", "phase":"container_start",
+                "termination_reason":"incomplete_report", "test_started":false,
+                "stderr_tail":"container shim refused: pid limit reached"}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        adapter.execute(&delivery).unwrap();
+        let result = completion(&mut adapter, &delivery);
+        let encoded = serde_json::to_value(&result).unwrap();
+        let diagnostics: Vec<_> = encoded["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.get("CheckExecutionFailure"))
+            .collect();
+        if mode == "done" {
+            assert!(diagnostics.is_empty(), "successful reports keep no stderr");
+        } else {
+            assert_eq!(
+                result.failure_class.as_deref(),
+                Some("harness"),
+                "#849: a successful PB NoReport remains TL3-side with stderr"
+            );
+            assert_eq!(
+                diagnostics.len(),
+                1,
+                "the verified failure log lost its cause"
+            );
+            assert_eq!(
+                diagnostics[0]["diagnostic"]["stderr_tail"],
+                "container shim refused: pid limit reached"
+            );
+        }
+        for observation in &result.observations {
+            if let Observation::Checks {
+                results,
+                failed_tests,
+                ..
+            } = observation
+            {
+                assert!(
+                    !serde_json::to_string(&(results, failed_tests))
+                        .unwrap()
+                        .contains("pid limit reached")
+                );
+            }
         }
     }
 }
@@ -1595,39 +1667,173 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     );
 }
 
-fn bell_outage_does_not_retry_result_tools() {
-    let root = tempfile::tempdir().unwrap();
-    let delivery = run(root.path(), false);
-    let mut adapter = fixture(root.path(), "done");
-    adapter.execute(&delivery).unwrap();
-    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
-    let mut source = adapter.source();
-    let (sender, receiver) = mpsc::channel();
+fn unavailable_bell(runtime: &tokio::runtime::Runtime) -> wiremock::MockServer {
+    runtime.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        server
+    })
+}
+
+fn result_tool_calls(root: &Path) -> usize {
+    fs::read_to_string(root.join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains("--endings"))
+        .count()
+}
+
+/// #859/#817: a dispatched terminal job survives one tool error during a permanent bell outage.
+fn bell_outage_retries_transient_result_tool_error() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    for _ in 0..3 {
+    let bell = unavailable_bell(&runtime);
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture_with_bell(root.path(), "done", &bell.uri());
+    adapter.execute(&delivery).unwrap();
+    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(100)))
+            .unwrap(),
+        0
+    );
+    assert_eq!(result_tool_calls(root.path()), 1);
+    assert!(!record_path(root.path(), &delivery.key, "done").exists());
+    assert!(record_path(root.path(), &delivery.key, "job").exists());
+    fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(100)))
+            .unwrap(),
+        1,
+        "a later record rescan must complete the job without a no-progress look"
+    );
+    assert_passing_input(receiver.try_recv().unwrap());
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(result_tool_calls(root.path()), 2);
+    assert!(record_path(root.path(), &delivery.key, "done").exists());
+    assert_eq!(runtime.block_on(bell.received_requests()).unwrap().len(), 2);
+}
+
+/// #859: persistent tool failures back off in existing rescans, capped at eight rescans.
+fn bell_outage_result_tool_retry_is_bounded() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let bell = unavailable_bell(&runtime);
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture_with_bell(root.path(), "done", &bell.uri());
+    adapter.execute(&delivery).unwrap();
+    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    let mut expected = 0;
+    for rescan in 1..=32 {
         assert_eq!(
             runtime
-                .block_on(source.poll(&sender, Duration::from_secs(1)))
+                .block_on(source.poll(&sender, Duration::from_millis(100)))
                 .unwrap(),
             0
         );
+        expected += usize::from([1, 2, 4, 8, 16, 24, 32].contains(&rescan));
+        assert_eq!(result_tool_calls(root.path()), expected, "rescan {rescan}");
+        assert!(receiver.try_recv().is_err());
+        assert!(record_path(root.path(), &delivery.key, "job").exists());
+        assert!(!record_path(root.path(), &delivery.key, "done").exists());
     }
-    assert!(matches!(
-        receiver.try_recv(),
-        Err(mpsc::TryRecvError::Empty)
-    ));
-    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
     assert_eq!(
-        calls
-            .lines()
-            .filter(|line| line.contains("--endings"))
-            .count(),
-        1,
-        "bell transport backoff must not become a result-tool timer"
+        runtime.block_on(bell.received_requests()).unwrap().len(),
+        32
     );
+}
+
+/// #859/#817: recovery news must not be consumed by an outage retry countdown.
+fn bell_recovery_retries_result_tool_without_further_hints() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let bell = unavailable_bell(&runtime);
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture_with_bell(root.path(), "done", &bell.uri());
+    adapter.execute(&delivery).unwrap();
+    // Keep a live job awaited so healthy replies can advance after completion.
+    fs::write(root.path().join("queue/mode"), "pending").unwrap();
+    let mut live = delivery.clone();
+    live.key = "effect:1:5".into();
+    live.output = Out::Effect {
+        node: NodeId(1),
+        seq: 5,
+        kind: EffectKind::SubmitChecks,
+        head: None,
+    };
+    adapter.execute(&live).unwrap();
+    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    for attempt in 1..=2 {
+        assert_eq!(
+            runtime
+                .block_on(source.poll(&sender, Duration::from_millis(100)))
+                .unwrap(),
+            0
+        );
+        assert_eq!(result_tool_calls(root.path()), attempt);
+        assert!(receiver.try_recv().is_err());
+    }
+    fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
+    runtime.block_on(async {
+        bell.reset().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "epoch":"0123456789abcdef0123456789abcdef", "seq":0, "events":[]
+                })),
+            )
+            .mount(&bell)
+            .await;
+    });
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(100)))
+            .unwrap(),
+        1,
+        "the recovery rescan must retry despite the pending backoff"
+    );
+    assert_passing_input(receiver.try_recv().unwrap());
+    assert!(record_path(root.path(), &delivery.key, "done").exists());
+    for _ in 0..2 {
+        assert_eq!(
+            runtime
+                .block_on(source.poll(&sender, Duration::from_millis(100)))
+                .unwrap(),
+            0
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "recovery must deliver exactly once"
+        );
+        assert_eq!(result_tool_calls(root.path()), 3);
+    }
+    let requests = runtime.block_on(bell.received_requests()).unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "only recovery and the two healthy replies remain after reset"
+    );
+    assert_eq!(requests.last().unwrap().url.path(), "/v1/wait");
 }
 
 fn absent_withdrawal_retires_source_watch() {
@@ -2475,6 +2681,710 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
     );
 }
 
+/// #849 / Q51: the same retained PB ending has the same incident cause at every
+/// controller entry, and only a new release clears a TL3-side incident once.
+fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str) {
+    let retained_results = matches!(mode, "retained_results" | "failed_retained_results");
+    let harness = matches!(mode, "harness_error" | "retained_results");
+    fn transport_error(root: &Path, retain_results: bool) {
+        let actions = fs::read_to_string(root.join("queue/publications")).unwrap();
+        let path = root.join(format!("queue/{}.ending", actions.lines().last().unwrap()));
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let ending = &mut value["endings"][0];
+        ending["status"] = "failed".into();
+        ending["succeeded"] = false.into();
+        ending["exit_code"] = 1.into();
+        if retain_results {
+            // A failed PB action may retain verified stdout without a success receipt.
+            ending["result"]["receipt_sha256"] = serde_json::Value::Null;
+        } else {
+            ending["result"] = serde_json::Value::Null;
+        }
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    struct Synchronous(Adapter, bool, Option<(PathBuf, bool)>);
+    impl Executor for Synchronous {
+        fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+            self.0.execute(delivery)?;
+            if self.1 {
+                if let Some((root, retain_results)) = &self.2 {
+                    transport_error(root, *retain_results);
+                }
+                Ok(completion(&mut self.0, delivery))
+            } else {
+                Ok(Completion::confirmed(vec![]))
+            }
+        }
+        fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.0.reconcile(delivery)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    let retained: Completion = serde_json::from_str(incident_100060::DONE).unwrap();
+    if retained_results {
+        let Observation::Checks {
+            results,
+            report,
+            pass,
+            ..
+        } = &retained.observations[0]
+        else {
+            panic!("retained completion has Checks evidence")
+        };
+        assert!(!report && !pass && retained.failure_class.is_none());
+        // Rebind only the outer job identity to the local fixture. Results and
+        // proof receipts remain byte-for-byte equivalent JSON from the live job.
+        delivery.checks.as_mut().unwrap().plan = results.iter().map(|result| {
+            let mut check = serde_json::json!({
+                "name": result["name"], "kind": result["kind"],
+                "tests": result["tests"].as_array().unwrap().iter().map(|t| &t["test"]).collect::<Vec<_>>(),
+            });
+            if let Some(proof) = result.get("proof") {
+                check["proof"] = proof["declaration"].clone();
+            }
+            serde_json::from_value(check).unwrap()
+        }).collect();
+        fs::create_dir_all(root.path().join("queue")).unwrap();
+        fs::write(
+            root.path().join("queue/recorded_results.json"),
+            serde_json::to_vec(results).unwrap(),
+        )
+        .unwrap();
+    }
+    let adapter = fixture(root.path(), if path == "sync" { mode } else { "pending" });
+    let mut source = adapter.source();
+    let fakes = root.path().join("fakes");
+    let registry = |adapter: Adapter, synchronous: bool| {
+        let mut registry = adapters::simulation(&fakes).unwrap();
+        registry.register(
+            Upstream::PrismaBuild,
+            Synchronous(
+                adapter,
+                synchronous,
+                (!harness).then(|| (root.path().to_owned(), retained_results)),
+            ),
+        );
+        registry.register(
+            Upstream::Workers,
+            support::workers::Workers::new(None, adapters::workers::Fake::new(&fakes), vec![], {
+                let head = delivery.head_sha.clone().unwrap();
+                let run = delivery.checks.clone().unwrap();
+                move |_, completion| {
+                    let mut made = None;
+                    for observation in &mut completion.observations {
+                        match observation {
+                            Observation::Made { node, sha, .. } => {
+                                *sha = head.clone();
+                                made = Some(*node);
+                            }
+                            Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+                            _ => {}
+                        }
+                    }
+                    if let Some(node) = made {
+                        completion.observations.insert(
+                            0,
+                            Observation::CheckPlan {
+                                node,
+                                sha: head.clone(),
+                                run: run.clone(),
+                            },
+                        );
+                    }
+                }
+            }),
+        );
+        registry
+    };
+    let bootstrap = Bootstrap {
+        operations: None,
+        repos: vec![repository()],
+        rob: 1,
+        slots: 1,
+        pool: 1,
+        fail_fast: false,
+    };
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        registry(adapter, path == "sync"),
+        bootstrap.clone(),
+    )
+    .unwrap();
+    controller.start_release("t849-before").unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "pb-cause".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "PB completion cause".into(),
+            actor: 1,
+            label: "tl3".into(),
+            labels: Vec::new(),
+        })
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    for incident_round in 0..if retained_results { 2 } else { 1 } {
+        if incident_round == 1 {
+            let first = controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .into_iter()
+                .find(|r| r.table == "incidents" && r.value["open"] == true)
+                .unwrap();
+            assert_eq!(first.value["needs_rob"], false);
+            controller
+                .observe(
+                    "clear-first",
+                    Observation::GitHubComment {
+                        repository: repository(),
+                        issue: 42,
+                        comment: tl3_github::Comment {
+                            id: 100,
+                            body: format!("clear incident {}", first.id),
+                            user: tl3_github::Actor {
+                                id: 1,
+                                login: "fixture".into(),
+                            },
+                            created_at: chrono::DateTime::UNIX_EPOCH,
+                            updated_at: chrono::DateTime::UNIX_EPOCH,
+                            issue_url: "https://api.github.com/repos/RobTand/tl3-sandbox/issues/42"
+                                .into(),
+                        },
+                    },
+                )
+                .unwrap();
+            while controller.drive_once().unwrap() {}
+        }
+        if path != "sync" {
+            for attempt in 0..2 {
+                let action = fs::read_to_string(root.path().join("queue/publications")).unwrap();
+                finish(root.path(), action.lines().last().unwrap(), mode);
+                if !harness {
+                    transport_error(root.path(), retained_results);
+                }
+                let (sender, receiver) = mpsc::channel();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let delivered = (0..10).find_map(|_| {
+                    let count = runtime
+                        .block_on(source.poll(&sender, Duration::from_secs(1)))
+                        .unwrap();
+                    (count > 0).then_some(count)
+                });
+                assert_eq!(delivered, Some(1));
+                let inputs: Vec<_> = receiver.try_iter().collect();
+                assert!(!inputs.is_empty(), "source delivered the ending");
+                let snapshot = controller.snapshot().unwrap();
+                let watched = snapshot
+                    .rows
+                    .iter()
+                    .find(|r| {
+                        r.table == "watches"
+                            && r.value["output"]["Effect"]["kind"] == "SubmitChecks"
+                    })
+                    .unwrap();
+                let key = watched.id.clone();
+                // The source has retained the complete .done before a restart loses its Input.
+                let mut retained = fixture(root.path(), "pending");
+                let watched: Delivery = serde_json::from_value(watched.value.clone()).unwrap();
+                let ended = completion(&mut retained, &watched);
+                if retained_results {
+                    let Observation::Checks {
+                        results,
+                        failed_tests,
+                        report,
+                        pass,
+                        ..
+                    } = &ended.observations[0]
+                    else {
+                        panic!("adapter must retain parsed Checks")
+                    };
+                    let original: Completion = serde_json::from_str(incident_100060::DONE).unwrap();
+                    let Observation::Checks {
+                        results: expected,
+                        failed_tests: expected_failed,
+                        ..
+                    } = &original.observations[0]
+                    else {
+                        unreachable!()
+                    };
+                    assert_eq!(
+                        results, expected,
+                        "keep every parsed result and proof receipt"
+                    );
+                    assert_eq!(
+                        serde_json::to_value(failed_tests).unwrap(),
+                        serde_json::to_value(expected_failed).unwrap(),
+                        "keep maker feedback"
+                    );
+                    assert!(!report && !pass);
+                } else {
+                    assert_eq!(ended.failure_class.as_deref(), harness.then_some("harness"));
+                }
+                match path {
+                    "source" => {
+                        for input in inputs {
+                            tl3_controller::ingress::apply(&mut controller, input).unwrap();
+                        }
+                    }
+                    "watch" => {
+                        if attempt == 1 {
+                            drop(controller);
+                            source = retained.source();
+                            controller = Controller::open(
+                                tl3_store::Store::open(settings).unwrap(),
+                                registry(retained, false),
+                                bootstrap.clone(),
+                            )
+                            .unwrap();
+                        }
+                        controller.drive_once().unwrap();
+                    }
+                    "allowance" => controller.look_key(&key).unwrap(),
+                    _ => unreachable!(),
+                }
+                while controller.drive_once().unwrap() {}
+            }
+        }
+    }
+    while controller.drive_once().unwrap() {}
+    let snapshot = controller.snapshot().unwrap();
+    let incidents: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "incidents" && r.value["open"] == true)
+        .collect();
+    assert_eq!(incidents.len(), 1, "{path}: one blocking incident");
+    let incident = incidents[0];
+    assert_eq!(
+        incident.value["cause"],
+        if harness { "tl3" } else { "upstream" },
+        "{path}: same cause as synchronous completion, needs_rob={}",
+        incident.value["needs_rob"]
+    );
+    assert_eq!(
+        incident.value["signature"]["class"],
+        if harness {
+            "harness"
+        } else {
+            "operation_failed"
+        }
+    );
+    assert_eq!(
+        incident.value["needs_rob"], retained_results,
+        "Q7 retains first/later incident accounting; Q51 clears TL3 incidents either way"
+    );
+    assert!(
+        controller.world().unwrap().nodes[0].waiting_incident,
+        "#817 stays (d), an open incident"
+    );
+    let id = incident.id.clone();
+    controller.start_release("t849-after").unwrap();
+    if harness {
+        controller.drive_once().unwrap();
+    }
+    let after = controller.snapshot().unwrap();
+    assert_eq!(
+        after
+            .rows
+            .iter()
+            .find(|r| r.table == "incidents" && r.id == id)
+            .unwrap()
+            .value["open"],
+        !harness
+    );
+    let revision = after.revision;
+    controller.start_release("t849-after").unwrap();
+    assert_eq!(
+        controller.snapshot().unwrap().revision,
+        revision,
+        "same release clears nothing twice"
+    );
+    assert_eq!(
+        controller.world().unwrap().nodes[0].waiting_incident,
+        !harness
+    );
+}
+
+/// #849 extension / Q7 / Q51 / #817: successful PB no-report outcomes are TL3-side;
+/// failed PB endings retain Outside even with the live envelope (found by: review).
+fn retained_results_failure_causes(database: &mut support::Database, successful: bool) {
+    let mode = if successful {
+        "retained_results"
+    } else {
+        "failed_retained_results"
+    };
+    let mut failures = 0;
+    for path in ["sync", "source", "watch", "allowance"] {
+        let settings = database.create(&format!("pb_retained_{successful}_{path}"));
+        let result = std::panic::catch_unwind(|| completion_failure_cause(&settings, path, mode));
+        println!(
+            "test retained_results_failure_cause_{successful}_{path} ... {}",
+            if result.is_ok() { "ok" } else { "FAILED" }
+        );
+        failures += usize::from(result.is_err());
+    }
+    assert_eq!(failures, 0, "#849 real retained completion regressions");
+}
+
+fn completion_failure_causes(database: &mut support::Database) {
+    let mut failures = 0;
+    for path in ["sync", "source", "watch", "allowance"] {
+        for harness in [true, false] {
+            let settings = database.create(&format!("pb_cause_{path}_{harness}"));
+            let result = std::panic::catch_unwind(|| {
+                completion_failure_cause(
+                    &settings,
+                    path,
+                    if harness {
+                        "harness_error"
+                    } else {
+                        "no_report"
+                    },
+                )
+            });
+            println!(
+                "test completion_failure_cause_{path}_{harness} ... {}",
+                if result.is_ok() { "ok" } else { "FAILED" }
+            );
+            failures += usize::from(result.is_err());
+        }
+    }
+    assert_eq!(failures, 0, "#849 completion cause regressions");
+}
+
+/// Q7 / #850: status transport, schema, fleet health and delivery capacity all matter.
+fn pb_probe_uses_delivery_class_and_fails_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    probe_status(root.path(), true);
+    let mut adapter = probe_adapter(root.path());
+    assert!(
+        adapter.probe(&delivery).unwrap(),
+        "a live CPU fleet can serve this check"
+    );
+    let healthy: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.path().join("status.json")).unwrap()).unwrap();
+    for (pointer, value) in [
+        ("/schema", serde_json::json!("wrong")),
+        ("/transport", serde_json::json!("slurm")),
+        ("/complete", serde_json::json!(false)),
+        ("/pool/complete", serde_json::json!(false)),
+        ("/queue_space/state", serde_json::json!("critical")),
+        ("/nodes/0/healthy", serde_json::json!(false)),
+        ("/nodes/0/state", serde_json::json!("held")),
+        ("/nodes/0/state", serde_json::json!("draining")),
+        ("/nodes/0/state", serde_json::json!("stale")),
+        ("/nodes/0/capacity/cpu", serde_json::json!(0)),
+        ("/nodes/0/capacity/mem_gb", serde_json::json!(1)),
+        ("/nodes", serde_json::json!([])),
+    ] {
+        let mut status = healthy.clone();
+        *status.pointer_mut(pointer).unwrap() = value;
+        fs::write(
+            root.path().join("status.json"),
+            serde_json::to_vec(&status).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !adapter.probe(&delivery).unwrap(),
+            "{pointer} must fail closed"
+        );
+    }
+    for raw in ["not json", "{}"] {
+        fs::write(root.path().join("status.json"), raw).unwrap();
+        assert!(
+            !adapter.probe(&delivery).unwrap(),
+            "malformed status keeps incident"
+        );
+    }
+    fs::remove_file(root.path().join("status.json")).unwrap();
+    assert!(
+        !adapter.probe(&delivery).unwrap(),
+        "a tool failure is a failed probe"
+    );
+    probe_status(root.path(), true);
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    let repo = &mut config.github.repos[0];
+    repo.owner = delivery.repository.owner.clone();
+    repo.name = delivery.repository.name.clone();
+    repo.installation_id = delivery.repository.installation;
+    repo.test_demand = Some(tl3_config::TestDemand {
+        cpus: 1,
+        mem_gb: 65,
+    });
+    adapter = adapter.with_repositories(&config.github.repos);
+    assert!(
+        !adapter.probe(&delivery).unwrap(),
+        "probe must fit repository check demand"
+    );
+}
+
+fn probe_status_tool(root: &Path) -> tl3_prismabuild::Tool {
+    tl3_prismabuild::Tool {
+        program: "python3".into(),
+        args: vec![
+            "-c".into(),
+            "import pathlib,sys; p=pathlib.Path(sys.argv[1]); print(p.read_text())".into(),
+            root.join("status.json").into(),
+        ],
+    }
+}
+fn probe_status(root: &Path, healthy: bool) {
+    fs::write(
+        root.join("status.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema":"prismabuild.pbstatus.v1", "transport":"pool", "complete":true,
+            "queue_space":{"state":"ok"}, "pool":{"complete":true},
+            "nodes":[{"healthy":healthy,"state":"live", "capacity":{"cpu":16,"mem_gb":64},
+                "admission":{"cpu":{"state":"fresh"}}}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+fn probe_adapter(root: &Path) -> Adapter {
+    let (client, settings) = fixture_settings(root, "pending", "http://127.0.0.1:9/");
+    Adapter::new(
+        client.with_status_tool(probe_status_tool(root)),
+        settings,
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap()
+}
+
+/// Q7 / #850: probe the upstream after an acknowledged, terminal check;
+/// restart and release redelivery preserve one clearance and Rob-only later incidents.
+fn first_pb_incident_probes_after_terminal_completion(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let clock = FakeClock(std::rc::Rc::new(std::cell::Cell::new(1_000_000)));
+    probe_status(root.path(), false);
+    let open = || {
+        let fakes = root.path().join("fakes");
+        let mut registry = adapters::simulation(&fakes).unwrap();
+        registry.register(Upstream::PrismaBuild, probe_adapter(root.path()));
+        registry.register(
+            Upstream::Workers,
+            workers(
+                adapters::workers::Fake::new(&fakes),
+                delivery.head_sha.clone().unwrap(),
+            ),
+        );
+        let mut c = Controller::open_with_clock(
+            tl3_store::Store::open(settings).unwrap(),
+            registry,
+            Bootstrap {
+                operations: None,
+                repos: vec![repository()],
+                rob: 1,
+                slots: 1,
+                pool: 1,
+                fail_fast: false,
+            },
+            clock.clone(),
+        )
+        .unwrap();
+        let mut a = tl3_config::Allowances::default();
+        a.prismabuild.silence_secs = 1;
+        a.prismabuild.no_progress_secs = 3;
+        c.set_allowances(a);
+        c
+    };
+    let drain = |c: &mut Controller| {
+        for _ in 0..100 {
+            if !c.drive_once().unwrap() {
+                return;
+            }
+        }
+        panic!("controller did not settle");
+    };
+    let fail = |c: &mut Controller, n: u32| {
+        c.observe(
+            &format!("probe-plan-{n}"),
+            Observation::CheckPlan {
+                node: NodeId(0),
+                sha: delivery.head_sha.clone().unwrap(),
+                run: delivery.checks.clone().unwrap(),
+            },
+        )
+        .unwrap();
+        drain(c);
+        let watched = c
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.table == "watches" && r.value["output"]["Effect"]["kind"] == "SubmitChecks")
+            .unwrap();
+        assert_eq!(
+            c.effect(&watched.id).unwrap().unwrap().state,
+            tl3_store::EffectState::Confirmed,
+            "check dispatch was acknowledged before the terminal result"
+        );
+        let key = fs::read_to_string(root.path().join("queue/publications"))
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap()
+            .to_owned();
+        finish(root.path(), &key, "no_report");
+        let (tx, rx) = mpsc::channel();
+        let adapter = probe_adapter(root.path());
+        let running = adapter.source().spawn(tx);
+        let first = rx.recv_timeout(SIGNAL_WAIT).unwrap();
+        drop(running);
+        let mut observations = vec![first];
+        observations.extend(rx.try_iter());
+        for input in observations {
+            let tl3_controller::cli::Input::Observation { key, observation } = input else {
+                panic!("check completion");
+            };
+            c.observe(&key, observation).unwrap();
+            drain(c);
+        }
+        let snapshot = c.snapshot().unwrap();
+        assert!(
+            !c.world().unwrap().nodes[0].waiting_incident
+                || !snapshot.rows.iter().any(|r| r.table == "watches"
+                    && r.value["output"]["Effect"]["kind"] == "SubmitChecks"),
+            "terminal checks have no watch"
+        );
+        assert!(
+            record_path(root.path(), &watched.id, "done").is_file(),
+            "durable terminal marker for the acknowledged effect"
+        );
+    };
+    let incident = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| {
+                r.table == "incidents" && r.value["open"] == true && r.value["blocking"] == true
+            })
+            .unwrap()
+    };
+    let clears = || {
+        tl3_store::Store::open(settings)
+            .unwrap()
+            .events_after(tl3_store::Revision::ZERO, 10000)
+            .unwrap()
+            .into_iter()
+            .filter(|e| {
+                e.key.starts_with("consume:")
+                    && matches!(
+                        serde_json::from_value::<Observation>(e.payload.clone()),
+                        Ok(Observation::Kernel(tl3_kernel::Event::Fact {
+                            fact: tl3_kernel::Fact::IncidentCleared { by_rob: false },
+                            ..
+                        }))
+                    )
+            })
+            .count()
+    };
+    let mut c = open();
+    c.intake(LabelledIssue {
+        delivery: "probe-intake".into(),
+        owner: "RobTand".into(),
+        repo: "tl3-sandbox".into(),
+        installation: 1,
+        number: 42,
+        title: "PB probe".into(),
+        actor: 1,
+        label: "tl3".into(),
+        labels: vec![],
+    })
+    .unwrap();
+    drain(&mut c);
+    fail(&mut c, 1);
+    fail(&mut c, 2);
+    let first = incident(&mut c);
+    assert_eq!(
+        first.value["signature"]["upstream"], "PrismaBuild",
+        "incident must belong to PB: {}",
+        first.value
+    );
+    assert_eq!(first.value["needs_rob"], false);
+    assert!(first.value["effect"].is_null());
+    assert!(c.world().unwrap().nodes[0].waiting_incident);
+    for release in ["probe-release-a", "probe-release-a", "probe-release-b"] {
+        c.start_release(release).unwrap();
+        drop(c);
+        c = open();
+        clock.0.set(clock.0.get() + 10_000);
+        c.look_due().unwrap();
+        drain(&mut c);
+        assert_eq!(
+            incident(&mut c).id,
+            first.id,
+            "failed probe preserves incident across deploys"
+        );
+        assert_eq!(clears(), 0);
+        assert!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "allowances"
+                    && r.value["incident"] == first.id
+                    && r.value["due_ms"]
+                        .as_u64()
+                        .is_some_and(|due| due > clock.0.get())),
+            "the incident's own allowance has a durable future deadline"
+        );
+        assert!(
+            c.next_look_in().unwrap().is_some(),
+            "failed probe retains durable deadline"
+        );
+    }
+    probe_status(root.path(), true);
+    clock.0.set(clock.0.get() + 10_000);
+    c.look_due().unwrap();
+    drain(&mut c);
+    assert!(
+        !c.world().unwrap().nodes[0].waiting_incident,
+        "a healthy PB probe must clear the first null-effect incident"
+    );
+    assert_eq!(clears(), 1, "one automatic IncidentCleared fact");
+    for release in ["probe-release-b", "probe-release-c", "probe-release-c"] {
+        c.start_release(release).unwrap();
+        drop(c);
+        c = open();
+        clock.0.set(clock.0.get() + 10_000);
+        c.look_due().unwrap();
+        drain(&mut c);
+        assert_eq!(clears(), 1, "deploys cannot double-clear");
+    }
+    fail(&mut c, 3);
+    fail(&mut c, 4);
+    let second = incident(&mut c);
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.value["needs_rob"], true);
+    for release in ["probe-release-d", "probe-release-d"] {
+        c.start_release(release).unwrap();
+        drop(c);
+        c = open();
+        clock.0.set(clock.0.get() + 10_000);
+        c.look_due().unwrap();
+        drain(&mut c);
+        assert_eq!(
+            incident(&mut c).id,
+            second.id,
+            "Q7 later incidents need Rob even with PB healthy"
+        );
+        assert!(c.world().unwrap().nodes[0].waiting_incident);
+        assert_eq!(clears(), 1);
+    }
+}
+
 fn main() {
     if std::env::args().len() == 1
         || std::env::args().nth(1).as_deref() == Some("--router-regression")
@@ -2488,6 +3398,46 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--failed-retained-results")
+    {
+        let mut database = support::Database::start();
+        retained_results_failure_causes(&mut database, false);
+        database.stop();
+        println!("4 failed retained results scenarios passed; no skips");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--retained-results") {
+        let mut database = support::Database::start();
+        retained_results_failure_causes(&mut database, true);
+        database.stop();
+        println!("4 retained results scenarios passed; no skips");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--completion-causes") {
+        let mut database = support::Database::start();
+        completion_failure_causes(&mut database);
+        database.stop();
+        println!("8 completion cause scenarios passed; no skips");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--incident-probe") {
+        let mut database = support::Database::start();
+        first_pb_incident_probes_after_terminal_completion(&database.create("pb_incident_probe"));
+        database.stop();
+        println!("test first_pb_incident_probes_after_terminal_completion ... ok");
+        pb_probe_uses_delivery_class_and_fails_closed();
+        println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
+        println!("2 prismabuild scenarios passed");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--stderr-tail") {
+        container_stderr_is_operator_evidence();
+        println!("test container_stderr_is_operator_evidence ... ok");
+        println!("1 prismabuild scenarios passed");
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--failure-phases") {
         phase_evidence_survives_exact_head_receipts();
         println!("test phase_evidence_survives_exact_head_receipts ... ok");
@@ -2501,6 +3451,35 @@ fn main() {
     if args.get(1).is_some_and(|arg| arg == "--always-tests") {
         always_tests_are_staged_required_and_reported_in_every_round();
         stale_always_test_notes_survive_controller_evidence();
+        return;
+    }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--result-tool-recovery")
+    {
+        bell_recovery_retries_result_tool_without_further_hints();
+        println!("test bell_recovery_retries_result_tool_without_further_hints ... ok");
+        println!("1 prismabuild scenarios passed");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--result-tool-retry") {
+        let mut failures = 0;
+        for (name, test) in [
+            (
+                "bell_outage_retries_transient_result_tool_error",
+                bell_outage_retries_transient_result_tool_error as fn(),
+            ),
+            (
+                "bell_outage_result_tool_retry_is_bounded",
+                bell_outage_result_tool_retry_is_bounded as fn(),
+            ),
+        ] {
+            let passed = std::panic::catch_unwind(test).is_ok();
+            failures += usize::from(!passed);
+            println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
+        }
+        assert_eq!(failures, 0);
+        println!("2 prismabuild scenarios passed");
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--r5") {
@@ -2655,6 +3634,10 @@ fn main() {
         ),
         ("bounded_failure_details", bounded_failure_details),
         (
+            "container_stderr_is_operator_evidence",
+            container_stderr_is_operator_evidence,
+        ),
+        (
             "stale_always_test_notes_survive_controller_evidence",
             stale_always_test_notes_survive_controller_evidence,
         ),
@@ -2688,8 +3671,16 @@ fn main() {
         ("invalid_evidence_once", invalid_evidence_is_reported_once),
         ("tool_errors_wait_for_news", tool_errors_wait_for_news),
         (
-            "bell_outage_does_not_retry_result_tools",
-            bell_outage_does_not_retry_result_tools,
+            "bell_outage_retries_transient_result_tool_error",
+            bell_outage_retries_transient_result_tool_error,
+        ),
+        (
+            "bell_outage_result_tool_retry_is_bounded",
+            bell_outage_result_tool_retry_is_bounded,
+        ),
+        (
+            "bell_recovery_retries_result_tool_without_further_hints",
+            bell_recovery_retries_result_tool_without_further_hints,
         ),
         (
             "absent_withdrawal_retires_source_watch",
@@ -2748,8 +3739,15 @@ fn main() {
     println!("test quiet_alive_job_is_not_a_failed_read ... ok");
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
+    retained_results_failure_causes(&mut database, true);
+    retained_results_failure_causes(&mut database, false);
+    completion_failure_causes(&mut database);
+    first_pb_incident_probes_after_terminal_completion(&database.create("pb_incident_probe"));
+    println!("test first_pb_incident_probes_after_terminal_completion ... ok");
+    pb_probe_uses_delivery_class_and_fails_closed();
+    println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
     database.stop();
-    println!("53 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("74 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

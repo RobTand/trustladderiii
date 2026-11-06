@@ -3,7 +3,7 @@ use crate::{
     Error, Result,
     contracts::report::{
         CheckReport as Report, CheckResult, Custody, Outcome, PhaseEvidence, PhaseOutcome,
-        RunOutcome, SymptomSide, Verdict,
+        RedMessageMatch, RunOutcome, SymptomSide, Verdict,
     },
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, clipped},
@@ -156,20 +156,31 @@ pub(super) async fn ending(
         };
         return Ok(Some(completion(job, false, false, vec![], vec![failed])?));
     }
-    let (report, pass, results, failed_tests, failure) = match evidence(ending, job) {
+    let (report, pass, results, failed_tests, failure, diagnostic) = match evidence(ending, job) {
         Ok(verdict) => verdict,
         Err(error @ Error::Io(_)) => return Err(error),
         Err(error) => {
             eprintln!("PrismaBuild result {}: {error}", job.action);
-            (false, false, vec![], vec![], None)
+            (false, false, vec![], vec![], None, None)
         }
     };
     let mut completion = completion(job, report, pass, results, failed_tests)?;
     completion.failure_class = failure.map(Into::into);
+    if let Some(diagnostic) = diagnostic {
+        completion.observations.insert(
+            0,
+            Observation::CheckExecutionFailure {
+                node: job.delivery.node(),
+                generation: job.delivery.generation,
+                action_key: job.action.to_string(),
+                diagnostic,
+            },
+        );
+    }
     Ok(Some(completion))
 }
 
-/// The failure class when TL3's trusted harness rejected its own check input:
+/// TL3's trusted harness failures, including parsed test-run infrastructure outcomes.
 /// TL3-side under Q51, not a PrismaBuild failure.
 pub(crate) const HARNESS: &str = "harness";
 
@@ -185,6 +196,7 @@ type CheckEvidence = (
     Vec<serde_json::Value>,
     Vec<FailedTest>,
     Option<&'static str>,
+    Option<crate::check_execution::Diagnostic>,
 );
 
 fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
@@ -210,6 +222,7 @@ fn evidence_with_read(
     let mut results = vec![];
     let mut failed_tests = Vec::new();
     let mut failure = None;
+    let mut diagnostic = None;
     if let Some(evidence) = ending.result {
         if !evidence.verified
             || (successful
@@ -232,9 +245,31 @@ fn evidence_with_read(
             return Err(Error::Invalid("PrismaBuild result log changed"));
         }
         // The typed report clips each message to MAX_MESSAGE_CHARS as it parses.
-        if let Some(parsed) = parse(&raw, job) {
+        let parsed = match parse(&raw, job) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                // #848/Q51: a complete report that TL3 cannot decode is a harness defect.
+                // Serde's display text can quote report values; persist only a safe category.
+                let category = match error.classify() {
+                    serde_json::error::Category::Io => "io",
+                    serde_json::error::Category::Syntax => "syntax",
+                    serde_json::error::Category::Data => "data",
+                    serde_json::error::Category::Eof => "eof",
+                };
+                let diagnostic = FailedTest {
+                    test: "TL3_CHECKS".into(),
+                    message: format!(
+                        "report schema decode failed: {category} at line {} column {}",
+                        error.line(),
+                        error.column(),
+                    ),
+                };
+                return Ok((false, false, vec![], vec![diagnostic], Some(HARNESS), None));
+            }
+        };
+        if let Some(parsed) = parsed {
             if !rejudged(&parsed, job) {
-                return Ok((false, false, vec![], vec![], JUDGE_MISMATCH_CLASS));
+                return Ok((false, false, vec![], vec![], JUDGE_MISMATCH_CLASS, None));
             }
             failed_tests = parsed
                 .results
@@ -256,6 +291,9 @@ fn evidence_with_read(
                 .results
                 .iter()
                 .all(|r| !matches!(r.verdict, Verdict::InfrastructureFailure));
+            // Q51 / #849: a successful PB action's no-report outcome is TL3-side.
+            // Known PB failures retain the unclassified Q7 path, even with results.
+            failure = (successful && !report).then_some(HARNESS);
             pass = report
                 && successful
                 && parsed
@@ -270,13 +308,16 @@ fn evidence_with_read(
         } else if harness_error(&raw, job) {
             failure = Some(HARNESS);
         }
+        if !report {
+            diagnostic = crate::check_execution::from_log(&raw);
+        }
     } else if matches!(ending.status.as_str(), "executed" | "cache_hit") {
         // A receipt-only cache hit can outlive its queue record. Missing result evidence is unknown.
         return Err(Error::Invalid(
             "successful PrismaBuild ending has no verified result",
         ));
     }
-    Ok((report, pass, results, failed_tests, failure))
+    Ok((report, pass, results, failed_tests, failure, diagnostic))
 }
 
 // Stored rows historically included the parsed report's default empty messages.
@@ -349,16 +390,22 @@ fn completion(
     Ok(Completion::confirmed(observations))
 }
 
-fn parse(raw: &[u8], job: &Job) -> Option<Report> {
-    let text = std::str::from_utf8(raw).ok()?;
+fn parse(raw: &[u8], job: &Job) -> serde_json::Result<Option<Report>> {
+    let Ok(text) = std::str::from_utf8(raw) else {
+        return Ok(None);
+    };
     let reports: Vec<_> = text
         .lines()
         .filter_map(|line| line.strip_prefix("TL3_CHECKS "))
         .collect();
     if reports.len() != 1 {
-        return None;
+        return Ok(None);
     }
-    let report: Report = serde_json::from_str(reports[0]).ok()?;
+    // #848: framing/syntax failures retain no-report; only typed decoding is a harness defect.
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(reports[0]) else {
+        return Ok(None);
+    };
+    let report: Report = serde_json::from_value(value)?;
     if report.effect_key != job.delivery.key
         || report.base.as_str() != job.run.base_sha.as_str()
         || Some(report.head.as_str()) != job.delivery.head_sha.as_deref()
@@ -369,7 +416,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 .as_ref()
                 .map(tl3_worktrees::CommitId::as_str)
     {
-        return None;
+        return Ok(None);
     }
     if report
         .results
@@ -381,7 +428,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 .is_some_and(|phases| !phases_valid(phases, test.test.as_str()))
         })
     {
-        return None;
+        return Ok(None);
     }
     let mut plan = job.run.plan.clone();
     if !job.always_tests.is_empty() {
@@ -395,9 +442,11 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         });
     }
     // Only a job staged with selection may carry one trailing selected check (#359).
-    let extra = report.results.len().checked_sub(plan.len())?;
+    let Some(extra) = report.results.len().checked_sub(plan.len()) else {
+        return Ok(None);
+    };
     if extra > usize::from(job.selected_tests.is_some()) {
-        return None;
+        return Ok(None);
     }
     if let Some(selected) = report.results.get(plan.len()) {
         let Custody::InProcess = selected.custody;
@@ -405,7 +454,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             || selected.kind != Kind::Regression
             || selected.tests.len() > job.selected_tests.unwrap_or(0) as usize
         {
-            return None;
+            return Ok(None);
         }
     }
     for (result, check) in report.results.iter().zip(&plan) {
@@ -413,22 +462,22 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             || result.kind != check.kind
             || result.tests.len() != check.tests.len()
         {
-            return None;
+            return Ok(None);
         }
         let Custody::InProcess = result.custody;
         if result.declared_symptom != check.declared_symptom {
-            return None;
+            return Ok(None);
         }
         if let Some(declaration) = &check.declared_symptom {
             if !symptom_identity(result, declaration, check, job) {
-                return None;
+                return Ok(None);
             }
         } else if result.symptom_evidence.is_some() {
-            return None;
+            return Ok(None);
         }
         for (result, test) in result.tests.iter().zip(&check.tests) {
             if result.test.as_str() != test {
-                return None;
+                return Ok(None);
             }
         }
         if let Some(identity) = &result.proof {
@@ -443,7 +492,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                         .is_some_and(Option::is_some)
                 })
             {
-                return None;
+                return Ok(None);
             }
             if let Some(declaration) = &check.proof {
                 let subjects = &declaration.subjects;
@@ -465,18 +514,18 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                             test.passed && !matches!(test.head, Outcome::Passed)
                         }))
                 {
-                    return None;
+                    return Ok(None);
                 }
             }
         } else if check.proof.is_some() && result.tests.iter().any(|test| test.passed) {
-            return None;
+            return Ok(None);
         }
         // A forced check passes only on evidence from its forced head run (#393).
         if result.forcing.is_some() != check.forcing.is_some() {
-            return None;
+            return Ok(None);
         }
     }
-    Some(report)
+    Ok(Some(report))
 }
 
 fn judge_kind(kind: Kind) -> core_judge::Kind {
@@ -597,7 +646,13 @@ fn rejudged(report: &Report, job: &Job) -> bool {
                     .proof
                     .as_ref()
                     .and_then(|proof| proof.red_message_matches.as_ref())
-                    .is_some_and(|matches| matches.contains_key(test.test.as_str()))
+                    .and_then(|matches| matches.get(test.test.as_str()))
+                    .is_some_and(|matched| {
+                        matches!(
+                            matched,
+                            RedMessageMatch::Message | RedMessageMatch::SourceAssertion
+                        )
+                    })
                 {
                     core_judge::Reason::Matched
                 } else {
@@ -912,8 +967,8 @@ pub(crate) mod contract_vectors {
                 "sha256":format!("{:x}", Sha256::digest(line.as_bytes()))}},
         }))
         .unwrap();
-        let (report, pass, results, failed_tests, failure) = evidence(ending, &job).unwrap();
-        assert_eq!(failure, None, "{name}");
+        let (report, pass, results, failed_tests, failure, _) = evidence(ending, &job).unwrap();
+        assert_eq!(failure, (!report).then_some(HARNESS), "{name}: Q51");
         Parsed {
             name,
             vector,

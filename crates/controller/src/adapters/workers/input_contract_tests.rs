@@ -298,6 +298,43 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             labels: vec![],
         })
         .unwrap();
+    // #839 / Q27: build the evidence through the controller, real store and
+    // mock GitHub bounded read, then pass the retained row to both builders.
+    let target = tl3_kernel::DependencyTarget {
+        kind: tl3_kernel::PrerequisiteKind::Issue,
+        number: 2763,
+        request: None,
+    };
+    controller
+        .observe(
+            "t839-contract-declaration",
+            Observation::Kernel(Event::Fact {
+                node: NodeId(0),
+                fact: Fact::Dependency {
+                    target,
+                    status: tl3_kernel::DependencyStatus::Pending,
+                },
+            }),
+        )
+        .unwrap();
+    assert!(controller.drive_once().unwrap());
+    crate::adapters::github::set_fake_issue(&f.root.path().join("fakes"), &serde_json::from_value(json!({"number":2763,"title":"Closed prerequisite","body":null,"state":"closed","state_reason":"not_planned","updated_at":"2026-11-03T23:00:00Z"})).unwrap());
+    controller
+        .observe(
+            "t839-contract-catch-up",
+            Observation::PrerequisiteRead {
+                node: NodeId(0),
+                repository: controller.bootstrap.repos[0].clone(),
+                kind: target.kind,
+                number: target.number,
+            },
+        )
+        .unwrap();
+    assert!(controller.drive_once().unwrap());
+    assert_eq!(
+        controller.world().unwrap().dependencies()[0].status,
+        tl3_kernel::DependencyStatus::Delivered
+    );
     let mut store = Store::open(&config.store).unwrap();
     let brief = json!({"kind":"brief","brief":"Preserve evidence","memory_ids":[],"goals":[{"description":"Preserve evidence","verification":"test"}]});
     let plan = json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"evidence","kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]});
@@ -389,6 +426,12 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         "{role}: envelope rejected"
                     );
                     typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
+                    if role == "planner" {
+                        assert_eq!(
+                            request["inputs"]["prerequisite_closures"],
+                            json!([{"kind":"issue","number":2763,"reason":"not_planned"}])
+                        );
+                    }
                     if role == "reviewer" {
                         typed_round_trip::<tl3_contracts::roles::reviewer_input::ReviewerInput>(
                             &request["inputs"],
@@ -486,6 +529,10 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         let request = supervisor
             .request(&delivery, "postmortem", &mut store, &snapshot)
             .unwrap();
+        assert_eq!(
+            request["inputs"]["case"]["prerequisite_closures"],
+            json!([{"kind":"issue","number":2763,"reason":"not_planned"}])
+        );
         protocol::validate_inputs("postmortem", &request["inputs"]).unwrap();
         typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
         typed_round_trip::<tl3_contracts::roles::postmortem_input::PostmortemInput>(
@@ -537,6 +584,62 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
 
 #[path = "../../../tests/support/input_resource_world.rs"]
 mod resource_world;
+
+/// Auditing / #832-A: the real next-generation producer preserves every
+/// PB #2781 objection as its own stable audit_objections[index] item.
+#[test]
+fn audit_repair_receives_separately_indexed_real_objections() {
+    let golden: Value =
+        serde_json::from_str(include_str!("../../../tests/fail_fast/pb-2781.json")).unwrap();
+    let objections = &golden["records"][1]["reply"]["objections"];
+    let mut w = resource_world::World::new();
+    w.reply("issue", 2713);
+    let generation = w.controller.world().unwrap().nodes[0].generation;
+    w.controller
+        .observe(
+            "audit-disagrees",
+            Observation::WorkerReply {
+                node: NodeId(0),
+                generation,
+                role: "audit".into(),
+                reply: golden["records"][1]["reply"].clone(),
+                model: None,
+                plan_check: None,
+            },
+        )
+        .unwrap();
+    resource_world::World::drain(&mut w.controller);
+    let retry = w.launches.lock().unwrap().last().unwrap().clone();
+    assert_eq!(
+        w.controller.world().unwrap().nodes[0].phase,
+        Phase::Ingesting
+    );
+    assert!(retry.generation > generation);
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.github.repos[0].owner = "owner".into();
+    config.github.repos[0].name = "sandbox".into();
+    config.github.repos[0].installation_id = 3;
+    config.store = w.settings.clone();
+    config.workers.runs = w.root.path().join("runs");
+    config.models.key_file = w.root.path().join("fixture-key");
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &w.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
+    let mut store = Store::open(&w.settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let request = supervisor
+        .request(&retry, "ingest", &mut store, &snapshot)
+        .unwrap();
+    assert_eq!(&request["inputs"]["audit_objections"], objections);
+    let items = request["inputs"]["audit_objections"].as_array().unwrap();
+    assert_eq!(items.len(), objections.as_array().unwrap().len());
+    typed_round_trip::<tl3_contracts::roles::ingest_input::IngestInput>(&request["inputs"]);
+}
 
 /// Q7/Q51/#833: the retry sees the rejected declaration before producing its next reply.
 #[test]

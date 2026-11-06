@@ -8,3 +8,6 @@ pub use publication_io::{
 pub use tl3_controller::{
     Error, Repository, Result, dispatch_liveness, input_resources, redaction, steering,
 };
+
+#[path = "delivery_schedule/mod.rs"]
+mod delivery_schedule;

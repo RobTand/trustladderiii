@@ -46,52 +46,6 @@ _RUNTIME = {"crates/harness-core": [
     "//harness:test-vectors/summary/python-numbers.json",
 ]}
 
-# Wave B entry points in crates/harness-core (#818). Each port replaces or removes only its
-# own entry, so parallel ports never share a hunk. Keep the comment line above each entry.
-_WAVE_B_STUB = {
-    "srcs": ["wave_b/entry.rs"],
-    "crate_root": "wave_b/entry.rs",
-    "tags": ["manual", "wave-b-entry-point"],
-}
-
-_WAVE_B_ENTRIES = {
-    # summary-bound (#823)
-    "summary-bound": {
-        "srcs": ["tests/summary_bound.rs", "tests/summary_bound/reference.rs", "tests/summary_bound/conformance.rs"],
-        "crate_root": "tests/summary_bound.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
-        "data": [
-            "//harness:core_vectors",
-            "//harness:test-vectors/summary/python-envelope.json",
-            "//harness:test-vectors/summary/python-numbers.json",
-        ],
-        "tags": ["rust", "wave-b-summary-bound"],
-    },
-    # selector-identity (#823)
-    "selector-identity": {
-        "srcs": ["tests/selector_identity.rs"],
-        "crate_root": "tests/selector_identity.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde_json", "@crates//:proptest"],
-        "data": ["//harness:core_vectors"],
-        "tags": ["rust", "wave-b-selector-identity"],
-    },
-    # limits (S4)
-    "limits": {
-        "srcs": ["tests/limits.rs"],
-        "crate_root": "tests/limits.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde_json"],
-        "data": ["//harness:core_vectors", "tests/fixtures/limits/delay.json"],
-        "tags": ["wave-b-plan-only", "rust"],
-    },
-    # red-match (S4)
-    "red-match": {
-        "srcs": [":sources"],
-        "crate_root": "tests/red_match.rs",
-        "deps": [":tl3_harness_core", "@crates//:serde", "@crates//:serde_json"],
-        "tags": ["rust", "wave-b-entry-point"],
-    },
-}
-
 # rust_gate.py runs the controller's github binary as two timed groups.
 _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
 
@@ -109,8 +63,11 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
+    # #830: 62.427 s serial, measured at 34901a132a (da4bea96).
+    "tl3-controller/direct_merge": 8,
     "tl3-controller/quota_hold": 16,
     "tl3-controller/input_resources": 10,
+    "tl3-controller/stderr_incidents": 10,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/p5_checker": 14,
@@ -132,6 +89,7 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_stderr_incidents",
     "test_test_harness_summary",
     "test_test_redaction_adapter",
     "test_test_redaction_generated",
@@ -194,14 +152,16 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/direct_merge.rs": ["tests/mergify.rs", "tests/mergify/**", "tests/support/**", "tests/fixtures/mergify/**"],
     "tests/input_resources.rs": ["tests/support/**"],
-    "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json", "tests/fixtures/dispatch-restart-regressions.json"],
+    "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json", "tests/fixtures/dispatch-restart-regressions.json"],
     # CC-P: exact source replay and persistent differential schedules.
     "tests/prismabuild_schedule/main.rs": ["tests/prismabuild_schedule/io.rs", "tests/prismabuild_schedule/reference.rs", "tests/prismabuild_schedule/extracted.rs", "tests/prismabuild_schedule/io_schedule-regressions.txt"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
     "tests/production.rs": ["tests/prismabuild_fixture/**"],
+    "tests/stderr_incidents.rs": ["tests/redaction_support/**"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],
     "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs", "tests/support/ownership.rs"],
@@ -237,6 +197,13 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/worktrees.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/writer_references.rs": ["tests/writer_reference_model.py"],
 }
+
+# CC-E: reuse existing topic targets for delivery coverage without fanout growth.
+_CONTROLLER_TEST_SOURCES["tests/approval_race.rs"] += ["tests/delivery_conformance/**", "tests/delivery_fence/**"]
+_CONTROLLER_TEST_SOURCES["tests/publication_io.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/publication_io.rs", []) + ["tests/delivery_schedule/**"]
+_CONTROLLER_TEST_SOURCES["tests/replay_check.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/replay_check.rs", []) + ["tests/delivery_machine/**"]
+# One approval schedule per shard, including the eight controller and two fence cases.
+_LIBTEST_SHARDS["tl3-controller/approval_race"] = 37
 
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
@@ -306,20 +273,6 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     """
     directory = native.package_name()
     verus_proofs()
-    if directory == "crates/harness-core":
-        # Wave B entry points are deliberately outside Cargo discovery and Gate selection.
-        # Exact node-ID grammar still runs in the controller until S3 removes that dependency.
-        for kind, spec in _WAVE_B_ENTRIES.items():
-            rust_test(
-                name = "wave_b_" + kind.replace("-", "_"),
-                srcs = spec["srcs"],
-                crate_root = spec.get("crate_root"),
-                deps = spec.get("deps", []),
-                data = spec.get("data", []),
-                edition = "2024",
-                rustc_env = {"WAVE_B_KIND": kind},
-                tags = spec["tags"],
-            )
     native.exports_files(["Cargo.toml", "BUILD.bazel"])
     native.filegroup(
         name = "sources",
@@ -433,8 +386,10 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
         sources = [source]
     compile_data = options["compile_data"]
-    if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
+    if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
+        if native.package_name() == "crates/mergify":
+            sources = sources + native.glob(["proofs/enqueue_*.rs"])
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":

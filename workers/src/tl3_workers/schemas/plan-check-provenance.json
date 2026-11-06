@@ -71,6 +71,7 @@
     "RepairUnavailable": {
       "enum": [
         "disabled",
+        "failed_work",
         "input_allowance",
         "message_limit",
         "format_allowance_consumed"

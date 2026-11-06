@@ -1,0 +1,96 @@
+{
+  "check_suites": [
+    {
+      "app": {
+        "id": 85455,
+        "slug": "cloudflare-workers-and-pages"
+      },
+      "check_runs_url": "https://api.github.com/repos/RobTand/tessera/check-suites/114039163401/check-runs",
+      "conclusion": null,
+      "created_at": "2026-11-05T18:29:34Z",
+      "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
+      "id": 114039163401,
+      "status": "queued",
+      "updated_at": "2026-11-05T18:29:34Z"
+    },
+    {
+      "app": {
+        "id": 1236702,
+        "slug": "claude"
+      },
+      "check_runs_url": "https://api.github.com/repos/RobTand/tessera/check-suites/114039164045/check-runs",
+      "conclusion": null,
+      "created_at": "2026-11-05T18:29:34Z",
+      "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
+      "id": 114039164045,
+      "status": "queued",
+      "updated_at": "2026-11-05T18:29:34Z"
+    },
+    {
+      "app": {
+        "id": 10562,
+        "slug": "mergify"
+      },
+      "check_runs_url": "https://api.github.com/repos/RobTand/tessera/check-suites/114039164748/check-runs",
+      "conclusion": "success",
+      "created_at": "2026-11-05T18:29:34Z",
+      "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
+      "id": 114039164748,
+      "status": "completed",
+      "updated_at": "2026-11-05T18:30:30Z"
+    },
+    {
+      "app": {
+        "id": 5517179,
+        "slug": "tl2-factory-robtand"
+      },
+      "check_runs_url": "https://api.github.com/repos/RobTand/tessera/check-suites/114039165344/check-runs",
+      "conclusion": null,
+      "created_at": "2026-11-05T18:29:34Z",
+      "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
+      "id": 114039165344,
+      "status": "queued",
+      "updated_at": "2026-11-05T18:29:34Z"
+    },
+    {
+      "app": {
+        "id": 5542171,
+        "slug": "tl3-robtand"
+      },
+      "check_runs_url": "https://api.github.com/repos/RobTand/tessera/check-suites/114039166042/check-runs",
+      "conclusion": "success",
+      "created_at": "2026-11-05T18:29:35Z",
+      "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
+      "id": 114039166042,
+      "status": "completed",
+      "updated_at": "2026-11-05T18:29:46Z"
+    },
+    {
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "check_runs_url": "https://api.github.com/repos/RobTand/tessera/check-suites/114039305624/check-runs",
+      "conclusion": "failure",
+      "created_at": "2026-11-05T18:29:54Z",
+      "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
+      "id": 114039305624,
+      "status": "completed",
+      "updated_at": "2026-11-05T18:38:27Z"
+    },
+    {
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "check_runs_url": "https://api.github.com/repos/RobTand/tessera/check-suites/114039306794/check-runs",
+      "conclusion": "failure",
+      "created_at": "2026-11-05T18:29:54Z",
+      "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
+      "id": 114039306794,
+      "status": "completed",
+      "updated_at": "2026-11-05T18:31:24Z"
+    }
+  ],
+  "total_count": 7
+}

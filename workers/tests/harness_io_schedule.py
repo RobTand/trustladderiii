@@ -10,12 +10,24 @@ from pathlib import Path
 import sys
 import tempfile
 import types
+from unittest.mock import patch
 
 import pytest
 
-from tl3_harness import execution, test_tool
+from tl3_harness import execution, selector_identity as identity, test_tool
+from tl3_harness.selector_identity import selector_identity
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_workers import pb_tests
+
+
+# Frozen reference dependency, copied verbatim from 2e8cbefd9fe914d33308d8872838b34bbdb80219
+# harness/src/tl3_harness/selector_identity.py:15. Only the reference imports this copy.
+def selection_matches(value, selectors):
+    """Compare a full list or digest to the trusted full selection, never its prefix."""
+    if isinstance(value, list):
+        return value == list(selectors)
+    return (isinstance(value, dict) and type(value.get('count')) is int
+            and value == selector_identity(selectors))
 
 
 REFERENCE = Path(__file__).with_name('fixtures') / 'harness-extraction'
@@ -28,7 +40,8 @@ legacy_worker.__package__ = 'tl3_workers'
 legacy_worker.__file__ = str(REFERENCE / 'pb_tests.py.txt')
 sys.modules[legacy_worker.__name__] = legacy_worker
 # This reference retains all six original bounding call sites verbatim.
-exec(compile((REFERENCE / 'pb_tests.py.txt').read_text(), 'pre-extraction/pb_tests.py', 'exec'), legacy_worker.__dict__)
+with patch.object(identity, 'selection_matches', selection_matches, create=True):
+    exec(compile((REFERENCE / 'pb_tests.py.txt').read_text(), 'pre-extraction/pb_tests.py', 'exec'), legacy_worker.__dict__)
 
 
 class Crash(BaseException):

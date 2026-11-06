@@ -1,6 +1,7 @@
 """Small required Verus proofs with declared source, spec and toolchain inputs."""
 
 load("//tools/bazel:verus_toolchain.bzl", "VerusToolchainInfo")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 def _verus_test_impl(ctx):
     if ctx.attr.expected_obligations <= 0:
@@ -77,6 +78,18 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/mergify":
+        verus_test(
+            name = "verus_queue_entry",
+            src = "proofs/queue_entry.rs",
+            srcs = ["src/decide/queue_entry.rs"],
+            expected_obligations = 4,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         verus_test(
             name = "verus_delivery",
             src = "proofs/delivery.rs",
@@ -163,6 +176,95 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+        # ctrl-core B2: selectors are inventoried by the required mergify proof_map test.
+        # Each decide contract has one owner; shared bodies and generated Clone
+        # obligations have one owner across all roots. New families append entries.
+        enqueue_groups = {
+            "refused_sticky": ("refused_sticky", "enqueue#decide", 1),
+            "refused_sticky_witness": ("refused_sticky", "witness", 1),
+            # Write-ahead partitions exhaust Write: Label, Command and Rerun.
+            "write_ahead_label": ("write_ahead_label", "enqueue#decide", 1),
+            "write_ahead_label_witness": ("write_ahead_label", "witness", 2),
+            "write_ahead_command": ("write_ahead_command", "enqueue#decide", 1),
+            "write_ahead_command_witness": ("write_ahead_command", "witness", 1),
+            "write_ahead_rerun": ("write_ahead_rerun", "enqueue#decide", 1),
+            "write_ahead_rerun_witness": ("write_ahead_rerun", "witness", 1),
+            "recovery_grace": ("recovery_grace", "enqueue#decide", 1),
+            "recovery_grace_witness": ("recovery_grace", "witness", 2),
+            "command_completion": ("refused_sticky", "enqueue#command_completion", 1),
+            "reconcile_issue": ("refused_sticky", "enqueue#reconcile_issue", 1),
+            "grace_ms": ("recovery_grace", "enqueue#GRACE_MS", 1),
+            "clone_requeue": ("refused_sticky", "enqueue#Requeue::clone", 1),
+            "clone_command": ("refused_sticky", "enqueue#Command::clone", 1),
+            "clone_recovery": ("refused_sticky", "enqueue#Recovery::clone", 1),
+            "clone_intent": ("refused_sticky", "enqueue#Intent::clone", 1),
+            "clone_rerun": ("refused_sticky", "enqueue#Rerun::clone", 1),
+            "clone_enqueue_state": ("refused_sticky", "enqueue#EnqueueState::clone", 1),
+            "clone_issue_read": ("refused_sticky", "enqueue#IssueRead::clone", 1),
+            "clone_queue_read": ("refused_sticky", "enqueue#QueueRead::clone", 1),
+            "clone_need": ("refused_sticky", "enqueue#Need::clone", 1),
+            "clone_failure": ("refused_sticky", "enqueue#Failure::clone", 1),
+            "clone_complete": ("refused_sticky", "enqueue#Complete::clone", 1),
+            "clone_write": ("refused_sticky", "enqueue#Write::clone", 1),
+            "clone_command_result": ("refused_sticky", "enqueue#CommandResult::clone", 1),
+            "clone_rerun_result": ("refused_sticky", "enqueue#RerunResult::clone", 1),
+            "clone_command_read": ("refused_sticky", "enqueue#CommandRead::clone", 1),
+            "clone_queue_event": ("refused_sticky", "enqueue#QueueEvent::clone", 1),
+            "clone_effect": ("refused_sticky", "enqueue#Effect::clone", 1),
+            # ctrl-core A4: independent ack, stale-head and dequeue contract families.
+            "ack_sound": ("ack_sound", "enqueue#decide", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "ack_sound_issue": ("ack_sound", "enqueue#reconcile_issue", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "ack_sound_completion": ("ack_sound", "enqueue#command_completion", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "ack_sound_witness": ("ack_sound", "witness", 4, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "stale_head": ("stale_head", "enqueue#decide", 1),
+            "stale_head_witness": ("stale_head", "witness", 2),
+            "dequeue_fresh": ("dequeue_fresh", "enqueue#dequeue_pending", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "dequeue_fresh_label_event": ("dequeue_fresh", "enqueue#LabelEvent::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "dequeue_fresh_witness": ("dequeue_fresh", "witness", 4, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            # ctrl-core C2: required-check port and rerun-budget selectors.
+            "required_check": ("required_check", "enqueue#required_check", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_types": ("required_check", "enqueue#RequiredState::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_witness": ("required_check", "witness#covers", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_oracle_witness": ("required_check", "witness#oracle", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "rerun_budget": ("rerun_budget", "enqueue#decide", 1),
+            "rerun_budget_consumed_receipt_witness": ("rerun_budget", "witness#consumed_receipt", 1),
+            "rerun_budget_retained_budget_witness": ("rerun_budget", "witness#retained_budget", 1),
+            "rerun_budget_dispatch_once_witness": ("rerun_budget", "witness#dispatch_once", 1),
+            "rerun_budget_result_budget_witness": ("rerun_budget", "witness#result_budget", 1),
+            "rerun_budget_read_gates_witness": ("rerun_budget", "witness#read_gates", 1),
+            "rerun_budget_read_receipts_witness": ("rerun_budget", "witness#read_receipts", 1),
+            "rerun_budget_absent_results_witness": ("rerun_budget", "witness#absent_results", 1),
+            "rerun_budget_terminal_results_witness": ("rerun_budget", "witness#terminal_results", 1),
+            "rerun_budget_resumable_results_witness": ("rerun_budget", "witness#resumable_results", 1),
+            "rerun_budget_pending_covers_witness": ("rerun_budget", "witness#pending_covers", 1),
+        }
+        for name, entry in enqueue_groups.items():
+            root, module, count = entry[:3]
+            extra_specs = entry[3].get("extra_specs", []) if len(entry) == 4 else []
+            verus_test(
+                name = "verus_enqueue_" + name,
+                src = "proofs/enqueue_" + root + ".rs",
+                srcs = [
+                    "src/decide/enqueue.rs",
+                    "src/decide/check.rs",
+                    "src/decide/observe.rs",
+                    "src/decide/verification.rs",
+                ],
+                specs = [
+                    "proofs/enqueue_helpers.rs",
+                    "proofs/enqueue_" + root + "_spec.rs",
+                    "proofs/enqueue_" + root + "_witness.rs",
+                ] + extra_specs,
+                module = module,
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
         # ctrl-core A2: executable execute plans and body-heal decisions.
         verus_test(
             name = "verus_plan",
@@ -212,7 +314,70 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
+        # ctrl-core A3: separate routing families over the real production module.
+        for name, count in [("queue", 10), ("webhook", 16), ("projection", 12), ("failure", 5)]:
+            verus_test(
+                name = "verus_route_" + name,
+                src = "proofs/route.rs",
+                srcs = ["src/decide/route.rs"],
+                expected_obligations = count,
+                module = "route::" + name,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
+    # CC-E: dependency-free delivery steps and the faithful dispatch composition.
+    if native.package_name() == "crates/delivery":
+        verus_test(
+            name = "verus_core",
+            src = "proofs/core.rs",
+            srcs = ["src/step.rs"],
+            expected_obligations = 18,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        for name, count in {"once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50}.items():
+            verus_test(
+                name = "verus_" + name,
+                src = "proofs/" + name + ".rs",
+                srcs = ["src/step.rs", "src/mirror.rs", "src/upstream.rs"],
+                expected_obligations = count,
+                tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+
     if native.package_name() == "crates/controller":
+        # #830: direct delivery, full SHA pins, approval, known merge and write order.
+        py_binary(
+            name = "direct_merge_resources",
+            srcs = ["proofs/direct_merge_resources.py"],
+            main = "proofs/direct_merge_resources.py",
+            visibility = ["//visibility:public"],
+        )
+        verus_test(
+            name = "verus_direct_merge",
+            src = "proofs/direct_merge.rs",
+            srcs = ["src/adapters/direct_merge/decide.rs"],
+            expected_obligations = 10,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         native.exports_files(["src/kernel_boundary.rs", "src/dispatch_liveness/decision.rs", "src/dispatch_liveness/model.rs"])
         verus_test(
             name = "verus_quota_wake",
@@ -292,6 +457,18 @@ def verus_proofs():
             src = "proofs/classifier.rs",
             srcs = ["src/classifier/decision.rs"],
             expected_obligations = 6,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
+            name = "verus_ingest",
+            src = "proofs/ingest.rs",
+            srcs = ["//crates/contracts:src/roles/ingest_retention.rs"],
+            expected_obligations = 4,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
@@ -498,6 +675,17 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::dependency_retirement_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::edge_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::edge_rules": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::revocable": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::expected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::fact_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::pristine": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::progress_gate_check_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::gate_apply_checker_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::gate_apply_checker_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -618,6 +806,33 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_equivalence::reference::on_reply": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::outcome": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::resume": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::effect_kind": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::phase": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::question": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::node": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::output": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::outbox": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::compare": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::admitted_extraction_matches_original": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::audit_disagreement_runs_once_before_reset": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::port_t860_contracts::admissible": "#860: nonrecursive acceptance table predicate",
+            "kernel::port_t860_contracts::stopping_post": "#860: nonrecursive release frame predicate",
+            "kernel::port_t860_contracts::ended_post": "#860: nonrecursive frame predicate",
+            "kernel::port_t860_contracts::failed_post": "#860: nonrecursive frame predicate",
+            "kernel::port_t860_contracts::ended": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::audit_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::failed_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::active": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::stopping": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::reply_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::reply_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::apply_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::permitted_stop": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -696,7 +911,7 @@ def verus_proofs():
             "work_replies_plan": ("kernel::work_replies#reply_plan", 1),
             "work_replies_rebase": ("kernel::work_replies#reply_rebase", 1),
             "work_replies_recheck_head": ("kernel::work_replies#update_recheck_head", 1),
-            "retries": ("kernel::retries", 7),
+            "retries": ("kernel::retries#run_failed", 1),
             "acknowledgements_confirmed": ("kernel::acknowledgements#confirmed", 1),
             "acknowledgements_confirmed_agenda": ("kernel::acknowledgements#confirmed_agenda", 1),
             "acknowledgements_delivery_failed": ("kernel::acknowledgements#delivery_failed", 1),
@@ -729,6 +944,13 @@ def verus_proofs():
             "dependencies_dependency_path": ("kernel::dependencies#World::dependency_path", 7),
             "dependencies_find_dependency": ("kernel::dependencies#World::find_dependency", 2),
             "dependencies_first_undelivered": ("kernel::dependencies#World::first_undelivered", 2),
+            "dependency_retirement_fact": ("kernel::dependency_retirement#verify_fact", 1),
+            "dependency_retirement_preserves": ("kernel::dependency_retirement#preserves", 1),
+            "dependency_retirement_abandoned": ("kernel::dependency_retirement#verify_abandoned", 1),
+            "dependency_retirement_waiting_world": ("kernel::dependency_retirement#waiting_world", 1),
+            "dependency_retirement_fact_witness": ("kernel::dependency_retirement#fact_witness", 1),
+            "dependency_retirement_abandoned_witness": ("kernel::dependency_retirement#abandoned_witness", 1),
+            "dependencies_update_allowed": ("kernel::dependencies#update_allowed", 1),
             "dependencies_prepare_dependency": ("kernel::dependencies#World::prepare_dependency", 1),
             "dependencies": ("kernel::dependencies#World::record_dependency", 1),
             "dependencies_remove_dependency": ("kernel::dependencies#World::remove_dependency", 2),
@@ -848,7 +1070,34 @@ def verus_proofs():
             "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
-            "plan_check_witness": ("kernel::plan_check_witness", 3),
+            "plan_check_witness": ("kernel::plan_check_witness", 5),
+            "t860_retries_stop_for_review": ("kernel::retries#stop_for_review", 1),
+            "t860_retries_failed_round": ("kernel::retries#failed_round", 1),
+            "t860_retries_next_rung": ("kernel::retries#next_rung", 1),
+            "t860_retries_out_of_room": ("kernel::retries#out_of_room", 1),
+            "t860_retries_plan_retry": ("kernel::retries#plan_retry", 1),
+            "t860_retries_recheck": ("kernel::retries#recheck", 1),
+            "port_t860_scope": ("kernel::port_t860_scope#apply_scope", 1),
+            "port_t860_headroom": ("kernel::port_t860_scope#checker_headroom", 1),
+            "port_t860_admitted": ("kernel::port_t860_frames#admitted", 1),
+            "port_t860_rejected_once": ("kernel::port_t860_frames#rejected_once", 1),
+            "port_t860_rejected_incident": ("kernel::port_t860_frames#rejected_incident", 1),
+            "port_t860_inactive": ("kernel::port_t860_frames#inactive", 1),
+            "port_t860_actor": ("kernel::port_t860_frames#actor", 1),
+            "port_t860_world": ("kernel::port_t860_frames#world", 1),
+            "port_t860_apply": ("kernel::port_t860_apply#verify_apply", 1),
+            "port_t860_witness_world": ("kernel::port_t860_witness#world", 1),
+            "port_t860_witness_cover": ("kernel::port_t860_witness#cover", 1),
+            "port_t860_release_run": ("kernel::reply_admission#release_run", 1),
+            "port_t860_release_job": ("kernel::reply_admission#release_job", 1),
+            "port_t860_on_stopping_reply": ("kernel::reply_admission#on_stopping_reply", 1),
+            "port_t860_on_rejected_reply": ("kernel::reply_admission#on_rejected_reply", 1),
+            "port_t860_on_admitted_reply": ("kernel::reply_admission#on_admitted_reply", 1),
+            "port_t860_link_audit_finished": ("kernel::port_t860_link#audit_finished", 1),
+            "port_t860_link_inactive": ("kernel::port_t860_link#inactive", 1),
+            "port_t860_link_rejected": ("kernel::port_t860_link#rejected", 1),
+            "port_t860_link_admitted": ("kernel::port_t860_link#admitted", 1),
+            "port_t860_link_irrelevant": ("kernel::port_t860_link#irrelevant", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

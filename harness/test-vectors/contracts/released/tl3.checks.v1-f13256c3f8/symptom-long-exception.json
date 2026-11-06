@@ -1,0 +1,135 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::symptom-long-exception",
+ "request": {
+  "base": "37e308b9b6576cfde50d3dc66834651710a7d77a",
+  "effect_key": "checks:symptom-long-exception",
+  "head": "0e190b77830b9abc7bcd62158778c92c28089f88",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "declared_symptom": {
+     "exception": "builtins.TimeoutError",
+     "node": "tests/test_long.py::test_long",
+     "parallel": 0,
+     "phase": "call",
+     "repeat": 1
+    },
+    "kind": "demonstrating",
+    "name": "long exception symptom",
+    "tests": [
+     "tests/test_long.py::test_long"
+    ]
+   }
+  ],
+  "reviewed": null
+ },
+ "results": [
+  {
+   "custody": "in-process",
+   "declared_symptom": {
+    "exception": "builtins.TimeoutError",
+    "node": "tests/test_long.py::test_long",
+    "parallel": 0,
+    "phase": "call",
+    "repeat": 1
+   },
+   "kind": "demonstrating",
+   "name": "long exception symptom",
+   "proof": {
+    "base_tree_sha256": "19824bf76b06ed08ebc0c4a9bde7823ce8e19db2f9902d217f92a9825ea87d10",
+    "declaration": null,
+    "head_tree_sha256": "3cacd88737b1ddc07860ae29c48369f041a14025cd3b0b49b55a67276081c627",
+    "mode": "pytest-outcome",
+    "observer_sha256": {
+     "tests/test_long.py::test_long": "674f633f1f4cd8766e674cbedf954a4971d20d4b500010e1c4f0374d1c874156"
+    },
+    "rule": "subject-observer-v1",
+    "source_base_tree_sha256": "19824bf76b06ed08ebc0c4a9bde7823ce8e19db2f9902d217f92a9825ea87d10",
+    "subjects": {
+     "tests/test_long.py": {
+      "base": "a2726d4442cbea69abb95db6374c6c02c016a84eb291c585f58375d99f9a4100",
+      "head": "674f633f1f4cd8766e674cbedf954a4971d20d4b500010e1c4f0374d1c874156"
+     }
+    },
+    "support_sha256": {}
+   },
+   "symptom_evidence": {
+    "base": "37e308b9b6576cfde50d3dc66834651710a7d77a",
+    "declaration": {
+     "exception": "builtins.TimeoutError",
+     "node": "tests/test_long.py::test_long",
+     "parallel": 0,
+     "phase": "call",
+     "repeat": 1
+    },
+    "forcing": null,
+    "head": "0e190b77830b9abc7bcd62158778c92c28089f88",
+    "runs": [
+     {
+      "outcome": "unavailable",
+      "records": [
+       {
+        "event": "start",
+        "schema": 1
+       },
+       {
+        "event": "result",
+        "failures": [
+         {
+          "exception": "test_long.DeadlineXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          "phase": "call",
+          "source": true
+         }
+        ],
+        "message": "def test_long():\n>       raise DeadlineXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX(\"deadline passed\")\nE       test_long.DeadlineXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX: deadline passed\n\ntests/test_long.py:6: DeadlineXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "outcome": "error",
+        "test": "tests/test_long.py::test_long",
+        "truncated": true
+       }
+      ],
+      "run": 1,
+      "sha256": "4bec30981b303edde459ebf6d66ecf30e6e9caea51195ecf5c15a9e7a8ef38ec",
+      "side": "base",
+      "target_hits": {}
+     },
+     {
+      "outcome": "passed",
+      "records": [
+       {
+        "event": "start",
+        "schema": 1
+       },
+       {
+        "event": "result",
+        "failures": [],
+        "message": "",
+        "outcome": "passed",
+        "test": "tests/test_long.py::test_long",
+        "truncated": false
+       },
+       {
+        "event": "finish",
+        "exit_code": 0
+       }
+      ],
+      "run": 1,
+      "sha256": "e0776c451f93af881d9191162b41aca1adf2d0e23ef32588222aa8dd8039523c",
+      "side": "head",
+      "target_hits": {}
+     }
+    ]
+   },
+   "tests": [
+    {
+     "base": "no-report",
+     "head": "passed",
+     "message": "Declared symptom observed 0 of 1 base runs (1 attempted). Zero occurrences is not RED. Every base failure must match the declaration; every head run must pass under identical settings.",
+     "passed": false,
+     "pre_existing": false,
+     "test": "tests/test_long.py::test_long"
+    }
+   ],
+   "verdict": "infrastructure-failure"
+  }
+ ]
+}

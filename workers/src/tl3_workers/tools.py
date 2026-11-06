@@ -708,6 +708,9 @@ def build_tools(worktree, descriptions):
                     fresh = allowance.begin_tool(_name, kwargs) if tracking else False
                     before = worktree.content_digest(kwargs["path"]) if tracking and _name in WRITE_TOOLS else None
                     result = _method(*args, **kwargs)
+                    if _name == "run_tests":
+                        from tl3_harness.supervision import model_result
+                        result = model_result(result)
                     if tracking:
                         changed = (_name in WRITE_TOOLS and before != worktree.content_digest(kwargs["path"]))
                         allowance.observe_tool(_name, kwargs, result, fresh=fresh, changed=changed)
