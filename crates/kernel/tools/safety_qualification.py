@@ -19,7 +19,7 @@ CASES = {
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',
         'audit_disagreement_node(&mut w.nodes[i]);',
-        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out); }',
+        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, _out); }',
         '//crates/kernel:verus_ingest_reply_audit_disagrees'),
     'plan_check_rejected_asks': (
         'crates/kernel/src/plan_check.rs',
@@ -328,7 +328,7 @@ CASES = {
     't860_second_asks': (
         'crates/kernel/src/ingest.rs',
         'audit_disagreement_node(&mut w.nodes[i]);',
-        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out); }',
+        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, _out); }',
         '//crates/kernel:verus_ingest_reply_audit_disagrees',
     ),
     't860_second_drops_stop': (
@@ -346,7 +346,7 @@ CASES = {
     't860_outputs': (
         'crates/kernel/src/ingest.rs',
         'audit_disagreement_node(&mut w.nodes[i]);',
-        'audit_disagreement_node(&mut w.nodes[i]);\n    emit_node(&mut w.nodes[i], i, EffectKind::PrepareWorktree, out);',
+        'audit_disagreement_node(&mut w.nodes[i]);\n    emit_node(&mut w.nodes[i], i, EffectKind::PrepareWorktree, _out);',
         '//crates/kernel:verus_ingest_reply_audit_disagrees',
     ),
     't860_complete_checker': (

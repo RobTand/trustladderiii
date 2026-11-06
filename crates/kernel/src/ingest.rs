@@ -141,19 +141,19 @@ fn reply_audit_agrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ())
 
 kernel_fn! {
 /// Auditing: private verbatim disagreement branch and isolated counter update.
-fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(_out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
     ensures final(w).nodes@.len() == old(w).nodes@.len(),
         final(w).next_question == old(w).next_question,
         final(w).file_sets@ == old(w).file_sets@,
-        *final(out) == *old(out),
+        *final(_out) == *old(_out),
         ingest_facts::audit_post(old(w).nodes@[i as int], final(w).nodes@[i as int]),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
-        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        reply_bounds(*old(w), *final(w), i as int, old(_out).len, final(_out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     kernel_snapshot! { before_node = w.nodes@[i as int] }
