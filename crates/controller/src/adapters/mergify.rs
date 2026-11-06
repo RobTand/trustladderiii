@@ -67,7 +67,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tl3_github::{Actor, CheckRun, GitHub, RepoChanges, webhook::Event};
 use tl3_kernel::{NodeId, World};
-use tl3_mergify::decide::{facts, translate::Kind};
+use tl3_mergify::decide::{facts, route, translate::Kind};
 use tl3_mergify::{Mergify, QUEUE_LABEL, QueueState, is_merge_queue_pr};
 use tl3_store::{InternKind, Snapshot};
 
@@ -1380,11 +1380,12 @@ pub(crate) fn queue_blocked(
     suites_completed: bool,
     required: &[RequiredCheck],
 ) -> Option<(Vec<String>, Vec<String>)> {
-    let conditions = if state.state == QueueState::Waiting && suites_completed {
-        tl3_mergify::unmet_conditions(state.check.as_ref()?)
-    } else {
-        vec![]
-    };
+    let conditions =
+        if route::queue::conditions(state.state == QueueState::Waiting, suites_completed) {
+            tl3_mergify::unmet_conditions(state.check.as_ref()?)
+        } else {
+            vec![]
+        };
     if !facts::queue_blocked(state.state, suites_completed, !conditions.is_empty()) {
         return None;
     }
@@ -1440,7 +1441,8 @@ async fn queue_facts(
             head_checks::evaluate(github, &repo_name, pull, requirements, &state.check_runs)
                 .await?;
         head_infrastructure = checks.infrastructure();
-        if !checks.unavailable.is_empty() {
+        let setup = route::queue::setup(checks.unavailable.is_empty(), checks.missing.is_empty());
+        if setup.unavailable {
             facts.push(QueueFact {
                 repository: repo.clone(),
                 number: pull.number,
@@ -1451,7 +1453,7 @@ async fn queue_facts(
         }
         // Q52: once every suite on the head has completed, no app is still
         // working on it, so a missing required context will not report.
-        if !checks.missing.is_empty() {
+        if setup.missing_suites {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
             if facts::suites_completed(&suite_statuses(&suites)) {
                 facts.extend(checks.missing.iter().map(|required| QueueFact {
@@ -1466,21 +1468,17 @@ async fn queue_facts(
         }
         // #447: Mergify waits on a condition nothing still running can meet,
         // such as PrismaBuild's scopes after its pr-gate failed.
-        if state.state == QueueState::Waiting
-            && checks_settled(state)
-            && state
+        if route::queue::blocked_suites(
+            state.state == QueueState::Waiting,
+            checks_settled(state),
+            state
                 .check
                 .as_ref()
-                .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty())
-        {
+                .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty()),
+        ) {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
             let completed = facts::suites_completed(&suite_statuses(&suites));
-            let required: Vec<_> = checks
-                .missing
-                .iter()
-                .chain(&checks.reported)
-                .cloned()
-                .collect();
+            let required = route::queue::required(checks.missing.clone(), checks.reported.clone());
             if let Some((conditions, failed)) = queue_blocked(state, completed, &required) {
                 facts.push(QueueFact {
                     repository: repo.clone(),
@@ -1495,7 +1493,7 @@ async fn queue_facts(
         }
         facts.extend(
             open.iter()
-                .filter(|required| checks.reported.contains(required))
+                .filter(|required| route::queue::reported(true, checks.reported.contains(required)))
                 .map(|required| QueueFact {
                     repository: repo.clone(),
                     number: pull.number,
@@ -1511,11 +1509,12 @@ async fn queue_facts(
                 number: pull.number,
                 evidence,
             };
-            if !snapshot
-                .map(|snapshot| fact.recorded(snapshot))
-                .transpose()?
-                .unwrap_or(false)
-            {
+            if route::queue::emit(
+                snapshot
+                    .map(|snapshot| fact.recorded(snapshot))
+                    .transpose()?
+                    .unwrap_or(false),
+            ) {
                 if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
                     *details =
                         ci_evidence::read_checks(github, &repo_name, &state.check_runs).await;
@@ -1538,7 +1537,9 @@ async fn queue_facts(
                 completed: check.status == "completed",
                 concluded: check.conclusion.is_some(),
                 merged_title: check.output.as_ref().is_some_and(|output| {
-                    output.title.as_deref() == Some("Merged via merge queue")
+                    route::queue::merged_title(
+                        output.title.as_deref() == Some("Merged via merge queue"),
+                    )
                 }),
             });
             let checks_passed = match facts::merged_plan(
@@ -1595,11 +1596,12 @@ async fn queue_facts(
             number: pull.number,
             evidence,
         };
-        if !snapshot
-            .map(|snapshot| fact.recorded(snapshot))
-            .transpose()?
-            .unwrap_or(false)
-        {
+        if route::queue::emit(
+            snapshot
+                .map(|snapshot| fact.recorded(snapshot))
+                .transpose()?
+                .unwrap_or(false),
+        ) {
             if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
                 *details = ci_evidence::read_queue(github, &full_name(repo), state).await;
             }
@@ -1652,9 +1654,11 @@ fn tracked(snapshot: &Snapshot, repo: &Repository, include_closed: bool) -> Resu
                 .map_err(|_| Error::Invalid("invalid PR node"))?,
         );
         let n = &world.nodes[node.0 as usize];
-        if (matches!(n.phase, tl3_kernel::Phase::Closed(_))
-            && (!include_closed || n.merged.is_some()))
-            || crate::request(snapshot, node)?.repo != *repo
+        if !route::projection::phase(
+            matches!(n.phase, tl3_kernel::Phase::Closed(_)),
+            include_closed,
+            n.merged.is_some(),
+        ) || crate::request(snapshot, node)?.repo != *repo
         {
             continue;
         }
@@ -1706,15 +1710,17 @@ fn open_missing_checks(
             head: missing,
             required,
         } = &fact.evidence
-            && missing == head
+            && route::projection::missing_head(missing == head)
             && fact.node(snapshot)? == Some(node)
         {
             let id = crate::looks::missing_check_incident_id(node, head, required);
-            if snapshot
-                .rows
-                .iter()
-                .any(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
-            {
+            if route::projection::missing(
+                true,
+                true,
+                snapshot.rows.iter().any(|row| {
+                    row.table == "incidents" && row.id == id && row.value["open"] == true
+                }),
+            ) {
                 open.push(required.clone());
             }
         }
@@ -1726,16 +1732,17 @@ fn pending_enqueues(snapshot: &Snapshot, repo: &Repository, number: u64) -> Resu
     let mut pending = Vec::new();
     for effect in &snapshot.pending_effects {
         let delivery = crate::hydrate(effect, snapshot)?;
-        if delivery.repository == *repo
-            && delivery.pull_request == Some(number)
-            && matches!(
+        if route::projection::pending(
+            delivery.repository == *repo,
+            delivery.pull_request == Some(number),
+            matches!(
                 delivery.output,
                 Out::Effect {
                     kind: EffectKind::Enqueue,
                     ..
                 }
-            )
-        {
+            ),
+        ) {
             pending.push(Input::Look {
                 key: effect.key.clone(),
             });
@@ -1762,6 +1769,9 @@ impl Translator {
         snapshot: &Snapshot,
         repos: &[Repository],
     ) -> Result<Vec<Input>> {
+        if !route::webhook::interested(route_event(event)) {
+            return Ok(vec![]);
+        }
         let context = match event {
             Event::PullRequestMerged { context, .. }
             | Event::PullRequestClosed { context, .. }
@@ -1774,11 +1784,12 @@ impl Translator {
             _ => return Ok(vec![]),
         };
         let Some(repo) = repos.iter().find(|repo| {
-            repo.installation == context.installation_id
-                && repo
-                    .owner
-                    .eq_ignore_ascii_case(&context.repository.owner.login)
-                && repo.name.eq_ignore_ascii_case(&context.repository.name)
+            route::webhook::repository(
+                repo.installation == context.installation_id,
+                repo.owner
+                    .eq_ignore_ascii_case(&context.repository.owner.login),
+                repo.name.eq_ignore_ascii_case(&context.repository.name),
+            )
         }) else {
             return Ok(vec![]);
         };
@@ -1801,8 +1812,11 @@ impl Translator {
                     },
                 };
                 if let Some(node) = binding.node(snapshot)?
-                    && world.nodes[node.0 as usize].merged.is_none()
-                    && !is_merge_queue_pr(pull_request)
+                    && route::webhook::merged(
+                        true,
+                        world.nodes[node.0 as usize].merged.is_none(),
+                        is_merge_queue_pr(pull_request),
+                    )
                 {
                     let checks = self
                         .runtime
@@ -1834,10 +1848,13 @@ impl Translator {
                 actor,
                 ..
             } => {
-                if is_merge_queue_pr(pull_request) {
+                if !route::webhook::pull(is_merge_queue_pr(pull_request), true) {
                     return Ok(vec![]);
                 }
-                let Some(item) = open.iter().find(|item| item.number == pull_request.number) else {
+                let Some(item) = open
+                    .iter()
+                    .find(|item| route::projection::number(item.number, pull_request.number))
+                else {
                     return Ok(vec![]);
                 };
                 let evidence = match event {
@@ -1849,7 +1866,7 @@ impl Translator {
                         let current = self
                             .runtime
                             .block_on(github.pull_request(&full_name(repo), pull_request.number))?;
-                        if current.merged_at.is_some() {
+                        if route::webhook::fresh_merge(current.merged_at.is_some()) {
                             facts.extend(self.look(github, repo, item, snapshot)?);
                         } else {
                             facts.extend(person_facts(repo, pull_request.number, &events, false));
@@ -1857,8 +1874,10 @@ impl Translator {
                         None
                     }
                     Event::PullRequestSynchronized { after, .. }
-                        if actor.login != format!("{}[bot]", github.app_slug())
-                            && after == &pull_request.head.sha =>
+                        if route::webhook::push(
+                            actor.login == format!("{}[bot]", github.app_slug()),
+                            after == &pull_request.head.sha,
+                        ) =>
                     {
                         Some(Evidence::PushByOther {
                             head: after.clone(),
@@ -1874,25 +1893,30 @@ impl Translator {
             }
             Event::CheckRunCompleted { check_run, .. }
             | Event::CheckRunUpdated { check_run, .. } => {
-                let queue_event = check_run.name == tl3_mergify::QUEUE_CHECK
-                    && check_run.app.as_ref().is_some_and(|app| {
-                        app.id == tl3_mergify::MERGIFY_APP_ID && app.slug == "mergify"
-                    });
-                if check_run.name == tl3_mergify::QUEUE_CHECK && !queue_event {
+                let check_route = route_check(check_run);
+                if check_route == route::webhook::Check::Drop {
                     return Ok(vec![]);
                 }
+                let queue_event = check_route == route::webhook::Check::Queue;
                 for item in tracked(snapshot, repo, true)?.iter().filter(|item| {
-                    item.head == check_run.head_sha
-                        && (check_run.pull_requests.is_empty()
-                            || check_run
-                                .pull_requests
-                                .iter()
-                                .any(|pull| pull.number == item.number))
+                    route::webhook::head_pull(
+                        item.head == check_run.head_sha,
+                        check_run.pull_requests.is_empty(),
+                        check_run
+                            .pull_requests
+                            .iter()
+                            .any(|pull| pull.number == item.number),
+                    )
                 }) {
                     let pending = pending_enqueues(snapshot, repo, item.number)?;
-                    if queue_event || !pending.is_empty() && item.approved == check_run.head_sha {
+                    let action = route::webhook::check_action(
+                        queue_event,
+                        !pending.is_empty(),
+                        item.approved == check_run.head_sha,
+                    );
+                    if action.look {
                         facts.extend(self.look(github, repo, item, snapshot)?);
-                        if !queue_event {
+                        if action.wake {
                             wake.extend(pending);
                         }
                     }
@@ -1901,15 +1925,17 @@ impl Translator {
             // A completed suite can be the last evidence that a required check won't report (Q52).
             Event::CheckSuiteCompleted { check_suite, .. } => {
                 for item in open.iter().filter(|item| {
-                    item.approved == check_suite.head_sha
-                        && (check_suite.pull_requests.is_empty()
-                            || check_suite
-                                .pull_requests
-                                .iter()
-                                .any(|pull| pull.number == item.number))
+                    route::webhook::head_pull(
+                        item.approved == check_suite.head_sha,
+                        check_suite.pull_requests.is_empty(),
+                        check_suite
+                            .pull_requests
+                            .iter()
+                            .any(|pull| pull.number == item.number),
+                    )
                 }) {
                     let pending = pending_enqueues(snapshot, repo, item.number)?;
-                    if !pending.is_empty() {
+                    if route::webhook::suite_action(!pending.is_empty()).look {
                         facts.extend(self.look(github, repo, item, snapshot)?);
                         wake.extend(pending);
                     }
@@ -1959,11 +1985,9 @@ impl Translator {
             .ok_or(Error::Invalid("missing queue fact client"))?;
         let mut facts = Vec::new();
         let world: World = crate::snapshot::decode(snapshot)?;
-        for pull in changes
-            .pull_requests
-            .iter()
-            .filter(|pull| pull.merged_at.is_some() && !is_merge_queue_pr(pull))
-        {
+        for pull in changes.pull_requests.iter().filter(|pull| {
+            route::projection::catch_merged(pull.merged_at.is_some(), is_merge_queue_pr(pull))
+        }) {
             let binding = QueueFact {
                 repository: repo.clone(),
                 number: pull.number,
@@ -1973,11 +1997,14 @@ impl Translator {
                 },
             };
             if let Some(node) = binding.node(snapshot)?
-                && matches!(
-                    world.nodes[node.0 as usize].phase,
-                    tl3_kernel::Phase::Closed(_)
+                && route::projection::merged(
+                    true,
+                    matches!(
+                        world.nodes[node.0 as usize].phase,
+                        tl3_kernel::Phase::Closed(_)
+                    ),
+                    world.nodes[node.0 as usize].merged.is_none(),
                 )
-                && world.nodes[node.0 as usize].merged.is_none()
             {
                 let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                 let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, &head);
@@ -1997,10 +2024,10 @@ impl Translator {
             let pull = self
                 .runtime
                 .block_on(github.pull_request(&full_name(repo), item.number))?;
-            if is_merge_queue_pr(&pull) || pull.merged_at.is_some() {
+            if !route::projection::catch_pull(is_merge_queue_pr(&pull), pull.merged_at.is_some()) {
                 continue;
             }
-            if !item.known_heads.contains(&pull.head.sha) {
+            if route::projection::unknown(item.known_heads.contains(&pull.head.sha)) {
                 facts.push(QueueFact {
                     repository: repo.clone(),
                     number: item.number,
@@ -2010,7 +2037,7 @@ impl Translator {
                 });
             }
             for (number, event) in &changes.labels {
-                if *number == item.number
+                if route::projection::number(*number, item.number)
                     && let Some(facts::PersonFact::Dequeued { event }) =
                         facts::person_fact(facts::IssueEvent {
                             id: event.id,
@@ -2026,7 +2053,10 @@ impl Translator {
                 }
             }
             for (number, event) in &changes.closed {
-                if *number == item.number && actor(event.actor.as_ref()) == facts::Actor::Person {
+                if route::projection::person(
+                    *number == item.number,
+                    actor(event.actor.as_ref()) == facts::Actor::Person,
+                ) {
                     facts.push(QueueFact {
                         repository: repo.clone(),
                         number: item.number,
@@ -2443,4 +2473,30 @@ fn heal_record(saved: &BodyHeal, head: &str) -> heal_core::Record {
         same_head: saved.head == head,
         reran: saved.reran,
     }
+}
+
+// Parse webhook variants and exact queue-check identities at the shell boundary.
+fn route_event(event: &Event) -> route::webhook::Event {
+    match event {
+        Event::PullRequestMerged { .. } => route::webhook::Event::Merged,
+        Event::PullRequestClosed { .. } => route::webhook::Event::Closed,
+        Event::PullRequestUnlabeled { .. } => route::webhook::Event::Unlabeled,
+        Event::PullRequestSynchronized { .. } => route::webhook::Event::Synchronized,
+        Event::CheckRunCompleted { .. } | Event::CheckRunUpdated { .. } => {
+            route::webhook::Event::CheckRun
+        }
+        Event::CheckSuiteCompleted { .. } => route::webhook::Event::CheckSuite,
+        Event::MergeGroup { .. } => route::webhook::Event::MergeGroup,
+        _ => route::webhook::Event::Other,
+    }
+}
+fn route_check(check: &CheckRun) -> route::webhook::Check {
+    route::webhook::check(
+        check.name == tl3_mergify::QUEUE_CHECK,
+        check
+            .app
+            .as_ref()
+            .is_some_and(|app| app.id == tl3_mergify::MERGIFY_APP_ID),
+        check.app.as_ref().is_some_and(|app| app.slug == "mergify"),
+    )
 }
