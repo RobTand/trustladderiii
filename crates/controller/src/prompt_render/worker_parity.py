@@ -270,7 +270,7 @@ def scheduled(namespace, state, crash_at, role_name='planner', samples=(3, 4), k
                    'model': {'name': 'claude-fixture', 'base_url': 'http://unused.invalid',
                              'effort': 'low', 'budget_tokens': 100},
                    'memory': {'summary_file': str(Path(temporary) / 'memory.json')},
-                   'inputs': {'base_sha': 'a' * 40, 'ingest': {'goals': []}}}
+                   'inputs': {'base_sha': 'a' * 40, 'ingest': {'goals': []}, 'footprint': []}}
         roles = dict(namespace['ROLES'])
         if role_name != 'planner':
             roles[role_name] = replace(roles[role_name], run=role_run, validates_reply=True)
