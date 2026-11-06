@@ -359,6 +359,9 @@ pub struct Controller {
     delegated_attributions: Vec<String>,
 }
 impl Controller {
+    /// #845: configure repository generation for exclusive file locks.
+    pub fn set_repository_generation(&mut self, _repos: &[tl3_config::Repository]) {}
+
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
         Self::open_with_clock(store, adapters, bootstrap, clock::SystemClock)
     }
