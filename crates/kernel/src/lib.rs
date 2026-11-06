@@ -2099,14 +2099,16 @@ pub fn pool_key(n: &Node) -> (result: Option<(Priority, u64)>) [
         Some((n.priority, n.ticket.unwrap()))
     } else { None }),
 ] {
-    let ticket = match n.ticket {
-        Some(ticket) => ticket,
-        None => return None,
-    };
-    if matches!(n.phase, Phase::Ready(_)) {
-        return None;
+    match n.ticket {
+        Some(ticket) => {
+            if matches!(n.phase, Phase::Ready(_)) {
+                None
+            } else {
+                Some((n.priority, ticket))
+            }
+        }
+        None => None,
     }
-    Some((n.priority, ticket))
 }
 }
 
