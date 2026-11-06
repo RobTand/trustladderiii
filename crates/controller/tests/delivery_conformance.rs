@@ -30,6 +30,7 @@ enum Answer {
 struct Script {
     answers: VecDeque<Answer>,
     target: Option<String>,
+    observations: VecDeque<Vec<tl3_controller::executor::Observation>>,
     calls: Vec<String>,
 }
 struct Recording(Arc<Mutex<Script>>, tl3_config::Store);
@@ -38,12 +39,9 @@ impl Executor for Recording {
         &mut self,
         delivery: &Delivery,
     ) -> tl3_controller::Result<Vec<tl3_controller::executor::Observation>> {
-        self.0
-            .lock()
-            .unwrap()
-            .calls
-            .push(format!("observe:{}", delivery.key));
-        Ok(vec![])
+        let mut script = self.0.lock().unwrap();
+        script.calls.push(format!("observe:{}", delivery.key));
+        Ok(script.observations.pop_front().unwrap_or_default())
     }
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
         assert_eq!(
@@ -754,4 +752,49 @@ fn fixture_connection(settings: &tl3_config::Store) -> postgres::Client {
         .password("tl3-disposable-test-password")
         .connect(postgres::NoTls)
         .unwrap()
+}
+
+/// R1: Sent is durable even when a queued observation returns before execute.
+/// Recovery consumes the observation input before considering the old key again.
+#[test]
+fn observations_return_before_http_with_durable_sent_and_inbox() {
+    let mut database = database::Database::start();
+    let settings = database.create("observation_cut");
+    let script = Arc::new(Mutex::new(Script {
+        observations: VecDeque::from([vec![
+            tl3_controller::executor::Observation::ScratchPruned {
+                reference: "late-reference".into(),
+            },
+        ]]),
+        ..Script::default()
+    }));
+    let mut initial = open(&settings, script.clone());
+    let epoch = initial.snapshot().unwrap().epoch.get();
+    seed(&settings, "observed", epoch);
+    drop(initial);
+    let (mut controller, trace) = traced_open(&settings, "observed", script.clone());
+    controller.drive_once().unwrap();
+    assert_eq!(actual(&settings, "observed"), State::Sent);
+    assert!(!mirror::continue_after_observations(true));
+    assert!(
+        !script
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|s| s.starts_with("execute:"))
+    );
+    let snapshot = controller.snapshot().unwrap();
+    assert!(snapshot.rows.iter().any(|r| r.table == "inbox"));
+    let trace = trace.lock().unwrap();
+    let sent = trace
+        .iter()
+        .position(|d| d.key.starts_with("delivery:"))
+        .unwrap();
+    let observed = trace
+        .iter()
+        .rposition(|d| d.rows.iter().any(|r| r.0 == "inbox"))
+        .unwrap();
+    assert!(sent < observed);
+    assert_eq!(trace[observed].effect, State::Sent);
 }

@@ -1,3 +1,7 @@
+#![allow(
+    dead_code,
+    reason = "Full retained shells compile paths beyond each generated schedule"
+)]
 //! Full retained/current methods run through the same recorded I/O boundary.
 //! Unchanged helpers are scripted boundary calls. The changed shells, queue
 //! submission, transaction envelopes and real enum conversions are compiled.
@@ -193,10 +197,8 @@ impl Recorded {
         r.calls.push(json!({"write":name,"payload":payload}));
         r.writes += 1;
         if persist {
-            r.durable.insert(
-                format!("{}:{name}", r.writes),
-                serde_json::to_vec(&payload).unwrap(),
-            );
+            let key = format!("{}:{name}", r.writes);
+            r.durable.insert(key, serde_json::to_vec(&payload).unwrap());
         }
         if r.crash == r.writes {
             std::panic::panic_any("scheduled durable cut");
@@ -416,10 +418,17 @@ fn run(reference: bool, samples: Vec<u8>, crash: usize, scenario: u8) -> (Record
 }
 #[test]
 fn full_shell_differential_varying_reads_and_every_write_cut() {
+    let output = std::path::PathBuf::from(
+        std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+            .unwrap_or_else(|| std::env::temp_dir().into_os_string()),
+    )
+    .join("full-shell-regressions.txt");
+    std::fs::write(&output, include_bytes!("full-shell-regressions.txt")).unwrap();
+    let path = Box::leak(output.to_string_lossy().into_owned().into_boxed_str());
     let mut runner = TestRunner::new(Config {
         cases: 96,
         rng_seed: RngSeed::Fixed(73007),
-        failure_persistence: None,
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(path))),
         ..Config::default()
     });
     runner
@@ -449,4 +458,16 @@ fn compiled_shells_and_boundary_conversions_are_verbatim() {
     assert!(include_str!("old-shell.rs").contains(&base[..end]));
     let production = include_str!("../../src/executor.rs");
     assert!(production.contains(include_str!("conversions.rs")));
+}
+
+/// R4: a later missing-key read cannot undo the already durable enqueue.
+#[test]
+fn queued_input_survives_a_later_missing_pending_key() {
+    let (recorded, _) = run(false, vec![0, 0, 0, 1], 0, 0);
+    assert!(
+        recorded
+            .durable
+            .values()
+            .any(|bytes| String::from_utf8_lossy(bytes).contains("queue:completion:original:"))
+    );
 }

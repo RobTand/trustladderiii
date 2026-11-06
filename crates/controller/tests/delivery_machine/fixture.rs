@@ -1,3 +1,4 @@
+use input_errors::{PendingKernelInput, PENDING_KERNEL};
 struct Controller {
     store:Store,
     adapters:Adapters,

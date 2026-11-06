@@ -131,7 +131,7 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
-        for name, count in {"once": 25, "converges": 35, "dedup": 26, "approval": 37, "fence": 47}.items():
+        for name, count in {"once": 39, "converges": 70, "dedup": 42, "approval": 75, "fence": 47}.items():
             verus_test(
                 name = "verus_" + name,
                 src = "proofs/" + name + ".rs",

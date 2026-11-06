@@ -518,3 +518,65 @@ pub fn repaired_approval(before: Approval, copies: u64, dispatches: u64) -> Appr
         ..before
     }
 }
+
+/// One admitted controller invocation, including the grant spent at its Sent
+/// commit. This volatile permission is distinct from the durable grant row.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ApprovalAttempt {
+    pub durable: Approval,
+    pub may_issue: bool,
+    pub issued: bool,
+    pub spent: Grant,
+}
+/// lib.rs:1270-1298. Gate on the snapshot grant/history, commit Sent (and its
+/// grant deletion), then permit HTTP only on the Send path. Found/Pending history
+/// still commits Sent but cannot issue. Observations may discard this permission.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out.may_issue == (before.state == State::Intended &&
+        (before.grant != Grant::None || !prior || (!predecessor && read == Read::Absent))),
+    out.durable.state == if before.state == State::Intended {State::Sent} else {before.state},
+    out.durable.grant == if before.state == State::Intended {Grant::None} else {before.grant},
+    out.durable.lineage_safe == before.lineage_safe,
+    out.durable.unresolved == before.unresolved,
+    out.durable.incident_open == before.incident_open,
+    out.durable.repair == before.repair,
+    out.spent == if before.state == State::Intended {before.grant} else {Grant::None}, !out.issued,
+))]
+pub fn begin_approval_attempt(
+    before: Approval,
+    prior: bool,
+    predecessor: bool,
+    read: Read,
+) -> ApprovalAttempt {
+    if before.state != State::Intended {
+        return ApprovalAttempt {
+            durable: before,
+            may_issue: false,
+            issued: false,
+            spent: Grant::None,
+        };
+    }
+    let action = approval_decision(before, prior, predecessor, read);
+    ApprovalAttempt {
+        durable: send_approval(before),
+        may_issue: action == Action::Send,
+        issued: false,
+        spent: before.grant,
+    }
+}
+/// F3/Q27: the admitted invocation can issue after ownership loss. Its durable
+/// Sent is historical evidence. A single invocation consumes its volatile issue
+/// permission; it never recreates the durable authorization row.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    requires before.may_issue, before.durable.state == State::Sent,
+    ensures !out.may_issue, out.issued, out.durable == before.durable, out.spent == before.spent,
+))]
+pub fn issue_approval_attempt(before: ApprovalAttempt) -> ApprovalAttempt {
+    ApprovalAttempt {
+        may_issue: false,
+        issued: true,
+        ..before
+    }
+}

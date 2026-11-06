@@ -63,6 +63,21 @@ fn grant_spent_exactly_once(before: mirror::Approval)
     let checked_2=mirror::approval_decision(incident,true,false,mirror::Read::Pending);
     assert(checked_2 != mirror::Action::Send);
 }
+/// Q27: arbitrary dispatch through the composed admission step. For an unknown
+/// dispatched POST, any admitted retry spends an actual grant at the Sent commit.
+/// Issuance consumes its volatile permission and cannot mint a second grant.
+fn composed_retry_requires_and_consumes_grant(before:mirror::Approval, predecessor:bool) {
+    let attempt=mirror::begin_approval_attempt(before,true,predecessor,mirror::Read::Pending);
+    if attempt.may_issue {
+        assert(before.grant != mirror::Grant::None);
+        assert(attempt.spent == before.grant);
+        assert(attempt.durable.grant == mirror::Grant::None);
+        let issued=mirror::issue_approval_attempt(attempt);
+        assert(issued.issued && !issued.may_issue && issued.durable.grant == mirror::Grant::None);
+        let replay=mirror::begin_approval_attempt(issued.durable,true,predecessor,mirror::Read::Pending);
+        assert(!replay.may_issue);
+    }
+}
 /// lib.rs:1853-1866: replacement provenance comes from actual Retryable kernel
 /// completion, not the empty network read. Old sequence, watch and retirement
 /// change in the same input commit that creates the successor authorization.
