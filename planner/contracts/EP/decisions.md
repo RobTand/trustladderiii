@@ -20,3 +20,8 @@ found by: live probe
   protected edits, base/head runner features and unknown artifacts stay requirements.
   Advertised tool capabilities supply executor facts; unavailable verification is
   never removed to make preflight pass. No core row API change.
+
+- Preparation d45db31d completed successfully. Existing generators refreshed only
+  ingest/audit current prompt baselines and four Rust role recordings. The six
+  other roles compare unchanged. BUILD generation and lint/requirements passed;
+  no BUILD edits. Frozen reference sources remain byte-identical.

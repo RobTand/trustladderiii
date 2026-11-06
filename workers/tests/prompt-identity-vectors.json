@@ -32,11 +32,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-7ada04de2d779d227b6fd925dadc2d634d38394b1a9c3273",
+          "prompt_cache_identity": "tl3-cache-2e75c86931d43437146c57217f466f358e8ded402fdd2a64",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "552364ab099cbb5d3f0410816fb4a6c6a0720adcd91f0645a9f7c18d92676fc5",
-            "utf8_bytes": 9788
+            "sha256": "4f325fba3a29fd3910cfc65e0e9cdb9c1b68dc812eb296d45b5bcbcb303eb6cb",
+            "utf8_bytes": 10221
           }
         },
         {
@@ -100,11 +100,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-b36ff58ef3952f9d2cf992e5b00df353f32c004a16519bcb",
+          "prompt_cache_identity": "tl3-cache-66953206bce2fc1f78e2064d0cbb6d525c239af88be6a244",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "ffd4c23b54f81a031aa67cb306829f58c00dd4e25ce77e3493a5f7f335efd80a",
-            "utf8_bytes": 9788
+            "sha256": "d8ed8e26f373b50f24a804fb95a460eaa627feda8b1eae394935b770b573c625",
+            "utf8_bytes": 10221
           }
         },
         {
@@ -401,11 +401,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-cf816a43f4b76de93aba266c0d3d72362e3d28995a8b20f5",
+          "prompt_cache_identity": "tl3-cache-5ecfff4f7b339073bea5acbbab86835ea363d5cb12e50569",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "980c07405680dda25d9518e6d7a360ca2bbce78ae02537431ab7089f8b69ccae",
-            "utf8_bytes": 11917
+            "sha256": "b9e418b4bb762708a55575e60429687e637d4b02d643c68c73b579c03ee2673e",
+            "utf8_bytes": 12319
           }
         },
         {
@@ -469,11 +469,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-49f8ec4249efec655ec7a7b96c5fb37dfbfc223427881f38",
+          "prompt_cache_identity": "tl3-cache-23f7b5b8a7d586a047f6d925fc6dfe8616f1ac5404b69221",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "db35ea075bc5df81067c709d67ffaa2464f251aba27dedc3e62d68f2be4debe9",
-            "utf8_bytes": 11917
+            "sha256": "8739f94003e96865bc96300a0d44f3cf9902cabe4db02ce41c7b1a2dd7434389",
+            "utf8_bytes": 12319
           }
         },
         {
