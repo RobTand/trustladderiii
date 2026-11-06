@@ -11,7 +11,10 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures (fact_progress_input(*old(w), i as int, fact)
+    ensures (match fact { Fact::Dependency { target, status } =>
+            port_deps_specs::handler_post(*old(w), *final(w), i as int, target, status, *old(out), *final(out)),
+            _ => true, }),
+        (fact_progress_input(*old(w), i as int, fact)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
