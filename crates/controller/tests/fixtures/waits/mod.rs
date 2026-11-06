@@ -22,12 +22,14 @@ pub fn adapter_with_bell(root: &Path, bell_url: &str, ownership: &mut Ownership)
         program: "/never-submit-from-wait-fixtures".into(),
         args: vec![],
     };
+    // The wait fixtures stand in for the production queue, whose leases renew.
     let client = PrismaBuild::new(Options {
-        queue_root: queue,
+        queue_root: queue.clone(),
         tool: tool.clone(),
         bell_url: bell_url.into(),
     })
     .unwrap()
+    .with_production_queue(queue)
     .with_status_tool(Tool {
         program: "false".into(),
         args: vec![],

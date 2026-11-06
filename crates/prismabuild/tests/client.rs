@@ -60,7 +60,9 @@ impl Fixture {
             },
             bell_url: url.into(),
         })
-        .unwrap();
+        .unwrap()
+        // This fixture stands in for the production queue, whose leases renew.
+        .with_production_queue(dir.path());
         Self { dir, client }
     }
 
@@ -510,6 +512,12 @@ async fn newer_publication_wins_and_an_old_lease_never_declares_loss() {
     let record = present(f.client.read(&key(1)).await.unwrap());
     assert_eq!(record.state, ActionState::Claimed);
     assert_eq!(record.lease.unwrap().heartbeat_unix, 1.0);
+    // #817 (Flux / M1): a queue that is not the production queue gives no lease.
+    let flux = f
+        .client
+        .clone()
+        .with_production_queue("/nonexistent/pb-queue");
+    assert!(present(flux.read(&key(1)).await.unwrap()).lease.is_none());
     f.record("failed", 1, Some("lease_lost_max_attempts"), None, 200.0);
     assert_eq!(
         present(f.client.read(&key(1)).await.unwrap()).state,

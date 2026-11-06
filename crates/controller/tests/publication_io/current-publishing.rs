@@ -546,6 +546,26 @@ impl Adapter {
         }
     }
 
+    pub(super) fn approval_evidence(
+        &self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        use crate::dispatch_liveness::decision::ContractEvidence;
+        match std::fs::read(self.approval_path(delivery)?) {
+            Ok(bytes) => Ok(match serde_json::from_slice::<ApprovalAttempt>(&bytes)? {
+                ApprovalAttempt::Dispatching | ApprovalAttempt::Uncertain => {
+                    ContractEvidence::RecordedIntent
+                }
+                ApprovalAttempt::Observed => ContractEvidence::Ending,
+                ApprovalAttempt::Preflight | ApprovalAttempt::Refused => ContractEvidence::Absent,
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ContractEvidence::Absent)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     fn approval_was_refused(&self, delivery: &Delivery) -> Result<bool> {
         let path = self
             .records
