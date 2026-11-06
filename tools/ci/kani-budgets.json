@@ -112,27 +112,6 @@
    "seconds": 109.1,
    "tier": "pr"
   },
-  "apply_answer_add_credit": {
-   "cpu_seconds": 241.1,
-   "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
-   "peak_gb": 4.22,
-   "seconds": 234.1,
-   "tier": "pr"
-  },
-  "apply_answer_continue": {
-   "cpu_seconds": 348.4,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 4.03,
-   "seconds": 340.6,
-   "tier": "pr"
-  },
-  "apply_answer_try_again": {
-   "cpu_seconds": 316.4,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 4.05,
-   "seconds": 310.6,
-   "tier": "pr"
-  },
   "apply_approved": {
    "cpu_seconds": 305.4,
    "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",

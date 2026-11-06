@@ -138,6 +138,9 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_answer_unclear", "port_answers_verify_answer"),
     ("apply_answer_retry", "port_answers_verify_answer"),
     ("apply_answer_mark_handled", "port_answers_verify_answer"),
+    ("apply_answer_continue", "port_answers_verify_answer"),
+    ("apply_answer_try_again", "port_answers_verify_answer"),
+    ("apply_answer_add_credit", "port_answers_verify_answer"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

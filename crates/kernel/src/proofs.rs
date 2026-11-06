@@ -1095,15 +1095,6 @@ proof!(
     apply_upstream_stalled,
     check_apply(fact(Fact::UpstreamStalled))
 );
-proof!(apply_answer_continue, check_apply(answer(Answer::Continue)));
-proof!(
-    apply_answer_try_again,
-    check_apply(answer(Answer::TryAgain))
-);
-proof!(
-    apply_answer_add_credit,
-    check_apply(answer(Answer::AddCredit(kani::any())))
-);
 
 // Settle's internal transitions, one phase at a time.
 proof!(advance_ingesting, check_advance(Phase::Ingesting, true));

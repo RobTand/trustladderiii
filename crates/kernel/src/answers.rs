@@ -3,9 +3,9 @@ use super::*;
 
 #[cfg(verus_keep_ghost)]
 verus! {
-/// #806: five independently framed answer rows, with cleanup advancement.
+/// #806: Eight framed answer rows, including paid continuations.
 pub(super) open spec fn answer_supported(answer: Answer) -> bool {
-    matches!(answer, Answer::ChangeRequest | Answer::Stop | Answer::Unclear | Answer::Retry | Answer::MarkHandled)
+    matches!(answer, Answer::Continue | Answer::TryAgain | Answer::AddCredit(_) | Answer::ChangeRequest | Answer::Stop | Answer::Unclear | Answer::Retry | Answer::MarkHandled)
 }
 
 /// #806: neutral public contract for the real answer handler, including stale IDs.
@@ -208,9 +208,11 @@ fn answer_awaiting(w: &mut World, i: usize, q: Question, answer: Answer,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance);] {
+] hide [node_checked] {
+    kernel_snapshot! { before_world = *w }
     kernel_snapshot! { before_answer = w.nodes@[i as int] }
     kernel_snapshot! { before_question = w.next_question }
+    kernel_proof! { port_answers_continuation::awaiting_input(*w, before_answer@); }
             if answer == Answer::Unclear {
                 // One clarifying question. After that the question just stays open.
                 if !q.clarified {
@@ -261,11 +263,17 @@ fn answer_awaiting(w: &mut World, i: usize, q: Question, answer: Answer,
                 _ => {}
             }
     kernel_proof! { if answer_supported(answer) {
-        if matches!(answer, Answer::Stop | Answer::ChangeRequest) {
+        if matches!(answer, Answer::Continue | Answer::TryAgain | Answer::AddCredit(_)) {
+            port_answers_continuation::post_paid(before_answer@, w.nodes@[i as int], q, answer, before_question@);
+        } else if matches!(answer, Answer::Stop | Answer::ChangeRequest) {
             port_answers_handler::post_stopping(before_answer@, q.id, answer, before_question@);
         } else {
             port_answers_handler::post_unchanged(before_answer@, q.id, answer, before_question@);
         }
+    }
+    if node_checked(before_world@, before_answer@) && answer_progress_input(before_answer@, q.id, answer) {
+        port_answers_continuation::awaiting_progress(before_answer@, w.nodes@[i as int], q.id,
+            answer, before_question@, w.next_question);
     } }
         }
 }

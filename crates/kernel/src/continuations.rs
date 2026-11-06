@@ -138,77 +138,77 @@ fn resume_planning(m: &mut Node, i: usize, q: Question, must_split: bool,
 kernel_fn! {
 /// #806 ingesting continuation: isolate the verbatim primitive call from the dispatch join.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-fn resume_ingesting(m: &mut Node, q: Question) -> (result: ()) [
-    requires old(m).generation < u64::MAX, q.cont == (Cont::Ingesting),
-    ensures port_answers_continuation::resume_post(*old(m), *final(m), q),
+fn resume_ingesting(m: &mut Node, _q: Question) -> (result: ()) [
+    requires old(m).generation < u64::MAX, _q.cont == (Cont::Ingesting),
+    ensures port_answers_continuation::resume_post(*old(m), *final(m), _q),
 ] {
     kernel_snapshot! { before = *m }
     set_phase(m, Phase::Ingesting);
-    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, q); }
+    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, _q); }
 }
 }
 
 kernel_fn! {
 /// #806 auditing continuation: isolate the verbatim primitive call from the dispatch join.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-fn resume_auditing(m: &mut Node, q: Question) -> (result: ()) [
-    requires old(m).generation < u64::MAX, q.cont == (Cont::Auditing),
-    ensures port_answers_continuation::resume_post(*old(m), *final(m), q),
+fn resume_auditing(m: &mut Node, _q: Question) -> (result: ()) [
+    requires old(m).generation < u64::MAX, _q.cont == (Cont::Auditing),
+    ensures port_answers_continuation::resume_post(*old(m), *final(m), _q),
 ] {
     kernel_snapshot! { before = *m }
     set_phase(m, Phase::Auditing);
-    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, q); }
+    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, _q); }
 }
 }
 
 kernel_fn! {
 /// #806 unplanned continuation: isolate the verbatim primitive call from the dispatch join.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-fn resume_unplanned(m: &mut Node, q: Question) -> (result: ()) [
-    requires old(m).generation < u64::MAX, q.cont == (Cont::Unplanned),
-    ensures port_answers_continuation::resume_post(*old(m), *final(m), q),
+fn resume_unplanned(m: &mut Node, _q: Question) -> (result: ()) [
+    requires old(m).generation < u64::MAX, _q.cont == (Cont::Unplanned),
+    ensures port_answers_continuation::resume_post(*old(m), *final(m), _q),
 ] {
     kernel_snapshot! { before = *m }
     set_phase(m, Phase::Unplanned);
-    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, q); }
+    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, _q); }
 }
 }
 
 kernel_fn! {
 /// #806 ready continuation: isolate the verbatim primitive call from the dispatch join.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-fn resume_ready(m: &mut Node, q: Question, r: Resume) -> (result: ()) [
-    requires old(m).generation < u64::MAX, q.cont == (Cont::Ready(r)),
-    ensures port_answers_continuation::resume_post(*old(m), *final(m), q),
+fn resume_ready(m: &mut Node, _q: Question, r: Resume) -> (result: ()) [
+    requires old(m).generation < u64::MAX, _q.cont == (Cont::Ready(r)),
+    ensures port_answers_continuation::resume_post(*old(m), *final(m), _q),
 ] {
     kernel_snapshot! { before = *m }
     set_phase(m, Phase::Ready(r));
-    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, q); }
+    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, _q); }
 }
 }
 
 kernel_fn! {
 /// #806 stop continuation: isolate the verbatim primitive call from the dispatch join.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-fn resume_stop(m: &mut Node, q: Question, o: Outcome) -> (result: ()) [
-    requires old(m).generation < u64::MAX, q.cont == (Cont::Stop(o)),
-    ensures port_answers_continuation::resume_post(*old(m), *final(m), q),
+fn resume_stop(m: &mut Node, _q: Question, o: Outcome) -> (result: ()) [
+    requires old(m).generation < u64::MAX, _q.cont == (Cont::Stop(o)),
+    ensures port_answers_continuation::resume_post(*old(m), *final(m), _q),
 ] {
     kernel_snapshot! { before = *m }
     enter_stopping(m, o);
-    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, q); }
+    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, _q); }
 }
 }
 
 kernel_fn! {
 /// #806 nowhere continuation: isolate the verbatim primitive call from the dispatch join.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-fn resume_nowhere(m: &mut Node, q: Question) -> (result: ()) [
-    requires old(m).generation < u64::MAX, q.cont == (Cont::Nowhere),
-    ensures port_answers_continuation::resume_post(*old(m), *final(m), q),
+fn resume_nowhere(m: &mut Node, _q: Question) -> (result: ()) [
+    requires old(m).generation < u64::MAX, _q.cont == (Cont::Nowhere),
+    ensures port_answers_continuation::resume_post(*old(m), *final(m), _q),
 ] {
     kernel_snapshot! { before = *m }
     enter_stopping(m, Outcome::Stopped);
-    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, q); }
+    kernel_proof! { port_answers_continuation::seal_resume(before@, *m, _q); }
 }
 }

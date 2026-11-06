@@ -116,5 +116,37 @@ pub(super) proof fn seal_resume(n: Node, after: Node, q: Question)
         Cont::Nowhere => retirement::stopped(n, Outcome::Stopped),
     },
     ensures resume_post(n, after, q),
-{ reveal(resume_post); reveal(resumed); reveal(rephased); }
+{ reveal(resume_post); reveal(resumed); reveal(rephased); }/// #806: open only the paid-answer envelope, including TryAgain's four resets.
+#[verifier::spinoff_prover]
+pub(super) proof fn post_paid(n: Node, after: Node, q: Question, answer: Answer, next: u64)
+    requires n.phase == Phase::AwaitingRob, n.question == Some(q), offered(q.kind, answer),
+        matches!(answer, Answer::Continue | Answer::TryAgain | Answer::AddCredit(_)),
+        continuation_post(
+            if answer == Answer::TryAgain { Node { attempt: 1, review_restarted: false,
+                round: 0, replanned: false, ..n } } else { n }, after,
+            if answer == Answer::TryAgain { Question { cost: if q.cost > 1 { q.cost } else { 1 }, ..q } } else { q },
+            match answer { Answer::AddCredit(k) => k, _ => 0u8 }),
+    ensures answers::answer_post(n, after, q.id, answer, next, next),
+{ reveal(continuation_post); reveal(answers::answer_post); reveal(answered); }
+
+/// #805 / #806: the production question checker excludes cleanup offers in AwaitingRob.
+#[verifier::spinoff_prover]
+pub(super) proof fn awaiting_input(w: World, n: Node)
+    ensures node_checked(w, n) && n.phase == Phase::AwaitingRob && n.question.is_some()
+        ==> n.question.unwrap().kind != QKind::CleanupFailed,
+{}
+
+/// #805 / #806: retain the exact legacy selected-answer progress outside the handler context.
+#[verifier::spinoff_prover]
+pub(super) proof fn awaiting_progress(n: Node, after: Node, id: u64, answer: Answer,
+    next: u64, next_after: u64)
+    requires answers::answer_post(n, after, id, answer, next, next_after),
+        n.phase == Phase::AwaitingRob, answer_progress_input(n, id, answer),
+        n.question.is_some(), n.question.unwrap().kind != QKind::CleanupFailed,
+    ensures distance(after) < distance(n),
+{
+    reveal(answers::answer_post); reveal(answered); reveal(continued); reveal(rephased);
+    reveal(retirement::stopped); reveal(distance);
+}
+
 }

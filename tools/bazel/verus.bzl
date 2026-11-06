@@ -1165,6 +1165,12 @@ def verus_proofs():
             "port_answers_resume_ready": ("kernel::continuations#resume_ready", 1),
             "port_answers_resume_stop": ("kernel::continuations#resume_stop", 1),
             "port_answers_resume_nowhere": ("kernel::continuations#resume_nowhere", 1),
+            "port_answers_post_paid": ("kernel::port_answers_continuation#post_paid", 1),
+            "port_answers_cover_continue": ("kernel::port_answers_witness#cover_continue", 1),
+            "port_answers_cover_try_again": ("kernel::port_answers_witness#cover_try_again", 1),
+            "port_answers_cover_add_credit": ("kernel::port_answers_witness#cover_add_credit", 1),
+            "port_answers_awaiting_input": ("kernel::port_answers_continuation#awaiting_input", 1),
+            "port_answers_awaiting_progress": ("kernel::port_answers_continuation#awaiting_progress", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

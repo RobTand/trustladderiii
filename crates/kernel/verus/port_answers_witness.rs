@@ -1,4 +1,4 @@
-//! #806: constructive, original-domain changed-world covers for the five slice-1 answers.
+//! #806: constructive, original-domain changed-world covers for the eight answers.
 use super::port_answers_model::*;
 use super::*;
 
@@ -157,6 +157,61 @@ fn cover_mark_handled() -> (result: (Ghost<World>, World, Outbox)) [
     let w = world(7);
     kernel_snapshot! { before = w }
     let (after, out) = port_answers_apply::verify_answer(w, 1, 0, Answer::MarkHandled);
+    (before, after, out)
+}
+}
+
+kernel_fn! {
+/// #806 continue cover: construct an original-domain accepted, settled world and
+/// execute real apply, including arbitrary u8 deposits and the zero-deposit top-up.
+fn cover_continue() -> (result: (Ghost<World>, World, Outbox)) [
+    ensures progress_phase_witness::original(result.0@), retirement::accepted(result.0@), settled_world(result.0@),
+        retirement::accepted(result.1), result.1.nodes@[0] != result.0@.nodes@[0],
+        result.1.nodes@[0] == commanded(result.0@.nodes@[0], 1, 0, Answer::Continue, 1),
+        result.1.nodes@[0].question.is_none(), result.1.nodes@[0].generation == 1,
+        result.1.nodes@[0].phase == Phase::Ingesting,
+] proof [reveal(funded); reveal(commanded); reveal(answered); reveal(continued); reveal(rephased); reveal(retirement::stopped);] {
+    let w = world(0);
+    kernel_snapshot! { before = w }
+    let (after, out) = port_answers_apply::verify_answer(w, 1, 0, Answer::Continue);
+    (before, after, out)
+}
+}
+
+kernel_fn! {
+/// #806 try_again cover: construct an original-domain accepted, settled world and
+/// execute real apply, including arbitrary u8 deposits and the zero-deposit top-up.
+fn cover_try_again() -> (result: (Ghost<World>, World, Outbox)) [
+    ensures progress_phase_witness::original(result.0@), retirement::accepted(result.0@), settled_world(result.0@),
+        retirement::accepted(result.1), result.1.nodes@[0] != result.0@.nodes@[0],
+        result.1.nodes@[0] == commanded(result.0@.nodes@[0], 1, 0, Answer::TryAgain, 1),
+        result.1.nodes@[0].question.is_none(), result.1.nodes@[0].generation == 1,
+        result.1.nodes@[0].phase == (Phase::Planning { must_split: false }),
+        result.1.nodes@[0].attempt == 1, result.1.nodes@[0].round == 0,
+        !result.1.nodes@[0].replanned, !result.1.nodes@[0].review_restarted,
+        result.1.nodes@[0].credit.added == 1, result.1.nodes@[0].credit.spent == 1,
+] proof [reveal(funded); reveal(commanded); reveal(answered); reveal(continued); reveal(rephased); reveal(retirement::stopped);] {
+    let w = world(1);
+    kernel_snapshot! { before = w }
+    let (after, out) = port_answers_apply::verify_answer(w, 1, 0, Answer::TryAgain);
+    (before, after, out)
+}
+}
+
+kernel_fn! {
+/// #806 add_credit cover: construct an original-domain accepted, settled world and
+/// execute real apply, including arbitrary u8 deposits and the zero-deposit top-up.
+fn cover_add_credit(k: u8) -> (result: (Ghost<World>, World, Outbox)) [
+    ensures progress_phase_witness::original(result.0@), retirement::accepted(result.0@), settled_world(result.0@),
+        retirement::accepted(result.1), result.1.nodes@[0] != result.0@.nodes@[0],
+        result.1.nodes@[0] == commanded(result.0@.nodes@[0], 1, 0, Answer::AddCredit(k), 1),
+        result.1.nodes@[0].question.is_none(), result.1.nodes@[0].generation == 1,
+        result.1.nodes@[0].credit.added == if k == 0 { 1u64 } else { k as u64 },
+        result.1.nodes@[0].credit.spent == 1,
+] proof [reveal(funded); reveal(commanded); reveal(answered); reveal(continued); reveal(rephased); reveal(retirement::stopped);] {
+    let w = world(2);
+    kernel_snapshot! { before = w }
+    let (after, out) = port_answers_apply::verify_answer(w, 1, 0, Answer::AddCredit(k));
     (before, after, out)
 }
 }

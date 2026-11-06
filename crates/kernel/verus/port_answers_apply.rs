@@ -1,4 +1,4 @@
-//! #806: real apply, complete checker and answer assertions for the five slice-1 answers.
+//! #806: real apply, complete checker and answer assertions for the eight answers.
 use super::port_answers_model::*;
 use super::*;
 
@@ -32,6 +32,9 @@ pub(super) proof fn preserves_world(before: World, after: World, cmd: u64, id: u
     reveal(retirement::accepted); reveal(next_question);
     let n = before.nodes@[0];
     match answer {
+        Answer::Continue => port_answers_frames::continue_frame(before, after, n, cmd, id),
+        Answer::TryAgain => port_answers_frames::try_again_frame(before, after, n, cmd, id),
+        Answer::AddCredit(k) => port_answers_frames::add_credit_frame(before, after, n, cmd, id, k),
         Answer::ChangeRequest => port_answers_frames::change_request_frame(before, after, n, cmd, id),
         Answer::Stop => port_answers_frames::stop_frame(before, after, n, cmd, id),
         Answer::Unclear => port_answers_frames::unclear_frame(before, after, n, cmd, id),
@@ -51,7 +54,7 @@ pub(super) proof fn preserves_world(before: World, after: World, cmd: u64, id: u
 }
 
 kernel_fn! {
-/// #806: the five slice-1 check_apply(answer(...)) harnesses, with arbitrary command and
+/// #806: the eight check_apply(answer(...)) harnesses, with arbitrary command and
 /// question IDs. One real apply, no settle or unrolling.
 pub(super) fn verify_answer(mut w: World, cmd: u64, id: u64, answer: Answer) -> (result: (World, Outbox)) [
     requires answers::answer_supported(answer), retirement::domain(w), retirement::accepted(w), retirement::bounded(w), storage_ordered(w),

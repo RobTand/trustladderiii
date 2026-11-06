@@ -430,7 +430,10 @@ CASES = {
     'answer_continuation_unplanned': ('crates/kernel/src/continuations.rs', 'set_phase(m, Phase::Unplanned);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_unplanned'),
     'answer_continuation_ready': ('crates/kernel/src/continuations.rs', 'set_phase(m, Phase::Ready(r));', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_ready'),
     'answer_continuation_stop': ('crates/kernel/src/continuations.rs', 'enter_stopping(m, o);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_stop'),
-    'answer_continuation_nowhere': ('crates/kernel/src/continuations.rs', 'enter_stopping(m, Outcome::Stopped);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_nowhere'),
+    'answer_continuation_nowhere': ('crates/kernel/src/continuations.rs', 'enter_stopping(m, Outcome::Stopped);', 'set_phase(m, Phase::Ingesting);', '//crates/kernel:verus_port_answers_resume_nowhere'),    'port_answer_continue': ('crates/kernel/src/answers.rs', 'Answer::Continue => go_on(w, i, q, 0, out),', 'Answer::Continue => go_on(w, i, q, 1, out),', '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_try_again': ('crates/kernel/src/answers.rs', 'm.attempt = 1;', 'm.attempt = 0;', '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'port_answer_add_credit': ('crates/kernel/src/answers.rs', 'go_on(w, i, q, k, out);', 'go_on(w, i, q, 0, out);', '//crates/kernel:verus_port_answers_awaiting_handler'),
+
 }
 
 
