@@ -75,6 +75,11 @@ pub(super) fn verify_phase(mut w: World) -> (result: (World, Outbox, bool)) [
         if !changed {
             reveal(port_advance_contracts::exact);
             port_advance_outputs::stutter(before@.nodes@[0], c, empty@, out);
+            assert(w.nodes@[0] == before@.nodes@[0]);
+            assert(w.next_ticket == before@.next_ticket);
+            assert(w.nodes@ =~= before@.nodes@);
+            assert(same_world(before@, w));
+            assert(out.len == 0);
         }
         assert forall|i: int| 0 <= i < 2 implies node_post(before@.nodes@[i], w.nodes@[i]) by {
             assert(i == 0 || i == 1);
