@@ -756,3 +756,33 @@ fn r2_b_webhook_merge_retires_without_stale_history_commit() {
     assert!(!std::fs::read_dir(fixture.root.path().join("direct")).unwrap().any(|e|e.unwrap().path().extension().is_some_and(|ext|ext=="intent"||ext=="merged")));
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
+
+#[test]
+fn r2_c_healthy_event_wait_never_accumulates_read_outages() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_r2_healthy_wait");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let reads = fixture.direct.lock().unwrap().reads;
+    for allowance in 0..9 {
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(10));
+        controller.look_due().unwrap();
+        drain(&mut controller);
+        let snapshot = controller.snapshot().unwrap();
+        assert!(!snapshot.rows.iter().any(|r|r.table == "incidents"), "healthy allowance {allowance} must not create an incident");
+        for row in snapshot.rows.iter().filter(|r|r.table == "allowances") {
+            assert_eq!(row.value["read_failures"].as_u64().unwrap_or(0), 0, "healthy wait must not be counted as a failed read");
+            assert_eq!(row.value["read_incidents"].as_u64().unwrap_or(0), 0);
+            assert!(row.value["failure"].is_null(), "healthy wait must not report upstream record unavailable: {}", row.value);
+        }
+        assert!(!serde_json::to_string(&snapshot).unwrap().contains("upstream record unavailable"));
+    }
+    assert_eq!(fixture.direct.lock().unwrap().reads, reads, "event wait must not poll");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    fixture.check(Some("success"));
+    store_direct_check_event(&fixture, &settings, "healthy-wait-ended");
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+}
