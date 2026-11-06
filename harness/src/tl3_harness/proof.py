@@ -1,11 +1,14 @@
 """The source partition shared by rehearsal, development tests, and Checking."""
 import ast
 import builtins
+import configparser
 import hashlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import posixpath
 import shutil
 import symtable
 import textwrap
+import tomllib
 
 from .model import Kind, ProofRefusal
 from .trees import bound_names, is_test, tree_sha256
@@ -423,22 +426,67 @@ def conftest_subjects(base, head, plan):
     return allowed
 
 
-def stdlib_shadow(head: Path, modules):
-    """First file that imports as one of `modules` at top level (#876).
+LOADER_STDLIB = frozenset({'pathlib', 'unittest', 'importlib'})
+PYTEST_INI = (('pytest.ini', 'pytest'), ('.pytest.ini', 'pytest'), ('tox.ini', 'pytest'), ('setup.cfg', 'tool:pytest'))
 
-    pytest runs with `--rootdir=.`, and its rootdir insertion puts on sys.path the
-    nearest ancestor of a test file that has no `__init__.py`. Any such directory,
-    and the repository root, is a possible import root. A file inside a regular
-    package (a directory with `__init__.py`) imports under the package's dotted
-    name, so `_pytest/pathlib.py` is `_pytest.pathlib`, never `pathlib`."""
-    for path in sorted(head.rglob('*.py')):
-        relative = path.relative_to(head)
+
+def pytest_pythonpath(tree: Path):
+    """Directories a tree's pytest configuration puts on sys.path (its `pythonpath` option)."""
+    entries = []
+    for name, keys in (('pyproject.toml', ('tool', 'pytest', 'ini_options')), ('pyproject.toml', ('tool', 'pytest')),
+                       ('pytest.toml', ('pytest',)), ('.pytest.toml', ('pytest',))):
+        try:
+            table = tomllib.loads((tree / name).read_text()) if (tree / name).is_file() else {}
+            for key in keys:
+                table = table.get(key, {}) if isinstance(table, dict) else {}
+            value = table.get('pythonpath', []) if isinstance(table, dict) else []
+        except (tomllib.TOMLDecodeError, UnicodeError):
+            continue
+        if isinstance(value, str):
+            entries += value.split()
+        elif isinstance(value, list):
+            entries += [item for item in value if isinstance(item, str)]
+    for name, section in PYTEST_INI:
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read_string((tree / name).read_text() if (tree / name).is_file() else '')
+        except (configparser.Error, UnicodeError):
+            continue
+        entries += parser.get(section, 'pythonpath', fallback='').split()
+    return {posixpath.normpath(entry) for entry in entries}
+
+
+def stdlib_shadow(tree: Path, modules=LOADER_STDLIB):
+    """First file importable under one of `modules` as a top-level name (#876).
+
+    An import root is the repository root, a pytest `pythonpath` entry, or a
+    directory without `__init__.py`: pytest's rootdir insertion (`--rootdir=.`)
+    puts the nearest such ancestor of a test file on sys.path. A file inside a
+    regular package imports under the package's dotted name, so
+    `_pytest/pathlib.py` is `_pytest.pathlib`, never `pathlib`."""
+    configured = pytest_pythonpath(tree)
+    for path in sorted(tree.rglob('*.py')):
+        relative = path.relative_to(tree)
         for depth, part in enumerate(relative.parts):
             stem = part[:-3] if depth == len(relative.parts) - 1 else part
-            package = depth and (head.joinpath(*relative.parts[:depth]) / '__init__.py').is_file()
-            if stem in modules and not package:
+            parent = PurePosixPath(*relative.parts[:depth])
+            root = (depth == 0 or parent.as_posix() in configured
+                    or not (tree / parent / '__init__.py').is_file())
+            if stem in modules and root:
                 return stem, relative.as_posix()
     return None
+
+
+def refuse_stdlib_shadow(tree: Path, observer):
+    shadow = stdlib_shadow(tree)
+    if shadow:
+        module, relative = shadow
+        raise ProofRefusal(f'{relative} could shadow the standard-library module `{module}` that the observer loader '
+                           'trusts, because it is a top-level name in an import root (the repository root, a pytest '
+                           'pythonpath entry, or a directory without __init__.py); rename or move it if this change '
+                           'owns it, otherwise (for example a vendored dependency) put the observer and its loading '
+                           'code in the test body of a test module that already exists on the base commit',
+                           observer, relative)
 
 
 def assemble_proof(base: Path, head: Path, destination: Path, check, config):
@@ -464,7 +512,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         if any(overlaps(observer, other) for other in observers[index + 1:]):
             raise ProofRefusal('overlapping observer selections', observer.split('::')[0])
     paths = {item.split('::')[0] for item in (*observers, *support)}
-    identities, inferred_support = {}, set()
+    identities, inferred_support, loader_observers = {}, set(), []
     for name in sorted(paths):
         if not is_test(name, config['test-files']) and any(item.split('::')[0] == name for item in observers):
             raise ProofRefusal('observer is outside configured tests', name)
@@ -477,13 +525,8 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         if observer_context:
             # Canonical import spelling cannot authenticate a repository-local
             # replacement of the stdlib inputs used by the loader exception.
-            shadow = stdlib_shadow(head, {'pathlib', 'unittest', 'importlib'})
-            if shadow:
-                module, relative = shadow
-                raise ProofRefusal(f'observer loader requires unshadowed standard-library modules, and {relative} is '
-                                   f'importable as the top-level module `{module}` because it sits in a directory '
-                                   'that is not a package (no __init__.py) or at the repository root; move or rename '
-                                   'it, or put the observer in an existing test module', name, relative)
+            refuse_stdlib_shadow(head, name)
+            loader_observers.append(name)
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
@@ -622,6 +665,9 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         lines = composed.splitlines(keepends=True)
         lines[insertion:insertion] = [line + '\n' for line in imports]
         target.write_bytes(''.join(lines).encode())
+    for name in loader_observers[:1]:
+        # RED runs on base plus the copied observers: a head-only package marker does not protect it.
+        refuse_stdlib_shadow(destination, name)
     for subject in subjects:
         if unit(destination, subject) != unit(base, subject):
             raise ProofRefusal('assembled proof changed a base subject binding', subject.split('::')[0])
