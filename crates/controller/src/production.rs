@@ -39,6 +39,12 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
 fn require_drained_pb(root: &std::path::Path) -> Result<()> {
     use std::{fs, io::ErrorKind};
     const HOLD: &str = "Flux selection requires ops to drain or explicitly hold retained PrismaBuild bindings on the PB route";
+    match fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.file_type().is_symlink() => return Err(crate::Error::Invalid(HOLD)),
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
