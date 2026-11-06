@@ -121,15 +121,6 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "progress_from_unplanned_waiting_one",
         "progress_unplanned_waiting",
     ),
-    // #806 W1: real apply, complete checker and executable original-domain covers.
-    ("apply_ingest_done", "port_replies_witness_cover"),
-    ("apply_ingest_early_end", "port_replies_witness_cover"),
-    ("apply_protected_paths", "port_replies_witness_cover"),
-    ("apply_audit_agrees", "port_replies_witness_cover"),
-    ("apply_audit_disagrees", "port_replies_witness_cover"),
-    ("apply_plan_leaf", "port_replies_witness_cover"),
-    ("apply_plan_split", "port_replies_witness_cover"),
-    ("apply_plan_cant_meet", "port_replies_witness_cover"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

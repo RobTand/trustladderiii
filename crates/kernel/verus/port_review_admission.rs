@@ -44,10 +44,10 @@ pub(super) proof fn rejected(before: World, after: World, i: int, generation: u6
     ensures reply_result(before, after, i, generation, reply, out_before, out_after),
 { reveal(reply_result); }
 
-/// #806: the shared accepted relation is vacuous outside both selected families.
+/// #806: the shared accepted relation is vacuous outside its selected family.
 pub(super) proof fn unselected(before: World, after: World, i: int, source: Node,
     reply: Reply, out_before: Outbox, out_after: Outbox)
-    requires !selected(reply), !port_replies_contracts::selected(reply),
+    requires !selected(reply),
     ensures transition_post(before, after, i, source, reply, out_before, out_after),
 { reveal(transition_post); }
 
@@ -61,15 +61,7 @@ pub(super) proof fn accepted(before: World, middle: World, after: World, i: int,
         middle.file_sets@ == before.file_sets@, middle.dependencies@ == before.dependencies@,
         transition_post(middle, after, i, middle.nodes@[i], reply, out_before, out_after),
     ensures reply_result(before, after, i, generation, reply, out_before, out_after),
-{
-    reveal(reply_result); reveal(transition_post);
-    reveal(accepted_reply);
-    match reply {
-        Reply::PlanLeaf { footprint, .. } => footprint::storage_frame(before, middle, footprint, footprint),
-        Reply::MakerNeedsFiles { files, .. } => footprint::storage_frame(before, middle, files, files),
-        _ => {},
-    }
-}
+{ reveal(reply_result); reveal(transition_post); }
 /// #805 rebase rows: the exact accepted transition preserves the progress decrease.
 pub(super) proof fn rebase_progress(before: World, after: World, i: int,
     reply: Reply, out_before: Outbox, out_after: Outbox)

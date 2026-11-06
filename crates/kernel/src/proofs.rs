@@ -953,6 +953,35 @@ proof!(
     })
 );
 proof!(
+    apply_ingest_done,
+    check_apply(reply(Reply::IngestDone { size: kani::any() }))
+);
+proof!(
+    apply_ingest_early_end,
+    check_apply(reply(Reply::IngestEarlyEnd(kani::any())))
+);
+proof!(
+    apply_protected_paths,
+    check_apply(reply(Reply::ProtectedPaths))
+);
+proof!(apply_audit_agrees, check_apply(reply(Reply::AuditAgrees)));
+proof!(
+    apply_audit_disagrees,
+    check_apply(reply(Reply::AuditDisagrees))
+);
+proof!(
+    apply_plan_leaf,
+    check_apply(reply(Reply::PlanLeaf {
+        footprint: kani::any(),
+        fits: kani::any()
+    }))
+);
+proof!(apply_plan_split, check_apply(reply(Reply::PlanSplit)));
+proof!(
+    apply_plan_cant_meet,
+    check_apply(reply(Reply::PlanCantMeet))
+);
+proof!(
     apply_maker_done,
     check_apply(reply(Reply::MakerDone { head: kani::any() }))
 );

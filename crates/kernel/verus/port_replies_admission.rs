@@ -70,7 +70,7 @@ pub(super) proof fn stopped_reply(before: World, after: World, generation: u64, 
     ensures node_result(before, after, reply), table_frame(before, after),
         retirement::notices_only(out_after),
 {
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result); reveal(retirement::accepted); reveal(node_result);
+    reveal(port_review_reply::reply_post); reveal(retirement::accepted); reveal(node_result);
     stopping_node(before, before.nodes@[0], generation, reply);
     retirement::node_frame(before, after, after.nodes@[0]);
 }
@@ -85,7 +85,7 @@ pub(super) proof fn stale_reply(before: World, after: World, generation: u64, re
     ensures node_result(before, after, reply), table_frame(before, after),
         retirement::notices_only(out_after),
 {
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result); reveal(retirement::accepted); reveal(node_result);
+    reveal(port_review_reply::reply_post); reveal(retirement::accepted); reveal(node_result);
     retirement::node_frame(before, after, before.nodes@[0]);
 }
 
@@ -100,7 +100,7 @@ pub(super) proof fn rejected_reply(before: World, after: World, generation: u64,
     ensures node_result(before, after, reply), table_frame(before, after),
         retirement::notices_only(out_after),
 {
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result); reveal(retirement::accepted);
+    reveal(port_review_reply::reply_post); reveal(retirement::accepted);
     reveal(retirement::bounded); reveal(node_result);
     rejected_node(before, before.nodes@[0], reply);
     retirement::node_frame(before, after, after.nodes@[0]);
@@ -118,10 +118,9 @@ pub(super) proof fn accepted_reply(before: World, after: World, generation: u64,
     ensures node_result(before, after, reply), table_frame(before, after),
         retirement::notices_only(out_after),
 {
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result); reveal(port_review_reply::transition_post);
+    reveal(port_review_reply::reply_post); reveal(port_review_reply::transition_post);
     reveal(port_replies_contracts::transition_post); reveal(node_post);
     reveal(retirement::accepted); reveal(retirement::bounded); reveal(node_result);
-    reveal(port_review_reply::accepted_reply);
     admitted_node(before, after, reply);
 }
 
@@ -132,7 +131,7 @@ pub(super) proof fn specific_reply(before: World, after: World, generation: u64,
         port_review_reply::reply_post(before, after, 0, generation, reply, out_before, out_after),
     ensures specific(before, after, generation, reply),
 {
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result); reveal(port_review_reply::transition_post);
+    reveal(port_review_reply::reply_post); reveal(port_review_reply::transition_post);
     reveal(port_replies_contracts::transition_post); reveal(node_post);
     reveal(transitioned); reveal(plan_retry_node); reveal(retirement::stopped);
 }
