@@ -1166,3 +1166,54 @@ def test_ep2_parent_thirteen_cases(name, text, is_context):
     assert bool(reply['evidence_contract']) is not is_context
     if is_context:
         assert text in reply['brief']
+
+
+EP2_RETAINED = json.loads((Path(__file__).parent / 'fixtures' / 'ep2-retained-audit.json').read_text())
+
+
+@pytest.mark.parametrize('presented', [False, True])
+def test_ep2_exact_retained_audit_preflight(presented):
+    from tl3_workers.evidence import preflight
+
+    audit = EP2_RETAINED['final_audit']
+    entries = (EP2_RETAINED['evidence_contract_presented_to_final_audit'] if presented
+               else audit['evidence_contract'])
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': ['native_threads_2', 'base_head'],
+                  'artifacts': ['logs', 'terminal_verdict', 'cas_receipt', 'action_key'],
+                  'methods': ['red_green', 'subject_observer', 'head'], 'protected_files': []}
+    inputs = {'tool_capabilities': [capability], 'ingest': dict(copy.deepcopy(BRIEF),
+              goals=copy.deepcopy(EP2_RETAINED['goals_presented_to_final_audit']),
+              evidence_contract=copy.deepcopy(entries))}
+    before = copy.deepcopy(inputs)
+    reply = dict(copy.deepcopy(AGREE), evidence_contract=[])
+    preflight(inputs, reply)
+    assert reply['evidence_contract'] == entries[1:]
+    assert not reply['evidence_errors'], reply['evidence_errors']
+    assert inputs == before
+    # Each mixed requirement is still checked, as are the two method-bearing entries.
+    for index, entry in enumerate(entries[1:], 1):
+        reduced = copy.deepcopy(capability)
+        if entry['methods']:
+            reduced['methods'].remove(entry['methods'][0])
+        else:
+            reduced['executor'] = 'other_executor'
+        trial = dict(copy.deepcopy(AGREE), evidence_contract=[copy.deepcopy(entry)])
+        preflight({'tool_capabilities': [reduced]}, trial)
+        assert trial['evidence_contract'] == [entry]
+        assert trial['evidence_errors'], index
+        assert entry['requirement'] in trial['evidence_errors'][0]
+
+
+def test_ep2_exact_audit_mixed_goals_and_wrappers_stay_intact():
+    from tl3_workers.evidence import contract_violations
+
+    audit = copy.deepcopy(EP2_RETAINED['final_audit'])
+    rows = contract_violations({'tool_capabilities': []}, audit, role='audit')
+    # Route repairs operate on the underlying entry, never on a blanket prefix.
+    assert any(row.repair.pointer.value == '/evidence_contract' for row in rows)
+    assert all(row.repair.pointer.value != '/objections' for row in rows)
+    assert audit['objections'] == EP2_RETAINED['final_audit']['objections']
+    goals = copy.deepcopy(EP2_RETAINED['goals_presented_to_final_audit'])
+    reply = dict(copy.deepcopy(BRIEF), goals=goals, evidence_contract=[])
+    assert not contract_violations({'tool_capabilities': []}, reply)

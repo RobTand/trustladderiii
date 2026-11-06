@@ -1,0 +1,354 @@
+{
+  "schema": "tl3.ops.ep-retained-audit.v1",
+  "repo": "RobTand/tessera",
+  "issue": 1455,
+  "request": 432,
+  "held_for": "EP #931 deployment; first live golden probe after deploy",
+  "read_only": true,
+  "source": {
+    "final_audit_trace": "tr-2bfb6abef8d628c2181bd1f5bb2530ba",
+    "generation": 3,
+    "final_audit_artifact_sha256": "6c12cc1634c0a1aae5d65dc10ab911401620c74fe480278fed9589113196a2d4",
+    "repaired_ingest_trace": "tr-dcb4c5da9f2f292348ab22e858c74e62",
+    "ingest_generation": 2,
+    "repaired_ingest_artifact_sha256": "f9db049f07443d7c1433fb415bd227380e5cfb333a37be13374242c956e9b10f",
+    "ingest_contract_and_goals_match_final_audit_input": true,
+    "root_span_id": "w9wSmntarNo="
+  },
+  "final_audit": {
+    "verdict": "disagree",
+    "objections": [
+      "Unsupported evidence requirement: Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records. The supplied capabilities do not expose priority, resource admission or a worker bound. They do not list exit status, skips, missing tools or separate terminal records as artifact capabilities. Report these gaps. Do not claim that a receipt proves those details. (runner_features=priority -10, runner_features=admitted CPU and memory, runner_features=bounded workers, artifacts=exit status, artifacts=terminal records, artifacts=skips, artifacts=missing tools).",
+      "Unsupported evidence requirement: Run the new and changed tests in both target files. Run the four named controls without edits. Use the configured two-thread native bound. Retain the requested records. Report unsupported resource details and artifact capabilities as gaps. (artifacts=exit status, artifacts=skips, artifacts=missing tools).",
+      "Unsupported evidence requirement: Repeat the targeted tests independently on the final head. Cover both edited test files and the four named read-only controls. Use native_threads_2. Confirm that the new tests need no GPU, checkpoint or download. Retain the action key and requested execution records. Report unsupported details as gaps. (artifacts=exit status, artifacts=skips, artifacts=missing tools)."
+    ],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "exit status",
+          "logs",
+          "terminal records",
+          "cas_receipt",
+          "skips",
+          "missing tools"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads. Record exit status, logs, terminal records, CAS receipts, skips and missing tools.",
+          "source": "issue.body"
+        },
+        "requirement": "Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records. The supplied capabilities do not expose priority, resource admission or a worker bound. They do not list exit status, skips, missing tools or separate terminal records as artifact capabilities. Report these gaps. Do not claim that a receipt proves those details.",
+        "runner_features": [
+          "priority -10",
+          "admitted CPU and memory",
+          "bounded workers",
+          "native_threads_2"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "exit status",
+          "logs",
+          "terminal_verdict",
+          "cas_receipt",
+          "skips",
+          "missing tools"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Evidence. The new and changed tests will run through the build tool with two native threads. They cover the two main test files. Four existing tests will run as read-only controls. The record will list the exit status, logs, final verdict, stored receipts, skipped tests and missing tools. Some details do not show in the receipt: priority -10, the CPU and memory admitted, and the worker count. The record will report these as gaps. It will not report them as observed. No GPU work will run.",
+          "source": "issue comment by tl3-robtand[bot], effect 89326"
+        },
+        "requirement": "Run the new and changed tests in both target files. Run the four named controls without edits. Use the configured two-thread native bound. Retain the requested records. Report unsupported resource details and artifact capabilities as gaps.",
+        "runner_features": [
+          "native_threads_2"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "exit status",
+          "logs",
+          "terminal_verdict",
+          "cas_receipt",
+          "skips",
+          "missing tools"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Independent check:\n- The targeted tests run again on the final version through the build tool, with the two-thread native runner setting.\n- The run covers the two edited test files. It also covers four read-only control tests: parse digest, compact loader, issue references and impacted tests.\n- The report will give the action key, exit status, logs, final verdict, storage receipts, skips and missing tools. It will also confirm that the new parse-count and refusal tests pass without a GPU, checkpoint or download.\n- The receipt may not show the priority of -10, the CPU and memory admitted, or the number of workers that ran. The report will state these as gaps. It will not state them as seen facts.",
+          "source": "issue comment by tl3-robtand[bot], effect 108810"
+        },
+        "requirement": "Repeat the targeted tests independently on the final head. Cover both edited test files and the four named read-only controls. Use native_threads_2. Confirm that the new tests need no GPU, checkpoint or download. Retain the action key and requested execution records. Report unsupported details as gaps.",
+        "runner_features": [
+          "native_threads_2"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green",
+          "subject_observer"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "The parse-count check does not satisfy the declared RED proof. The base run fails before it reaches a parser-count assertion. Supply a proof that meets the subject/observer rule.",
+          "source": "issue comment by tl3-robtand[bot], effect 1099338"
+        },
+        "requirement": "Supply assertion RED proof that reaches the parser-count assertion on base. Use the subject/observer rule. Run the same observer on head for GREEN. An import failure before the count assertion does not meet this obligation.",
+        "runner_features": [
+          "base_head",
+          "native_threads_2"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "native_threads_2"
+        ],
+        "artifacts": [
+          "action_key",
+          "logs",
+          "terminal_verdict",
+          "cas_receipt"
+        ],
+        "methods": [
+          "head"
+        ],
+        "protected_files": [],
+        "requirement": "An independent check must repeat the targeted tests on the final head. It must cover both edited test files and the four named read-only controls. It must use the configured two-thread native bound. The report must include the required execution records. It must report unsupported resource details as gaps. I checked the relevant verifier code, reader code and test regions. Those regions support ingest's account of the discarded parsed container and the second parse. I ran no tests. I did not verify implementation results or final-head execution results. I did not complete the architecture review or the generator dependency review. This agreement concerns the reading of the request. It does not establish completion of the goals.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue comment by tl3-robtand[bot], effect 108810",
+          "quote": "Independent check:\n- The targeted tests run again on the final version through the build tool, with the two-thread native runner setting.\n- The run covers the two edited test files. It also covers four read-only control tests: parse digest, compact loader, issue references and impacted tests.\n- The report will give the action key, exit status, logs, final verdict, storage receipts, skips and missing tools. It will also confirm that the new parse-count and refusal tests pass without a GPU, checkpoint or download.\n- The receipt may not show the priority of -10, the CPU and memory admitted, or the number of workers that ran. The report will state these as gaps. It will not state them as seen facts."
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records. The supplied capabilities do not expose priority, resource admission or a worker bound. They do not list exit status, skips, missing tools or separate terminal records as artifact capabilities. Report these gaps. Do not claim that a receipt proves those details. (runner_features=priority -10, runner_features=admitted CPU and memory, runner_features=bounded workers, artifacts=exit status, artifacts=terminal records, artifacts=skips, artifacts=missing tools).",
+      "Unsupported evidence requirement: Run the new and changed tests in both target files. Run the four named controls without edits. Use the configured two-thread native bound. Retain the requested records. Report unsupported resource details and artifact capabilities as gaps. (artifacts=exit status, artifacts=skips, artifacts=missing tools).",
+      "Unsupported evidence requirement: Repeat the targeted tests independently on the final head. Cover both edited test files and the four named read-only controls. Use native_threads_2. Confirm that the new tests need no GPU, checkpoint or download. Retain the action key and requested execution records. Report unsupported details as gaps. (artifacts=exit status, artifacts=skips, artifacts=missing tools)."
+    ]
+  },
+  "evidence_contract_presented_to_final_audit": [
+    {
+      "artifacts": [
+        "exit status",
+        "logs",
+        "terminal records",
+        "cas_receipt",
+        "skips",
+        "missing tools"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [],
+      "protected_files": [],
+      "provenance": {
+        "kind": "source",
+        "quote": "Run development pytest through PrismaBuild at priority -10 with admitted CPU and memory, bounded workers and native threads. Record exit status, logs, terminal records, CAS receipts, skips and missing tools.",
+        "source": "issue.body"
+      },
+      "requirement": "Run development pytest through PrismaBuild. Keep priority -10, admitted CPU and memory, bounded workers and bounded native threads as source requirements. Retain all requested records. The supplied capabilities do not expose priority, resource admission or a worker bound. They do not list exit status, skips, missing tools or separate terminal records as artifact capabilities. Report these gaps. Do not claim that a receipt proves those details.",
+      "runner_features": [
+        "priority -10",
+        "admitted CPU and memory",
+        "bounded workers",
+        "native_threads_2"
+      ],
+      "tool": "run_tests"
+    },
+    {
+      "artifacts": [
+        "exit status",
+        "logs",
+        "terminal_verdict",
+        "cas_receipt",
+        "skips",
+        "missing tools"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [],
+      "protected_files": [],
+      "provenance": {
+        "kind": "source",
+        "quote": "Evidence. The new and changed tests will run through the build tool with two native threads. They cover the two main test files. Four existing tests will run as read-only controls. The record will list the exit status, logs, final verdict, stored receipts, skipped tests and missing tools. Some details do not show in the receipt: priority -10, the CPU and memory admitted, and the worker count. The record will report these as gaps. It will not report them as observed. No GPU work will run.",
+        "source": "issue comment by tl3-robtand[bot], effect 89326"
+      },
+      "requirement": "Run the new and changed tests in both target files. Run the four named controls without edits. Use the configured two-thread native bound. Retain the requested records. Report unsupported resource details and artifact capabilities as gaps.",
+      "runner_features": [
+        "native_threads_2"
+      ],
+      "tool": "run_tests"
+    },
+    {
+      "artifacts": [
+        "action_key",
+        "exit status",
+        "logs",
+        "terminal_verdict",
+        "cas_receipt",
+        "skips",
+        "missing tools"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [],
+      "protected_files": [],
+      "provenance": {
+        "kind": "source",
+        "quote": "Independent check:\n- The targeted tests run again on the final version through the build tool, with the two-thread native runner setting.\n- The run covers the two edited test files. It also covers four read-only control tests: parse digest, compact loader, issue references and impacted tests.\n- The report will give the action key, exit status, logs, final verdict, storage receipts, skips and missing tools. It will also confirm that the new parse-count and refusal tests pass without a GPU, checkpoint or download.\n- The receipt may not show the priority of -10, the CPU and memory admitted, or the number of workers that ran. The report will state these as gaps. It will not state them as seen facts.",
+        "source": "issue comment by tl3-robtand[bot], effect 108810"
+      },
+      "requirement": "Repeat the targeted tests independently on the final head. Cover both edited test files and the four named read-only controls. Use native_threads_2. Confirm that the new tests need no GPU, checkpoint or download. Retain the action key and requested execution records. Report unsupported details as gaps.",
+      "runner_features": [
+        "native_threads_2"
+      ],
+      "tool": "run_tests"
+    },
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [
+        "red_green",
+        "subject_observer"
+      ],
+      "protected_files": [],
+      "provenance": {
+        "kind": "source",
+        "quote": "The parse-count check does not satisfy the declared RED proof. The base run fails before it reaches a parser-count assertion. Supply a proof that meets the subject/observer rule.",
+        "source": "issue comment by tl3-robtand[bot], effect 1099338"
+      },
+      "requirement": "Supply assertion RED proof that reaches the parser-count assertion on base. Use the subject/observer rule. Run the same observer on head for GREEN. An import failure before the count assertion does not meet this obligation.",
+      "runner_features": [
+        "base_head",
+        "native_threads_2"
+      ],
+      "tool": "run_tests"
+    }
+  ],
+  "goals_presented_to_final_audit": [
+    {
+      "description": "Retain the verified parsed container for immutable accepted bytes in an implementation-owned handle. Give the handle a limited lifetime.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Extract shared metadata construction from the ordinary reader. Make both reader paths use it. Preserve every metadata, profile, rate, slack, plane-range, geometry, scale-shape and shard check.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add accepted-wire decoding that uses the retained container without another container parse. Run the full plane materialization and reconstruction checks.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add a deterministic CPU test with a tiny valid wire. Count calls to the real container parser across verification and accepted-wire decoding. Assert exactly one call.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add a CPU comparison test for the accepted and ordinary reader paths. Require equal metadata and equal decoded values.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add real-verifier and real-reader refusal tests for corrupt bytes, receipt size and hash mismatches, receipt-field mismatches, expected-identity mismatches, incomplete planes, wrong recipes and malformed metadata. Preserve existing refusals.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Refuse handles that verification did not issue. Cover a handle for other bytes.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Make the new fixtures self-contained and deterministic. Require no GPU, checkpoint or model download. Do not use artifact-dependent or device-dependent skips as proof for the new cases.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add no global digest cache or extra copy of the large plane data. Keep retained evidence within the handle's lifetime.",
+      "stage": "maker",
+      "verification": "review"
+    },
+    {
+      "description": "Preserve existing function signatures and bytes-taking behavior. Keep serialized bytes, receipt fields, recipes, historical-producer verification, serving admission and source identities unchanged. Leave the existing plane-region digest fix unchanged.",
+      "stage": "maker",
+      "verification": "review"
+    },
+    {
+      "description": "Keep manual edits inside the four declared source and test files. Keep the four control test files read-only. Touch no protected path. Complete the relevant architecture and generator dependency reads. Use configured generation for declared outputs before checks. Never hand-edit generated outputs. Keep PrismaQuant adoption outside this change.",
+      "stage": "maker",
+      "verification": "review"
+    },
+    {
+      "description": "Run development and targeted pytest through PrismaBuild. Cover both edited test files and all four named read-only controls. Use native_threads_2. Retain the required execution records. Keep priority -10, admitted CPU and memory, and bounded workers as source requirements. Report unsupported controls and artifacts as evidence gaps. Do not claim that receipts prove them.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Establish independent assertion RED and GREEN proof for the new parse-count observer. Run head observers against base subjects for RED. Run the same observers against head subjects for GREEN. Require the base run to reach a failing parser-count assertion. Declare its exact RED message before execution. Do not accept an import or setup failure as that proof.",
+      "proof_obligation": {
+        "kind": "assertion",
+        "observer": "new",
+        "quote": "The parse-count check does not satisfy the declared RED proof. The base run fails before it reaches a parser-count assertion. Supply a proof that meets the subject/observer rule.",
+        "source": "issue comment by tl3-robtand[bot], effect 1099338",
+        "subjects": [
+          "src/tessera/cached_unit.py",
+          "src/tessera/unit_artifact.py"
+        ]
+      },
+      "stage": "checking",
+      "verification": "test"
+    },
+    {
+      "description": "Run the targeted tests independently again on the final head through PrismaBuild. Cover tests/test_cached_producer.py and tests/test_cached_unit_reader_gamut.py. Include tests/test_parse_digest_once.py, tests/test_compact_loader.py, tests/test_issue_refs.py and tests/test_impacted_tests.py as read-only controls. Use native_threads_2. Confirm that the new tests pass without a GPU, checkpoint or download. Retain the required records. Report unsupported evidence details as gaps.",
+      "stage": "checking",
+      "verification": "test"
+    },
+    {
+      "description": "Review the final diff for the declared edit boundary and protected-path restrictions. Confirm that the change preserves the stated APIs, validation rules and memory limits.",
+      "stage": "checking",
+      "verification": "review"
+    },
+    {
+      "description": "Publish the producer capability before PrismaQuant adopts it.",
+      "publication": {
+        "body_lines": [],
+        "branch": "tessera-1455-tl3-432",
+        "non_draft": true,
+        "proof": false
+      },
+      "stage": "publishing",
+      "verification": "review"
+    }
+  ],
+  "selection": "Only final structured audit reply, associated final ingest contract and goals, and source identities. No prompts, tools, transcripts, environment, credentials or direct DB access.",
+  "redactions": 0
+}
