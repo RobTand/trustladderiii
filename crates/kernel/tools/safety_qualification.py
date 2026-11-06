@@ -24,6 +24,11 @@ CASES = {
     'retire_new_adoption': ('crates/kernel/src/events.rs', '                node.proposed = Some(head);', '                node.proposed = None;', '//crates/kernel:verus_events'),
     'retire_gate_grant_w2': ('crates/kernel/src/ranks.rs', 'm.holds = true;', 'm.holds = false;', '//crates/kernel:verus_ranks_advance_slot'),
     'retire_gate_grant_w3': ('crates/kernel/src/ranks.rs', 'set_phase(m, r.phase());', 'let _ = r;', '//crates/kernel:verus_ranks_advance_slot'),
+    'audit_disagreement_asks': (
+        'crates/kernel/src/ingest.rs',
+        'stop_for_review(m, ReviewStop::AuditDisagreement);',
+        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out);',
+        '//crates/kernel:verus_ingest_reply_ingest'),
     'plan_check_rejected_asks': (
         'crates/kernel/src/plan_check.rs',
         'Reply::PlanCheckRejected => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
