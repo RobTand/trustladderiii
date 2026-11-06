@@ -89,6 +89,7 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
         assert(port_replies_contracts::transition_post(worker_before@, *w, i as int,
             worker_before@.nodes@[i as int], reply, worker_outputs@, *out)) by {
             reveal(port_replies_contracts::transition_post);
+            reveal(port_review_reply::accepted_reply);
             reveal(port_failfast_diversion::plan_retry_post);
         }
     }
