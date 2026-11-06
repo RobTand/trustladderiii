@@ -2818,17 +2818,23 @@ fn main() {
         "tool_errors_",
         "always_tests_",
         "reproducing_check_",
+        "recorded_ending_case_",
+        "phase_evidence_case_",
+        "invalid_evidence_case_",
+        "declared_symptom_case_",
+        "explicit_subject_symptom_case_",
+        "SIGKILL_case_",
     ]
     .map(|prefix| names.iter().filter(|name| name.starts_with(prefix)).count());
     assert_eq!(
         split_counts,
-        [4, 5, 2, 8, 2],
+        [4, 5, 2, 8, 2, 8, 8, 3, 9, 9, 2],
         "independent table rows must be shardable"
     );
     assert_eq!(
         names.len(),
-        69,
-        "preserve the 48 unchanged scenarios and all 21 table rows"
+        102,
+        "preserve every independent row and all stateful scenarios"
     );
     let weights = scenario_shard::weights_ms(
         &scenario_shard::measured("tl3-controller/prismabuild"),
