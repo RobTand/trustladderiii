@@ -17,7 +17,19 @@ impl Shell<'_> {
         {
             return Ok(());
         }
-        commit.rows.push(put("queue_gates", identity, json!(fact)));
+        commit.rows.push(put("queue_gates", identity.clone(), json!(fact)));
+        // Retain the newest 128 passive gates globally, ordered by event time
+        // then identity. An attached witness is copied into its live hold.
+        let mut gates = vec![(gate.at, identity)];
+        for row in snapshot.rows.iter().filter(|row| row.table == "queue_gates") {
+            let prior: QueueFact = decode_stored(row.value.clone())?;
+            if let Evidence::Gate(gate) = prior.evidence { gates.push((gate.at, row.id.clone())); }
+        }
+        gates.sort();
+        let excess = gates.len().saturating_sub(128);
+        for (_, id) in gates.into_iter().take(excess) {
+            commit.rows.push(tl3_store::RowChange::Delete {table:"queue_gates".into(),id});
+        }
         if !gate.successful {
             return Ok(());
         }

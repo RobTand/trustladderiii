@@ -2694,11 +2694,18 @@ impl Controller {
                 .node(snapshot)?
                 .is_some_and(|node| closed.contains(&node)))
         };
+        let retired_hold = |value: &Value| -> Result<bool> {
+            let hold: queue_cause::Hold = decode_stored(value.clone())?;
+            Ok(world.nodes.get(hold.node.0 as usize).is_none_or(|node| {
+                matches!(node.phase, tl3_kernel::Phase::Closed(_)) || node.merged.is_some()
+                    || commit_sha(snapshot, node.head) != Some(hold.head.as_str())
+            }))
+        };
         let mut rows = Vec::new();
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
-                && table == "queue_facts"
-                && closed_fact(value)?
+                && ((table == "queue_facts" && closed_fact(value)?)
+                    || (table == "queue_holds" && retired_hold(value)?))
             {
                 continue;
             }
@@ -2728,6 +2735,7 @@ impl Controller {
                         node.merged.is_some() || matches!(node.phase, tl3_kernel::Phase::Closed(_))
                     });
             if discard_rebase_context
+                || (row.table == "queue_holds" && retired_hold(&row.value)?)
                 || row.table == "check_reports"
                     && row
                         .id
