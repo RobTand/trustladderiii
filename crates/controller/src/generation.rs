@@ -1,6 +1,7 @@
 //! Configured generation at exact committed controller boundaries.
 use crate::{Error, Result, executor::Delivery};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 use tl3_contracts::{generation::GenerationRequest, roles::maker_reply::GenerationReceipt};
 use tl3_worktrees::{CommitId, Worktrees};
@@ -71,6 +72,35 @@ impl Runner {
         else {
             return Ok(None);
         };
+        let demand = repo.test_demand.unwrap_or_default();
+        let mut request = GenerationRequest {
+            checkout: Default::default(),
+            state: Default::default(),
+            command: repo.generator.clone().unwrap(),
+            generated_files: repo.generated_files.clone(),
+            files: delivery.paths.clone(),
+            protected_paths: self
+                .config
+                .planning
+                .protected_paths
+                .iter()
+                .chain(repo.protected_paths.iter())
+                .cloned()
+                .collect(),
+            image: repo
+                .container_image
+                .clone()
+                .unwrap_or_else(|| self.config.prismabuild.container_image.clone()),
+            tools_path: self.config.prismabuild.tools_dir.clone(),
+            cpus: demand.cpus,
+            mem_gb: demand.mem_gb,
+            timeout_s: repo.generator_timeout_s.unwrap_or(120),
+        };
+        let contract = format!("{:x}", Sha256::digest(serde_json::to_vec(&request)?));
+        let directory = directory.join(contract);
+        let directory = directory.as_path();
+        request.checkout = directory.join("checkout");
+        request.state = directory.join("executor.json");
         fs::create_dir_all(directory)?;
         let completed = directory.join("completed.json");
         if let Some(saved) = crate::adapters::worktrees::read::<Completed>(&completed)? {
@@ -111,30 +141,6 @@ impl Runner {
         if snapshot.head()? != *head {
             return Err(Error::Invalid("generation snapshot head changed"));
         }
-        let demand = repo.test_demand.unwrap_or_default();
-        let request = GenerationRequest {
-            checkout,
-            state: directory.join("executor.json"),
-            command: repo.generator.clone().unwrap(),
-            generated_files: repo.generated_files.clone(),
-            files: delivery.paths.clone(),
-            protected_paths: self
-                .config
-                .planning
-                .protected_paths
-                .iter()
-                .chain(repo.protected_paths.iter())
-                .cloned()
-                .collect(),
-            image: repo
-                .container_image
-                .clone()
-                .unwrap_or_else(|| self.config.prismabuild.container_image.clone()),
-            tools_path: self.config.prismabuild.tools_dir.clone(),
-            cpus: demand.cpus,
-            mem_gb: demand.mem_gb,
-            timeout_s: repo.generator_timeout_s.unwrap_or(120),
-        };
         let request_path = directory.join("request.json");
         crate::adapters::worktrees::write(&request_path, &request)?;
         let output = Command::new(&self.config.workers.python)

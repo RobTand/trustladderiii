@@ -625,7 +625,7 @@ impl Served {
                                     observations.push(Observation::RebaseGenerationFailed {
                                         node: record.delivery.node(),
                                         generation: record.delivery.generation,
-                                        report,
+                                        report: Box::new(report),
                                     });
                                     let completion = Completion::confirmed(observations);
                                     record.completion = Some(completion.clone());
@@ -937,7 +937,7 @@ impl Executor for Real {
                 check_run = Some(run.clone());
             }
             if let Observation::RebaseGenerationFailed { report, .. } = observation {
-                return Ok(Some(report));
+                return Ok(Some(*report));
             }
         }
         Ok(Some(crate::generation::Report {

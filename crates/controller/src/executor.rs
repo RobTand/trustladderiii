@@ -250,7 +250,7 @@ pub enum Observation {
     RebaseGenerationFailed {
         node: NodeId,
         generation: u64,
-        report: crate::generation::Report,
+        report: Box<crate::generation::Report>,
     },
     Rebased {
         node: NodeId,
