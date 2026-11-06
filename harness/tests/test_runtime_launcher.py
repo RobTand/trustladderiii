@@ -269,3 +269,68 @@ def test_absent_container_does_not_hide_a_live_owned_process(launcher, monkeypat
         child.wait(timeout=5)
         child.stdin.close()
         child.stdout.close()
+
+
+def test_explicit_backend_selection_keeps_pb_default(monkeypatch):
+    from tl3_harness import runtime
+
+    monkeypatch.delenv('TL3_EXECUTION_BACKEND', raising=False)
+    monkeypatch.setenv('FLUX_JOB_ID', 'nested-native-job')
+    assert runtime.launch_context() is None
+    monkeypatch.setenv('TL3_EXECUTION_BACKEND', 'prismabuild')
+    assert runtime.launch_context() is None
+    monkeypatch.setenv('TL3_EXECUTION_BACKEND', 'misspelled')
+    with pytest.raises(RuntimeError, match='execution backend'):
+        runtime.launch_context()
+
+
+@pytest.fixture
+def backend_cli(tmp_path, monkeypatch):
+    executable = tmp_path / 'backend-cli'
+    calls = tmp_path / 'backend-calls.json'
+    reply = tmp_path / 'reply'
+    executable.write_text(f'''#!{sys.executable}
+import json
+import pathlib
+import sys
+pathlib.Path({str(calls)!r}).write_text(json.dumps({{'argv': sys.argv[1:], 'request': json.load(sys.stdin)}}))
+sys.stdout.write(pathlib.Path({str(reply)!r}).read_text())
+''')
+    executable.chmod(0o700)
+    monkeypatch.setenv('TL3_EXECUTION_BACKEND', 'flux')
+    monkeypatch.setenv('TL3_RUN_BACKEND_CLI', str(executable))
+    monkeypatch.setenv('TL3_RUN_BACKEND_CONFIG', str(tmp_path / 'options.json'))
+    monkeypatch.setenv('TL3_RUN_OWNER', 'owner')
+    monkeypatch.setenv('TL3_RUN_CORRELATION', 'correlation')
+    monkeypatch.setenv('FLUX_JOB_ID', 'fJob')
+    return reply, calls
+
+
+def test_launch_context_consumes_generated_cli_boundary(backend_cli):
+    from tl3_harness import runtime
+
+    reply, calls = backend_cli
+    context = {'run': {'backend': 'flux', 'uri': 'local:///native', 'instance': 'run/generation', 'job': 'fJob'}}
+    reply.write_text(json.dumps({'schema': 'tl3.run_backend.frame.v1', 'sequence': 0, 'kind': 'result',
+                                'result': {'op': 'launch_context', 'context': context}}) + '\n')
+    assert runtime.launch_context() == context
+    invocation = json.loads(calls.read_text())
+    assert invocation['argv'] == ['--config', str(reply.parent / 'options.json')]
+    assert invocation['request'] == {'op': 'launch_context', 'owner': 'owner', 'correlation': 'correlation', 'job': 'fJob'}
+    assert runtime.cache_owner() == ('flux', 'local:///native', 'run/generation', 'fJob')
+
+
+@pytest.mark.parametrize('response', [
+    '', 'not-json\n',
+    '{"schema":"tl3.run_backend.frame.v1","sequence":0,"kind":"error","code":"invalid","message":"refused"}\n',
+    '{"schema":"tl3.run_backend.frame.v1","sequence":1,"kind":"result","result":{"op":"launch_context","context":{}}}\n',
+    '{"schema":"tl3.run_backend.frame.v1","sequence":0,"kind":"result","result":{"op":"probe","context":{}}}\n',
+    '{"schema":"tl3.run_backend.frame.v1","sequence":0,"kind":"result","result":{"op":"launch_context","context":{}}}\n' * 2,
+])
+def test_backend_cli_refuses_invalid_frames_without_pb_fallback(backend_cli, response):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    reply.write_text(response)
+    with pytest.raises(RuntimeError):
+        runtime.launch_context()
