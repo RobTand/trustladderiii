@@ -28,6 +28,7 @@ py_library(
         "model.py",
         "node_ids.py",
         "proof.py",
+        "proof_rules.py",
         "red_message.py",
         "redaction.py",
         "report.py",

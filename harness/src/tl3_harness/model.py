@@ -173,7 +173,7 @@ class ProofRefusal(HarnessInputError):
         first = self.violations[0].facts
         self.module, self.symbol = first.get('module', ''), first.get('symbol', '')
         self.reason = render_proof(self.violations, role)
-        super().__init__(named(self.rule, 'Proof assembly refused: ' + self.reason, {'violations': self.as_json()}))
+        super().__init__(named(self.rule, self.reason, {'violations': self.as_json()}))
 
     @classmethod
     def from_violations(cls, violations, *, role='maker'):
@@ -201,7 +201,7 @@ class ProofRefusal(HarnessInputError):
             if not matches:
                 matches = [(prefix, index) for prefix, units in groups for index, unit in enumerate(units)
                            if module and unit.split('::')[0] == module]
-            if matches:
+            if matches and 'field' not in facts:
                 prefix, index = matches[0]
                 facts['field'] = f'{prefix}/{index}'
             violations.append(Violation(violation.rule, facts))

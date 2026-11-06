@@ -267,7 +267,7 @@ def test_new_fixture_support_cannot_call_a_base_constructor(repository):
         {'tests/test_queue.py': HEAD + support + observer}, Check('fixture observer', Kind.DEMONSTRATING, (NODE,), proof=proof))
     # #842 r2: the imported/base constructor is outside the support call allowlist.
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
 
 
@@ -467,7 +467,7 @@ def test_review662_base_subject_can_update_state_during_import(repository, suppo
     if support:
         # #842 r2: a support initializer cannot call into the base subject.
         assert results[0].verdict == Verdict.FAIL, results
-        assert 'Proof assembly refused' in results[0].tests[0].message
+        assert 'proof.' in results[0].tests[0].message
         assert results[0].tests[0].base == Outcome.UNCOLLECTED
     else:
         assert results[0].verdict == Verdict.PASS, results
@@ -600,7 +600,7 @@ def test_t842_real_ops_proof_shapes(repository, case):
         return
     # #842 r2: replacing submit.PBRUN is runtime mutation of a loaded subject.
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
 
 
@@ -782,7 +782,7 @@ def test_t842_review_counterexamples_refuse_before_execution(repository, tmp_pat
                   proof=model.Proof.parse(case['proof']))
     results, _, _ = round_result(repository, case['before'], case['after'], check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message, results
+    assert 'proof.' in results[0].tests[0].message, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
 
 
@@ -1051,7 +1051,7 @@ def test_t842_declared_literal_cannot_hide_a_second_binding_in_its_source_line(r
                   proof=model.Proof.parse(case['proof']))
     results, _, _ = round_result(repository, case['before'], case['after'], check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message, results
+    assert 'proof.' in results[0].tests[0].message, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
 
 
@@ -1138,7 +1138,7 @@ def load_subject():
         else:
             assert results[0].verdict == Verdict.FAIL, results
             assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
-            assert 'Proof assembly refused' in results[0].tests[0].message, results
+            assert 'proof.' in results[0].tests[0].message, results
     assert not accepted, 'Forged proofs accepted for unchanged subject behavior: ' + ', '.join(accepted)
 @pytest.mark.parametrize('shape', ['partial-constructor', 'formatter-without-loader'])
 def test_t842_r2_main_siblings(repository, shape):
@@ -1172,7 +1172,7 @@ def test_observer():
         assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
     assert results[0].verdict == Verdict.FAIL, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
 
 
 def t842_safe_loader_case():
@@ -1290,7 +1290,7 @@ def test_t842_r2_partial_factory_cannot_omit_function_object_mutation(repository
         assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
     assert results[0].verdict == Verdict.FAIL, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
 
 
 # #867 (found by: live probe, tessera #1455): a refusal must tell the maker what
@@ -1358,7 +1358,7 @@ def test_r1_support_rows_name_the_rule_and_repair(source, expected, witness):
     assert getattr(error, 'rule', None) == 'proof.support.' + expected
     assert error.violations
     assert error.reason == render_all(error.violations, role='maker')
-    assert str(error).endswith(error.reason)
+    assert str(error) == error.reason
     for violation in error.violations:
         text = violation.render(role='maker')
         assert 'tests/test_observer.py' in text and 'Allowed:' in text
@@ -1498,3 +1498,16 @@ def test_r1_configuration_maps_a_raw_syntax_error_without_changing_the_guard(tmp
     assert 'proof.source.unparsable' in text
     tool.changed_configuration = lambda *args: []
     assert execution.configuration_changes(tmp_path, tmp_path, 'base', tmp_path, 'head', tmp_path, tool, ()) is None
+
+
+
+def test_r1_report_all_keeps_each_support_declaration_pointer(tmp_path):
+    case = t842_immutable_case('def first(value): return sorted(value)\n'
+                               'def second(box): box["x"] = 1', '1')
+    case['proof']['observer_support'] = ['tests/test_observer.py::first', 'tests/test_observer.py::second']
+    with pytest.raises(model.ProofRefusal) as caught:
+        assemble_t842_case(tmp_path, case)
+    assert {violation.rule.id for violation in caught.value.violations} == {
+        'proof.support.call_allowlist', 'proof.support.member_write'}
+    assert {name.value for violation in caught.value.violations for name in violation.rule.names(violation.facts)
+            if name.kind == 'field'} == {'/proof/observer_support/0', '/proof/observer_support/1'}

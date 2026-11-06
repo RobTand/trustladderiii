@@ -5,7 +5,6 @@ where the checks live. Source changes cannot be granted as declaration edits.
 """
 import builtins
 from dataclasses import replace
-import json
 
 from .terminal_forms import PLANNER, MAKER
 from .rules import Allowed, CantMeet, Edit, Name, Rule, Violation, at, register, render_all
@@ -230,6 +229,3 @@ def export_rows():
             result.append(data)
     return result
 
-
-if __name__ == '__main__':
-    print(json.dumps(export_rows(), indent=2, sort_keys=True))

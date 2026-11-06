@@ -1,0 +1,718 @@
+[
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "import_roots": "repository root, pytest pythonpath entries, or directories without __init__.py",
+        "loader": "no repository file importable under a trusted standard-library name",
+        "trusted_modules": [
+          "importlib",
+          "pathlib",
+          "unittest"
+        ]
+      }
+    },
+    "gating": false,
+    "id": "proof.loader.stdlib_shadow",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "{path} could shadow the standard-library module `{stdlib}` that the observer loader trusts, because it is a top-level name in an import root (the repository root, a pytest pythonpath entry, or a directory without __init__.py); rename or move it if this change owns it, otherwise (for example a vendored dependency) put the observer and its loading code in the test body of a test module that already exists on the base commit."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "builtin_arguments": "literal positional arguments only",
+        "builtins": [
+          "abs",
+          "all",
+          "any",
+          "bool",
+          "bytes",
+          "enumerate",
+          "float",
+          "frozenset",
+          "int",
+          "len",
+          "max",
+          "min",
+          "range",
+          "repr",
+          "reversed",
+          "round",
+          "sorted",
+          "str",
+          "sum",
+          "tuple",
+          "zip"
+        ],
+        "functions": "top-level functions defined once in this support"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.call_allowlist",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Move any check that inspects a parameter or variable into the observer test body. For string formatting use an f-string over local values there."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "support_class": "no base classes or class keywords"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.class_bases",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Use a plain class without bases, or move this into the observer test body."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "with": "scoped sys.argv setup with mock.patch.object from unittest.mock"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.context_manager",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Move the with block into the observer test body; support admits only the scoped sys.argv setup."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "support_definition": "undecorated"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.decorator",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Move the fixture body into the observer test body, or declare the fixture module as a new observer module. A plain undecorated support function called by the observer is also allowed; @pytest.fixture remains refused."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "partial_definition": "bound exactly once"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.definition_binding",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Remove later rebinding, or move setup into the observer test body or a new support factory."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "partial_definition": "only direct calls elsewhere in the module"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.definition_use",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Move other uses into the observer test body so the selected support definition is self-contained."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "partial_definition": "no member or subscript writes elsewhere"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.definition_write",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Move the setup into the observer test body or a new support factory, preserving the partial definition."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "support": "a new module or a new exact definition"
+      }
+    },
+    "gating": true,
+    "id": "proof.support.existing_module",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Select exact new definitions from an existing module; an existing whole module cannot be observer support."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "support": "new bindings disjoint from base and subjects"
+      }
+    },
+    "gating": true,
+    "id": "proof.support.graft_binding",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Use new plain support names; move setup into the observer test body instead of rebinding base source."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "literal_support": "one plain name in one assignment"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.literal_assignment",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Put test data inside the observer test body or a new support factory."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "literal_support": "immutable and bound exactly once"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.literal_binding",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Put test data inside the observer test body or a new support factory, including its initialization context."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "initializer": "immutable literal syntax without calls"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.literal_initializer",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Put initialization inside the observer test body or a new support factory."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "support": "no base wildcard binding with the same name"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.literal_wildcard",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Use a local observer value or import; inferred literal support must preserve base wildcard bindings."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "support_binding": "brand-new plain names without member or subscript writes"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.member_write",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Build the value and bind it to a new name, or move this into the observer test body."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "excluded_attributes": [
+          "__builtins__",
+          "__delattr__",
+          "__dict__",
+          "__getattribute__",
+          "__globals__",
+          "__setattr__",
+          "_getframe",
+          "attrgetter",
+          "cr_frame",
+          "currentframe",
+          "f_globals",
+          "f_locals",
+          "gi_frame",
+          "methodcaller",
+          "modules",
+          "tb_frame"
+        ],
+        "excluded_modules": [
+          "__main__",
+          "builtins",
+          "importlib",
+          "inspect",
+          "sys"
+        ],
+        "excluded_names": [
+          "__builtins__",
+          "__import__",
+          "attrgetter",
+          "compile",
+          "delattr",
+          "eval",
+          "exec",
+          "getattr",
+          "globals",
+          "locals",
+          "methodcaller",
+          "setattr",
+          "vars"
+        ]
+      }
+    },
+    "gating": false,
+    "id": "proof.support.namespace_api",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Use plain support bindings; move dynamic namespace operations into the observer test body."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "support": "a new binding absent from base"
+      }
+    },
+    "gating": true,
+    "id": "proof.support.new",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Select new observer support. Keep existing base subjects outside observer_support."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "operands": "literal",
+        "template": "literal str or bytes without __"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.percent_format",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Use an f-string over local values in the observer test body."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "excluded_attributes": [
+          "Formatter",
+          "TestCase",
+          "format",
+          "format_map",
+          "main"
+        ]
+      }
+    },
+    "gating": false,
+    "id": "proof.support.reflective_attribute",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Use an f-string, or move this into the observer test body."
+    }
+  },
+  {
+    "allowed": {
+      "keyword": "const",
+      "value": {
+        "imports": "explicit names"
+      }
+    },
+    "gating": false,
+    "id": "proof.support.wildcard_import",
+    "names": [
+      {
+        "kind": "field",
+        "value": "{field}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      },
+      {
+        "kind": "symbol",
+        "value": "{symbol}"
+      },
+      {
+        "kind": "path",
+        "value": "{path}"
+      }
+    ],
+    "repair": {
+      "kind": "CantMeet",
+      "reason": "Import each needed name explicitly, or move this into the observer test body."
+    }
+  }
+]

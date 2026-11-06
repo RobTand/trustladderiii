@@ -11,6 +11,7 @@ import textwrap
 import tomllib
 
 from .model import Kind, ProofRefusal
+from .rules import Violation
 from .trees import bound_names, is_test, tree_sha256
 from .proof_rules import (
     LOADER_STDLIB, NAMESPACE_API_NAMES, NAMESPACE_API_ATTRIBUTES, NAMESPACE_API_MODULES,
@@ -464,15 +465,15 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
     observers = () if outcome_observer else tuple(dict.fromkeys(test.split('[', 1)[0] for test in check.tests))
     for subject in subjects:
         if any(overlaps(subject, item) for item in (*support, *observers)):
-            raise ProofRefusal('proof.subject.overlap', module=subject.split('::')[0])
+            raise ProofRefusal('proof.subject.overlap', module=subject.split('::')[0], symbol=subject)
         if unit(base, subject) == unit(head, subject):
-            raise ProofRefusal('proof.subject.changed', module=subject.split('::')[0])
+            raise ProofRefusal('proof.subject.changed', module=subject.split('::')[0], symbol=subject)
     for dependency in support:
         if unit(base, dependency) is not None:
-            raise ProofRefusal('proof.support.new', module=dependency.split('::')[0])
+            raise ProofRefusal('proof.support.new', module=dependency.split('::')[0], symbol=dependency)
     for index, observer in enumerate(observers):
         if any(overlaps(observer, other) for other in observers[index + 1:]):
-            raise ProofRefusal('proof.observer.overlap', module=observer.split('::')[0])
+            raise ProofRefusal('proof.observer.overlap', module=observer.split('::')[0], symbol=observer)
     paths = {item.split('::')[0] for item in (*observers, *support)}
     identities, inferred_support, loader_observers = {}, set(), []
     for name in sorted(paths):
@@ -490,13 +491,14 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
             refuse_stdlib_shadow(head, name)
             loader_observers.append(name)
         violations = []
-        def collect(validate, *args, **kwargs):
+        def collect(validate, *args, field=None, **kwargs):
             try:
                 return validate(*args, **kwargs)
             except ProofRefusal as error:
                 if any(item.rule.gating for item in error.violations):
                     raise
-                violations.extend(error.violations)
+                violations.extend(Violation(item.rule, {**item.facts, **({'field': field} if field else {})})
+                                  for item in error.violations)
 
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
@@ -507,9 +509,11 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
         for item in requested:
             if item in support:
                 text, _ = source_unit(new, item)
-                collect(validate_support, text, name, observer_context=observer_context and item == name, subjects=subjects, context=(old, new))
+                collect(validate_support, text, name, observer_context=observer_context and item == name, subjects=subjects, context=(old, new),
+                        field=f'/proof/observer_support/{support.index(item)}')
                 if old_path.exists() and '::' in item:
-                    collect(validate_partial_literal, text, new, name, item.split('::')[-1])
+                    collect(validate_partial_literal, text, new, name, item.split('::')[-1],
+                            field=f'/proof/observer_support/{support.index(item)}')
                 if item != name:
                     support_required.update(global_names(text, name))
         for statement in ast.parse(new).body:
@@ -642,7 +646,7 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
         refuse_stdlib_shadow(destination, name)
     for subject in subjects:
         if unit(destination, subject) != unit(base, subject):
-            raise ProofRefusal('proof.subject.preserved', module=subject.split('::')[0])
+            raise ProofRefusal('proof.subject.preserved', module=subject.split('::')[0], symbol=subject)
     inferred = sorted({path.relative_to(tree).as_posix() for tree in (base, head)
                        for path in tree.rglob('*') if path.is_file()
                        and (not (base / path.relative_to(tree)).is_file()
