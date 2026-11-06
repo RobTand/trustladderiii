@@ -55,11 +55,7 @@ pub(super) proof fn room_side(w: World, after: World, generation: u64, files: Fo
         port_review_reply::accepted_reply(w, w.nodes@[0], Reply::MakerNeedsFiles { files, fits }),
         port_review_reply::reply_post(w, after, 0, generation,
             Reply::MakerNeedsFiles { files, fits }, initial, out),
-    ensures port_failfast_pair_frame::frame(w, after),
-        port_failfast_pair::retry_post(port_review_reply::ended(w.nodes@[0]),
-            (after.nodes@[0], after.next_question), w.fail_fast, w.next_question,
-            1, ReviewStop::MakerNeedsFiles),
-        w.fail_fast ==> out.len == initial.len,
+    ensures port_failfast_replies::retry_side(w, after, 1, ReviewStop::MakerNeedsFiles, initial, out),
 {
     port_failfast_replies::admitted(w, after, generation, Reply::MakerNeedsFiles { files, fits }, initial, out);
     reveal(port_review_reply::accepted_reply);
@@ -88,8 +84,8 @@ pub(super) proof fn exhausted(before: World, fast: World, off: World, on: World,
     footprint::storage_frame(before, fast, files, files);
     room_side(before, off, generation, files, fits, initial, off_out);
     room_side(fast, on, generation, files, fits, initial, on_out);
-    port_failfast_pair_frame::compare(before, off, on, port_review_reply::ended(before.nodes@[0]),
-        1, ReviewStop::MakerNeedsFiles, on_out);
+    port_failfast_replies::retry_pair(before, fast, off, on, 1, ReviewStop::MakerNeedsFiles,
+        initial, off_out, on_out);
 }
 
 /// Q54 MakerNeedsFiles: funded unions agree, unfunded unions ask for credit,

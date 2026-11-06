@@ -771,9 +771,7 @@ def verus_proofs():
             "kernel::port_failfast_reply_witness::input": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_reply_bounds::grown": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_reply_bounds::bound": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::port_failfast_replies::side": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::port_failfast_replies::kind": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::port_failfast_replies::free": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_replies::retry_side": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1197,8 +1195,14 @@ def verus_proofs():
             "port_failfast_replies_ordinary_review": ("kernel::port_failfast_replies#ordinary_review", 1),
             "port_failfast_files_joined": ("kernel::port_failfast_files#joined", 1),
             "port_failfast_files_exhausted": ("kernel::port_failfast_files#exhausted", 1),
-            "port_failfast_replies_maker_side": ("kernel::port_failfast_replies#maker_side", 1),
-            "port_failfast_replies_review_side": ("kernel::port_failfast_replies#review_side", 1),
+            "port_failfast_replies_eta": ("kernel::port_failfast_replies#eta", 1),
+            "port_failfast_replies_cant_meet_side": ("kernel::port_failfast_replies#cant_meet_side", 1),
+            "port_failfast_replies_maker_room_side": ("kernel::port_failfast_replies#maker_room_side", 1),
+            "port_failfast_replies_changes_side": ("kernel::port_failfast_replies#changes_side", 1),
+            "port_failfast_replies_reviewer_side": ("kernel::port_failfast_replies#reviewer_side", 1),
+            "port_failfast_replies_checks_side": ("kernel::port_failfast_replies#checks_side", 1),
+            "port_failfast_replies_free_side": ("kernel::port_failfast_replies#free_side", 1),
+            "port_failfast_replies_retry_pair": ("kernel::port_failfast_replies#retry_pair", 1),
             "port_failfast_files_room_side": ("kernel::port_failfast_files#room_side", 1),
         }
         for name, (module, count) in groups.items():
