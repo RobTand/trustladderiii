@@ -393,6 +393,20 @@ pub(super) fn require_ops(s: &Schedule, entry: Entry, ops: &[&str]) {
         );
     }
 }
+/// 4g: the current `completion` also returns its observed queue read.
+pub(super) trait EntryReconciliation {
+    fn reconciliation(self) -> Result<Reconciliation>;
+}
+impl EntryReconciliation for Result<Reconciliation> {
+    fn reconciliation(self) -> Result<Reconciliation> {
+        self
+    }
+}
+impl<T> EntryReconciliation for Result<(Reconciliation, T)> {
+    fn reconciliation(self) -> Result<Reconciliation> {
+        self.map(|(result, _)| result)
+    }
+}
 pub(super) fn reconciliation(result: Result<Reconciliation>) -> Value {
     match result {
         Ok(Reconciliation::Found(c)) => json!({"found":c}),
