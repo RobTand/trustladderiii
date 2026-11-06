@@ -1727,7 +1727,8 @@ validation boundary stubbed. They never depend on the real `tl3` binary.
 one JSON document with `rows` and `summary`. Each row contains the delivery node
 id, the owning GitHub issue number as `request`, `owner/name` as `repo`, `head`,
 `removed_paths` unchanged, and `written_at` with the latest write's `revision`
-and UTC `committed_at` timestamp. Ownership comes only from the `requests` row
+and UTC `committed_at` timestamp. A missing event leaves `committed_at` null;
+the trim still appears and counts toward the summary. Ownership comes only from the `requests` row
 with the same node id. Missing or malformed owning fields become null.
 
 A trim must contain exactly `head` as a string and `removed_paths` as a string

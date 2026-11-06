@@ -157,6 +157,7 @@ impl Counts {
 /// #896 F0: one JSON document with `rows` and `summary`, ordered by node and group.
 /// Only scope_trims values, request issue numbers and repository names leave here.
 /// `written_at` contains the latest write's revision and UTC commit timestamp.
+/// A missing event preserves the trim and emits a null commit timestamp.
 /// Missing or malformed owning fields are null. Invalid trims count toward totals
 /// in their owning groups, but never toward non-empty counts.
 pub fn load_scope_trims(reader: &mut tl3_store::Reader) -> crate::Result<Value> {
@@ -177,7 +178,7 @@ pub fn read_scope_trims(tx: &mut tl3_store::Transaction<'_>) -> crate::Result<Va
                   request.value -> 'issue', request.value #> '{repo,owner}',
                   request.value #> '{repo,name}'
            FROM tl3_world trim
-           JOIN tl3_events event ON event.revision = trim.version
+           LEFT JOIN tl3_events event ON event.revision = trim.version
            LEFT JOIN tl3_world request ON request.table_name = 'requests'
                                       AND request.row_id = trim.row_id
            WHERE trim.table_name = 'scope_trims'
@@ -217,7 +218,7 @@ pub fn read_scope_trims(tx: &mut tl3_store::Transaction<'_>) -> crate::Result<Va
             Some(trim) => json!({
                 "node":node, "request":request, "repo":repo,
                 "head":trim.head, "removed_paths":trim.removed_paths,
-                "written_at":{"revision":record.get::<_, i64>(2), "committed_at":record.get::<_, String>(3)}
+                "written_at":{"revision":record.get::<_, i64>(2), "committed_at":record.get::<_, Option<String>>(3)}
             }),
             None => json!({"node":node,"invalid":true}),
         });
