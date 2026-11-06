@@ -524,3 +524,14 @@ def test_independent_cleanup_refuses_ambiguous_or_replaced_ownership(cleanup_fix
                                      cgroup_root=root / 'cgroups', timeout=2)
     calls = [json.loads(line) for line in (root / 'cleanup-calls').read_text().splitlines()]
     assert not any(command[0] == 'rm' for command in calls)
+
+
+def test_in_job_refuses_missing_runtime_prerequisites_before_launch(tmp_path, monkeypatch):
+    from tl3_harness import runtime
+
+    monkeypatch.setattr(runtime, 'check_rootless_directory', lambda environment: None)
+    monkeypatch.setattr(runtime, 'launch_context', lambda: {'runtime': {'mode': 'in_job'}})
+    monkeypatch.setenv('PATH', str(tmp_path))
+    with pytest.raises(RuntimeError, match='crun and catatonit'):
+        runtime.command(tmp_path / 'checkout', tmp_path / 'private')
+    assert list(tmp_path.iterdir()) == []
