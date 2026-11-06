@@ -139,18 +139,14 @@ class BudgetTests(unittest.TestCase):
                 self.assertTrue(entry['invocation'].startswith('https://app.buildbuddy.io/invocation/'))
                 self.assertLessEqual(entry['peak_gb'], kani_gate.MEMORY_GB - kani_gate.RESERVED_GB)
 
-    def test_budget_builder_derives_tiers_and_pending_from_measurements(self):
+    def test_budget_builder_derives_tiers_from_measurements(self):
         builder = getattr(kani_gate, 'build_budgets', None)
         self.assertTrue(callable(builder), 'missing reproducible budget builder')
         measured = {name: {'seconds': seconds, 'peak_gb': 1, 'invocation': 'https://run'}
-                    for name, seconds in [('fast', 600), ('slow', 600.1),
-                                          ('gate_leaf_progress_w2', 3301), ('gate_leaf_progress_w3', 3301)]}
+                    for name, seconds in [('fast', 600), ('slow', 600.1)]}
         built = builder(measured)['harnesses']
         self.assertEqual(built['fast']['tier'], 'pr')
         self.assertEqual(built['slow']['tier'], 'nightly')
-        for name in ('gate_leaf_progress_w2', 'gate_leaf_progress_w3'):
-            self.assertEqual(built[name]['pending'], '#806')
-            self.assertEqual(built[name]['tier'], 'nightly')
         built['slow']['seconds'] = 599
         self.assertEqual(builder(built)['harnesses']['slow']['tier'], 'pr')
         built['fast']['seconds'] = 601
@@ -161,19 +157,6 @@ class BudgetTests(unittest.TestCase):
             with self.subTest(name=name):
                 expected = 'pr' if entry['seconds'] <= 600 and not entry.get('lower_bound') else 'nightly'
                 self.assertEqual(entry.get('tier'), expected)
-        for name in ('gate_leaf_progress_w2', 'gate_leaf_progress_w3'):
-            if name in kani_gate.load_budgets():
-                self.assertEqual(kani_gate.load_budgets()[name].get('pending'), '#806')
-
-    def test_pending_harnesses_are_attempted_alone_instead_of_rejected(self):
-        budgets = {'pending': {'seconds': 3301, 'peak_gb': 34, 'pending': '#806'},
-                   'fast': {'seconds': 10, 'peak_gb': 1}}
-        try:
-            shards = kani_gate.plan(list(budgets), budgets)
-        except kani_gate.KaniError as error:
-            self.fail(f'pending proof must be attempted: {error}')
-        self.assertIn(['pending'], shards)
-        self.assertEqual(sorted(sum(shards, [])), sorted(budgets))
 
     def test_timeouts_and_warnings_have_headroom(self):
         info = kani_gate.budget('a', {'a': {'seconds': 400.0, 'peak_gb': 8.0}})
@@ -470,43 +453,6 @@ class ControllerTests(unittest.TestCase):
                 saved = json.loads(Path(directory, 'kani-result.json').read_text())
                 self.assertEqual(saved['passed'], expected == 0)
 
-    def test_nightly_pending_timeouts_and_kills_do_not_hide_real_failures(self):
-        names = ['pending', 'fast']
-        budgets = {'pending': {'seconds': 3301, 'peak_gb': 34, 'pending': '#806', 'tier': 'nightly'},
-                   'fast': {'seconds': 10, 'peak_gb': 1, 'tier': 'pr'}}
-        cases = [('TIMEOUT', 0), ('KILLED', 0), ('FAILED', 1), ('MISSING', 1), ('SUCCESSFUL', 0)]
-        for verdict, expected in cases:
-            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as directory, \
-                 patch.object(kani_gate, 'harnesses', return_value=names), \
-                 patch.object(kani_gate, 'load_budgets', return_value=budgets), \
-                 patch.object(kani_gate, 'prove', return_value=({
-                     'pending': {'name': 'pending', 'verdict': verdict},
-                     'fast': {'name': 'fast', 'verdict': 'SUCCESSFUL'}}, [])), \
-                 patch.dict(os.environ, {'BUILDBUDDY_API_KEY': 'fake'}):
-                self.assertEqual(kani_gate.gate_main(gate_args(directory, 'nightly')), expected)
-                summary = Path(directory, 'kani-summary.md').read_text()
-                self.assertIn('pending #806', summary)
-                self.assertIn(verdict, summary)
-
-
-    def test_lost_pending_runner_requires_terminal_evidence_and_preserves_failure(self):
-        class Client:
-            def __init__(self, execution, text):
-                self.execution, self.text = execution, text
-
-            def call(self, method, body):
-                if method == 'GetExecution':
-                    return {'execution': [self.execution]}
-                if method == 'GetLog':
-                    return {'log': {'contents': self.text}}
-                raise AssertionError(method)
-        completed = {'stage': 'COMPLETED', 'status': {'code': 4}}
-        for text, expected in [('', 'TIMEOUT'), (FAILURE, 'FAILED')]:
-            result = kani_gate.pending_runner_result(Client(completed, text), 'inv', 'pending')
-            self.assertEqual(result['verdict'], expected)
-        self.assertIsNone(kani_gate.pending_runner_result(Client({'stage': 'EXECUTING'}, ''), 'inv', 'pending'))
-
-
 
 class ShardTests(unittest.TestCase):
     def test_runner_entrypoint_scrubs_the_key_from_kani(self):
@@ -556,7 +502,7 @@ class ReportTests(unittest.TestCase):
              patch.object(kani_gate.urllib.request, 'urlopen') as network, \
              patch('sys.stdout', new_callable=io.StringIO) as output:
             summary = Path(directory, 'nightly.md')
-            summary.write_text('pending #806: TIMEOUT; regression: FAILED')
+            summary.write_text('regression: TIMEOUT; another: FAILED')
             try:
                 code = kani_gate.main(['report', '--summary', str(summary), '--dry-run'])
             except SystemExit as error:

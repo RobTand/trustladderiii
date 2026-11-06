@@ -78,10 +78,6 @@ TARGET_SECONDS = int(PROVE_SECONDS * 0.9)
 MAX_SHARDS = 12
 PR_SECONDS = 600
 PR_TARGET_SECONDS = 18 * 60
-PENDING = {
-    'gate_leaf_progress_w2': '#806',
-    'gate_leaf_progress_w3': '#806',
-}
 # Shards beyond the account's concurrent quota queue, so the job waits for
 # about three runner hours in total.
 WAIT_MINUTES = 180
@@ -206,10 +202,8 @@ def build_budgets(measurements):
     """Keep measurements and derive tier membership on every remeasurement."""
     entries = {}
     for name, measured in measurements.items():
-        entry = {key: value for key, value in measured.items() if key not in ('tier', 'pending')}
+        entry = {key: value for key, value in measured.items() if key != 'tier'}
         entry['tier'] = 'pr' if entry['seconds'] <= PR_SECONDS and not entry.get('lower_bound') else 'nightly'
-        if name in PENDING:
-            entry['pending'] = PENDING[name]
         entries[name] = entry
     return {'schema': 'tl3.kani-budgets.v1',
             'source': 'Measured on BuildBuddy, Kani 0.68.0, 8-CPU 176 GB runners unless noted by invocation; '
@@ -218,18 +212,8 @@ def build_budgets(measurements):
             'harnesses': entries}
 
 
-def pending_result(name, result, budgets, mode):
-    issue = budgets.get(name, {}).get('pending')
-    if mode != 'nightly' or not issue:
-        return result
-    result = {**result, 'pending': issue}
-    if result['verdict'] in ('TIMEOUT', 'KILLED'):
-        result.update(outcome=result['verdict'], verdict='PENDING')
-    return result
-
-
 def acceptable(result):
-    return result['verdict'] in ('SUCCESSFUL', 'PENDING')
+    return result['verdict'] == 'SUCCESSFUL'
 
 
 def load_budgets(path=BUDGETS):
@@ -276,12 +260,6 @@ def plan(names, budgets, cpus=CPUS, memory_gb=MEMORY_GB, max_shards=MAX_SHARDS,
     Harnesses go longest first onto the least loaded shard. A harness that
     needs more than one CPU's share of memory counts that many slots. A
     harness that cannot finish inside a runner's hour fails the plan."""
-    pending = [name for name in names if budgets.get(name, {}).get('pending')]
-    if pending:
-        # Give each unbounded attempt its own runner, so its timeout cannot
-        # prevent another harness from reporting before the runner hour ends.
-        return (plan([name for name in names if name not in pending], budgets, cpus, memory_gb,
-                     max_shards - len(pending), target) + [[name] for name in pending])
     usable = memory_gb - RESERVED_GB
     share = usable / cpus
     load = {}
@@ -500,8 +478,7 @@ def shard_main(args):
             raise KaniError(f'Kani codegen exited {code}')
         budgets = load_budgets()
         prover = Prover(args.harness, budgets, logs, fail_fast=args.mode == 'pr')
-        record['results'] = {name: pending_result(name, result, budgets, args.mode)
-                             for name, result in prover.run().items()}
+        record['results'] = prover.run()
     except (KaniError, OSError, ValueError, KeyError) as error:
         record['error'] = str(error)
     record['seconds'] = round(time.monotonic() - started, 1)
@@ -595,39 +572,6 @@ def check_shard(raw, head, names):
     return record
 
 
-def pending_runner_result(client, invocation_id, name):
-    """Recover a pending-only runner killed before it could upload its record."""
-    response = client.call('GetExecution', {'execution_lookup': {'invocation_id': invocation_id}})
-    executions = response.get('execution', [])
-    if len(executions) != 1 or executions[0].get('stage') not in ('COMPLETED', 4):
-        return None
-    execution = executions[0]
-    status = execution.get('status', {})
-    if status.get('code') != 4 and execution.get('exitCode') not in (137, -9, 143, -15):
-        return None
-    # A timeout/kill must never mask a counterexample already printed.
-    page, seen, logs = '0000', set(), []
-    while page not in seen:
-        seen.add(page)
-        response = client.call('GetLog', {'selector': {'invocation_id': invocation_id}, 'page_token': page})
-        logs.append(response.get('log', {}).get('contents', ''))
-        following = response.get('nextPageToken', response.get('next_page_token', ''))
-        if not following or following == page:
-            break
-        page = following
-    else:
-        return None
-    text = ''.join(logs)
-    for line in text.splitlines():
-        if line.startswith('KANI_RESULT '):
-            result = json.loads(line[len('KANI_RESULT '):])
-            if result.get('name') == name:
-                return result
-    outcome = 'FAILED' if 'VERIFICATION:- FAILED' in text else (
-        'TIMEOUT' if status.get('code') == 4 else 'KILLED')
-    return {'name': name, 'verdict': outcome, 'reason': 'runner ended before uploading its record'}
-
-
 def prove(client, args, names, budgets, sleep=time.sleep):
     """Launch every shard, wait, and collect one result per harness."""
     import remote_gate
@@ -669,17 +613,6 @@ def prove(client, args, names, budgets, sleep=time.sleep):
                     raise KaniError(record['error'])
                 reported = record['results']
             except (KaniError, remote_gate.RemoteError) as error:
-                recovered = None
-                if args.mode == 'nightly' and len(shard) == 1 and budgets.get(shard[0], {}).get('pending'):
-                    try:
-                        recovered = pending_runner_result(client, invocation_id, shard[0])
-                    except (remote_gate.RemoteError, ValueError):
-                        pass
-                if recovered is not None:
-                    with lock:
-                        results[shard[0]] = {**recovered, 'invocation': invocation_id}
-                        finished.add(invocation_id)
-                    return
                 with lock:
                     errors.append(f'{invocation_id}: {error}')
                 failed.set()
@@ -690,7 +623,7 @@ def prove(client, args, names, budgets, sleep=time.sleep):
                     results[name] = reported.get(name) or {
                         'name': name, 'verdict': 'MISSING', 'reason': 'no result reported'}
                     results[name]['invocation'] = invocation_id
-                if any(not acceptable(pending_result(name, results[name], budgets, args.mode)) for name in shard):
+                if any(not acceptable(results[name]) for name in shard):
                     failed.set()
 
         # Daemon threads: after a fail-fast cancel, nothing waits for the others.
@@ -739,8 +672,6 @@ def summarize(mode, head, selection, results, errors):
         covers = '{}/{}'.format(*result['covers']) if result.get('covers') else ''
         note = ' (warning)' if result.get('warning') else ''
         reason = f' ({result["reason"]})' if result.get('reason') else ''
-        if result.get('pending'):
-            reason += f' (pending {result["pending"]}: {result.get("outcome", result["verdict"])})'
         lines.append(f'| {result["name"]} | {result["verdict"]}{reason} | {result.get("seconds", "")}{note} '
                      f'| {result.get("warn_after", "")} | {covers} | {result.get("peak_gb", "")} |')
     return '\n'.join(lines)
@@ -787,7 +718,6 @@ def gate_main(args):
         results, errors = prove(client, args, names, budgets)
     except (KaniError, remote_gate.RemoteError) as error:
         results, errors = {}, [str(error)]
-    results = {name: pending_result(name, result, budgets, args.mode) for name, result in results.items()}
     passed = not errors and len(results) == len(names) and all(
         acceptable(result) for result in results.values())
     summary = summarize(args.mode, args.head, selection, results, errors)
