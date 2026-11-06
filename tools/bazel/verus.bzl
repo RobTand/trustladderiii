@@ -833,6 +833,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::admissible": "#860: nonrecursive acceptance table predicate",
             "kernel::port_t860_contracts::stopping_post": "#860: nonrecursive release frame predicate",
             "kernel::port_t860_contracts::ended_post": "#860: nonrecursive frame predicate",
+            "kernel::ranks::advance_bounds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::ranks::advance_admission_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::node_updates::raised_incident": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::node_updates::operation": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::node_updates::workflow": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::node_updates::failure_ladder": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -1121,6 +1124,8 @@ def verus_proofs():
             "port_t860_link_rejected": ("kernel::port_t860_link#rejected", 1),
             "port_t860_link_admitted": ("kernel::port_t860_link#admitted", 1),
             "port_t860_link_irrelevant": ("kernel::port_t860_link#irrelevant", 1),
+            "ranks_admission_result": ("kernel::ranks#admission_result", 1),
+            "node_updates_incident_views": ("kernel::node_updates#incident_views", 1),
             "node_updates_count_failure_result": ("kernel::node_updates#count_failure_result", 1),
             "node_updates_counted_failure_legacy": ("kernel::node_updates#counted_failure_legacy", 1),
         }

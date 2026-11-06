@@ -113,4 +113,28 @@ pub(super) proof fn counted_failure_legacy(b: Node, a: Node, bo: Outbox, ao: Out
     reveal(port_t860_contracts::failed_node);
     reveal(retirement::incident);
 }
+
+pub(super) open spec fn raised_incident(b: Node, a: Node, needs_rob: bool) -> bool {
+    operation(a) == (b.run, b.job, b.pool, match b.effect {
+        Some(e) => Some(InFlight { cancelling: e.cancelling || holding(b.phase), ..e }),
+        None => None,
+    })
+    && workflow(a) == (incident_resume(b.phase),
+        if holding(b.phase) { 0u8 } else { b.pos },
+        (b.generation + if holding(b.phase) { 1int } else { 0int }) as u64,
+        None, !holding(b.phase) && b.holds)
+    && failure_ladder(a) == failure_ladder(b)
+    && incident(a) == (true, needs_rob)
+    && pr_facts(a) == pr_facts(b) && attempt_ladder(a) == attempt_ladder(b)
+    && ledger(a) == ledger(b) && identity(a) == identity(b)
+}
+
+/// Project an existing exact incident result once, outside its consumers.
+pub(super) proof fn incident_views(b: Node, a: Node, needs_rob: bool)
+    requires a == retirement::incident(b, needs_rob),
+    ensures raised_incident(b, a, needs_rob),
+{
+    reveal(retirement::incident);
+}
+
 }

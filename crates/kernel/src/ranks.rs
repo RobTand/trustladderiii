@@ -592,15 +592,9 @@ pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> boo
 
 /// #771: bounds proved for the actual local transition. This is a postcondition,
 /// not an alternative transition relation.
-#[verifier::opaque]
-pub(super) open spec fn advance_post(before: Node, after: Node,
+pub(super) open spec fn advance_bounds(before: Node, after: Node,
     ticket_before: u64, ticket_after: u64, changed: bool) -> bool {
     (changed ==> internal_height(after) < internal_height(before))
-    && (changed && before.phase == Phase::Unplanned
-        && !before.waiting_incident && before.effect.is_none() ==> after == (Node {
-        credit: Credit { withheld: false, ..before.credit }, planning_started: true,
-        ..retirement::phased(before, Phase::Planning { must_split: false })
-    }))
     && after.last_cmd == before.last_cmd
     && after.repo == before.repo && after.footprint == before.footprint
     && (settle_shape(before) ==> settle_shape(after))
@@ -621,6 +615,35 @@ pub(super) open spec fn advance_post(before: Node, after: Node,
     && after.credit.spent == before.credit.spent
     && (!changed ==> after == before && ticket_after == ticket_before)
 }
+
+/// Admission's exact result stays outside unrelated arm queries.
+#[verifier::opaque]
+pub(super) open spec fn advance_admission_post(before: Node, after: Node, changed: bool) -> bool {
+    (changed && before.phase == Phase::Unplanned
+        && !before.waiting_incident && before.effect.is_none() ==> after == (Node {
+        credit: Credit { withheld: false, ..before.credit }, planning_started: true,
+        ..retirement::phased(before, Phase::Planning { must_split: false })
+    }))
+}
+
+/// Preserve the dispatcher contract for existing consumers.
+#[verifier::opaque]
+pub(super) open spec fn advance_post(before: Node, after: Node,
+    ticket_before: u64, ticket_after: u64, changed: bool) -> bool {
+    advance_bounds(before, after, ticket_before, ticket_after, changed)
+        && advance_admission_post(before, after, changed)
+}
+
+pub(super) proof fn admission_result(before: Node, after: Node)
+    requires after == (Node {
+        credit: Credit { withheld: false, ..before.credit }, planning_started: true,
+        ..retirement::phased(before, Phase::Planning { must_split: false })
+    }),
+    ensures advance_admission_post(before, after, true),
+{
+    reveal(advance_admission_post);
+}
+
 }
 
 kernel_fn! {
@@ -630,10 +653,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             old(node).phase is Closed || old(node).waiting_incident || old(node).effect.is_some(),
         ensures (!result ==> final(_out).len == old(_out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -659,10 +682,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)).is_none(),
         ensures (!result ==> final(out).len == old(out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -685,10 +708,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Do(kind)),
         ensures (!result ==> final(out).len == old(out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -705,10 +728,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Start(role)),
         ensures (!result ==> final(out).len == old(out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -737,10 +760,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartChecks),
         ensures (!result ==> final(out).len == old(out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -760,10 +783,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartRebase),
         ensures (!result ==> final(out).len == old(out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -783,19 +806,23 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Admit),
         ensures (!result ==> final(_out).len == old(_out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+            advance_admission_post(*old(node), *final(node), result),
             result ==> final(node).phase == (Phase::Planning { must_split: false }),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
+        kernel_snapshot! { before_admit = *node }
         let n = *node;
         if n.paused || !context.admit {
+            kernel_proof! { reveal(advance_admission_post); }
             return false;
         }
         let m = &mut *node;
         m.credit.withheld = false;
         m.planning_started = true;
         set_phase(m, Phase::Planning { must_split: false });
+        kernel_proof! { admission_result(before_admit@, *m); }
         true
     }
 }
@@ -807,10 +834,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Slot),
         ensures (!result ==> final(_out).len == old(_out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
@@ -843,10 +870,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Release),
         ensures (!result ==> final(_out).len == old(_out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
@@ -863,10 +890,10 @@ kernel_fn! {
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Teardown(kind)),
         ensures (!result ==> final(out).len == old(out).len),
-            advance_post(*old(node), *final(node),
+            advance_bounds(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         let n = *node;
         if n.question.is_some() {
             return false; // waiting for Rob
@@ -899,10 +926,10 @@ kernel_fn! {
         requires advance_pre(*old(_node), *old(_next_ticket), old(_out).len),
             !(old(_node).phase is Closed) && !old(_node).waiting_incident && old(_node).effect.is_none() && matches!(current_item(*old(_node)), Some(Item::Await | Item::Merge | Item::Answer)),
         ensures (!result ==> final(_out).len == old(_out).len),
-            advance_post(*old(_node), *final(_node),
+            advance_bounds(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+    ] proof [reveal(advance_bounds); reveal(distance);] {
         false
     }
 }
@@ -918,7 +945,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
-    ] {
+    ] proof [reveal(advance_post); reveal(advance_admission_post);] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
             return advance_blocked(node, next_ticket, context, out);

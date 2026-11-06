@@ -46,7 +46,6 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         raise_incident(w, i, needs_rob, out);
     }
     kernel_proof! {
-        reveal(retirement::incident);
         node_updates::count_failure_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
     }
 }
