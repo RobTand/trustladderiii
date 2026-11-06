@@ -429,7 +429,22 @@ def _judged_run(model, request, workdir, emit):
             except (ValueError, TypeError):
                 raise tracing.WorkerStageError("postmortem JSON parse failure") from None
             written = scrub(written, redactor)
-            result = _checked(inputs, envelope(written, grades))
+            try:
+                result = _checked(inputs, envelope(written, grades))
+            except ValidationError as error:
+                from dataclasses import replace
+                from tl3_workers.rules import CantMeet, Name, Violation
+                # The model edits the inner object, not the code-owned envelope.
+                error.rule_violations = tuple(
+                    Violation(item.rule, {**item.facts, 'pointer': item.facts['pointer'].removeprefix('/postmortem')})
+                    if (item.facts['pointer'] == '/postmortem'
+                        or item.facts['pointer'].startswith('/postmortem/')) else
+                    Violation(replace(item.rule,
+                        names=lambda facts: (Name('symbol', 'tl3_workers.roles.postmortem::envelope'),),
+                        repair=lambda facts: CantMeet('the invalid field belongs to the code-owned envelope')),
+                        item.facts)
+                    for item in getattr(error, 'rule_violations', ()))
+                raise
             try:
                 written["recommendations"], dropped = applicable(
                     written["recommendations"], RELEASE_ROOT)
