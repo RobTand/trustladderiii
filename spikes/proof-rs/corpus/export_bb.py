@@ -13,6 +13,6 @@ os.environ['PYTHONPATH'] = ':'.join(str(Path(item).resolve()) for item in ('harn
 os.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] = '1'
 os.environ['PROOF_CORPUS_OUT'] = os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY']
 result = subprocess.run(['uv', 'run', '--no-project', '--python', '3.14', '--with', 'pytest==9.0.2',
-    '--with', 'bazel-runfiles', 'python', '-m', 'pytest', '-p', 'proof_corpus', '-q',
-    'harness/tests', '--tb=short'])
+    '--with', 'bazel-runfiles', '--with', 'pytest-xdist==3.8.0', 'python', '-m', 'pytest', '-p', 'proof_corpus', '-q',
+    *(sys.argv[1:] or ['harness/tests']), '--tb=short'])
 raise SystemExit(result.returncode)
