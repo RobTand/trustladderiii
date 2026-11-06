@@ -62,4 +62,6 @@ def verify(mode):
 if sys.argv[1] == 'prepare':
     prepare()
 else:
+    if sys.argv[1] == 'affected':
+        prepare()
     verify(sys.argv[1])

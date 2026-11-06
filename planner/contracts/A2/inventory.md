@@ -74,7 +74,7 @@ was corrected. No test verdict is claimed for that preparation.
 One earlier submission used a mistyped SHA and failed repository setup; it is
 retained separately as a setup failure, never as RED.
 
-Sampled/merged origin/rust-fv 349b85e710 before qualification. This includes
+Sampled/merged origin/rust-fv 349b85e717897abc32b6b28193e2db5925b01e09 before qualification. This includes
 landed EP d3b9eb126, A0c, A1, F2 and harness R1. Supplied EP history and the red
 commit remain ancestors. Only the A2 diff against actual origin is owned here;
 inherited Rust/Cargo work does not make A2 clippy applicable. No A2 Rust/Cargo

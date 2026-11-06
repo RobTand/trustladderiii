@@ -248,7 +248,11 @@ def test_maker_collects_status_and_findings_in_original_failure_order(review_fix
         maker._check_reply(inputs, before)
     assert [item.rule.id for item in raised.value.rule_violations] == [
         'maker.maker_status', 'maker.reproductions']
-    assert permits(raised.value.rule_violations, before, good, role='maker')
+    after = deepcopy(good)
+    after['reproductions'] = [{'finding_id': item['id'], 'reason': 'Manual review is required.'}
+                              for item in inputs['current_review_findings']]
+    assert permits(raised.value.rule_violations, before, after, role='maker')
+    maker._check_reply(inputs, after)
 
 
 def test_maker_coverage_repair_owns_overlapping_status_diagnostics(review_fix):

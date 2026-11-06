@@ -57,6 +57,7 @@ def _goal_coverage(facts):
     checked = [item['goal_id'] for item in reply['self_check']]
     if len(checked) != len(goals) or set(checked) != {goal['id'] for goal in goals}:
         yield {'pointer': '/self_check', 'allowed': Allowed('schema', {
+            '$defs': _done_property('self_check')['$defs'],
             'type': 'array', 'minItems': len(goals), 'maxItems': len(goals),
             'items': {'anyOf': [_entry_allowed(goal) for goal in goals]},
             'allOf': [{'contains': {'properties': {'goal_id': {'const': goal['id']}}},
