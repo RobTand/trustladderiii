@@ -74,6 +74,15 @@ impl<Q: Executor, D: Executor> Executor for Router<Q, D> {
         self.selected(repository)
             .prerequisite(repository, kind, number)
     }
+    fn prerequisite_detail(
+        &mut self,
+        repository: &Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<crate::merge_dependencies::ExternalFact> {
+        self.selected(repository)
+            .prerequisite_detail(repository, kind, number)
+    }
     fn implementation(&self) -> &'static str {
         self.queue.implementation()
     }

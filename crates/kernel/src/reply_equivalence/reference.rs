@@ -1,58 +1,7 @@
-//! #806: pre-refactor on_reply, with its body retained verbatim.
-use super::super::*;
+//! #860: verbatim pre-extraction on_reply body at 6a1f337adc6df8b1b8c4de135f4c96973389457e.
+use crate::*;
 
-kernel_fn! {
-pub(super) fn reference_on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
-        node_headroom(old(w).nodes@[i as int]),
-        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-        footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
-        footprint::ordered_table(*old(w)),
-    ensures progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
-            generation, reply, *old(out), *final(out)),
-        (node_checked(*old(w), old(w).nodes@[i as int])
-            && generation == old(w).nodes@[i as int].generation
-            && successful_reply_input(old(w).nodes@[i as int], reply)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
-        footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
-        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
-        final(w).nodes@.len() == old(w).nodes@.len(),
-        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
-            ==> final(w).nodes@[j] == old(w).nodes@[j],
-        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
-        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
-        final(w).nodes@[i as int].credit.start as int <= old(w).nodes@[i as int].credit.start as int + CREDIT_START_STEP_BUDGET,
-        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
-        final(w).nodes@[i as int].credit.added == old(w).nodes@[i as int].credit.added,
-        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
-        final(w).next_ticket == old(w).next_ticket,
-        final(w).next_question as int <= old(w).next_question as int + 1,
-        footprint::ordered_table(*final(w)),
-        final(w).file_sets@.len() >= old(w).file_sets@.len(),
-        forall|j: int| 0 <= j < old(w).file_sets@.len()
-            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
-        final(w).gates@ == old(w).gates@,
-        final(w).pool_capacity == old(w).pool_capacity,
-        final(w).fail_fast == old(w).fail_fast,
-        final(w).dependencies@ == old(w).dependencies@,
-        final(out).len <= old(out).len + 1,
-        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
-            && old(w).nodes@[i as int].phase is Planning
-            && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
-            && old(w).nodes@[i as int].run == Some(generation) ==> {
-                let n = final(w).nodes@[i as int];
-                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
-                    && n.review_stop == Some(ReviewStop::PlanCantMeet)
-                    && n.credit == old(w).nodes@[i as int].credit
-                    && n.plan_retries == old(w).nodes@[i as int].plan_retries
-                    && final(w).next_question == old(w).next_question
-                    && *final(out) == *old(out)
-            }),
-] {
+pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Outbox) {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     let n = &w.nodes[i];
@@ -139,5 +88,4 @@ pub(super) fn reference_on_reply(w: &mut World, i: usize, generation: u64, reply
             }
         }
     }
-}
 }

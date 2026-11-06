@@ -146,6 +146,12 @@ mod reference {
     }
 }
 mod current {
+    mod records {
+        use super::super::io::mock_std as std;
+        use super::super::*;
+        include!("records-current.rs");
+    }
+    use records::Records;
     adapter!();
     include!("current.rs");
     mod publishing {

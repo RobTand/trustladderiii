@@ -958,18 +958,33 @@ prerequisite does not make the request not actionable. After ingest and audit,
 the root waits in Unplanned until every prerequisite is delivered. The wait
 holds no slot, file lock or spendable credit, and avoids planner and maker cost.
 
-Each declaration names an active TL3 request root or an external merge fact.
-A merged PR, an issue closed as completed, or a TL3 request closed as done
-delivers. A stopped request with an open issue stays pending and can later
-restart. An issue closed as not planned abandons, posts one note, and keeps
-the waiting request blocked until Rob changes or stops it. Status says
-"waiting for #N to merge". Planning after release uses current main.
+Each declaration names an active TL3 request root or an external prerequisite fact.
+Rob, 2026-11-05, #839 (Q27): 'If it's truly closed, the prerequisite should just continue.' [Decision](https://github.com/RobTand/trustladderiii/issues/839#issuecomment-6671251113).
+Any truly closed issue or PR delivers, whether merged, completed, not planned,
+or closed by TL3 as not actionable. A stopped request with an open issue stays
+pending and restartable under Q49; status says "waiting for #N: stopped".
+The dependent retains typed closure-without-merge evidence naming the prerequisite
+and its reason. Both its planner input and postmortem input carry that record.
+No additional gate is added; the planner's normal checks catch missing code.
+Planning after release uses current main. Each chain link proceeds only when its
+own prerequisite resolves; closing an ancestor does not resolve open successors.
+"Truly closed" means currently closed. Reopening a prerequisite retracts its
+provisional delivery while the dependent has not started planning. A second
+closure can deliver it again. The existing `planning_started` admission boundary
+remains final for that attempt: a reopen does not roll back a dependent that
+already entered Planning. Its retained closure record remains historical evidence
+for its plan and postmortem.
+Startup invalidates unconsumed delivery snapshots and performs one bounded current
+read per unstarted prerequisite identity, including previously closed prerequisites.
+It supersedes queued old closure observations rather than replaying terminal facts.
+This discovers pre-deploy closures and reopens without a request restart or periodic
+rescan. Webhooks and catch-up include open/reopened issue and PR state. Older
+versioned observations cannot overwrite a newer prerequisite state.
 
-Facts are never stale or dropped and update dependencies in every phase.
-Declarations reconcile retained terminal facts before waiting, even when an
-active prerequisite root still exists. Re-ingest retains terminal outcomes and
-announcement identities for unchanged targets. A stop is announced once even
-when its issue stays open and its dependency status remains pending.
+Declarations read authoritative current state before waiting. Re-ingest keeps
+historical closure records and announcement identities for unchanged targets,
+but does not use an old closure as current admission evidence. A stop is announced
+once even when its issue stays open and its dependency status remains pending.
 No request gains prerequisites after it first starts planning. Cycles across
 requests are rejected with a plain note, and every ending is announced to
 waiters. These root merge prerequisites move from slice two into slice one.

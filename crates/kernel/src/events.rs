@@ -79,8 +79,15 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                     generation, reply, *old(out), *final(out)),
             _ => true,
         },
+        (match event {
+            Event::Reply { node: NodeId(0), generation, reply: Reply::AuditDisagrees } =>
+                old(w).nodes@.len() > 0 ==> port_t860_contracts::reply_post(*old(w), *final(w), 0,
+                    generation, Reply::AuditDisagrees, *old(out), *final(out)),
+            _ => true,
+        }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_apply = *w }
+    kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
     match event {
         Event::NewAdoption {

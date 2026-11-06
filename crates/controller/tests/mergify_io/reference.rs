@@ -893,3 +893,5 @@ impl ScheduledHold for QueueFact {
     }
 
 }
+
+impl Adapter { fn routing(&self, entry: io::Entry) -> Value { super::a3::default_run(entry,false) } }

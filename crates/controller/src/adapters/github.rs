@@ -41,9 +41,24 @@ impl Executor for Fake {
         kind: tl3_kernel::PrerequisiteKind,
         number: u64,
     ) -> Result<tl3_kernel::DependencyStatus> {
+        Ok(self.prerequisite_detail(repository, kind, number)?.status)
+    }
+    fn prerequisite_detail(
+        &mut self,
+        repository: &crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<crate::merge_dependencies::ExternalFact> {
         let issue = self.issue(repository, number)?;
         crate::input_resources::validate(repository, kind, &issue)?;
-        Ok(crate::merge_dependencies::issue_status(&issue))
+        Ok(crate::merge_dependencies::ExternalFact {
+            updated_at: Some(issue.updated_at),
+            repository: repository.clone(),
+            kind,
+            number,
+            status: crate::merge_dependencies::issue_status(&issue),
+            reason: Some(issue.state_reason.unwrap_or_else(|| "unspecified".into())),
+        })
     }
     fn issue(&mut self, _repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
         let bytes = std::fs::read(fake_issue_path(&self.1, number))?;
@@ -422,7 +437,15 @@ impl Executor for Adapter {
         kind: tl3_kernel::PrerequisiteKind,
         number: u64,
     ) -> Result<tl3_kernel::DependencyStatus> {
-        use tl3_kernel::{DependencyStatus, PrerequisiteKind};
+        Ok(self.prerequisite_detail(repository, kind, number)?.status)
+    }
+    fn prerequisite_detail(
+        &mut self,
+        repository: &crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<crate::merge_dependencies::ExternalFact> {
+        use tl3_kernel::PrerequisiteKind;
         let client = self
             .clients
             .get(&repository.installation)
@@ -436,8 +459,11 @@ impl Executor for Adapter {
                 crate::input_resources::github(error, resource.clone(), repository.installation)
             })?;
         crate::input_resources::validate(repository, kind, &issue)?;
-        match kind {
-            PrerequisiteKind::Issue => Ok(crate::merge_dependencies::issue_status(&issue)),
+        let (status, updated_at) = match kind {
+            PrerequisiteKind::Issue => (
+                crate::merge_dependencies::issue_status(&issue),
+                issue.updated_at,
+            ),
             PrerequisiteKind::PullRequest => {
                 let pr = self
                     .runtime
@@ -445,14 +471,24 @@ impl Executor for Adapter {
                     .map_err(|error| {
                         crate::input_resources::github(error, resource, repository.installation)
                     })?;
-                Ok(if pr.merged_at.is_some() {
-                    DependencyStatus::Delivered
-                } else {
-                    DependencyStatus::Pending
-                })
+                (crate::merge_dependencies::pr_status(&pr), pr.updated_at)
             }
-        }
+        };
+        Ok(crate::merge_dependencies::ExternalFact {
+            updated_at: Some(updated_at),
+            repository: repository.clone(),
+            kind,
+            number,
+            status,
+            reason: Some(match kind {
+                PrerequisiteKind::Issue => {
+                    issue.state_reason.unwrap_or_else(|| "unspecified".into())
+                }
+                PrerequisiteKind::PullRequest => "closed_without_merge".into(),
+            }),
+        })
     }
+
     fn issue(&mut self, repository: &crate::Repository, number: u64) -> Result<tl3_github::Issue> {
         let client = self
             .clients

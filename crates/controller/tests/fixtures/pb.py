@@ -71,6 +71,8 @@ def finish(key, request):
         raw = ("Traceback (most recent call last):\nValueError: a plan needs uniquely named checks\n"
                "TL3_CHECKS_ERROR " + json.dumps({"schema": "tl3.checks.error.v1",
                                                  "effect_key": request["effect_key"], "error": "ValueError"}) + "\n")
+    if (root / "recorded_execution.json").exists():
+        raw = "TL3_EXECUTION_FAILURE " + (root / "recorded_execution.json").read_text() + "\n" + raw
     log = root / f"{key}.stdout"
     log.write_text(raw)
     save(root / f"{key}.ending", {"schema": "prismabuild.endings.v1", "complete": True,
