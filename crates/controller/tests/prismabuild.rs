@@ -436,7 +436,10 @@ fn staged_request_carries_the_repository_protected_paths() {
     let request: serde_json::Value =
         serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
     assert_eq!(request["footprint"], serde_json::json!(delivery.paths));
-    assert_eq!(request["generated_paths"], serde_json::json!(["generated/**"]));
+    assert_eq!(
+        request["generated_paths"],
+        serde_json::json!(["generated/**"])
+    );
     let protected: BTreeSet<_> = request["protected_paths"]
         .as_array()
         .expect("the staged request names protected paths")

@@ -110,7 +110,7 @@ def repair_for(facts, role, allowed, reason):
         return CantMeet('TL3-side assembly fault: the harness supplied a staging destination that already exists.')
     if rule == 'proof.staging.single_check':
         return CantMeet('stage one check at a time')
-    path = facts.get('module')
+    path = facts.get('path') if rule == 'proof.loader.stdlib_shadow' else facts.get('module')
     source_rule = (rule.startswith(('proof.support.', 'proof.loader.'))
                    and rule not in ('proof.support.new', 'proof.support.existing_module')
                    or rule in ('proof.source.unparsable', 'proof.source.definition',
@@ -125,9 +125,11 @@ def repair_for(facts, role, allowed, reason):
             'proof.observer.module_missing': 'Create this declared observer module and its selected test definitions.',
             'proof.observer.unresolved_symbol': 'Define the missing name in the observer module or inside the observer test body.',
             'proof.support.decorator': 'Move the fixture body into the observer test body and remove the decorated support dependency.',
-            'proof.loader.stdlib_shadow': 'Move the observer and its loader into an existing test body in this observer module.',
+            'proof.loader.stdlib_shadow': 'Move or rename this shadowing file so it is no longer importable under the trusted standard-library name.',
         }
         return SourceEdit(path, instructions.get(rule, reason))
+    if role == MAKER.role and rule == 'proof.loader.stdlib_shadow':
+        reason += ' The observer must move to an existing base test module, which requires a plan change.'
     if role == PLANNER.role and facts.get('selection_search'):
         reason += ' No concrete declaration selection passes assembly on these trees.'
     return CantMeet(reason)

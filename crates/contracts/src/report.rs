@@ -140,7 +140,11 @@ pub struct TestResult {
     #[schemars(with = "ClippedText<MESSAGE_CHARS>", transform = message_schema)]
     pub message: Option<ClippedText<MESSAGE_CHARS>>,
     /// #899: additive v3 diagnostic; older reports retain the ordinary message.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "Text<1, PROOF_MESSAGE_CHARS>")]
     pub proof_refusal: Option<Text<1, PROOF_MESSAGE_CHARS>>,
     #[serde(
@@ -162,7 +166,9 @@ pub struct TestResult {
 impl TestResult {
     /// Complete proof rows take precedence in maker findings.
     pub fn failure_message(&self) -> &str {
-        self.proof_refusal.as_ref().map_or_else(|| self.message(), Text::as_str)
+        self.proof_refusal
+            .as_ref()
+            .map_or_else(|| self.message(), Text::as_str)
     }
 
     /// The harness diagnostic text. Older reports may omit the field entirely.

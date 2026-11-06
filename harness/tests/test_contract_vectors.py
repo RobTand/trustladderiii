@@ -162,6 +162,17 @@ def commit(repo, files, message):
                           capture_output=True, text=True).stdout.strip()
 
 
+# #899: the complete shared rows use the additive v3 proof_refusal field.
+SCENARIOS['proof-refusal'] = dict(
+    base={'product.py': PRODUCT.format(value=0), 'tests/test_value.py': 'def test_value(): assert True\n'},
+    head={'product.py': PRODUCT.format(value=1), 'tests/test_value.py':
+          'def first(value): return sorted(value)\ndef second(box): box["x"] = 1\ndef test_value(): assert True\n'},
+    plan=[plan_check('complete proof rows', 'demonstrating', ['tests/test_value.py::test_value'],
+                    proof={'subjects': ['product.py::target'],
+                           'observer_support': ['tests/test_value.py::first', 'tests/test_value.py::second'],
+                           'red_message': 'regression'})])
+
+
 @pytest.fixture
 def produce(tmp_path, monkeypatch):
     command = lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]

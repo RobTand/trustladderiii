@@ -321,7 +321,7 @@ def test_planner_probe_budget_and_changed_modules_first(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('row_id', ['proof.source.definition', 'proof.observer.module_missing',
-                                   'proof.observer.unresolved_symbol', 'proof.support.decorator', 'proof.loader.stdlib_shadow'])
+                                   'proof.observer.unresolved_symbol', 'proof.support.decorator'])
 def test_maker_repairs_use_editable_observer_source(tmp_path, row_id):
     from tl3_harness.rules import SourceEdit
     case = partitions()[row_id]['bad']
@@ -339,7 +339,7 @@ def test_maker_repairs_use_editable_observer_source(tmp_path, row_id):
     assert repair.path == 'tests/test_observer.py'
     expected = {'proof.source.definition': 'define', 'proof.observer.module_missing': 'create',
                 'proof.observer.unresolved_symbol': 'define', 'proof.support.decorator': 'fixture body',
-                'proof.loader.stdlib_shadow': 'existing test body'}[row_id]
+                'proof.loader.stdlib_shadow': 'shadowing file'}[row_id]
     assert expected in repair.instruction.lower()
 
 
@@ -366,3 +366,29 @@ def test_planner_names_keep_the_editable_field_when_maker_would_edit_source(tmp_
     violation, = evaluate((row,), {'module': 'tests/test_observer.py', 'footprint': ('tests/test_observer.py',),
         'field': '/checks/3/proof/observer_support/0', 'role': 'planner'}, role='planner')
     assert any(name.kind == 'field' for name in row.names(violation.facts))
+
+
+@pytest.mark.parametrize('owned,protected,generated,kind', [
+    (False, (), (), 'CantMeet'), (True, (), (), 'SourceEdit'),
+    (True, ('path*.py',), (), 'CantMeet'), (True, (), ('path*.py',), 'CantMeet'),
+])
+def test_stdlib_shadow_repairs_only_the_editable_shadow(tmp_path, owned, protected, generated, kind):
+    from tl3_harness.rules import CantMeet, SourceEdit
+    case = partitions()['proof.loader.stdlib_shadow']['bad']
+    for side in ('before', 'after'):
+        for name, source in case[side].items():
+            path = tmp_path / side / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source)
+    check = model.Check('shadow', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'],
+                             footprint=('tests/test_observer.py', 'pathlib.py') if owned else ('tests/test_observer.py',),
+                             protected=protected, generated=generated)
+    assert caught.value.rule == 'proof.loader.stdlib_shadow'
+    repair = caught.value.violations[0].repair
+    assert isinstance(repair, {'CantMeet': CantMeet, 'SourceEdit': SourceEdit}[kind])
+    if kind == 'SourceEdit':
+        assert repair.path == 'pathlib.py'
+    else:
+        assert 'requires a plan change' in repair.reason

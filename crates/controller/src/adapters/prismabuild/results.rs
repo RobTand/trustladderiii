@@ -1,4 +1,6 @@
 use super::{Job, checks::Kind};
+#[cfg(test)]
+use crate::findings::MAX_MESSAGE_CHARS;
 use crate::{
     Error, Result,
     contracts::report::{
@@ -8,8 +10,6 @@ use crate::{
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, clipped},
 };
-#[cfg(test)]
-use crate::findings::MAX_MESSAGE_CHARS;
 #[cfg(test)]
 use judge_tests::recorded_io::File;
 use serde::Deserialize;

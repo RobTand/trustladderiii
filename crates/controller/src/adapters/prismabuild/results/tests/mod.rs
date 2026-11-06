@@ -752,13 +752,18 @@ fn no_report_keeps_harness_class_and_operator_stderr() {
     }
 }
 
-
 /// #899 MF2, found by: review. Complete rows reach both maker feedback fields.
 #[test]
 fn proof_refusal_rows_reach_maker_feedback_without_clipping() {
     let (job, mut report) = fixture("uncollected", "uncollected", false, false);
-    let first = format!("proof.support.call_allowlist source path tests/test_x.py {} repair-first-tail", "allowed ".repeat(180));
-    let second = format!("proof.support.member_write source path tests/test_x.py {} repair-second-tail", "allowed ".repeat(180));
+    let first = format!(
+        "proof.support.call_allowlist source path tests/test_x.py {} repair-first-tail",
+        "allowed ".repeat(180)
+    );
+    let second = format!(
+        "proof.support.member_write source path tests/test_x.py {} repair-second-tail",
+        "allowed ".repeat(180)
+    );
     let full = format!("{first}\n{second}");
     report["schema"] = json!("tl3.checks.v3");
     report["results"][0]["tests"][0]["message"] = json!(&full[..1000]);
@@ -767,7 +772,12 @@ fn proof_refusal_rows_reach_maker_feedback_without_clipping() {
     let failed = &evidence.3;
     assert_eq!(failed.len(), 1, "{evidence:?}");
     let feedback = crate::findings::check_report(false, true, failed, &[], 0);
-    for text in ["proof.support.call_allowlist", "proof.support.member_write", "repair-first-tail", "repair-second-tail"] {
+    for text in [
+        "proof.support.call_allowlist",
+        "proof.support.member_write",
+        "repair-first-tail",
+        "repair-second-tail",
+    ] {
         assert!(failed[0].message.contains(text), "missing {text}");
         assert!(feedback.contains(text), "feedback missing {text}");
     }
