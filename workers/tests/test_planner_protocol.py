@@ -111,7 +111,7 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     result = run_reply_in_process(tmp_path, planner_request, proposal)
     assert_rule_report(result)
     assert result.events[-1]["reply"]["violations"][:1] == [
-        "Checks must name exact pytest node IDs. Replace `../test.py::test_escape` "
+        "check.selector_inexact. Replace `../test.py::test_escape` "
         "with the exact test definitions this check needs."]
 
 
@@ -467,7 +467,7 @@ def test_a1_empty_allowed_set_is_an_explicit_terminal_row(planner_request, monke
 
 def _row_case(rule_id):
     from tl3_harness.model import named
-    from tl3_workers.roles.planner_rules import inventory
+    from tl3_workers.roles.planner import inventory
 
     footprint = inventory()[rule_id]['footprint']
     proof = {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}
@@ -558,20 +558,23 @@ def _row_case(rule_id):
         draft['evidence_contract'] = [requirement]
         inputs['tool_capabilities'] = [capability]
         items, witness = {'requirement': requirement}, {**requirement, **capability}
+    if footprint == 'EDIT_COVER':
+        witness = copy.deepcopy(draft)
+        witness['checks'][0]['node_ids'].append('test.py::test_new')
     facts = {'reply': draft, 'draft': copy.deepcopy(draft), 'completed': completed, 'inputs': inputs,
              'diagnostics': [named(rule_id, '', items)], 'base_nodes': {'test.py::test_old'},
              'base_sources': {'test.py': 'def test_new(): assert True\n'}}
     return facts, witness
 
 
-from tl3_workers.roles.planner_rules import inventory as _rule_inventory
+from tl3_workers.roles.planner import inventory as _rule_inventory
 
 
 @pytest.mark.parametrize('rule_id', sorted(_rule_inventory()))
 def test_a1_each_registered_rule_renders_and_enforces_its_repair(rule_id):
     """PRD #878: every rule and all 43 footprints have an executable interface contract."""
     from dataclasses import replace
-    from tl3_workers.roles.planner_rules import rows
+    from tl3_workers.roles.planner import rows
     from tl3_workers.rules import CantMeet, apply_edit, evaluate, permits, register
 
     row = next(row for row in rows() if row.id == rule_id)
@@ -598,7 +601,7 @@ def test_a1_each_registered_rule_renders_and_enforces_its_repair(rule_id):
 
 def test_a1_reports_all_rows_without_clipping():
     from tl3_harness.model import named
-    from tl3_workers.roles.planner_rules import violations
+    from tl3_workers.roles.planner import violations
     from tl3_workers.rules import render_all
 
     facts = {'reply': {'kind': 'leaf'}, 'draft': {'kind': 'leaf'}, 'completed': {},

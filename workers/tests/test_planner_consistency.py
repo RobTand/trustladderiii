@@ -58,7 +58,7 @@ def test_request156_gets_one_tool_free_consistency_correction(planner_request, r
     history, offered = model.calls[1]
     assert model.calls[0][1] and not offered
     assert isinstance(history[-1], HumanMessage)
-    assert CONTROL in history[-1].text and 'no demonstrating check' in history[-1].text
+    assert CONTROL in history[-1].text and 'edit.uncovered' in history[-1].text
     assert 'Tools are unavailable' in history[-1].text
     assert json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))['ingest'] == planner_request['inputs']['ingest']
     result = events[-1]['reply']
@@ -156,7 +156,7 @@ def test_request156_substantive_stops_do_not_get_consistency_correction(planner_
             assert result['evidence_errors']
     else:
         assert result['violations']
-        assert any(CONTROL in violation and 'no demonstrating check' in violation
+        assert any(CONTROL in violation and 'edit.uncovered' in violation
                    for violation in result['violations'])
 
 
@@ -208,7 +208,7 @@ def test_request162_forced_check_gets_the_same_single_correction(planner_request
     history, offered = model.calls[1]
     assert not offered
     assert all(node in history[-1].text for node in INVENTED)
-    assert 'Existing check must name a test defined at the base' in history[-1].text
+    assert 'forced.base_missing' in history[-1].text
     inputs = json.loads(next(m.text for m in history if isinstance(m, HumanMessage)))
     assert inputs['ingest']['goals'] == planner_request['inputs']['ingest']['goals']
 
@@ -461,8 +461,8 @@ def test_pb2710_one_tool_free_coverage_correction(planner_request, coverage_case
     assert len(model.calls) == 2, 'coverage must reach the existing single repair boundary'
     history, tools = model.calls[1]
     assert not tools and 'Tools are unavailable' in history[-1].text
-    assert fixture['violation'] in history[-1].text
-    assert fixture['repair_instruction'] in history[-1].text
+    assert 'goal.coverage' in history[-1].text and '/goal_ids' in history[-1].text
+    assert 'Allowed: schema' in history[-1].text
     assert sum(event['event'] == 'reply' for event in events) == 1
     assert bool(events[-1]['reply']['violations']) == (resolution == 'cant_meet')
     assert ('plan_check' in events[-1]) == (resolution == 'cant_meet')
