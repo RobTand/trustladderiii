@@ -218,10 +218,11 @@ class ProofRefusal(HarnessInputError):
                 prefix, index = matches[0]
                 facts['field'] = f'{prefix}/{index}'
             from .proof_rules import declaration_pointer
-            facts['field'] = declaration_pointer(facts.get('field', '/proof'), check_index)
+            facts['field'] = declaration_pointer(facts.get('field', '/proof'), check_index, role)
             facts['check_index'] = check_index
             facts['footprint'] = tuple(footprint or ())
-            declaration = {'tests': list(check.tests)}
+            test_key = declaration_pointer('/tests', check_index, role).rsplit('/', 1)[1]
+            declaration = {test_key: list(check.tests)}
             if check.proof:
                 declaration['proof'] = check.proof.as_json()
             if check.forcing:

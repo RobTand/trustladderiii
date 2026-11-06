@@ -71,9 +71,13 @@ def render(violations, role):
     return render_all(violations, role=role)
 
 
-def declaration_pointer(field, check_index):
+def declaration_pointer(field, check_index, role='maker'):
     """The sole boundary from check-relative paths to planner reply pointers."""
-    return field if field.startswith('/checks') else f'/checks/{check_index}' + field
+    pointer = field if field.startswith('/checks') else f'/checks/{check_index}' + field
+    test_prefix = f'/checks/{check_index}/tests'
+    if role == PLANNER.role and (pointer == test_prefix or pointer.startswith(test_prefix + '/')):
+        return f'/checks/{check_index}/node_ids' + pointer[len(test_prefix):]
+    return pointer
 
 
 def failure_facts(facts):

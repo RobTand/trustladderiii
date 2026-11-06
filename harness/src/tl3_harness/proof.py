@@ -17,6 +17,7 @@ from .proof_rules import (
     LOADER_STDLIB, NAMESPACE_API_NAMES, NAMESPACE_API_ATTRIBUTES, NAMESPACE_API_MODULES,
     PURE_SUPPORT_BUILTINS, REFLECTIVE_SUPPORT_ATTRIBUTES, SOURCE_DEFINITION_COUNT,
     SUPPORT_MOCK_IMPORTS, SUPPORT_UNITTEST_IMPORTS, SUPPORT_ARGV_ATTRIBUTE,
+    declaration_pointer,
 )
 
 
@@ -477,14 +478,16 @@ def planner_selections(refusal, base, head, check, config):
         facts = dict(violation.facts)
         field = facts['field']
         relative = field.removeprefix(f"/checks/{facts['check_index']}")
-        group = next((prefix for prefix in ('/proof/subjects', '/proof/observer_support', '/tests')
+        test_key = declaration_pointer('/tests', facts['check_index'], 'planner').rsplit('/', 1)[1]
+        test_group = '/' + test_key
+        group = next((prefix for prefix in ('/proof/subjects', '/proof/observer_support', test_group)
                       if relative.startswith(prefix + '/')), None)
         if group is None or violation.rule.id in ('proof.source.unparsable', 'proof.tree.destination_fresh'):
             violations.append(violation)
             continue
         def passes(reply):
             declared = reply['checks'][facts['check_index']]
-            proposed = SimpleNamespace(name=check.name, kind=check.kind, tests=tuple(declared['tests']),
+            proposed = SimpleNamespace(name=check.name, kind=check.kind, tests=tuple(declared[test_key]),
                 forcing=check.forcing, declared_symptom=check.declared_symptom,
                 proof=replace(check.proof, subjects=tuple(declared['proof']['subjects']),
                               observer_support=tuple(declared['proof']['observer_support'])) if check.proof else None)
@@ -499,7 +502,7 @@ def planner_selections(refusal, base, head, check, config):
         parent, key = field.rsplit('/', 1)
         reduced = deepcopy(facts['reply'])
         del at(reduced, parent)[int(key)]
-        if (group != '/tests' or at(reduced, parent)) and passes(reduced):
+        if (group != test_group or at(reduced, parent)) and passes(reduced):
             facts.update(field=parent, alternatives=[at(reduced, parent)], replacement_total=1,
                          bad_value={'replacement_total': 1})
             violations.extend(evaluate((violation.rule,), facts, role='planner'))
@@ -507,13 +510,13 @@ def planner_selections(refusal, base, head, check, config):
         candidates = []
         for path in sorted(head.rglob('*.py')):
             module = path.relative_to(head).as_posix()
-            if group == '/tests' and not is_test(module, config.get('test-files', ())):
+            if group == test_group and not is_test(module, config.get('test-files', ())):
                 continue
             try:
                 tree = ast.parse(path.read_bytes(), filename=module)
             except (SyntaxError, UnicodeError):
                 continue
-            if group != '/tests':
+            if group != test_group:
                 candidates.append(module)
             def definitions(body, prefix=()):
                 for node in body:
