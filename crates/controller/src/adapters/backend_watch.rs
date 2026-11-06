@@ -19,6 +19,9 @@ enum Command {
 #[derive(Clone)]
 pub struct Handle(mpsc::Sender<Command>);
 impl Handle {
+    pub fn unwatch(&self, _owner: Owner) -> Result<()> {
+        Err(crate::Error::Invalid("per-owner detach is not implemented"))
+    }
     /// Called only after the controller's immutable intent is durable.
     pub fn watch(&self, owner: Owner) -> Result<()> {
         self.0.send(Command::Watch(owner))

@@ -32,6 +32,21 @@ fn release(released: &Arc<(Mutex<bool>, Condvar)>) {
 }
 fn owner() -> Owner { Owner { owner: "controller".into(), correlation: "retained-effect".into() } }
 
+#[test]
+fn unwatch_missing_owner_is_idempotent_on_a_running_source() {
+    let (entered, _attached) = mpsc::channel();
+    let backend = Arc::new(Backend { entered, released: Arc::new((Mutex::new(false), Condvar::new())), fail: true });
+    let (handle, source) = Source::new(backend, vec![], Arc::new(|_, _| panic!("no owner was watched")));
+    let (sender, _inputs) = mpsc::channel();
+    let running = source.spawn(sender);
+    let first = handle.unwatch(owner());
+    let second = handle.unwatch(owner());
+    running.stop().unwrap();
+    running.join().unwrap();
+    assert!(first.is_ok());
+    assert!(second.is_ok());
+}
+
 /// FX/#850: restart attaches the durable owner without resubmission; unknown stays unknown.
 #[test]
 fn observer_restart_attaches_and_retains_unknown_without_completion() {
