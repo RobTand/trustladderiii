@@ -7,6 +7,8 @@
 
 pub mod bounded;
 pub mod checks;
+pub mod execution;
+pub mod prerequisites;
 pub mod report;
 
 pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, ProofDeclaration};
@@ -33,6 +35,10 @@ pub fn generated() -> Vec<Generated> {
         Generated {
             path: format!("{SCHEMA_DIRECTORY}/check-report.json"),
             text: render(&check_report_schema()),
+        },
+        Generated {
+            path: format!("{SCHEMA_DIRECTORY}/execution-failure.json"),
+            text: render(&execution_failure_schema()),
         },
         decision_context::generated().unwrap_or_else(|error| panic!("{error}")),
         request::generated().unwrap_or_else(|error| panic!("{error}")),
@@ -74,6 +80,22 @@ pub fn generated() -> Vec<Generated> {
         ),
     });
     files
+}
+
+/// #826: the Python operator-log producer validates against this generated contract.
+pub fn execution_failure_schema() -> Value {
+    let mut schema = SchemaSettings::draft2020_12()
+        .into_generator()
+        .into_root_schema_for::<execution::Diagnostic>()
+        .to_value();
+    let object = schema.as_object_mut().expect("struct schema");
+    object.remove("title");
+    object.insert(
+        "$id".into(),
+        Value::String(format!("{SCHEMA_BASE}execution-failure.json")),
+    );
+    strip_integer_formats(&mut schema);
+    schema
 }
 
 /// The harness check report's schema: self-contained, with every definition in `$defs`.

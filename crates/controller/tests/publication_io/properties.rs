@@ -338,7 +338,10 @@ fn current_functions_are_production() {
         include_str!("../../src/adapters/github/publishing.rs"),
         include_str!("current-publishing.rs")
     );
-    assert!(include_str!("../../src/adapters/record.rs").starts_with(include_str!("records.rs")));
+    assert!(
+        include_str!("../../src/adapters/record.rs")
+            .starts_with(include_str!("records-current.rs"))
+    );
 }
 #[test]
 fn references_are_frozen_bodies() {
@@ -384,7 +387,8 @@ fn references_are_frozen_bodies() {
 #[test]
 fn shared_helpers_are_production() {
     assert!(
-        include_str!("../../src/adapters/record.rs").starts_with(include_str!("records.rs")),
+        include_str!("../../src/adapters/record.rs")
+            .starts_with(include_str!("records-current.rs")),
         "atomic record writer drift"
     );
     for (source, copy, names, indent) in [
