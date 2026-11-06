@@ -15,6 +15,22 @@ use tl3_mergify::{
     QUEUE_LABEL, QueueState,
     decide::{enqueue as lifecycle, facts},
 };
+/// Copies the committed regressions to writable test output, so proptest can
+/// append new minimized failures there instead of the read-only runfiles tree.
+/// Each test thread gets its own file, so parallel runners cannot clobber each other.
+pub(crate) fn writable_regressions() -> &'static str {
+    let output = ::std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+        .or_else(|| ::std::env::var_os("TEST_TMPDIR"))
+        .unwrap_or_else(|| ::std::env::temp_dir().into_os_string());
+    let test = ::std::thread::current()
+        .name()
+        .unwrap_or("runner")
+        .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    let name = format!("mergify_io-{test}-regressions.txt");
+    let path = ::std::path::PathBuf::from(output).join(name);
+    ::std::fs::write(&path, include_str!("proptest-regressions.txt")).unwrap();
+    Box::leak(path.to_str().unwrap().to_owned().into_boxed_str())
+}
 mod io;
 use io::{Clock, GitHub, Mergify, Path, Runtime, Snapshot};
 use tl3_github::Comment;
@@ -301,6 +317,7 @@ macro_rules! adapter {
 macro_rules! run_entry {
     ($a:ident, $entry:ident, $d:ident, $waiting:expr) => {
         match $entry {
+            io::Entry::Webhook | io::Entry::CatchUp | io::Entry::QueueFacts => $a.routing($entry),
             io::Entry::Read => {
                 match (|| { let snapshot=$a.snapshot()?; $a.read($d, snapshot.as_ref()) })() {
                     Ok((state, facts)) => json!({"state":format!("{:?}",state.state),"pull":state.pull_request,"facts":facts}),
@@ -409,10 +426,9 @@ mod properties {
             cases: CASES,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
-            )))),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
+            ))),
             ..Config::default()
         });
         let strategy = (
@@ -458,10 +474,9 @@ mod properties {
             cases: CASES,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
-            )))),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
+            ))),
             ..Config::default()
         });
         runner
@@ -904,10 +919,9 @@ mod a1_schedules {
         let mut runner = TestRunner::new(Config {
             cases: 128,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
-            )))),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
+            ))),
             ..Config::default()
         });
         let runs = ::std::cell::Cell::new(0);
@@ -1247,10 +1261,9 @@ mod required_c1 {
             cases: 128,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
-            )))),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
+            ))),
             ..Config::default()
         })
     }
@@ -1629,10 +1642,9 @@ mod required_payload_c1 {
             cases: 128,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
-            )))),
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
+            ))),
             ..Config::default()
         })
     }
@@ -2150,3 +2162,9 @@ fn a2_boundary_helpers_are_production_source() {
         );
     }
 }
+
+// A3 ingress routing uses independently compiled real old/current shell bodies.
+mod a3;
+
+// A3: C1 focused head fixtures inherit the same production route namespace.
+use tl3_mergify::decide::route;

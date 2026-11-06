@@ -2335,6 +2335,33 @@ mod facts_ci_failed_lemmas;
 mod facts_merge_lemmas;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_t860_contracts.rs"]
+mod port_t860_contracts;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_t860_scope.rs"]
+mod port_t860_scope;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_t860_frames.rs"]
+mod port_t860_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_t860_apply.rs"]
+mod port_t860_apply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_t860_witness.rs"]
+mod port_t860_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_t860_link.rs"]
+mod port_t860_link;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_contracts.rs"]
 mod port_advance_contracts;
 

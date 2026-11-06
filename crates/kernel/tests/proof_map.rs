@@ -126,6 +126,7 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "progress_from_unplanned_waiting_one",
         "progress_unplanned_waiting",
     ),
+    ("apply_audit_disagrees", "port_t860_apply"),
     ("dependency_no_cycle", "port_deps_register_preserves"),
     ("dependency_waiting_holds_nothing", "port_deps_terminal"),
     ("dependency_delivered_releases", "port_deps_delivery_cover"),

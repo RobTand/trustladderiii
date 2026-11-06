@@ -15,6 +15,7 @@ mod blocked;
 pub mod board;
 mod branches;
 pub mod budget;
+mod check_execution;
 pub mod check_harness;
 pub mod classifier;
 pub mod cli;
@@ -1788,7 +1789,7 @@ impl Controller {
         let effect = snapshot
             .pending_effects
             .iter()
-            .find(|e| e.key == key)
+            .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         self.submit_kernel_input(
             format!("completion:{key}:{}", effect.updated_revision.get()),
@@ -1809,7 +1810,7 @@ impl Controller {
         let effect = snapshot
             .pending_effects
             .iter()
-            .find(|e| e.key == key)
+            .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
         if completion.ack == Ack::Permanent
@@ -1848,9 +1849,12 @@ impl Controller {
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(snapshot, key, class, &mut commit)?;
         }
-        if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
-            // A terminal failed attempt was found. Return to the sending state
-            // through the effect machine before recording its failure.
+        let plan = tl3_delivery::completion(
+            executor::delivery_state(effect.state),
+            executor::delivery_ack(completion.ack),
+        );
+        if plan.bridge {
+            // These intermediate edges remain staged in the same transaction.
             commit.transitions.push(EffectTransition {
                 key: key.into(),
                 from: EffectState::Uncertain,
@@ -1862,20 +1866,8 @@ impl Controller {
                 to: EffectState::Sent,
             });
         }
-        let from = if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
-            EffectState::Sent
-        } else {
-            effect.state
-        };
-        let state = if effect.state == EffectState::Cancelling {
-            EffectState::Confirmed
-        } else {
-            match completion.ack {
-                Ack::Confirmed => EffectState::Confirmed,
-                Ack::Retryable => EffectState::Intended,
-                Ack::Permanent | Ack::BodyPolicyRefused => EffectState::Failed,
-            }
-        };
+        let from = executor::stored_state(plan.from);
+        let state = executor::stored_state(plan.to);
         commit.transitions.push(EffectTransition {
             key: key.into(),
             from,
@@ -2550,6 +2542,9 @@ impl Controller {
                 if let Some(evidence) = blocked {
                     summary.push(' ');
                     summary.push_str(&evidence);
+                }
+                if source == executor::Upstream::PrismaBuild {
+                    check_execution::append(snapshot, commit, node, &mut summary)?;
                 }
                 if source == executor::Upstream::Workers {
                     let failure = commit
@@ -3410,6 +3405,20 @@ impl Controller {
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
+                return Ok(None);
+            }
+            Observation::CheckExecutionFailure {
+                node,
+                generation,
+                action_key,
+                diagnostic,
+            } => {
+                let current =
+                    &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];
+                if current.job == Some(generation) && current.generation == generation {
+                    commit.rows.push(put("check_execution_failures", node.0.to_string(),
+                        json!({"generation":generation, "action_key":action_key, "diagnostic":diagnostic})));
+                }
                 return Ok(None);
             }
             Observation::Checks {
@@ -4391,7 +4400,9 @@ fn observation_upstream(
         | Observation::Plan { .. }
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
-        Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
+        Observation::CheckPlan { .. }
+        | Observation::Checks { .. }
+        | Observation::CheckExecutionFailure { .. } => Some(Upstream::PrismaBuild),
         Observation::RebaseConflict { .. }
         | Observation::Rebased { .. }
         | Observation::WorktreePrepared { .. }

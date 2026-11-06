@@ -516,6 +516,7 @@ input_inventory! {
     WorktreePrepared => refusal_case_worktree_prepared,
     CheckPlan => refusal_case_check_plan,
     Checks => refusal_case_checks,
+    CheckExecutionFailure => refusal_case_check_execution_failure,
     Plan => refusal_case_plan,
     Made => refusal_case_made,
     Reviewed => refusal_case_reviewed,
@@ -555,6 +556,7 @@ impl InputCase {
             Observation::WorktreePrepared { .. } => Self::WorktreePrepared,
             Observation::CheckPlan { .. } => Self::CheckPlan,
             Observation::Checks { .. } => Self::Checks,
+            Observation::CheckExecutionFailure { .. } => Self::CheckExecutionFailure,
             Observation::Plan { .. } => Self::Plan,
             Observation::Made { .. } => Self::Made,
             Observation::Reviewed { .. } => Self::Reviewed,
@@ -690,6 +692,12 @@ fn observation_inventory(
             sha: sha.clone(),
             run,
         },
+        serde_json::from_value(json!({"CheckExecutionFailure": {
+            "node":node, "generation":generation, "action_key":"a".repeat(64),
+            "diagnostic":{"outcome":"setup_failure", "phase":"container_start",
+                "termination_reason":"incomplete_report", "test_started":false,
+                "stderr_tail":format!("launcher refused {payload}")}}}))
+        .unwrap(),
         Observation::Checks {
             node,
             generation,
@@ -747,6 +755,7 @@ fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
         InputCase::Plan
             | InputCase::Made
             | InputCase::Checks
+            | InputCase::CheckExecutionFailure
             | InputCase::Reviewed
             | InputCase::CiFailed
             | InputCase::Merged
@@ -773,7 +782,7 @@ fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
             );
             if case != InputCase::Made {
                 reply(c, NodeId(0), Reply::MakerDone { head });
-                if case != InputCase::Checks {
+                if !matches!(case, InputCase::Checks | InputCase::CheckExecutionFailure) {
                     reply(
                         c,
                         NodeId(0),
@@ -861,6 +870,7 @@ fn assert_handler_reached(case: InputCase, before: &Snapshot, after: &Snapshot) 
         InputCase::WorkerFailed => "worker_failures",
         InputCase::WorktreePrepared | InputCase::CheckPlan => "check_plans",
         InputCase::Checks => "check_evidence",
+        InputCase::CheckExecutionFailure => "check_execution_failures",
         InputCase::RebaseConflict | InputCase::Rebased => "rebase_conflicts",
         InputCase::PullRequest => "pull_requests",
         InputCase::PrivateIntake | InputCase::PrivateReplacement => "requests",
@@ -1191,6 +1201,7 @@ fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize
             | InputCase::WorktreePrepared
             | InputCase::CheckPlan
             | InputCase::Checks
+            | InputCase::CheckExecutionFailure
             | InputCase::Plan
             | InputCase::Made
             | InputCase::Reviewed
