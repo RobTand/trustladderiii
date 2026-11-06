@@ -121,7 +121,7 @@ fn delivered_prerequisite_releases_planning() {
 }
 
 #[test]
-fn not_planned_blocks_with_one_note_even_after_a_late_delivery() {
+fn historical_abandonment_delivers_after_the_closure_fact() {
     let mut world = roots(1);
     let prerequisite = target(2761, None);
     dependency(
@@ -156,14 +156,27 @@ fn not_planned_blocks_with_one_note_even_after_a_late_delivery() {
         DependencyStatus::Abandoned,
     );
     assert!(repeated.is_empty());
+    assert_eq!(world.nodes[0].phase, Phase::Unplanned);
+    assert_eq!(world.nodes[0].credit.balance(), 0);
     dependency(
         &mut world,
         NodeId(0),
         prerequisite,
         DependencyStatus::Delivered,
     );
-    assert_eq!(world.nodes[0].phase, Phase::Unplanned);
-    assert_eq!(world.nodes[0].credit.balance(), 0);
+    // #839 / Q27: the controller reconciles historical abandonment as delivered.
+    assert_eq!(world.nodes[0].phase, Phase::Planning { must_split: false });
+    assert_eq!(world.nodes[0].credit.balance(), 4);
+    assert!(
+        dependency(
+            &mut world,
+            NodeId(0),
+            prerequisite,
+            DependencyStatus::Pending
+        )
+        .is_empty()
+    );
+    assert_eq!(world.dependencies()[0].status, DependencyStatus::Delivered);
 }
 
 #[test]

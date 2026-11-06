@@ -55,6 +55,11 @@ const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
 
 // #806: these names retain their event/phase coverage after Kani retirement.
 const VERUS_RETIREMENTS: &[(&str, &str)] = &[
+    ("apply_dependency", "dependency_retirement_fact"),
+    (
+        "dependency_abandoned_never_releases",
+        "dependency_retirement_abandoned",
+    ),
     // #832: new semantic replies are covered by Verus; Kani stays frozen.
     ("apply_plan_check_rejected", "plan_check_witness"),
     ("apply_plan_check_needs_split", "plan_check_witness"),
@@ -126,7 +131,8 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_ingest_early_end", "port_replies_witness_cover"),
     ("apply_protected_paths", "port_replies_witness_cover"),
     ("apply_audit_agrees", "port_replies_witness_cover"),
-    ("apply_audit_disagrees", "port_replies_witness_cover"),
+    // #860: apply_audit_disagrees is retired by the t860 port, not W1.
+    ("apply_audit_disagrees", "port_t860_apply"),
     ("apply_plan_leaf", "port_replies_witness_cover"),
     ("apply_plan_split", "port_replies_witness_cover"),
     ("apply_plan_cant_meet", "port_replies_witness_cover"),
@@ -141,6 +147,8 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_rebase_clean", "review_world_verify_apply"),
     ("apply_rebase_needs_changes", "review_world_verify_apply"),
     ("apply_run_failed", "review_world_verify_apply"),
+    ("apply_checks_done", "review_world_verify_apply"),
+    ("apply_rebase_progress_gate", "review_rebase_gate"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

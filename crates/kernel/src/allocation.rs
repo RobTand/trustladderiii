@@ -67,7 +67,8 @@ pub(super) fn abandon_operation(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// #771: successful completion resets failures and preserves allocation counters.
 pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
-    ensures *final(m) == (Node { run: None, job: None, pool: false,
+    ensures port_t860_contracts::ended_post(*old(m), *final(m)),
+        *final(m) == (Node { run: None, job: None, pool: false,
         run_failures: 0, run_incidents: 0,
         effect: match old(m).effect {
             Some(e) => Some(InFlight { cancelling: e.cancelling
@@ -88,7 +89,7 @@ pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
         final(m).fx_failures == old(m).fx_failures,
         final(m).fx_incidents == old(m).fx_incidents,
 
-] {
+] proof [reveal(port_t860_contracts::ended_post); reveal(port_t860_contracts::ended);] {
     abandon_operation(m);
     m.run_failures = 0;
     m.run_incidents = 0;
@@ -123,12 +124,23 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
-] proof [reveal(retirement::stopped);] {
+] {
     kernel_snapshot! { before = *m }
+    stop_node(m, outcome);
     kernel_proof! {
-        allocation_stopping_lemmas::stopping_frame(before@, retirement::stopped(before@, outcome), outcome);
-        allocation_stopping_lemmas::stopping_progress(before@, retirement::stopped(before@, outcome), outcome);
+        allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
+        allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
     }
+}
+}
+
+kernel_fn! {
+/// Stop and replacement rows / #806: the original match moved verbatim under the standing rule.
+fn stop_node(m: &mut Node, outcome: Outcome) -> (result: ()) [
+    requires !(old(m).phase is Closed || old(m).phase is Stopping)
+        ==> old(m).generation < u64::MAX,
+    ensures *final(m) == retirement::stopped(*old(m), outcome),
+] proof [reveal(retirement::stopped);] {
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {

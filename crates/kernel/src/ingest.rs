@@ -75,7 +75,8 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         old(w).next_question < u64::MAX,
         matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)
             | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+    ensures port_t860_contracts::transition_post(*old(w), *final(w), i as int, reply, *old(out), *final(out)),
+        (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
@@ -136,6 +137,12 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
             }
             assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
                 reveal(reply_bounds);
+            }
+        }
+        if reply != Reply::AuditDisagrees {
+            assert(port_t860_contracts::transition_post(ingest_before@, *w, i as int, reply,
+                ingest_out@, *out)) by {
+                reveal(port_t860_contracts::transition_post);
             }
         }
     }
@@ -221,6 +228,8 @@ fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result:
         retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
         final(w).next_question == old(w).next_question,
         *final(_out) == *old(_out),
+        port_t860_contracts::transition_post(*old(w), *final(w), i as int, Reply::AuditDisagrees,
+            *old(_out), *final(_out)),
 ] {
     kernel_snapshot! { ingest_before = *w }
     kernel_snapshot! { ingest_source = w.nodes@[i as int] }
@@ -256,6 +265,13 @@ fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result:
                     port_replies_handlers::fields_audit_stop(ingest_source@,
                         w.nodes@[i as int], ingest_id@, audit_incremented@);
                 } }
+            }
+            kernel_proof! {
+                port_t860_link::audit_finished(ingest_source@, w.nodes@[i as int]);
+                assert(port_t860_contracts::transition_post(ingest_before@, *w, i as int,
+                    Reply::AuditDisagrees, ingest_out@, *_out)) by {
+                    reveal(port_t860_contracts::transition_post);
+                }
             }
 
 }
