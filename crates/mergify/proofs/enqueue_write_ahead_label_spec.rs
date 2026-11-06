@@ -10,7 +10,7 @@ pub open spec fn command(old: EnqueueState, label: bool) -> bool {
 
 /// TL3 #751 K-write-ahead requires recorded intent before every upstream write;
 /// #760 preserves SaveIntent/fence/final-read order. Q41 exact-head validation:
-/// docs/state-machine.md:132,487. Recovery context: docs/state-table.md:541,575.
+/// docs/state-machine.md:132,487. Recovery context: docs/state-table.md:555,589.
 /// #608 records served incident RobTand/prismabuild#2705, not a new rule.
 /// Exact effect order and intent encoding: preserved existing behaviour (no rule).
 /// Quantification ranges over the real non-Kani Vec, without a slot bound.
