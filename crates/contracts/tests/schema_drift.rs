@@ -70,6 +70,10 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/plan-check-provenance.json",
         include_str!("../../../workers/src/tl3_workers/schemas/plan-check-provenance.json"),
     ),
+    (
+        "workers/src/tl3_workers/schemas/generation-request.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/generation-request.json"),
+    ),
 ];
 
 #[test]

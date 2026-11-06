@@ -63,6 +63,7 @@ pub struct Real {
     repositories: Vec<Served>,
     branches: crate::branches::Branches,
     protected_paths: crate::scope::ProtectedPaths,
+    generation: Option<crate::generation::Runner>,
 }
 
 struct Served {
@@ -72,6 +73,7 @@ struct Served {
     github: Option<(tl3_github::GitHub, tokio::runtime::Runtime)>,
     journal: PathBuf,
     mutex: Arc<Mutex<()>>,
+    generation: Option<crate::generation::Runner>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -89,6 +91,8 @@ enum Intent {
         target: String,
         #[serde(default)]
         pin_failed: bool,
+        #[serde(default)]
+        for_repair: bool,
     },
     Remove {
         expected: Option<String>,
@@ -113,7 +117,14 @@ fn adapter(error: impl Into<Error>) -> Error {
 }
 
 impl Real {
-    pub fn with_generation(self, _config: &tl3_config::Config) -> Result<Self> { Ok(self) }
+    pub fn with_generation(mut self, config: &tl3_config::Config) -> Result<Self> {
+        let runner = crate::generation::Runner::new(config);
+        for repo in &mut self.repositories {
+            repo.generation = Some(runner.clone());
+        }
+        self.generation = Some(runner);
+        Ok(self)
+    }
 
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
         self.branches = crate::branches::Branches::new(repos)?;
@@ -133,6 +144,7 @@ impl Real {
             repositories: vec![],
             branches: crate::branches::Branches::new(&[])?,
             protected_paths: crate::scope::ProtectedPaths::default(),
+            generation: None,
         })
     }
 
@@ -240,6 +252,7 @@ impl Real {
             github,
             journal,
             mutex,
+            generation: self.generation.clone(),
         });
         Ok(())
     }
@@ -396,7 +409,7 @@ impl Served {
                 })
             }
             Out::Effect {
-                kind: EffectKind::StartRebase,
+                kind: EffectKind::StartRebase | EffectKind::StartRun(tl3_kernel::Role::Maker),
                 ..
             } => {
                 let target = self
@@ -418,6 +431,13 @@ impl Served {
                 Ok(Intent::Rebase {
                     target: target.as_str().into(),
                     pin_failed,
+                    for_repair: matches!(
+                        delivery.output,
+                        Out::Effect {
+                            kind: EffectKind::StartRun(_),
+                            ..
+                        }
+                    ),
                 })
             }
             Out::Effect {
@@ -537,7 +557,11 @@ impl Served {
                 }
                 write(&self.published_path(branch), &head.as_str())?;
             }
-            Intent::Rebase { target, pin_failed } => {
+            Intent::Rebase {
+                target,
+                pin_failed,
+                for_repair,
+            } => {
                 let target = CommitId::new(target).map_err(adapter)?;
                 let Some((head, base)) = self.git.branch_state(branch).map_err(adapter)? else {
                     return Ok(None);
@@ -575,7 +599,36 @@ impl Served {
                     return Ok(None);
                 };
                 match result {
-                    RebaseResult::Clean { base, head } => {
+                    RebaseResult::Clean { base, mut head } => {
+                        if let Some(runner) = &self.generation {
+                            if !writable {
+                                return Ok(None);
+                            }
+                            let directory = self
+                                .journal
+                                .join("generation")
+                                .join(hex(record.delivery.key.as_bytes()));
+                            if let Some(report) =
+                                runner.run(&self.git, &directory, &record.delivery, &head)?
+                            {
+                                if !report.completed {
+                                    observations.push(Observation::RebaseGenerationFailed {
+                                        node: record.delivery.node(),
+                                        generation: record.delivery.generation,
+                                        report,
+                                    });
+                                    let completion = Completion::confirmed(observations);
+                                    record.completion = Some(completion.clone());
+                                    write(&self.record_path(&record.delivery), record)?;
+                                    return Ok(Some(completion));
+                                }
+                                let generated = CommitId::new(report.head).map_err(adapter)?;
+                                self.git
+                                    .install_generated(branch, checkout, &head, &generated)
+                                    .map_err(adapter)?;
+                                head = generated;
+                            }
+                        }
                         if let Some(mut run) = record.delivery.checks.clone() {
                             if *pin_failed {
                                 reproducing::unavailable(
@@ -608,6 +661,13 @@ impl Served {
                         });
                     }
                     RebaseResult::Conflicted { head, files } => {
+                        if *for_repair {
+                            // A queue repair keeps today's maker route on a conflicted update.
+                            let completion = Completion::confirmed(vec![]);
+                            record.completion = Some(completion.clone());
+                            write(&self.record_path(&record.delivery), record)?;
+                            return Ok(Some(completion));
+                        }
                         if !writable {
                             return Ok(None);
                         }
@@ -794,6 +854,76 @@ impl Real {
 }
 
 impl Executor for Real {
+    fn check_generation(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<crate::generation::Report>> {
+        let repo = self.repository(delivery)?;
+        let Some(runner) = &repo.generation else {
+            return Ok(None);
+        };
+        if !runner.configured(delivery) {
+            return Ok(None);
+        }
+        let _guard = repo
+            .mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        let head = CommitId::new(
+            delivery
+                .head_sha
+                .clone()
+                .ok_or(Error::Invalid("freshness needs exact head"))?,
+        )?;
+        let directory =
+            repo.journal
+                .join("freshness")
+                .join(hex(format!("{}:{}", delivery.key, head.as_str()).as_bytes()));
+        runner.run(&repo.git, &directory, delivery, &head)
+    }
+    fn prepare_generated_repair(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<crate::generation::Report>> {
+        let repo = self.repository(delivery)?;
+        if !repo
+            .generation
+            .as_ref()
+            .is_some_and(|runner| runner.configured(delivery))
+        {
+            return Ok(None);
+        }
+        let mut update = delivery.clone();
+        update.key = format!("generation-repair:{}", delivery.key);
+        update.output = Out::Effect {
+            node: delivery.node(),
+            seq: 0,
+            kind: EffectKind::StartRun(tl3_kernel::Role::Maker),
+            head: None,
+        };
+        let completion = self.execute_with(&update, |_| {})?;
+        let repo = self.repository(&update)?;
+        let branch = self.branch_for(&update)?;
+        let head = repo
+            .git
+            .branch_state(&branch)?
+            .ok_or(Error::Invalid("repair branch absent"))?
+            .0;
+        for observation in completion.observations {
+            if let Observation::RebaseGenerationFailed { report, .. } = observation {
+                return Ok(Some(report));
+            }
+        }
+        Ok(Some(crate::generation::Report {
+            completed: true,
+            changed: vec![],
+            message:
+                "Branch update before queue repair completed or conflicted; continue maker repair."
+                    .into(),
+            head: head.as_str().into(),
+            evidence: None,
+        }))
+    }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.execute_with(delivery, |_| {})
     }
@@ -839,7 +969,7 @@ fn same_repo(a: &Repository, b: &Repository) -> bool {
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     match fs::read(path) {
         Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),

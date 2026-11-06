@@ -16,6 +16,12 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'generated_freshness': (
+        'crates/controller-core/src/translate_checks.rs',
+        '    completed && unchanged',
+        '    completed || unchanged',
+        '//crates/controller-core:verus_translate_checks_decisions',
+    ),
     'fit_monotone': (
         'crates/controller/src/budget/limits.rs',
         '    size < limit',

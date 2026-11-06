@@ -256,3 +256,23 @@ def make_generator_tool(worktree, *, restore_only=False):
         return receipt
 
     return run
+
+
+def main():
+    """Controller edge: invoke the same run_generator executor without a model."""
+    from tl3_workers.tools import Worktree
+    request = json.loads(Path(sys.argv[-1]).read_text())
+    with Worktree(request["checkout"], generated_files=request["generated_files"],
+                  generator=request["command"]) as worktree:
+        worktree.test_checkout = Path(request["checkout"])
+        worktree.test_settings = TestSettings(request["image"], Path(request["tools_path"]),
+                                              request["cpus"], request["mem_gb"])
+        worktree.generator_files = request["files"]
+        worktree.protected_paths = request["protected_paths"]
+        worktree.generator_timeout_s = request["timeout_s"]
+        worktree.generator_state = Path(request["state"])
+        print(json.dumps(make_generator_tool(worktree)(), sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

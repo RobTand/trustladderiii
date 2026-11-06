@@ -83,3 +83,11 @@ pub fn checks_reply(
         pass: passed && exact_head,
     }
 }
+
+/// #845 / Checking and Queued rows: only successful, unchanged generation is fresh.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
+    result == (completed && unchanged),
+))]
+pub fn generation_fresh(completed: bool, unchanged: bool) -> bool {
+    completed && unchanged
+}

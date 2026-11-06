@@ -1334,6 +1334,7 @@ impl Controller {
                     if self.observe_pending_effect(&delivery)? {
                         return Ok(true);
                     }
+                    self.prepare_queue_generation_repair(&delivery)?;
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
                     if let Err(error) = &result
@@ -3415,7 +3416,35 @@ impl Controller {
                     exact_head,
                     pass,
                 );
+                let mut pass = decision.pass;
+                let mut report = report;
+                let mut tests = tests;
                 if decision.record {
+                    let delivery =
+                        self.generation_delivery(snapshot, world, node, generation, &sha)?;
+                    if let Some(generated) = self
+                        .adapters
+                        .get(executor::Upstream::Worktrees)?
+                        .check_generation(&delivery)?
+                    {
+                        pass = pass && generated.fresh();
+                        if !generated.fresh() {
+                            report = true;
+                            tests.push(findings::FailedTest {
+                                test: "configured generator freshness".into(),
+                                message: findings::clipped(
+                                    &generated.message,
+                                    findings::MAX_MESSAGE_CHARS,
+                                ),
+                            });
+                        }
+                        commit.rows.push(put(
+                            "generation_evidence",
+                            format!("{}:{sha}", node.0),
+                            json!(generated),
+                        ));
+                    }
+
                     let prefix = format!("{}:", node.0);
                     let earlier: Vec<_> = snapshot
                         .rows
@@ -3476,7 +3505,7 @@ impl Controller {
                     generation,
                     reply: Reply::ChecksDone {
                         report,
-                        pass: decision.pass,
+                        pass,
                         in_footprint,
                     },
                 }
@@ -3983,6 +4012,45 @@ impl Controller {
                     head: self.head(node, &sha)?,
                 },
             },
+            Observation::RebaseGenerationFailed {
+                node,
+                generation,
+                report,
+            } => {
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("generation failure has no request"))?;
+                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                {
+                    return Ok(None);
+                }
+                failed_tests.push(findings::FailedTest {
+                    test: "configured generator".into(),
+                    message: report.message.clone(),
+                });
+                commit.rows.push(put(
+                    "generation_evidence",
+                    format!("{}:rebase:{generation}", node.0),
+                    json!(report),
+                ));
+                let mut prior = self
+                    .store
+                    .worker_document(&node.0.to_string(), "maker_findings")?
+                    .unwrap_or(json!([]));
+                prior.as_array_mut().ok_or(Error::Invalid("invalid maker findings"))?.push(json!({
+                    "kind":"failed_check", "report": report.message, "goal_ids":[], "failed_tests":failed_tests,
+                    "outside_paths":[], "outside_paths_total":0, "ci_checks":[]
+                }));
+                commit
+                    .rows
+                    .push(put("maker_findings", node.0.to_string(), prior));
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RebaseNeedsChanges,
+                }
+            }
             Observation::RebaseConflict {
                 node,
                 generation,
@@ -4144,8 +4212,12 @@ impl Controller {
                         RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
                         _ => None,
                     }).unwrap_or_else(|| "The maker could not meet the goals.".into()))),
-                tail::Finding::Ci => Some((findings::Kind::FailedCheck,
-                    findings::ci_report(&ci_checks, &failed_tests))),
+                tail::Finding::Ci => {
+                    if let Some(node) = node {
+                        commit.rows.push(put("generation_repairs", node.0.to_string(), json!({"queue_ci_failed":true})));
+                    }
+                    Some((findings::Kind::FailedCheck, findings::ci_report(&ci_checks, &failed_tests)))
+                },
                 tail::Finding::None => None,
             };
             node.zip(report)
@@ -4365,7 +4437,8 @@ fn observation_upstream(
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
         Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
-        Observation::RebaseConflict { .. }
+        Observation::RebaseGenerationFailed { .. }
+        | Observation::RebaseConflict { .. }
         | Observation::Rebased { .. }
         | Observation::WorktreePrepared { .. }
         | Observation::ScratchSaved { .. }

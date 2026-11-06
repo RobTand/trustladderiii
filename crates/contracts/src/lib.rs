@@ -7,6 +7,7 @@
 
 pub mod bounded;
 pub mod checks;
+pub mod generation;
 pub mod report;
 
 pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, ProofDeclaration};
@@ -70,6 +71,15 @@ pub fn generated() -> Vec<Generated> {
             &SchemaSettings::draft2020_12()
                 .into_generator()
                 .into_root_schema_for::<plan_check::PlanCheckProvenance>()
+                .to_value(),
+        ),
+    });
+    files.push(Generated {
+        path: format!("{SCHEMA_DIRECTORY}/generation-request.json"),
+        text: render(
+            &SchemaSettings::draft2020_12()
+                .into_generator()
+                .into_root_schema_for::<generation::GenerationRequest>()
                 .to_value(),
         ),
     });

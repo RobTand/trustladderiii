@@ -51,6 +51,103 @@ impl Worktrees {
         Self::open(destination, destination)
     }
 
+    /// #845: freeze verified generator imports without changing the checked head.
+    pub fn commit_generation_input(&self, expected: &CommitId) -> Result<CommitId, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if self.resolve("HEAD")? != *expected {
+            return Err(Error::Recovery);
+        }
+        self.run(
+            &self.repo,
+            "stage generated snapshot",
+            ["add", "--force", "--all"],
+        )?;
+        let tree = commit_line(
+            &self
+                .run(&self.repo, "generated snapshot tree", ["write-tree"])?
+                .stdout,
+        )?;
+        let previous = commit_line(
+            &self
+                .run(
+                    &self.repo,
+                    "input snapshot tree",
+                    ["rev-parse", &format!("{}^{{tree}}", expected.as_str())],
+                )?
+                .stdout,
+        )?;
+        if tree == previous {
+            return Ok(expected.clone());
+        }
+        let output = success(
+            "commit generated snapshot",
+            self.execute_with_environment(
+                &self.repo,
+                [
+                    "commit-tree",
+                    tree.as_str(),
+                    "-p",
+                    expected.as_str(),
+                    "-m",
+                    "Regenerate configured outputs",
+                ],
+                None,
+                None,
+                GitEnvironment::Snapshot,
+            )?,
+        )?;
+        commit_line(&output.stdout)
+    }
+
+    /// #845: install a recorded generator commit using the rebase recovery marker.
+    /// Detachment keeps the old checkout clean until the expected-head ref update.
+    pub fn install_generated(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        expected: &CommitId,
+        generated: &CommitId,
+    ) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.leaf(name)?;
+        self.verify_repository(path)?;
+        let marker = self.rebase_marker(path)?;
+        if marker.exists() {
+            self.restore_rebase_checkout(path, name, &marker)?;
+        }
+        self.verify_checkout(path, name)?;
+        self.require_clean(path)?;
+        let current = self.head_locked(name)?;
+        if current == *generated {
+            return Ok(());
+        }
+        if current != *expected {
+            return Err(Error::Recovery);
+        }
+        let mut temporary = tempfile::NamedTempFile::new_in(marker.parent().ok_or(Error::Io)?)
+            .map_err(|_| Error::Io)?;
+        temporary
+            .write_all(name.reference().as_bytes())
+            .map_err(|_| Error::Io)?;
+        temporary.as_file().sync_all().map_err(|_| Error::Io)?;
+        temporary.persist(&marker).map_err(|_| Error::Io)?;
+        fs::File::open(marker.parent().ok_or(Error::Io)?)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| Error::Io)?;
+        self.run(
+            path,
+            "detach for generation",
+            ["checkout", "--detach", expected.as_str()],
+        )?;
+        self.update_refs(&format!(
+            "update {} {} {}\n",
+            name.reference(),
+            generated.as_str(),
+            expected.as_str()
+        ))?;
+        self.restore_rebase_checkout(path, name, &marker)
+    }
+
     /// Import a pinned commit that need not belong to the checkout's head history.
     pub fn import_commit(&self, source: &Path, commit: &CommitId) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;

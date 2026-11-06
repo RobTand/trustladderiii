@@ -63,7 +63,8 @@ fn register_owned(
     fs::create_dir_all(&records)?;
     let mut adapters = Registry::default();
     let mut worktrees = adapters::worktrees::Real::new(&config.worktrees_root, epoch)?
-        .with_repositories(&config.github.repos)?;
+        .with_repositories(&config.github.repos)?
+        .with_generation(config)?;
     for repo in &bootstrap.repos {
         let path = repository_path(&config.worktrees_root, repo);
         fs::create_dir_all(&path)?;
