@@ -10,6 +10,8 @@ mod record;
 pub mod workers;
 pub mod worktrees;
 
+pub mod backend_watch;
+
 use crate::{
     Result,
     executor::{Registry, Upstream},
