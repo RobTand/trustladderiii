@@ -1,0 +1,55 @@
+"""Read exact BuildBuddy child verdicts and counts through the approved log reader."""
+import importlib.util
+import json
+from pathlib import Path
+import re
+import sys
+
+spec = importlib.util.spec_from_file_location('bb_logs', '/home/rob/tmp/tl3-build/bb_logs.py')
+bb = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bb)
+parent_id, expected_sha, output = sys.argv[1:]
+output = Path(output)
+output.mkdir(parents=True, exist_ok=True)
+records = bb.call('GetInvocation', {'selector': {'invocation_id': parent_id},
+                                    'include_child_invocations': True})['invocation']
+parent, = records
+children = parent.get('childInvocations', parent.get('child_invocations', []))
+report = {'parent': parent_id, 'head': expected_sha, 'verdict': {
+    key: parent.get(key) for key in ('invocationStatus', 'success', 'bazelExitCode')}, 'children': []}
+for child in children:
+    child_id = child.get('invocationId', child.get('invocation_id'))
+    record = bb.invocation(child_id)
+    if record.get('command') != 'test':
+        continue
+    actual_sha = bb.commit_of(record)
+    entry = {'id': child_id, 'head': actual_sha, 'verdict': {
+        key: record.get(key) for key in ('invocationStatus', 'success', 'bazelExitCode')}, 'logs': []}
+    assert actual_sha == expected_sha, entry
+    actions = bb.call('GetAction', {'selector': {'invocation_id': child_id}}).get('action', [])
+    for action_index, action in enumerate(actions):
+        label = action.get('targetLabel', action.get('target_label', ''))
+        for item in action.get('file', []):
+            if item.get('name') != 'test.log':
+                continue
+            content = bb.scrub(bb.call('GetFile', {'uri': item['uri']}, raw=True).decode(errors='replace'))
+            name = f'{child_id}-{action_index}.log'
+            (output / name).write_text(content)
+            summaries = [line for line in content.splitlines()
+                         if re.search(r'\b\d+ (?:passed|failed|skipped|xfailed|errors?)\b', line)
+                         and ('===' in line or 'test result:' in line)]
+            counts = {}
+            for line in summaries:
+                for number, kind in re.findall(r'\b(\d+) (passed|failed|skipped|xfailed|errors?)\b', line):
+                    counts[kind] = counts.get(kind, 0) + int(number)
+            entry['logs'].append({'target': label, 'file': name, 'counts': counts, 'summary': summaries})
+    entry['executed_cases'] = sum(sum(row['counts'].get(kind, 0) for kind in ('passed', 'failed', 'error', 'errors'))
+                                  for row in entry['logs'])
+    report['children'].append(entry)
+(output / 'evidence.json').write_text(json.dumps(report, indent=2) + '\n')
+print(json.dumps({'parent': parent_id, 'head': expected_sha, 'verdict': report['verdict'],
+                  'children': [{'id': item['id'], 'verdict': item['verdict'],
+                                'logs': len(item['logs']), 'executed_cases': item['executed_cases']}
+                               for item in report['children']]}, indent=2))
+assert report['children'], 'no child test invocations found'
+assert all(item['executed_cases'] > 0 for item in report['children']), 'missing positive test.log counts'

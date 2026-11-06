@@ -187,7 +187,8 @@ def test_maker_refusals_render_and_guard_the_same_repair(review_fix, case, point
     from copy import deepcopy
     from tl3_workers.rules import CantMeet, Edit, apply_edit, permits
 
-    inputs, original = review_fix
+    supplied_inputs, supplied_reply = review_fix
+    inputs, original = deepcopy(supplied_inputs), deepcopy(supplied_reply)
     before = deepcopy(original)
     if case == 'goals':
         before['self_check'] = []
