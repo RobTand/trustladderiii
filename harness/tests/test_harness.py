@@ -47,7 +47,7 @@ def run(tree, names, additions=frozenset(), *, notes=None):
         return tests, dict.fromkeys(tests, Outcome.NO_REPORT)
 
 
-def source_guard_run(tmp_path, body, *, proof=True, setup='', teardown='', subject=None, summary=False):
+def source_guard_run(tmp_path, body, *, proof=True, setup='', teardown='', subject=None, summary=False, parallel=0):
     (tmp_path / 'app.py').write_text(subject or 'def value():\n    return 1\n')
     (tmp_path / 'support.py').write_text(
         'def source(path):\n    return path.read_bytes()\n')
@@ -74,7 +74,8 @@ def test_next():
     if proof:
         request['proof_subjects'] = {nodes[0]: ['app.py'], nodes[1]: ['app.py']}
     result = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(request),
-                             str(tmp_path), *(['--summary'] if summary else [])],
+                             str(tmp_path), *(['--summary'] if summary else []),
+                             *([f'--parallel={parallel}'] if parallel else [])],
                             capture_output=True, env={
                                 'PATH': os.environ['PATH'], 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'})
     records = [decode(line) for line in result.stdout.splitlines()]
@@ -90,6 +91,10 @@ def test_next():
     ('    import mmap, os\n    with mmap.mmap(app.fd, 0, access=mmap.ACCESS_READ) as data:\n        data[:]',
      '    import os\n    app.fd = os.open(app.__file__, os.O_RDONLY)'),
     ('    try:\n        path.read_text()\n    except Exception:\n        pass', ''),
+    ('    import os\n    os.read(app.fd, 10000)',
+     '    import os\n    app.fd = os.open(app.__file__, os.O_RDONLY)'),
+    ('    import io\n    io.open(app.fd, "rb", closefd=False).read()',
+     '    import os\n    app.fd = os.open(app.__file__, os.O_RDONLY)'),
 ])
 def test_runner_source_guard_records_reads_and_resets_per_test(tmp_path, body, setup):
     nodes, records, exit_code = source_guard_run(tmp_path, body, setup=setup)
@@ -114,12 +119,13 @@ def test_runner_source_guard_allows_subject_reads_and_other_phases(tmp_path, cas
     assert parse(records, nodes, set(), exit_code) == dict.fromkeys(nodes, Outcome.PASSED), records
 
 
-def test_summary_source_guard_uses_existing_error_result(tmp_path):
-    nodes, records, exit_code = source_guard_run(tmp_path, '    path.read_bytes()', summary=True)
+@pytest.mark.parametrize('parallel', [0, 2])
+def test_summary_source_guard_uses_existing_error_result(tmp_path, parallel):
+    nodes, records, exit_code = source_guard_run(tmp_path, '    path.read_bytes()', summary=True, parallel=parallel)
     results = [record for record in records if record['event'] == 'result']
     assert exit_code == 1, records
-    assert [(item['test'], item['outcome']) for item in results] == [(nodes[0], 'error'), (nodes[1], 'passed')]
-    assert 'subject_source_read' in results[0]['message']
+    assert {item['test']: item['outcome'] for item in results} == {nodes[0]: 'error', nodes[1]: 'passed'}
+    assert 'subject_source_read' in next(item['message'] for item in results if item['test'] == nodes[0])
 
 
 @pytest.mark.parametrize("kind,name,expected", [
@@ -397,7 +403,7 @@ def test_runner_siblings_load_without_the_tl3_harness_package(tmp_path):
     import re
     harness = Path(container_command.__code__.co_filename).parent
     siblings = re.findall(r'with_name\("(\w+\.py)"\)', (harness / "runner.py").read_text())
-    assert {"node_ids.py", "forcing_ownership.py", "limits.py", "red_message.py"} <= set(siblings)
+    assert {"node_ids.py", "forcing_ownership.py", "limits.py", "red_message.py", "source_reads.py"} <= set(siblings)
     mounted = tmp_path / "harness"
     shutil.copytree(harness, mounted, ignore=shutil.ignore_patterns("__pycache__"))
     for sibling in siblings:
