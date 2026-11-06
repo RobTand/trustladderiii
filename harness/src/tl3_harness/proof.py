@@ -351,19 +351,24 @@ def validate_support_calls(tree, module, allowed, context):
                 why = (f'{callee} is shadowed in this module' if node.func.id not in pure else
                        f'{callee} is allowed only with literal arguments and no keywords, because other '
                        'values can run their own code')
+            elif isinstance(node.func, ast.Name) and hasattr(builtins, node.func.id):
+                why = (f'{callee} is not one of the allowed builtins; builtins such as hasattr, isinstance and '
+                       'getattr can run code from other objects (for example through __getattr__ or '
+                       '__instancecheck__)')
             elif isinstance(node.func, ast.Name):
-                why = (f'{callee} is not one of the allowed builtins or a function defined in this support; '
-                       'builtins such as hasattr, isinstance and getattr can run code from other objects '
-                       '(for example through __getattr__ or __instancecheck__)')
-            else:
+                why = (f'{callee} is not a top-level support function defined once in this support, so it can be '
+                       'imported or rebound code')
+            elif isinstance(node.func, ast.Attribute):
                 why = f'{callee} calls a method on another object, which can run its code or change it'
-                if isinstance(node.func, ast.Attribute) and node.func.attr in REFLECTIVE_SUPPORT_ATTRIBUTES:
+                if node.func.attr in REFLECTIVE_SUPPORT_ATTRIBUTES:
                     why += '; for string formatting use an f-string over local values'
-            raise ProofRefusal('support cannot rebind or mutate existing objects; support may call only functions '
-                               'defined in this support and these allowed builtins, with literal arguments: '
-                               f'{listed(PURE_SUPPORT_BUILTINS)}; {why}; move this check into the observer test '
-                               'body, or into a support function that calls only the allowed builtins',
-                               module, callee)
+            else:
+                why = f'{callee} calls the result of another expression, which can run any code'
+            raise ProofRefusal('support cannot rebind or mutate existing objects; support may call only top-level '
+                               'functions defined in this support and these allowed builtins, with literal '
+                               f'arguments only (even inside support functions): {listed(PURE_SUPPORT_BUILTINS)}; '
+                               f'{why}; move any check that inspects a parameter or variable into the observer '
+                               'test body', module, callee)
         # Percent templates can dispatch to arbitrary mapping/operand methods.
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
             try:

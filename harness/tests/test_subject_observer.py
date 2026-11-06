@@ -1238,16 +1238,20 @@ def test_t842_r2_partial_factory_cannot_omit_function_object_mutation(repository
 # #867 (found by: live probe, tessera #1455): a refusal must tell the maker what
 # is allowed and how to repair, or the one repair turn repeats the same code.
 T867_CASES = [
-    ('hasattr', 'def helper(value):\n    return hasattr(value, "decoded")\n', ['hasattr', 'allowed builtins']),
-    ('isinstance', 'def helper(value):\n    return isinstance(value, int)\n', ['isinstance', 'allowed builtins']),
-    ('non-literal pure builtin', 'def helper(value):\n    return sorted(value)\n', ['sorted', 'literal arguments']),
-    ('method call', 'def helper(value):\n    return value.decode()\n', ['value.decode', 'allowed builtins']),
+    ('hasattr', 'def helper(value):\n    return hasattr(value, "decoded")\n', ['hasattr', 'is not one of the allowed builtins']),
+    ('isinstance', 'def helper(value):\n    return isinstance(value, int)\n', ['isinstance', 'is not one of the allowed builtins']),
+    ('non-literal pure builtin', 'def helper(value):\n    return sorted(value)\n', ['sorted', 'is allowed only with literal arguments']),
+    ('shadowed builtin', 'len = 3\ndef helper():\n    return len("x")\n', ['len', 'is shadowed']),
+    ('imported callable', 'from json import loads\ndef helper():\n    return loads("1")\n', ['loads', 'top-level support function']),
+    ('method call', 'def helper(value):\n    return value.decode()\n', ['value.decode', 'calls a method']),
+    ('called expression', 'def helper(table):\n    return table[0]()\n', ['table[0]', 'calls the result of another expression']),
     ('decorator', 'import pytest\n\n@pytest.fixture\ndef data():\n    return 1\n', ['pytest.fixture', 'decorator']),
     ('class bases', 'class Box(dict):\n    pass\n', ['Box', 'base class']),
     ('context manager', 'def helper():\n    with open("x") as handle:\n        return handle\n', ['with', 'sys.argv']),
     ('percent template', 'def helper(value):\n    return "%s" % value\n', ['%', 'f-string']),
-    ('reflective attribute', 'TEMPLATE = "{0}"\ndef helper():\n    return TEMPLATE.format(1)\n', ['format', 'f-string']),
-    ('member store', 'def helper(box):\n    box["k"] = 1\n', ['box', 'new name']),
+    ('reflective call', 'TEMPLATE = "{0}"\ndef helper():\n    return TEMPLATE.format(1)\n', ['TEMPLATE.format', 'f-string']),
+    ('reflective attribute load', 'TEMPLATE = "{0}"\nFORMAT = TEMPLATE.format\n', ['reflective or imported attribute access', 'f-string']),
+    ('member store', 'def helper(box):\n    box["k"] = 1\n', ['never members or subscripts', 'new name']),
     ('namespace api', 'def helper(value):\n    return getattr(value, "x")\n', ['getattr', 'observer test body']),
 ]
 
