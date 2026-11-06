@@ -256,7 +256,16 @@ fn publish(
     upstream: fn(&mut State),
     enqueue: fn(&mut State, &Delivery),
 ) -> Controller {
-    publish_until(settings, api, root, clock, config, upstream, enqueue, |_| false)
+    publish_until(
+        settings,
+        api,
+        root,
+        clock,
+        config,
+        upstream,
+        enqueue,
+        |_| false,
+    )
 }
 
 /// As `publish`, stopping once `stop` holds for the request's node.
