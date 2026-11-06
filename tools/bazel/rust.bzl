@@ -198,6 +198,13 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/writer_references.rs": ["tests/writer_reference_model.py"],
 }
 
+# CC-E: reuse existing topic targets for delivery coverage without fanout growth.
+_CONTROLLER_TEST_SOURCES["tests/approval_race.rs"] += ["tests/delivery_conformance/**", "tests/delivery_fence/**"]
+_CONTROLLER_TEST_SOURCES["tests/publication_io.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/publication_io.rs", []) + ["tests/delivery_schedule/**"]
+_CONTROLLER_TEST_SOURCES["tests/replay_check.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/replay_check.rs", []) + ["tests/delivery_machine/**"]
+# One approval schedule per shard, including the eight controller and two fence cases.
+_LIBTEST_SHARDS["tl3-controller/approval_race"] = 37
+
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
@@ -379,8 +386,10 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
         sources = [source]
     compile_data = options["compile_data"]
-    if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
+    if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
+        if native.package_name() == "crates/mergify":
+            sources = sources + native.glob(["proofs/enqueue_*.rs"])
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":

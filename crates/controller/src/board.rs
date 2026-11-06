@@ -297,6 +297,7 @@ pub struct Request {
     pub question_context: Option<serde_json::Value>,
     /// Q53 / #828: read from the allowance that holds the current attempt.
     pub quota_hold: Option<crate::looks::ModelQuotaHold>,
+    pub prerequisites: Vec<crate::merge_dependencies::PrerequisiteEvidence>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -512,7 +513,23 @@ fn card(
             .waiting_prerequisite
             .filter(|_| node.phase == Phase::Unplanned)
         {
-            format!("waiting for #{number} to merge")
+            let waits = request
+                .prerequisites
+                .iter()
+                .filter(|fact| {
+                    matches!(
+                        fact.state,
+                        crate::merge_dependencies::PrerequisiteState::Open
+                            | crate::merge_dependencies::PrerequisiteState::Stopped
+                    )
+                })
+                .map(crate::merge_dependencies::PrerequisiteEvidence::waiting_text)
+                .collect::<Vec<_>>();
+            if waits.is_empty() {
+                format!("waiting for #{number} to merge")
+            } else {
+                waits.join("; ")
+            }
         } else if let Some(position) = pool_position.filter(|_| wait == Wait::AgentPool) {
             format!(
                 "{} ({priority}, {} in line)",
@@ -907,6 +924,9 @@ impl Rows {
             });
             let details = details.remove(&id);
             rows.requests.push(Request {
+                prerequisites: crate::merge_dependencies::prerequisite_evidence(
+                    &snapshot, &world, id,
+                )?,
                 id,
                 node: *node,
                 repo: format!("{}/{}", request.repo.owner, request.repo.name),

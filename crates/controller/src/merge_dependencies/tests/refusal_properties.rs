@@ -110,6 +110,7 @@ fn queue_merge_refusal() {
     world.nodes[0].credit.start = 4;
     world.next_ticket = u64::MAX - world.ticket_step_budget().unwrap();
     persist_world(&mut c, &world, "seed-queue-refusal");
+    seed_current_delivery(&mut c, &repository, 2761);
     let snapshot = c.snapshot().unwrap();
     let mut binding = Commit::new("bind-queue-pr", json!(null), &snapshot);
     binding
@@ -534,7 +535,9 @@ input_inventory! {
 impl InputCase {
     fn observation(value: &Observation) -> Self {
         match value {
-            Observation::Prerequisite(..) => Self::Prerequisite,
+            Observation::Prerequisite(..) | Observation::PrerequisiteRead { .. } => {
+                Self::Prerequisite
+            }
             Observation::ScratchSaved { .. } => Self::ScratchSaved,
             Observation::ScratchPruned { .. } => Self::ScratchPruned,
             Observation::TraceLogsCapped { .. } => Self::TraceLogsCapped,
@@ -604,12 +607,12 @@ fn observation_inventory(
     };
     let issue = serde_json::from_value(json!({"number":2772,"title":"replacement","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z"})).unwrap();
     vec![
-        Observation::Prerequisite(ExternalFact {
+        Observation::PrerequisiteRead {
+            node,
             repository: repository.clone(),
             kind: PrerequisiteKind::Issue,
             number: 2761,
-            status: DependencyStatus::Delivered,
-        }),
+        },
         Observation::ScratchSaved {
             node,
             reference: "saved".into(),
@@ -943,6 +946,14 @@ fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize
         let other = intake(&mut c, &repository, 2772);
         ingest(&mut c, root, &[2761]);
         ingest(&mut c, other, &[2761]);
+        // #839: retry reads current upstream state, rather than a discarded
+        // pre-open closure observation. Both attempts see this same resource.
+        crate::adapters::github::set_fake_issue(
+            &repo.root.path().join("fakes"),
+            &serde_json::from_value(json!({"number":2761,"title":"Prerequisite","body":null,
+                "state":"closed","state_reason":"completed","updated_at":"2026-11-05T23:00:00Z"}))
+            .unwrap(),
+        );
     }
     if case == InputCase::Queue {
         let first = intake(&mut c, &repository, 2761);
@@ -1216,9 +1227,13 @@ fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize
     drop(c);
     let baseline_settings = copy_database(&settings, &format!("{name}_baseline"));
     let mut baseline = open_case(&baseline_settings, &repo, &bootstrap);
+    // #839: controller open queues bounded prerequisite recovery in the store.
+    let baseline_snapshot = baseline.snapshot().unwrap();
     baseline.refusal_injection.borrow_mut().visited = 0;
     assert!(
-        baseline.consume_kernel_input(&original, &row).unwrap(),
+        baseline
+            .consume_kernel_input(&baseline_snapshot, &row)
+            .unwrap(),
         "case {case:?} must have a successful baseline"
     );
     let reached = baseline.snapshot().unwrap();
@@ -1236,13 +1251,14 @@ fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize
     for checkpoint in 0..checkpoints {
         let trial_settings = copy_database(&settings, &format!("{name}_at_{checkpoint}"));
         let mut trial = open_case(&trial_settings, &repo, &bootstrap);
+        let trial_snapshot = trial.snapshot().unwrap();
         let before = business_bytes(&mut trial);
         *trial.refusal_injection.borrow_mut() = crate::input_errors::RefusalInjection {
             at: Some(checkpoint),
             visited: 0,
         };
         assert!(
-            !trial.consume_kernel_input(&original, &row).unwrap(),
+            !trial.consume_kernel_input(&trial_snapshot, &row).unwrap(),
             "case {case:?}, checkpoint {checkpoint}"
         );
         assert_eq!(
