@@ -1,4 +1,5 @@
 """Compare by call id and primary R1 rule, retaining all counterexamples."""
+import ast
 from collections import Counter, defaultdict
 import json
 from pathlib import Path
@@ -9,6 +10,11 @@ corpus, out = map(Path, sys.argv[1:])
 
 def rows(path):
     return [json.loads(line) for line in path.read_text().splitlines()]
+
+sys.path.insert(0, str(Path('harness/src').resolve()))
+# The runner cwd is spikes/proof-rs.
+sys.path.insert(0, str(Path('../../harness/src').resolve()))
+from tl3_harness import proof
 
 expected = rows(corpus / 'calls.jsonl')
 report = {}
@@ -56,17 +62,46 @@ for mode in ('current', 'reduced'):
 source_expected = {row['sha256']: row for row in rows(corpus / 'sources.jsonl')}
 counts = Counter()
 normalizations = []
+semantics = []
+literals = []
 for row in rows(out / 'sources.log'):
     py = source_expected[row['sha256']]
     counts['sources'] += 1
     counts['parse_agrees'] += row['accepted'] == ('error' not in py)
     if row['accepted'] and 'error' not in py:
+        for key, function in [('binding_names', proof.binding_names), ('global_names', proof.global_names), ('written_bindings', proof.written_bindings)]:
+            try:
+                value = function(py['source'], 'probe') if key != 'written_bindings' else function(py['source'], filename='probe')
+                if key == 'written_bindings':
+                    value = {'::'.join(item) for item in value}
+                value = sorted(value)
+            except (SyntaxError, ValueError):
+                value = None
+            if value != row.get(key):
+                semantics.append({'sha256': row['sha256'], 'name': py['name'], 'kind': key, 'source': py['source'], 'python': value, 'rust': row.get(key)})
+            else:
+                counts[key + '_equal'] += 1
+        tree = ast.parse(py['source'])
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                source = ast.get_source_segment(py['source'], node.value)
+                try:
+                    value = ast.literal_eval(node.value)
+                    try:
+                        hash(value)
+                        expected_literal = True
+                    except TypeError:
+                        expected_literal = False
+                except (SyntaxError, TypeError, ValueError):
+                    expected_literal = None
+                if source in row['literals'] and row['literals'][source] != expected_literal:
+                    literals.append({'sha256': row['sha256'], 'name': py['name'], 'source': source, 'python': expected_literal, 'rust': row['literals'][source]})
         counts['comparable_roundtrip'] += row['comparable_roundtrip']
         counts['unparse_equal'] += py['unparse'] == row['generated']
         if py['unparse'] != row['generated']:
             normalizations.append({'sha256': row['sha256'], 'name': py['name'], 'source': py['source'],
                                    'python': py['unparse'], 'ruff': row['generated']})
-report['parser'] = {'counts': counts, 'normalization_differences': normalizations}
+report['parser'] = {'counts': counts, 'normalization_differences': normalizations, 'semantic_differences': semantics, 'literal_differences': literals}
 metadata = json.loads((out / 'metadata.log').read_text())
 report['dependencies'] = {'packages': len(metadata['packages']),
     'licenses': dict(Counter(package.get('license') or '<unspecified>' for package in metadata['packages'])),

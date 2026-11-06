@@ -1,6 +1,5 @@
 """One admitted build-and-replay cycle. All computation happens on the PB worker."""
 import base64
-import gzip
 import io
 import json
 from pathlib import Path

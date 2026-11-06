@@ -88,7 +88,6 @@ fn norm(source: &str) -> String {
     ruff_python_codegen::round_trip(source).unwrap_or_else(|_| source.into()).trim().to_owned()
 }
 fn stmt_text(source: &str, stmt: &Stmt) -> String { source[usize::from(stmt.start())..usize::from(stmt.end())].to_owned() }
-fn expr_text(source: &str, expr: &Expr) -> String { source[usize::from(expr.start())..usize::from(expr.end())].to_owned() }
 
 #[derive(Default)]
 struct Names { bound: Set, loaded: Set, globals: Set, nonlocals: Set }
@@ -150,7 +149,7 @@ fn global_names(source: &str, module: &str) -> R<Set> {
                     Stmt::FunctionDef(n) => {
                         self.result.local.insert(n.name.to_string());
                         for d in &n.decorator_list { self.visit_expr(&d.expression); }
-                        self.result.children.push(scope(&n.body, n.parameters.iter().map(|p| p.name.to_string()).collect()));
+                        self.result.children.push(scope(&n.body, n.parameters.iter().map(|p| p.name().to_string()).collect()));
                     },
                     Stmt::ClassDef(n) => {
                         self.result.local.insert(n.name.to_string());
@@ -270,7 +269,7 @@ fn support_calls(body: &[Stmt], source: &str, module: &str, allowed: &[(usize,us
     let funcs: Set = body.iter().filter_map(|s| if let Stmt::FunctionDef(n)=s {
         let count=body.iter().filter(|s| binding_names(&stmt_text(source,s),module).unwrap_or_default().contains(n.name.as_str())).count();
         let nested=names(&n.body);
-        if count==1 && !nested.bound.contains(n.name.as_str()) && !n.parameters.iter().any(|p| p.name==n.name) {Some(n.name.to_string())} else {None}
+        if count==1 && !nested.bound.contains(n.name.as_str()) && !n.parameters.iter().any(|p| p.name()==&n.name) {Some(n.name.to_string())} else {None}
     } else {None}).collect();
     fn pure_value(e:&Expr,pure:&Set)->bool {
         if literal(e).is_some() && !matches!(e,Expr::Call(_)) { return true; }
@@ -527,6 +526,17 @@ fn assemble(input:&Value, reduced:bool)->R<(Value,Tree)>{
     let receipt=json!({"rule":"subject-observer-v1","declaration":declaration,"mode":if outcome{"pytest-outcome"}else{"head-observer"},"subjects":subject_json,"observer_sha256":observer_json,"support_sha256":support_json,"source_base_tree_sha256":tree_hash(&base),"base_tree_sha256":tree_hash(&staged),"head_tree_sha256":tree_hash(&head)});
     Ok((receipt,staged))
 }
+fn literal_facts(source: &str, body: &[Stmt]) -> BTreeMap<String,Option<bool>> {
+    struct Scan<'a>{source:&'a str, values:BTreeMap<String,Option<bool>>}
+    impl<'a> Visitor<'a> for Scan<'_>{
+        fn visit_stmt(&mut self,s:&'a Stmt){
+            let value=match s{Stmt::Assign(n)=>Some(n.value.as_ref()),Stmt::AnnAssign(n)=>n.value.as_deref(),_=>None};
+            if let Some(e)=value{let text=&self.source[usize::from(e.start())..usize::from(e.end())];self.values.insert(text.to_owned(),literal(e));}
+            visitor::walk_stmt(self,s);
+        }
+    }
+    let mut scan=Scan{source,values:BTreeMap::new()};scan.visit_body(body);scan.values
+}
 fn main(){
     let args:Vec<_>=std::env::args().collect();let reduced=args.iter().any(|a|a=="--reduced");let sources=args.iter().any(|a|a=="--sources");
     for line in io::stdin().lock().lines(){let line=line.unwrap();let row:Value=serde_json::from_str(&line).unwrap();
@@ -535,7 +545,9 @@ fn main(){
             let value=match parse_module(source){Ok(m)=>{
                 let generated=ruff_python_codegen::round_trip(source).unwrap();
                 let comparable= parse_module(&generated).is_ok_and(|n|m.suite().iter().map(ComparableStmt::from).eq(n.suite().iter().map(ComparableStmt::from)));
-                json!({"sha256":row["sha256"],"accepted":true,"generated":generated.trim_end(),"comparable_roundtrip":comparable,"rust_ns":start.elapsed().as_nanos()})
+                json!({"sha256":row["sha256"],"accepted":true,"generated":generated.trim_end(),"comparable_roundtrip":comparable,
+                    "binding_names":binding_names(source,"probe").ok(), "global_names":global_names(source,"probe").ok(),
+                    "written_bindings":written(source,"probe",&[]).ok(), "literals":literal_facts(source,m.suite()),"rust_ns":start.elapsed().as_nanos()})
             },Err(e)=>json!({"sha256":row["sha256"],"accepted":false,"error":e.to_string(),"rust_ns":start.elapsed().as_nanos()})};println!("{value}");continue;
         }
         let started=Instant::now();let result=assemble(&row["input"],reduced);let ns=started.elapsed().as_nanos();
