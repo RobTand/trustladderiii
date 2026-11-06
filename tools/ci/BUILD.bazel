@@ -351,6 +351,7 @@ py_binary(
     name = "mirror_lint",
     srcs = ["mirror_lint.py"],
     data = ["mirror-allowlist.json"],
+    visibility = ["//visibility:public"],
 )
 
 tl3_py_test(

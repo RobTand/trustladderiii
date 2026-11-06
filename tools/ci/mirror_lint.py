@@ -18,7 +18,8 @@ MANIFEST = Path('crates/contracts/generated/manifest.json')
 DRIFT_TEST = Path('crates/contracts/tests/schema_drift.rs')
 TEST_DIRS = {'test', 'tests', 'fixture', 'fixtures', 'testdata', '__tests__'}
 DECLARATION = re.compile(
-    r'\b(?:mirror\s+of\b|mirrors\s+[a-z_][\w.:/]*|read-only\s+mirror\b|MIRROR\s*:)',
+    r'\b(?:mirror\s+of\b|(?<!git )mirrors\s+(?!(?:and|or|are|the|a|an|in|for|to|from)\b)'
+    r'[a-z_][\w.:/]*|read-only\s+mirror\b|MIRROR\s*:)',
     re.IGNORECASE,
 )
 RUST_TOKEN = re.compile(
@@ -210,7 +211,14 @@ def shingles(text, suffix):
     """Hash windows of twelve meaningful lines; retain lines to reject hash collisions."""
     lines = []
     importing = False
-    for raw in text.splitlines():
+    import_lines = set()
+    if suffix == '.py':
+        for node in ast.walk(python_tree(text)):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                import_lines.update(range(node.lineno, node.end_lineno + 1))
+    for number, raw in enumerate(text.splitlines(), 1):
+        if number in import_lines:
+            continue
         line = raw.strip()
         if suffix == '.rs' and re.match(r'(?:pub(?:\([^)]*\))?\s+)?use\b', line):
             importing = ';' not in line
