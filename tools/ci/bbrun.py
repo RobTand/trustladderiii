@@ -90,6 +90,12 @@ class BuildBuddy:
     def __init__(self, key):
         self.key = key
 
+    def _error_text(self, text, limit):
+        text = str(text)
+        if self.key:
+            text = text.replace(self.key, '[key]')
+        return text[:limit]
+
     def call(self, method, body, timeout=120, raw=False, strict=False):
         data = json.dumps(body).encode()
         if self.key.encode() in data:
@@ -104,7 +110,24 @@ class BuildBuddy:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.read() if raw else json.load(
                     response, object_pairs_hook=cancel_unique_fields if strict else None)
-        except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        except urllib.error.HTTPError as error:
+            reason = self._error_text(error.reason, 512)
+            try:
+                excerpt = error.read(4096).decode('utf-8', errors='replace')
+            except Exception:
+                excerpt = '<body unavailable>'
+            finally:
+                try:
+                    error.close()
+                except Exception:
+                    pass
+            detail = (f'BuildBuddy {method} failed (HTTP {error.code} {reason}): '
+                      + self._error_text(excerpt, 1024))
+            raise RemoteError(self._error_text(detail, 2048)) from None
+        except urllib.error.URLError as error:
+            detail = f'BuildBuddy {method} failed (URLError): ' + self._error_text(error.reason, 512)
+            raise RemoteError(self._error_text(detail, 2048)) from None
+        except (TimeoutError, ValueError) as error:
             raise RemoteError(f'BuildBuddy {method} failed ({type(error).__name__})') from None
 
 
@@ -829,7 +852,7 @@ def cancel(client, args):
         emit('terminal', outcome=outcome or 'unconfirmed', cancellation_attempted=attempted)
         return 2 if outcome in (None, 'terminal_unknown') else 0
     except (RemoteError, OSError, ValueError, http.client.HTTPException):
-        # The transport already discards raw errors. Fixed diagnostics also keep
+        # The transport sanitizes HTTP errors. Fixed diagnostics also keep
         # remote ownership and acknowledgement strings out of evidence entirely.
         emit('terminal', outcome='unconfirmed' if attempted else 'refused',
              cancellation_attempted=attempted)

@@ -4,10 +4,24 @@
 copied byte-for-byte from the approved shared client at
 `/home/rob/tmp/bazel-wave2/tools/bbrun.py`, SHA-256
 `f17ce7ae8de16a8e35e48aba3b5020daa00d60f55500e66788b41b730b0bc8e5`.
-The only behavior added to that baseline is guarded cancellation and its two
-service RPC routes. The existing offline `--selftest` remains unchanged.
+Additions to that baseline include guarded cancellation, its two service RPC
+routes and safe HTTP diagnostics. The existing offline `--selftest` remains unchanged.
 
 Found by: operator, stuck or superseded BuildBuddy work. This is tooling only.
+
+## HTTP diagnostics
+
+HTTP failures retain the numeric status, up to 512 characters of reason and
+up to 1024 characters of body excerpt. The client reads at most 4096 body bytes
+and limits the complete diagnostic to 2048 characters. It replaces the known
+API key with `[key]` before truncating diagnostic text. URL failures retain
+their scrubbed reason. A failed body read still reports status and reason.
+There are no automatic retries or request/header dumps. Timeout and malformed
+JSON diagnostics retain their existing behavior. Raw/gzip evidence still
+refuses credential-bearing data rather than replacing it.
+
+Found by: RP Kani coordinator setup failure, reported only as `HTTPError`.
+The historical response is unavailable; this change cannot recover it.
 
 ## Cancellation
 

@@ -2,9 +2,12 @@
 import contextlib
 import copy
 import http.client
+import http.server
 import importlib.util
+import inspect
 import io
 import json
+import threading
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -246,6 +249,106 @@ class CancelTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('unconfirmed', out)
         self.assertEqual(len(calls), 5)
+
+
+class HttpDiagnosticTests(unittest.TestCase):
+    def clients(self):
+        # Match captain/kani_pr.py's imports and complete inspect extraction.
+        namespace = {}
+        exec('import base64,contextlib,inspect,json,os,shlex,sys,urllib.request,urllib.error,uuid\n'
+             'from pathlib import Path\nfrom unittest.mock import patch', namespace)
+        for name in ('API', 'MAX_SERIALIZED_ACTION_BYTES', 'SCANNER_SHA256'):
+            namespace[name] = getattr(bbrun, name)
+        helpers = (bbrun.RemoteError, bbrun.ActionTooLarge, bbrun.check_action_size,
+                   bbrun.BuildBuddy, bbrun.child_env, bbrun.run_and_record,
+                   bbrun.scan_artifacts, bbrun.secured_steps)
+        with patch.dict('sys.modules', {'bbrun': bbrun}):
+            exec('\n'.join(inspect.getsource(helper) for helper in helpers), namespace)
+        return ((bbrun.BuildBuddy(KEY), bbrun.RemoteError),
+                (namespace['BuildBuddy'](KEY), namespace['RemoteError']))
+
+    def diagnostic(self, client, error_type, transport):
+        out, err = io.StringIO(), io.StringIO()
+        with patch('urllib.request.urlopen', side_effect=transport) as opened, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(error_type) as caught:
+                client.call('Run', {}, timeout=3)
+        self.assertEqual(opened.call_count, 1)
+        message = str(caught.exception)
+        self.assertNotIn(KEY, message + out.getvalue() + err.getvalue())
+        self.assertLessEqual(len(message), 2048)
+        return message
+
+    def test_http_server_status_reason_and_bounded_scrubbed_body(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(int(self.path[1:]), 'Denied ' + KEY)
+                self.end_headers()
+                self.wfile.write(('body ' + KEY + ' ' + 'x' * 20000 + 'END').encode())
+
+            def log_message(self, *args):
+                pass
+
+        with http.server.HTTPServer(('127.0.0.1', 0), Handler) as server:
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                opened = urllib.request.urlopen
+                for client, error_type in self.clients():
+                    for status in (403, 503):
+                        with self.subTest(client=type(client), status=status):
+                            def transport(request, timeout):
+                                local = urllib.request.Request(
+                                    f'http://127.0.0.1:{server.server_port}/{status}',
+                                    data=request.data, headers=request.headers)
+                                return opened(local, timeout=timeout)
+                            message = self.diagnostic(client, error_type, transport)
+                            self.assertIn(str(status), message)
+                            self.assertIn('Denied [key]', message)
+                            self.assertIn('body [key]', message)
+                            self.assertNotIn('END', message)
+            finally:
+                server.shutdown()
+                thread.join()
+
+    def test_http_body_read_is_bounded_and_failure_keeps_status_reason(self):
+        class Body:
+            def __init__(self, failure):
+                self.failure = failure
+                self.closed = False
+                self.sizes = []
+
+            def read(self, size=-1):
+                self.sizes.append(size)
+                if size < 0 or size > 4096:
+                    raise AssertionError('unbounded body read')
+                if self.failure:
+                    raise http.client.IncompleteRead(KEY.encode())
+                return (KEY + ' excerpt').encode()
+
+            def close(self):
+                self.closed = True
+
+        for client, error_type in self.clients():
+            for failure in (False, True):
+                with self.subTest(client=type(client), failure=failure):
+                    body = Body(failure)
+                    error = urllib.error.HTTPError(
+                        'https://unused.invalid/' + KEY, 503, 'Unavailable ' + KEY, {}, body)
+                    message = self.diagnostic(client, error_type, error)
+                    self.assertIn('503', message)
+                    self.assertIn('Unavailable [key]', message)
+                    self.assertEqual(len(body.sizes), 1)
+                    self.assertGreater(body.sizes[0], 0)
+                    self.assertTrue(body.closed)
+                    if not failure:
+                        self.assertIn('[key] excerpt', message)
+
+    def test_url_reason_is_preserved_scrubbed_and_bounded(self):
+        for client, error_type in self.clients():
+            message = self.diagnostic(client, error_type, urllib.error.URLError(
+                'offline ' + KEY + ' ' + 'x' * 20000))
+            self.assertIn('offline [key]', message)
 
 
 if __name__ == '__main__':
