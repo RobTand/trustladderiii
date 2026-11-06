@@ -1,0 +1,381 @@
+#[path = "../../store/tests/support/mod.rs"]
+mod support;
+
+use serde_json::{Value, json};
+use tl3_controller::{
+    Bootstrap, Controller, LabelledIssue, Repository, adapters,
+    executor::{Delivery, Observation},
+};
+use tl3_kernel::{NodeId, Phase};
+use tl3_store::{Commit, RowChange, Store};
+
+const OUTPUTS: [&str; 4] = [
+    "BUILD.bazel",
+    "src/prismabuild/BUILD.bazel",
+    "tests/BUILD.bazel",
+    "tools/BUILD.bazel",
+];
+const RECEIPT: [&str; 2] = [
+    "src/prismabuild/generation_receipt.py",
+    "tests/test_generation_receipt_capture.py",
+];
+const DIGEST: [&str; 2] = [
+    "src/prismabuild/dependency_digest.py",
+    "tests/test_dependency_digest_contract.py",
+];
+
+struct Fixture {
+    controller: Option<Controller>,
+    settings: tl3_config::Store,
+    config: tl3_config::Config,
+    root: tempfile::TempDir,
+    _database: support::Database,
+    sequence: usize,
+}
+impl Fixture {
+    fn new(count: usize, patterns: &[&str], generator: bool) -> Self {
+        let mut database = support::Database::start();
+        let settings = database.create("generated_scope");
+        let root = tempfile::tempdir().unwrap();
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let repo = &mut config.github.repos[0];
+        repo.owner = "owner".into();
+        repo.name = "sandbox".into();
+        repo.installation_id = 3;
+        repo.generated_files = patterns.iter().map(|s| (*s).into()).collect();
+        repo.generator = generator.then(|| "python3 tools/gen_manifest.py".into());
+        let mut fixture = Self {
+            controller: None,
+            settings,
+            config,
+            root,
+            _database: database,
+            sequence: 0,
+        };
+        fixture.restart();
+        for index in 0..count {
+            fixture
+                .c()
+                .intake(LabelledIssue {
+                    delivery: format!("label-{index}"),
+                    owner: "owner".into(),
+                    repo: "sandbox".into(),
+                    installation: 3,
+                    number: 2819 + index as u64,
+                    title: "Generated scope".into(),
+                    actor: 42,
+                    label: "tl3".into(),
+                    labels: vec![],
+                })
+                .unwrap();
+        }
+        for index in 0..count {
+            fixture.arm(index, Phase::Planning { must_split: false });
+        }
+        fixture
+    }
+    fn c(&mut self) -> &mut Controller {
+        self.controller.as_mut().unwrap()
+    }
+    fn restart(&mut self) {
+        drop(self.controller.take());
+        let mut controller = Controller::open(
+            Store::open(&self.settings).unwrap(),
+            adapters::simulation(self.root.path()).unwrap(),
+            Bootstrap {
+                repos: vec![Repository {
+                    owner: "owner".into(),
+                    name: "sandbox".into(),
+                    installation: 3,
+                }],
+                rob: 42,
+                slots: 3,
+                pool: 16,
+                fail_fast: false,
+                operations: None,
+            },
+        )
+        .unwrap();
+        controller.set_repository_generation(&self.config.github.repos);
+        self.controller = Some(controller);
+    }
+    fn arm(&mut self, index: usize, phase: Phase) {
+        let mut node = self.c().world().unwrap().nodes[index];
+        node.phase = phase;
+        node.pos = if phase == Phase::Making {
+            2
+        } else if matches!(phase, Phase::Planning { .. }) {
+            1
+        } else {
+            0
+        };
+        node.effect = None;
+        node.ticket = None;
+        node.job = None;
+        node.run = if phase == Phase::Unplanned {
+            None
+        } else {
+            Some(node.generation)
+        };
+        node.pool = node.run.is_some();
+        node.holds = phase == Phase::Making;
+        node.worktree = node.holds;
+        node.paused = false;
+        node.waiting_incident = false;
+        node.credit.ready = true;
+        node.credit.start = 4;
+        let mut store = Store::open(&self.settings).unwrap();
+        let mut commit = Commit::new(
+            format!("arm-{}", self.sequence),
+            json!(null),
+            &store.load().unwrap(),
+        );
+        self.sequence += 1;
+        commit.rows.push(RowChange::Put {
+            table: "nodes".into(),
+            id: index.to_string(),
+            value: json!(node),
+        });
+        store.commit(&commit).unwrap();
+    }
+    fn observe(&mut self, observation: Observation) {
+        self.sequence += 1;
+        let key = format!("observation-{}", self.sequence);
+        self.c().observe(&key, observation).unwrap();
+        for _ in 0..50 {
+            if !self
+                .c()
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "inbox")
+            {
+                return;
+            }
+            assert!(self.c().drive_once().unwrap());
+        }
+        panic!("observation was not consumed");
+    }
+    fn plan(&mut self, index: usize, files: &[String]) {
+        let generation = self.c().world().unwrap().nodes[index].generation;
+        self.observe(Observation::Plan {
+            node: NodeId(index as u64),
+            generation,
+            paths: files.to_vec(),
+            fits: true,
+        });
+    }
+    fn scope(&mut self, index: usize) -> Option<Value> {
+        self.c()
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|r| r.table == "declared_scopes" && r.id == index.to_string())
+            .map(|r| r.value.clone())
+    }
+    fn locks(&mut self, index: usize) -> Vec<String> {
+        let world = self.c().world().unwrap();
+        let snapshot = self.c().snapshot().unwrap();
+        world
+            .files(world.nodes[index].footprint)
+            .unwrap()
+            .map(|file| {
+                snapshot
+                    .interned
+                    .iter()
+                    .find(|row| row.kind == tl3_store::InternKind::Path && row.id == file.0 as i64)
+                    .unwrap()
+                    .value
+                    .clone()
+            })
+            .collect()
+    }
+    fn delivery(&mut self, index: usize) -> Delivery {
+        self.c()
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .iter()
+            .filter_map(|e| serde_json::from_value::<Delivery>(e.payload.clone()).ok())
+            .filter(|d| d.node() == NodeId(index as u64))
+            .last()
+            .expect("kernel delivery")
+    }
+}
+fn files(authored: &[&str], generated: &[&str]) -> Vec<String> {
+    authored
+        .iter()
+        .chain(generated)
+        .map(|s| (*s).into())
+        .collect()
+}
+
+/// #845/Q27: the production controller must not serialize disjoint authored work.
+#[test]
+fn pb_2819_and_2822_hold_slots_concurrently() {
+    let mut f = Fixture::new(2, &["**/BUILD.bazel"], true);
+    f.plan(0, &files(&RECEIPT, &OUTPUTS));
+    f.plan(1, &files(&DIGEST, &OUTPUTS));
+    let world = f.c().world().unwrap();
+    assert!(
+        world.nodes[0].holds && world.nodes[1].holds,
+        "PB #2819 and #2822 must hold slots together"
+    );
+    assert_eq!(f.locks(0).len(), 2);
+}
+/// #845/Q48: real authored overlap still excludes the younger leaf.
+#[test]
+fn pb_2819_and_2821_still_serialize() {
+    let mut f = Fixture::new(2, &["**/BUILD.bazel"], true);
+    for index in 0..2 {
+        f.plan(index, &files(&RECEIPT, &OUTPUTS));
+    }
+    let world = f.c().world().unwrap();
+    assert!(world.nodes[0].holds);
+    assert!(!world.nodes[1].holds);
+    assert!(world.nodes[1].ticket.is_some());
+}
+/// #845: generated overlap cannot fill the planning wait queue.
+#[test]
+fn generated_overlap_does_not_close_planning_admission() {
+    let mut f = Fixture::new(5, &["gen/**/*.json"], true);
+    for index in 0..4 {
+        f.plan(
+            index,
+            &files(&[&format!("src/{index}.rs")], &["gen/shared.json"]),
+        );
+    }
+    f.arm(4, Phase::Unplanned);
+    f.plan(4, &["ignored.rs".into()]);
+    assert!(
+        matches!(
+            f.c().world().unwrap().nodes[4].phase,
+            Phase::Planning { .. }
+        ),
+        "only one capacity waiter remains, so planning stays open"
+    );
+}
+/// #845: generic generation keeps declared scope and excludes only generated locks.
+#[test]
+fn generic_generator_preserves_scope_delivery_and_restart() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    let declared = files(
+        &["src/input.rs"],
+        &["gen/manifest.json", "gen/nested/other.json"],
+    );
+    f.plan(0, &declared);
+    assert_eq!(
+        f.scope(0),
+        Some(json!(declared)),
+        "accepted PlanLeaf persists full declared scope"
+    );
+    assert_eq!(f.locks(0), ["src/input.rs"]);
+    let delivery = f.delivery(0);
+    assert_eq!(delivery.paths, declared);
+    let before = f.c().world().unwrap();
+    f.restart();
+    assert_eq!(f.c().world().unwrap(), before);
+    assert_eq!(f.scope(0), Some(json!(declared)));
+}
+/// #845: legacy and no-generator leaves retain their original exclusive scope.
+#[test]
+fn no_generator_and_generated_only_fallback_keep_full_locks() {
+    for generator in [false, true] {
+        let mut f = Fixture::new(1, &["gen/**/*.json"], generator);
+        let declared = if generator {
+            files(&[], &["gen/manifest.json"])
+        } else {
+            files(&["src/input.rs"], &["gen/manifest.json"])
+        };
+        f.plan(0, &declared);
+        let mut expected = declared.clone();
+        expected.sort();
+        let mut actual = f.locks(0);
+        actual.sort();
+        assert_eq!(actual, expected);
+    }
+}
+/// #845: stale and non-fitting replies do not replace committed scope.
+#[test]
+fn rejected_or_stale_plan_does_not_write_scope() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    for (generation, fits) in [(generation + 1, true), (generation, false)] {
+        f.observe(Observation::Plan {
+            node: NodeId(0),
+            generation,
+            paths: files(&["src/input.rs"], &["gen/manifest.json"]),
+            fits,
+        });
+        assert!(f.scope(0).is_none());
+    }
+}
+/// #845: growing files must retain declared generated paths across restart.
+#[test]
+fn maker_growth_repartitions_full_declared_scope() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    f.plan(0, &files(&["src/input.rs"], &["gen/manifest.json"]));
+    f.arm(0, Phase::Making);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply { node: NodeId(0), generation, role: "maker".into(), model: None, plan_check: None, reply: json!({"kind":"needs_files","files":[{"path":"src/extra.rs","why":"input"},{"path":"gen/extra.json","why":"output"}],"fits":true}) });
+    assert_eq!(
+        f.scope(0),
+        Some(json!([
+            "src/input.rs",
+            "gen/manifest.json",
+            "src/extra.rs",
+            "gen/extra.json"
+        ]))
+    );
+    let mut locks = f.locks(0);
+    locks.sort();
+    assert_eq!(locks, ["src/extra.rs", "src/input.rs"]);
+    f.restart();
+    assert_eq!(f.scope(0).unwrap().as_array().unwrap().len(), 4);
+}
+/// #845: changing a declared generated file is valid; a matching undeclared file is not.
+#[test]
+fn checks_authorize_only_declared_generated_outputs() {
+    for (path, authorized) in [("gen/manifest.json", true), ("gen/undeclared.json", false)] {
+        let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+        f.plan(0, &files(&["src/input.rs"], &["gen/manifest.json"]));
+        let head = {
+            let mut store = Store::open(&f.settings).unwrap();
+            store.intern_commit("0", &"a".repeat(40)).unwrap()
+        };
+        let mut node = f.c().world().unwrap().nodes[0];
+        node.phase = Phase::Checking;
+        node.pos = 1;
+        node.run = None;
+        node.pool = false;
+        node.job = Some(node.generation);
+        node.effect = None;
+        node.head = Some(tl3_kernel::HeadId(head.get() as u64));
+        node.worktree = true;
+        let mut store = Store::open(&f.settings).unwrap();
+        let mut commit = Commit::new("checking", json!(null), &store.load().unwrap());
+        commit.rows.push(RowChange::Put {
+            table: "nodes".into(),
+            id: "0".into(),
+            value: json!(node),
+        });
+        store.commit(&commit).unwrap();
+        f.observe(Observation::Checks {
+            node: NodeId(0),
+            generation: node.generation,
+            sha: "a".repeat(40),
+            changed_paths: vec![path.into()],
+            failed_tests: vec![],
+            report: true,
+            pass: true,
+            results: vec![],
+            base_sha: "b".repeat(40),
+            action_key: "scope-check".into(),
+        });
+        let world = f.c().world().unwrap();
+        assert_eq!(matches!(world.nodes[0].phase, Phase::Reviewing), authorized);
+    }
+}
