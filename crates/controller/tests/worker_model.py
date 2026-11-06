@@ -115,18 +115,18 @@ class ConsistencyModel(FakeMessagesListChatModel):
         assert self.turns <= 2, "consistency correction must stay within one turn"
         if self.turns == 2:
             assert not self.offered
-            refusal = next(line for line in messages[-1].content.splitlines()
-                           if line.startswith("edit.uncovered:"))
+            assert "edit.uncovered:" in messages[-1].content
+            refusal = messages[-1].content.split("edit.uncovered:", 1)[1].splitlines()[0]
             assert 'symbol "tests/test_greeting.py::test_control"' in refusal
             _, separator, rendered = refusal.partition(" Allowed: schema ")
             assert separator
             constraint, _ = json.JSONDecoder().raw_decode(rendered)
             allowed = Allowed("schema", constraint)
             repair = json.loads(self.responses[1].content)
-            assert allowed.accepts(repair)
+            assert allowed.accepts(repair), "row allowed set must accept the scripted repair"
             unrelated = copy.deepcopy(repair)
             unrelated["files"].append("unrelated.py")
-            assert not allowed.accepts(unrelated)
+            assert not allowed.accepts(unrelated), "row allowed set must reject unrelated file changes"
             assert 'Permitted edit: replace reply field ""' in refusal
         with marker.with_suffix(".consistency-turns").open("a") as output:
             output.write(json.dumps({"tools": self.offered}) + "\n")
