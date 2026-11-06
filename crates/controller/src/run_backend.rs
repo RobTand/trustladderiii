@@ -1,7 +1,7 @@
 //! Shared execution transport. Daytime base/head judging remains with the harness.
 pub mod cli;
-pub mod schema;
 pub mod prepared;
+pub mod schema;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,52 +23,98 @@ pub struct BackendError {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ErrorCode { InvalidRequest, Unavailable, AcceptanceUnknown, EvidenceInvalid, Conflict }
+pub enum ErrorCode {
+    InvalidRequest,
+    Unavailable,
+    AcceptanceUnknown,
+    EvidenceInvalid,
+    Conflict,
+}
 
 impl BackendError {
     pub fn invalid(message: &str) -> Self {
-        Self { code: ErrorCode::InvalidRequest, message: message.into() }
+        Self {
+            code: ErrorCode::InvalidRequest,
+            message: message.into(),
+        }
     }
     pub fn unknown(message: &str) -> Self {
-        Self { code: ErrorCode::AcceptanceUnknown, message: message.into() }
+        Self {
+            code: ErrorCode::AcceptanceUnknown,
+            message: message.into(),
+        }
     }
 }
 
 impl From<std::io::Error> for BackendError {
     fn from(_: std::io::Error) -> Self {
-        Self { code: ErrorCode::Unavailable, message: "backend I/O unavailable; retain intent and reattach".into() }
+        Self {
+            code: ErrorCode::Unavailable,
+            message: "backend I/O unavailable; retain intent and reattach".into(),
+        }
     }
 }
 impl From<serde_json::Error> for BackendError {
     fn from(_: serde_json::Error) -> Self {
-        Self { code: ErrorCode::EvidenceInvalid, message: "invalid or incompatible structured evidence".into() }
+        Self {
+            code: ErrorCode::EvidenceInvalid,
+            message: "invalid or incompatible structured evidence".into(),
+        }
     }
 }
 
 pub fn token(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 128
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
 pub fn hex(value: &str, length: usize) -> bool {
-    value.len() == length && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == length
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 pub fn generation(value: &str) -> bool {
-    token(value) || value.split_once('/').is_some_and(|(run, invocation)| token(run) && hex(invocation, 32))
+    token(value)
+        || value
+            .split_once('/')
+            .is_some_and(|(run, invocation)| token(run) && hex(invocation, 32))
 }
 pub fn f58(value: &str) -> bool {
     let rest = value.strip_prefix('f').or_else(|| value.strip_prefix('ƒ'));
-    rest.is_some_and(|s| !s.is_empty() && s.len() <= 16
-        && s.bytes().all(|b| b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".contains(&b)))
+    rest.is_some_and(|s| {
+        !s.is_empty()
+            && s.len() <= 16
+            && s.bytes()
+                .all(|b| b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".contains(&b))
+    })
 }
 pub fn absolute(path: &std::path::Path) -> bool {
-    path.is_absolute() && path.to_str().is_some_and(|s| s.len() <= 4096 && !s.chars().any(char::is_control))
-        && path.components().all(|c| matches!(c, std::path::Component::RootDir | std::path::Component::Normal(_)))
+    path.is_absolute()
+        && path
+            .to_str()
+            .is_some_and(|s| s.len() <= 4096 && !s.chars().any(char::is_control))
+        && path.components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::RootDir | std::path::Component::Normal(_)
+            )
+        })
 }
 
 impl BackendId {
     pub fn validate(&self) -> Result<()> {
-        if !generation(&self.instance) || !self.uri.starts_with("local:///") || self.uri.len() > 4096 || self.uri.chars().any(char::is_control) || !f58(&self.job) {
-            return Err(BackendError::invalid("expected Flux instance generation and f58 job ID; PB keys are unsupported"));
+        if !generation(&self.instance)
+            || !self.uri.starts_with("local:///")
+            || self.uri.len() > 4096
+            || self.uri.chars().any(char::is_control)
+            || !f58(&self.job)
+        {
+            return Err(BackendError::invalid(
+                "expected Flux instance generation and f58 job ID; PB keys are unsupported",
+            ));
         }
         Ok(())
     }
@@ -85,7 +131,9 @@ pub struct BackendId {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum BackendTag { Flux }
+pub enum BackendTag {
+    Flux,
+}
 
 /// Host-runner plumbing, not scheduler attestation or own-cgroup qualification.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -108,8 +156,16 @@ pub struct LaunchContext {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LaunchPlacement {
-    Observed { allocation: BlobRef, topology: BlobRef, host: String, rank: u32, os_pus: Vec<u32> },
-    Unqualified { reason: String },
+    Observed {
+        allocation: BlobRef,
+        topology: BlobRef,
+        host: String,
+        rank: u32,
+        os_pus: Vec<u32>,
+    },
+    Unqualified {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -135,7 +191,9 @@ pub struct ProgressPolicy {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExecutionRuntime {
-    Native { interpreter: PathBuf },
+    Native {
+        interpreter: PathBuf,
+    },
     RootlessPodman {
         mode: ContainerMode,
         executable: PathBuf,
@@ -145,7 +203,6 @@ pub enum ExecutionRuntime {
         memory_limit_bytes: Option<std::num::NonZeroU64>,
     },
 }
-
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -182,7 +239,10 @@ pub struct RuntimeIdentity {
 }
 impl RuntimeIdentity {
     pub fn placement(&self) -> Placement {
-        Placement { architecture: self.architecture.clone(), host_dependency: self.host_dependency.clone() }
+        Placement {
+            architecture: self.architecture.clone(),
+            host_dependency: self.host_dependency.clone(),
+        }
     }
 }
 
@@ -195,7 +255,10 @@ pub struct Placement {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct HostDependency { pub host: String, pub reason: String }
+pub struct HostDependency {
+    pub host: String,
+    pub reason: String,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -246,16 +309,32 @@ pub struct Reservation {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum MemoryGuarantee { DeclaredOnly, RequireAdmission }
+pub enum MemoryGuarantee {
+    DeclaredOnly,
+    RequireAdmission,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Suite {
-    Full { membership_digest: String },
-    SelectedCases { membership_digest: String },
-    WorkerTests { input_digest: String },
-    Generator { input_digest: String },
-    DaytimeChecks { plan_digest: String, base: String, head: String, reviewed: Option<String> },
+    Full {
+        membership_digest: String,
+    },
+    SelectedCases {
+        membership_digest: String,
+    },
+    WorkerTests {
+        input_digest: String,
+    },
+    Generator {
+        input_digest: String,
+    },
+    DaytimeChecks {
+        plan_digest: String,
+        base: String,
+        head: String,
+        reviewed: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -301,21 +380,43 @@ pub struct Owner {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-pub enum Ending { Passed, Failed, Refused, InfraLost, Cancelled }
+pub enum Ending {
+    Passed,
+    Failed,
+    Refused,
+    InfraLost,
+    Cancelled,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WaitStatus {
-    Exited { raw: u32, code: u8 },
-    Signalled { raw: u32, signal: u8, core_dumped: bool },
-    Other { raw: u32 },
+    Exited {
+        raw: u32,
+        code: u8,
+    },
+    Signalled {
+        raw: u32,
+        signal: u8,
+        core_dumped: bool,
+    },
+    Other {
+        raw: u32,
+    },
 }
 
 pub fn decode_wait_status(raw: u32) -> WaitStatus {
     if raw & 0x7f == 0 && raw <= 0xffff {
-        WaitStatus::Exited { raw, code: ((raw >> 8) & 0xff) as u8 }
+        WaitStatus::Exited {
+            raw,
+            code: ((raw >> 8) & 0xff) as u8,
+        }
     } else if raw & 0x7f != 0x7f && raw <= 0xff {
-        WaitStatus::Signalled { raw, signal: (raw & 0x7f) as u8, core_dumped: raw & 0x80 != 0 }
+        WaitStatus::Signalled {
+            raw,
+            signal: (raw & 0x7f) as u8,
+            core_dumped: raw & 0x80 != 0,
+        }
     } else {
         WaitStatus::Other { raw }
     }
@@ -325,10 +426,18 @@ pub fn decode_wait_status(raw: u32) -> WaitStatus {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NativeFact {
     Start,
-    Finish { status: WaitStatus },
-    Exception { exception_type: String, severity: u32, note: String },
+    Finish {
+        status: WaitStatus,
+    },
+    Exception {
+        exception_type: String,
+        severity: u32,
+        note: String,
+    },
     Clean,
-    Other { name: String },
+    Other {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -371,7 +480,9 @@ pub struct Receipt {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ReceiptIssuer { Tl3 }
+pub enum ReceiptIssuer {
+    Tl3,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -416,11 +527,21 @@ pub struct InputManifest {
 }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct InputFile { pub path: PathBuf, pub sha256: String }
+pub struct InputFile {
+    pub path: PathBuf,
+    pub sha256: String,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportOutcome { Passed, TestsFailed, ChecksCompleted, WorkerPayloadCompleted, RefusedBeforeTests, EnvironmentLost }
+pub enum ReportOutcome {
+    Passed,
+    TestsFailed,
+    ChecksCompleted,
+    WorkerPayloadCompleted,
+    RefusedBeforeTests,
+    EnvironmentLost,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -434,7 +555,14 @@ pub struct CaseFact {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum CaseOutcome { Passed, Failed, Error, Skipped, Xfailed, Xpassed }
+pub enum CaseOutcome {
+    Passed,
+    Failed,
+    Error,
+    Skipped,
+    Xfailed,
+    Xpassed,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -445,7 +573,10 @@ pub struct Membership {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
-pub struct CaseIdentity { pub target: String, pub name: String }
+pub struct CaseIdentity {
+    pub target: String,
+    pub name: String,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -458,13 +589,24 @@ pub enum Submission {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Observation {
-    Terminal { binding: Option<RunBinding>, terminal: Terminal },
-    Unknown { binding: Option<RunBinding>, reason: String },
+    Terminal {
+        binding: Option<RunBinding>,
+        terminal: Terminal,
+    },
+    Unknown {
+        binding: Option<RunBinding>,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum Availability { Available, Busy, Incompatible, Unknown }
+pub enum Availability {
+    Available,
+    Busy,
+    Incompatible,
+    Unknown,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -481,7 +623,12 @@ pub struct Probe {
 /// Implementations own dispatch/recovery, event interpretation and evidence retention.
 pub trait RunBackend {
     fn submit(&self, request: Request, intent: SubmissionIntent) -> Result<Submission>;
-    fn attach(&self, owner: &Owner, stop: &WatchStop, emit: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation>;
+    fn attach(
+        &self,
+        owner: &Owner,
+        stop: &WatchStop,
+        emit: &mut dyn FnMut(&Event) -> Result<()>,
+    ) -> Result<Observation>;
     fn cancel(&self, owner: &Owner) -> Result<CancelAck>;
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe>;
     fn liveness(&self, owner: &Owner) -> Result<Liveness>;
@@ -490,7 +637,11 @@ pub trait RunBackend {
     fn validate_allocation(&self, owner: &Owner, facts: &AllocationInput) -> Result<CpuGrant>;
     fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult>;
     fn worker_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<WorkerPayload>;
-    fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport>;
+    fn daytime_payload(
+        &self,
+        owner: &Owner,
+        terminal: &Terminal,
+    ) -> Result<crate::contracts::report::CheckReport>;
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -528,27 +679,42 @@ pub struct WatchStop {
 }
 
 #[derive(Default)]
-struct WatchState { stopped: bool, groups: std::collections::BTreeSet<u32> }
+struct WatchState {
+    stopped: bool,
+    groups: std::collections::BTreeSet<u32>,
+}
 
 impl WatchStop {
     pub fn stop(&self) {
         let mut state = self.inner.lock().expect("watch stop mutex");
         state.stopped = true;
-        for group in &state.groups { kill_group(*group); }
+        for group in &state.groups {
+            kill_group(*group);
+        }
     }
-    pub fn is_stopped(&self) -> bool { self.inner.lock().expect("watch stop mutex").stopped }
+    pub fn is_stopped(&self) -> bool {
+        self.inner.lock().expect("watch stop mutex").stopped
+    }
     pub(crate) fn register(&self, group: u32) {
         let mut state = self.inner.lock().expect("watch stop mutex");
         state.groups.insert(group);
-        if state.stopped { kill_group(group); }
+        if state.stopped {
+            kill_group(group);
+        }
     }
     pub(crate) fn unregister(&self, group: u32) {
-        self.inner.lock().expect("watch stop mutex").groups.remove(&group);
+        self.inner
+            .lock()
+            .expect("watch stop mutex")
+            .groups
+            .remove(&group);
     }
 }
 
 pub(crate) fn kill_group(group: u32) {
-    if let Ok(group) = i32::try_from(group) && let Some(group) = rustix::process::Pid::from_raw(group) {
+    if let Ok(group) = i32::try_from(group)
+        && let Some(group) = rustix::process::Pid::from_raw(group)
+    {
         let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
     }
 }
@@ -671,7 +837,10 @@ pub struct RuntimeOwnership {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ProcessIdentity { pub pid: u32, pub start_ticks: u64 }
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub start_ticks: u64,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -684,12 +853,19 @@ pub struct ContainerOwnership {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ScopeIdentity { pub unit: String, pub invocation_id: String, pub cgroup: String }
+pub struct ScopeIdentity {
+    pub unit: String,
+    pub invocation_id: String,
+    pub cgroup: String,
+}
 
 /// One bounded JSON stdin request to the trusted independent runtime cleanup entry.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct CleanupInput { pub schema: String, pub ownership: RuntimeOwnership }
+pub struct CleanupInput {
+    pub schema: String,
+    pub ownership: RuntimeOwnership,
+}
 
 /// Raw observations from the trusted host helper, interpreted only by Rust.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -751,13 +927,21 @@ pub struct CleanupResult {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerPayload {
-    Tests { summary: BlobRef, symptom_runs: Vec<BlobRef> },
-    Generator { artifact: BlobRef },
+    Tests {
+        summary: BlobRef,
+        symptom_runs: Vec<BlobRef>,
+    },
+    Generator {
+        artifact: BlobRef,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct WorkerCollection { pub report: BlobRef, pub payload: WorkerPayload }
+pub struct WorkerCollection {
+    pub report: BlobRef,
+    pub payload: WorkerPayload,
+}
 
 /// Existing generator bounds: decoded outputs 32 MiB, encoded artifact 48 MiB.
 pub const GENERATOR_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
@@ -776,6 +960,7 @@ pub struct PrepareBundleInput {
     pub trusted_root: PathBuf,
     pub producer_commit: String,
     pub container_interpreter: PathBuf,
+    pub cleanup_arguments: Vec<String>,
     pub image_inventory: PathBuf,
     pub image_inspect: PathBuf,
     pub profile: String,
@@ -785,19 +970,35 @@ pub struct PrepareBundleInput {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ModePrerequisites { pub no_cgroups_supported: bool, pub init_available: bool, pub user_scope_supported: bool }
+pub struct ModePrerequisites {
+    pub no_cgroups_supported: bool,
+    pub init_available: bool,
+    pub user_scope_supported: bool,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct CodeInventory { pub interpreter: PathBuf, pub files: Vec<CodeFile> }
+pub struct CodeInventory {
+    pub interpreter: PathBuf,
+    pub files: Vec<CodeFile>,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct CodeFile { pub path: PathBuf, pub sha256: String, pub bytes: u64 }
+pub struct CodeFile {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub bytes: u64,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct BundleFile { pub path: PathBuf, pub sha256: String, pub bytes: u64, pub mode: u32 }
+pub struct BundleFile {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub bytes: u64,
+    pub mode: u32,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -809,6 +1010,7 @@ pub struct RuntimeBundleManifest {
     pub interpreter: PathBuf,
     pub podman: PathBuf,
     pub container_interpreter: PathBuf,
+    pub cleanup_arguments: Vec<String>,
     pub collector: PathBuf,
     pub cleanup: PathBuf,
     pub trusted_root: PathBuf,
@@ -817,19 +1019,38 @@ pub struct RuntimeBundleManifest {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct PreparedRuntime { pub bundle: BlobRef, pub runner: RunnerIdentity, pub runtime: RuntimeIdentity, pub scratch_root: PathBuf }
+pub struct PreparedRuntime {
+    pub bundle: BlobRef,
+    pub runner: RunnerIdentity,
+    pub runtime: RuntimeIdentity,
+    pub scratch_root: PathBuf,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct EventCursor { pub sequence: u64, pub digest: String }
+pub struct EventCursor {
+    pub sequence: u64,
+    pub digest: String,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum NativePhase { Queued, Running, Finishing, Terminal, Unknown }
+pub enum NativePhase {
+    Queued,
+    Running,
+    Finishing,
+    Terminal,
+    Unknown,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ProgressAuthority { Historical, FreshNative, CommittedTerminal, Unknown }
+pub enum ProgressAuthority {
+    Historical,
+    FreshNative,
+    CommittedTerminal,
+    Unknown,
+}
 
 /// Persisted before the event callback. Historical progress never proves current liveness.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

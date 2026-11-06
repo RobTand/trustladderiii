@@ -2550,6 +2550,12 @@
         "cleanup": {
           "type": "string"
         },
+        "cleanup_arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "code_inventory": {
           "type": "string"
         },
@@ -2593,6 +2599,7 @@
         "trusted_root",
         "producer_commit",
         "container_interpreter",
+        "cleanup_arguments",
         "image_inventory",
         "image_inspect",
         "profile",
