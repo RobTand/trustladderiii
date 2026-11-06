@@ -70,7 +70,7 @@ impl Shared {
 pub struct Waits {
     shared: Arc<Shared>,
     watcher: backend_watch::Handle,
-    subscriptions: BTreeMap<String, backend::Owner>,
+    subscriptions: BTreeMap<String, Vec<backend::Owner>>,
 }
 
 impl Waits {
@@ -79,18 +79,20 @@ impl Waits {
         fs::create_dir_all(root)?;
         let shared = Arc::new(Shared { root: root.to_owned(), options, backend: backend.clone() });
         let mut recovered = Vec::new();
+        let mut subscriptions = BTreeMap::<String, Vec<backend::Owner>>::new();
         for entry in fs::read_dir(root)? {
             let path = entry?.path();
             let Some(id) = path.file_stem().and_then(|id| id.to_str()).filter(|id| backend::hex(id, 64)) else { continue; };
             let wait = shared.load(&format!("worker:{id}"))?;
-            shared.owned(&wait.owner)?;
+            let (_, _, profile) = shared.owned(&wait.owner)?;
+            subscriptions.entry(durable::digest(&serde_json::to_vec(&profile.delivery)?)).or_default().push(wait.owner.clone());
             recovered.push(wait.owner);
         }
         let finishing = shared.clone();
         let progress = shared.clone();
         let (watcher, source) = backend_watch::Source::new(backend, recovered,
             Arc::new(move |owner, observation| finishing.retain_observation(owner, observation)));
-        Ok((Self { shared, watcher, subscriptions: BTreeMap::new() }, source.with_progress(Arc::new(move |owner, event| progress.retain_progress(owner, event)))))
+        Ok((Self { shared, watcher, subscriptions }, source.with_progress(Arc::new(move |owner, event| progress.retain_progress(owner, event)))))
     }
 
     /// Persist before dispatch. Unknown acceptance retains the same reference and inputs.
@@ -109,10 +111,11 @@ impl Waits {
 
 impl WorkerWaits for Waits {
     fn watch_wait(&mut self, delivery: &Delivery, wait: Option<&tl3_store::ExternalWait>) -> Result<()> {
+        let subscription = durable::digest(&serde_json::to_vec(delivery)?);
         let Some(wait) = wait else {
-            if let Some(owner) = self.subscriptions.get(&delivery.key) {
-                self.watcher.unwatch(owner.clone())?;
-                self.subscriptions.remove(&delivery.key);
+            if let Some(owners) = self.subscriptions.get(&subscription) {
+                for owner in owners { self.watcher.unwatch(owner.clone())?; }
+                self.subscriptions.remove(&subscription);
             }
             return Ok(());
         };
@@ -122,12 +125,13 @@ impl WorkerWaits for Waits {
         if serde_json::to_vec(&profile.delivery)? != serde_json::to_vec(delivery)? {
             return Err(Error::Invalid("worker wait belongs to another delivery attempt"));
         }
-        if let Some(previous) = self.subscriptions.get(&delivery.key)
-            && *previous != retained.owner {
-            self.watcher.unwatch(previous.clone())?;
+        if let Some(previous) = self.subscriptions.get(&subscription) {
+            for owner in previous.iter().filter(|owner| **owner != retained.owner) {
+                self.watcher.unwatch(owner.clone())?;
+            }
         }
         self.watcher.watch(retained.owner.clone())?;
-        self.subscriptions.insert(delivery.key.clone(), retained.owner);
+        self.subscriptions.insert(subscription, vec![retained.owner]);
         Ok(())
     }
 
