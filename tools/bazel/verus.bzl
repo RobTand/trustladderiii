@@ -1098,6 +1098,11 @@ def verus_proofs():
             "review_retry_room_shape": ("kernel::port_review_retry_lemmas#room_shape", 1),
             "review_failure_restarted": ("kernel::port_review_failure#restarted", 1),
             "review_failure_incident": ("kernel::port_review_failure#incident", 1),
+            "retirement_handler_ci_ignored": ("kernel::retirement_handler_lemmas#ci_ignored", 1),
+            "retirement_handler_ci_retry": ("kernel::retirement_handler_lemmas#ci_retry", 1),
+            "retirement_handler_ci_infrastructure": ("kernel::retirement_handler_lemmas#ci_infrastructure", 1),
+            "retirement_handler_recheck_shape": ("kernel::retirement_handler_lemmas#recheck_shape", 1),
+            "retirement_handler_recheck_progress": ("kernel::retirement_handler_lemmas#recheck_progress", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
