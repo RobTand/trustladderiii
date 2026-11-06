@@ -32,7 +32,7 @@ def test_postmortem_model_schema_is_judge_result():
 
 
 def test_reviewer_rendered_prompt_accepts_all_approved_red_classes():
-    """tessera #1455: review must accept the state table's full demonstrating RED set."""
+    """tessera #1455: review must accept the state table's RED sets for each check kind."""
     from tl3_workers import runtime
 
     prompt = runtime.role_prompt(ROLES["reviewer"])
@@ -40,6 +40,9 @@ def test_reviewer_rendered_prompt_accepts_all_approved_red_classes():
                      .split("\n## Generation", 1)[0].split())
     assert "red_message applies only to assertion RED" in proof, proof
     for instruction in (
+        "A forced check accepts only an assertion failure or its declared symptom.",
+        "A missing name never counts for a forced check.",
+        "A reproducing check accepts only an assertion failure or a missing name that the round adds.",
         "an assertion failure",
         "a missing name that the leaf adds",
         "the explicitly declared symptom",
