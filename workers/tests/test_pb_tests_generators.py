@@ -43,6 +43,60 @@ def test_request_132_git_index_generation_lands_before_independent_check(generat
         assert "--anywhere" in args and "--detach" in args
 
 
+def test_validator_timeout_kills_and_reaps_before_generator_import(
+        generator_repo, generator_backend, tmp_path, monkeypatch):
+    import os
+    import signal
+    import sys
+    import checker_stub
+    from tl3_harness import generator
+    from tl3_workers import pb_tests, reply_check
+
+    case = 'tests/test_pb_tests_generators.py::test_request_132_git_index_generation_lands_before_independent_check'
+    cursor = tmp_path / 'timeout-replay'
+    child = tmp_path / 'blocked-validator'
+    child.write_text(f'#!{sys.executable}\nimport time\ntime.sleep(1000)\n')
+    child.chmod(0o755)
+    monkeypatch.setattr(reply_check, 'TIMEOUT_SECONDS', 0.2)
+    monkeypatch.setattr(reply_check, 'PB_TIMEOUT_SECONDS', 0.2, raising=False)
+    launched = []
+    failures = []
+    popen = subprocess.Popen
+
+    def observed(command, *args, **kwargs):
+        process = popen(command, *args, **kwargs)
+        if command[0] == str(child):
+            launched.append(process)
+        return process
+
+    def checker(command, document, **kwargs):
+        if command == ['check-pb', 'generator-finish']:
+            try:
+                return reply_check.run_check(command, document, binary=str(child), **kwargs)
+            except reply_check.ReplyCheckInfrastructureError as error:
+                failures.append(error)
+                raise
+        return checker_stub.replay(case, cursor, command, document)
+
+    monkeypatch.setattr(subprocess, 'Popen', observed)
+    monkeypatch.setattr(pb_tests, 'run_check', checker)
+    before = generator.manifest(generator_repo)
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    with tree:
+        result = generate()
+        assert result['status'] == 'failed', result
+        assert result['message'] == 'PB evidence validator timed out'
+        assert result['phase'] == 'artifact_validation'
+        assert tree.generation_receipt == result
+        assert json.loads(tree.generator_state.read_text())['phase'] == 'submitted'
+    assert len(failures) == len(launched) == 1
+    assert launched[0].returncode == -signal.SIGKILL
+    with pytest.raises(ChildProcessError):
+        os.waitpid(launched[0].pid, os.WNOHANG)
+    assert generator.manifest(generator_repo) == before
+    assert not list(generator_repo.rglob('.tl3-generator-import'))
+
+
 @pytest.mark.parametrize('damage', ['none', 'contract', 'source', 'receipt_tree'])
 @pytest.mark.durability
 def test_exhausted_maker_recovers_completed_generator_receipt_without_resubmission(

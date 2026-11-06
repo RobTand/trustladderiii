@@ -333,6 +333,35 @@ compare({'ending': oracle.ending(raw.encode()), 'log': raw})
 }
 
 #[test]
+fn review_literal_private_number_keys_match_python_cli() {
+    let script = r#"
+import json,sys
+from tl3_workers.reply_check import run_check
+key = '$serde_json::private::Number'
+cases = [{key: text} for text in ['42', '18446744073709551616', 'literal']]
+cases += [{key: '42', 'other': 1}, {'other': 1, key: '42'}]
+for depth in range(5):
+    value = {key: '42'}
+    for _ in range(depth):
+        value = {'nested': [value]}
+    cases.append(value)
+for value in cases:
+    wanted = json.dumps(value, sort_keys=True, separators=(',', ':'))
+    actual = run_check(['check-pb', 'canonical'], {'value': value})
+    assert actual == {'return': wanted}, (value, wanted, actual)
+print(json.dumps({'done': len(cases)}))
+"#;
+    assert_eq!(drive(script, &[]), 10);
+    review_parity(
+        r#"
+key = '$serde_json::private::Number'
+for value in [{key: '42'}, {'nested': [{key: 'literal'}]}]:
+    compare(oracle.log_input({**oracle.completed(), 'metadata': value}))
+"#,
+    );
+}
+
+#[test]
 fn review_json_decode_errors_match_real_python_json() {
     review_parity(
         r#"

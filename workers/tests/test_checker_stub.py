@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import base64
 import errno
+import hashlib
 import json
 import math
 import os
@@ -300,6 +301,44 @@ def test_pb_replay_rejects_changed_decision_facts_without_advancing(tmp_path, mo
     with pytest.raises(RuntimeError, match="changed PB fixture fact"):
         checker_stub.replay("review-r1", cursor, row["command"], current)
     assert not cursor.exists()
+
+
+@pytest.mark.parametrize('prepared', [False, True])
+@pytest.mark.parametrize('change', ['space', 'padded'])
+def test_pb_replay_rejects_raw_whitespace_even_when_decoded_json_matches(tmp_path, monkeypatch, prepared, change):
+    row = next(row for rows in checker_stub.cases().values() for row in rows
+               if row['command'] == ['check-pb', 'summary-finish'] and 'return' in row['response'])
+    current = json.loads(json.dumps(row['document']))
+    raw = base64.b64decode(current['raw'])
+    padding = 1 if change == 'space' else 1_048_577 - len(raw)
+    assert padding > 0
+    raw = raw.rstrip(b'\n') + b' ' * padding + b'\n'
+    current['raw'] = base64.b64encode(raw).decode()
+    current['ending']['result']['stdout'].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+    monkeypatch.setattr(checker_stub, 'cases', lambda: {'r2-padding': [row]})
+    cursor = tmp_path / 'cursor'
+    if prepared:
+        checker_stub.prepare_replay('r2-padding', cursor)
+    with pytest.raises(RuntimeError, match='changed PB fixture fact'):
+        checker_stub.replay('r2-padding', cursor, row['command'], current)
+    assert not cursor.exists()
+
+
+def test_pb_transport_deadline_has_tenfold_loaded_artifact_margin(tmp_path, monkeypatch):
+    child = tmp_path / 'validator'
+    child.write_text(f'#!{sys.executable}\n' + 'print(\'{"return": null}\')\n')
+    child.chmod(0o755)
+    original = subprocess.run
+    deadlines = []
+
+    def observed(command, *args, **kwargs):
+        if command[0] == str(child):
+            deadlines.append(kwargs['timeout'])
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, 'run', observed)
+    reply_check.run_check(['check-pb', 'canonical'], {'value': None}, binary=str(child))
+    assert deadlines == [deadlines[0]] and deadlines[0] >= math.ceil(10 * 3.323)
 
 
 def test_staged_replay_never_loads_the_global_corpus(tmp_path, monkeypatch):
