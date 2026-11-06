@@ -3,6 +3,7 @@ use super::*;
 
 kernel_fn! {
 /// Failed-run rows / #771: a retry and incident allocate at most two generations.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
@@ -43,17 +44,19 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         m.run_failures = 0;
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
-        raise_incident(w, i, needs_rob, out);
         kernel_proof! {
-            assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
-                reveal(port_review_retry::failed_run); reveal(port_review_retry::abandoned);
+            assert(retirement::incident(*m, needs_rob) == port_review_retry::failed_run(failed_before@)) by {
+                reveal(port_review_retry::abandoned);
+                port_review_failure::incident(failed_before@, *m, needs_rob);
             }
         }
+        raise_incident(w, i, needs_rob, out);
     }
     kernel_proof! {
         if failed_before@.run_failures == 0 {
             assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
-                reveal(port_review_retry::failed_run); reveal(port_review_retry::abandoned);
+                reveal(port_review_retry::abandoned);
+                port_review_failure::restarted(failed_before@, w.nodes@[i as int]);
             }
         }
     }

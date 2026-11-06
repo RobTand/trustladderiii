@@ -75,6 +75,7 @@ pub(super) open spec fn rechecked(n: Node, target: Phase, id: u64) -> (Node, u64
 }
 
 /// Q30: abandoning an operation cancels only its start effect.
+#[verifier::inline]
 pub(super) open spec fn abandoned(n: Node) -> Node {
     Node { run: None, job: None, pool: false, effect: match n.effect {
         Some(e) => Some(InFlight { cancelling: e.cancelling || matches!(e.kind,

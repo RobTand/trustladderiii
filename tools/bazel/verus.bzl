@@ -872,6 +872,8 @@ def verus_proofs():
             "review_retry_plan": ("kernel::retries#plan_retry", 1),
             "review_retry_recheck": ("kernel::retries#recheck", 1),
 
+            "review_failure_restarted": ("kernel::port_review_failure#restarted", 1),
+            "review_failure_incident": ("kernel::port_review_failure#incident", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
