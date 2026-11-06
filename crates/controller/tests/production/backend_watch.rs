@@ -4,10 +4,12 @@ use tl3_controller::{adapters::backend_watch::{Source, Finish}, cli::Input, run_
 struct Backend {
     entered: mpsc::Sender<(Owner, WatchStop)>,
     released: Arc<(Mutex<bool>, Condvar)>,
+    fail: bool,
 }
 impl RunBackend for Backend {
     fn attach(&self, owner: &Owner, stop: &WatchStop, _: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation> {
         self.entered.send((owner.clone(), stop.clone())).unwrap();
+        if self.fail { return Err(BackendError::unknown("generation changed; retain owner")); }
         let (released, changed) = &*self.released;
         let mut released = released.lock().unwrap();
         while !*released { released = changed.wait(released).unwrap(); }
@@ -35,7 +37,7 @@ fn owner() -> Owner { Owner { owner: "controller".into(), correlation: "retained
 fn observer_restart_attaches_and_retains_unknown_without_completion() {
     let (entered, attached) = mpsc::channel();
     let released = Arc::new((Mutex::new(false), Condvar::new()));
-    let backend = Arc::new(Backend { entered, released: released.clone() });
+    let backend = Arc::new(Backend { entered, released: released.clone(), fail: false });
     let (finished, observed) = mpsc::channel();
     let finish: Finish = Arc::new(move |owner, observation| {
         assert!(matches!(observation, Observation::Unknown { .. }));
@@ -59,7 +61,7 @@ fn observer_restart_attaches_and_retains_unknown_without_completion() {
 fn observer_shutdown_stops_all_local_watches_before_joining() {
     let (entered, attached) = mpsc::channel();
     let released = Arc::new((Mutex::new(false), Condvar::new()));
-    let backend = Arc::new(Backend { entered, released: released.clone() });
+    let backend = Arc::new(Backend { entered, released: released.clone(), fail: false });
     let finish: Finish = Arc::new(|_, _| panic!("stopped observation must not publish"));
     let mut second = owner();
     second.correlation = "second-effect".into();
@@ -81,5 +83,26 @@ fn observer_shutdown_stops_all_local_watches_before_joining() {
     assert!(stopped.is_ok());
     assert!(both_stopped);
     assert!(!duplicate, "one owner acquired multiple concurrent observers");
+    running.join().unwrap();
+}
+
+
+/// FX: an unavailable attach is retained as unknown without terminating unrelated observers.
+#[test]
+fn observer_attach_error_retains_unknown_and_keeps_source_available() {
+    let (entered, _attached) = mpsc::channel();
+    let backend = Arc::new(Backend { entered, released: Arc::new((Mutex::new(false), Condvar::new())), fail: true });
+    let (finished, observed) = mpsc::channel();
+    let finish: Finish = Arc::new(move |owner, observation| {
+        assert!(matches!(observation, Observation::Unknown { binding: None, .. }));
+        finished.send(owner.clone()).unwrap();
+        Ok(None)
+    });
+    let (_handle, source) = Source::new(backend, vec![owner()], finish);
+    let (sender, inputs) = mpsc::channel();
+    let running = source.spawn(sender);
+    assert_eq!(observed.recv_timeout(Duration::from_secs(5)).unwrap(), owner());
+    assert!(inputs.try_recv().is_err());
+    running.stop().unwrap();
     running.join().unwrap();
 }

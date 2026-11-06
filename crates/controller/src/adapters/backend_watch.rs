@@ -138,7 +138,8 @@ impl Source {
                                         sender.send(input).map_err(|_| crate::run_backend::BackendError::unknown("controller ingress closed"))?;
                                     }
                                     sender.send(Input::Wake).map_err(|_| crate::run_backend::BackendError::unknown("controller ingress closed"))
-                                }).map_err(|error| crate::Error::Adapter(Box::new(error)))?;
+                                }).unwrap_or_else(|error| Observation::Unknown { binding: None,
+                                    reason: format!("backend attach unavailable: {:?}", error.code) });
                                 if watching.is_stopped() { return Ok(()); }
                                 if let Some(input) = finish(&owner, observation)? {
                                     sender.send(input).map_err(|_| crate::Error::Invalid("controller ingress closed"))?;
