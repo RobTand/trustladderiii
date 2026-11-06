@@ -1,5 +1,6 @@
 // #743: Rust erases contracts; Verus checks the same executable bodies.
 #[cfg(not(verus_keep_ghost))]
+#[macro_export]
 macro_rules! decide_while {
     (($condition:expr) [$($contract:tt)*] $body:block) => {
         while $condition $body
@@ -7,6 +8,7 @@ macro_rules! decide_while {
 }
 
 #[cfg(verus_keep_ghost)]
+#[macro_export]
 macro_rules! decide_while {
     (($condition:expr) [$($contract:tt)*] $body:block) => {
         vstd::prelude::verus_exec_expr! {
@@ -16,14 +18,17 @@ macro_rules! decide_while {
 }
 
 #[cfg(not(verus_keep_ghost))]
+#[macro_export]
 macro_rules! decide_proof {
     ($($proof:tt)*) => {};
 }
 #[cfg(verus_keep_ghost)]
+#[macro_export]
 macro_rules! decide_proof {
     ($($proof:tt)*) => { vstd::prelude::verus_exec_expr! { proof { $($proof)* } } };
 }
 #[cfg(not(verus_keep_ghost))]
+#[macro_export]
 macro_rules! decide_predicate {
     (|$a:ident| $body:expr) => {
         |$a: &CheckView| $body
@@ -33,6 +38,7 @@ macro_rules! decide_predicate {
     };
 }
 #[cfg(verus_keep_ghost)]
+#[macro_export]
 macro_rules! decide_predicate {
     (|$a:ident| $body:expr) => {
         vstd::prelude::verus_exec_expr! {
@@ -45,7 +51,8 @@ macro_rules! decide_predicate {
         }
     };
 }
-#[cfg(all(not(verus_keep_ghost), test))]
+#[cfg(not(verus_keep_ghost))]
+#[macro_export]
 macro_rules! decide_report {
     ($ty:ty; $body:expr) => {
         || $body
@@ -55,6 +62,7 @@ macro_rules! decide_report {
     };
 }
 #[cfg(verus_keep_ghost)]
+#[macro_export]
 macro_rules! decide_report {
     (unread $ty:ty; $body:expr) => {
         vstd::prelude::verus_exec_expr! {
@@ -68,7 +76,8 @@ macro_rules! decide_report {
     };
 }
 
-#[cfg(all(not(verus_keep_ghost), test))]
+#[cfg(not(verus_keep_ghost))]
+#[macro_export]
 macro_rules! decide_infra {
     (unread $body:expr) => {
         |_| $body
@@ -78,6 +87,7 @@ macro_rules! decide_infra {
     };
 }
 #[cfg(verus_keep_ghost)]
+#[macro_export]
 macro_rules! decide_infra {
     (unread $body:expr) => {
         vstd::prelude::verus_exec_expr! {
