@@ -9,6 +9,7 @@ filegroup(
     name = "project_files",
     srcs = [
         "pyproject.toml",
+        "proof-rules.json",
         "//harness/tests:fixtures",
         "//harness/tools:sources",
     ] + glob(["test-vectors/**"]),

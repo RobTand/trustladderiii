@@ -13,6 +13,7 @@ import sys
 import tempfile
 
 from tl3_harness import execution
+from tl3_harness.proof_rules import STAGED_CHECK_COUNT
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, Check, Kind, Proof, ProofRefusal, Forcing, ALWAYS_CHECK
 from tl3_harness.proof import assemble_proof
 from tl3_harness.scratch import environment as scratch_environment
@@ -126,7 +127,7 @@ def _priority(priority):
     return priority
 
 
-def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forcing=None, declared_symptom=None, selected=()):
+def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forcing=None, declared_symptom=None, selected=(), role='maker'):
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
@@ -148,8 +149,8 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         base = root / 'base-source'
         export(worktree.test_checkout, base_sha, base)
         proving = [check for check in checks if check['kind'] in ('demonstrating', 'reproducing')]
-        if len(proving) > 1:
-            raise ProofRefusal('stage one check at a time; each check has its own source partition')
+        if len(proving) > STAGED_CHECK_COUNT:
+            raise ProofRefusal('proof.staging.single_check', role=role, field='/checks')
         item = proving[0] if proving else {}
         proof = Proof.parse(item['proof']) if item.get('proof') else None
         tests = tuple(item.get('tests', ()))
@@ -158,7 +159,7 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         check = Check(item.get('name', 'development proof') if proving or forcing or declared_symptom else ALWAYS_CHECK,
                       Kind(item.get('kind', 'demonstrating')) if proving or forcing or declared_symptom else Kind.REGRESSION,
                       tests or selected or ('_tl3_unselected.py::test_outcome',), projection_forcing, proof, projection_symptom)
-        receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {})
+        receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {}, role=role)
         (root / 'proof.json').write_text(json.dumps(receipt, sort_keys=True))
         shutil.rmtree(base)
         shutil.rmtree(head)
@@ -396,7 +397,7 @@ def _failure_receipt(ending, settings):
     return receipt
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None, _checks=None):
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None, _checks=None, role='maker'):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
@@ -470,7 +471,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                           if any(selects(selector, test) or selects(test, selector)
                                  for selector in selected for test in check['tests'])]
                 tree = _stage(worktree, root, base_sha, checks=checks, forcing=forcing,
-                              declared_symptom=declared_symptom, selected=selected)
+                              declared_symptom=declared_symptom, selected=selected, role=role)
                 proof = json.loads((root / 'proof.json').read_text()) if base else None
                 contract = {"tree": tree, "trusted": _git(root, "write-tree", "--prefix=trusted/").strip(),
                             "image": settings.image, "cpus": settings.cpus, "mem_gb": settings.mem_gb,
@@ -535,7 +536,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
         except ProofRefusal as error:
             return {'status': 'not_available', 'message': str(error), 'tests': [],
                     'totals': dict.fromkeys(OUTCOMES, 0), 'note': '',
-                    'proof_refusal': {'module': error.module, 'symbol': error.symbol, 'reason': error.reason}}
+                    'proof_refusal': {'rule': error.rule, 'module': error.module, 'symbol': error.symbol,
+                                      'reason': error.reason, 'violations': error.as_json()}}
         except ExecutionFailure as failure:
             result = infrastructure(failure.message())
             result.update(execution=failure.as_json(), selectors=list(selected))
@@ -565,7 +567,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     symptom = check.get('declared_symptom')
                     tool = make_test_tool(worktree, settings, emit=emit, timeout_seconds=timeout_seconds,
                                           forcing=Forcing.parse(check['forcing']) if check.get('forcing') else None,
-                                          declared_symptom=symptom, _checks=({**check, 'tests': nodes},))
+                                          declared_symptom=symptom, role=role, _checks=({**check, 'tests': nodes},))
                     observed = tool(nodes, base=True, repeat=symptom['repeat'] if symptom else repeat,
                                     parallel=symptom['parallel'] if symptom else parallel, priority=priority)
                     groups.append({'check': check.get('name', 'planned check'), **observed})
@@ -575,7 +577,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                              if not any(selects(test, selector) for check in checks for test in check['tests'])]
                 if remainder or not selected:
                     groups.append({'check': 'unplanned base tests', **make_test_tool(worktree, settings, emit=emit,
-                        timeout_seconds=timeout_seconds, _checks=())(remainder, base=True, repeat=repeat, parallel=parallel, priority=priority)})
+                        timeout_seconds=timeout_seconds, role=role, _checks=())(remainder, base=True, repeat=repeat, parallel=parallel, priority=priority)})
                 if len(groups) == 1:
                     return {key: value for key, value in groups[0].items() if key != 'check'}
                 status = next((item['status'] for item in groups if item['status'] != 'completed'), 'completed')

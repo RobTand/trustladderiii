@@ -243,13 +243,17 @@ def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, he
         if not base_tree.exists():
             export(repo, fork, base_tree)
     configuration = tool.changed_configuration(base_tree, head_tree)
+    syntax_refusal = None
     try:
         permitted = conftest_subjects(base_tree, head_tree, plan)
-    except (ProofRefusal, SyntaxError, OSError):
+    except SyntaxError as error:
+        syntax_refusal = str(ProofRefusal('proof.source.unparsable', module='conftest.py', bad_value=error.msg))
+        permitted = set()
+    except (ProofRefusal, OSError):
         permitted = set()
     configuration = [name for name in configuration if name not in permitted]
     paths = changed_protected(repo, fork, head, protected)
-    return changed_files_message(configuration, paths) if configuration or paths else None
+    return (syntax_refusal or changed_files_message(configuration, paths)) if configuration or paths else None
 
 
 class TestTool(Protocol):
@@ -638,8 +642,11 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             staged = root / f"proof-{index}"
             subject = reviewed_tree if check.kind == Kind.REPRODUCING else old
             try:
-                receipt = assemble_proof(subject, new, staged, check, config)
-            except (ProofRefusal, SyntaxError, OSError) as error:
+                receipt = assemble_proof(subject, new, staged, check, config, role='maker')
+            except SyntaxError as error:
+                refusal = ProofRefusal('proof.source.unparsable', module=check.tests[0].split('::')[0], bad_value=error.msg)
+                return refused(plan, str(refusal.for_check(check, 'maker')))
+            except (ProofRefusal, OSError) as error:
                 return refused(plan, str(error))
             notes = FailureNotes(check.proof.red_message if check.proof else None)
             forced_notes = FailureNotes()

@@ -248,7 +248,7 @@ class ForcingRehearsals:
                 self.active['stage'] = stage
                 inflight = self.active['inflight']
                 self.worktree.pb_reattach = {True: inflight} if inflight else {}
-                tool = make_test_tool(self.worktree, timeout_seconds=REHEARSAL_SECONDS,
+                tool = make_test_tool(self.worktree, timeout_seconds=REHEARSAL_SECONDS, role='planner',
                                       **({'forcing': parsed} if stage == 'forced' else {}),
                                       **({'declared_symptom': declared_symptom} if declared_symptom else {}))
                 observed = tool(list(selected), base=True, **(

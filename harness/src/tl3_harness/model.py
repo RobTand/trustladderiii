@@ -1,8 +1,9 @@
 from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
 from .red_message import RedMessageMatch
+from .proof_rules import ROWS, forced_exception as forced_exception, render as render_proof, violation_data
+from .rules import Violation, evaluate
 # Diagnostics live in limits.py, which the in-container runner loads by path (#858).
 from .limits import Diagnostic as Diagnostic, contextual as contextual, named as named
-import builtins
 from dataclasses import dataclass, field
 from enum import StrEnum
 import json
@@ -95,15 +96,6 @@ ENVIRONMENT_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
 TARGET = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
 
 
-def forced_exception(name: str) -> type | None:
-    """A builtin exception a forcing may raise. AssertionError would be a failure by assertion
-    the forcing itself wrote, and BaseException-only classes end the test process."""
-    error = getattr(builtins, name, None) if name.isidentifier() else None
-    if isinstance(error, type) and issubclass(error, Exception) and not issubclass(error, AssertionError):
-        return error
-    return None
-
-
 @dataclass(frozen=True)
 class Forcing:
     """A plan's declarative recreation of a flake's condition (#393). It is data: the
@@ -128,7 +120,7 @@ class Forcing:
                 raise HarnessInputError(named('forcing.environment_name', f"a forcing can't set the environment variable {name!r}{detail}", {}))
             if not isinstance(value, str) or len(value) > FORCING_TEXT or "\x00" in value:
                 raise HarnessInputError(named('forcing.environment_value', f"{name} needs a string value of at most {FORCING_TEXT} characters", {}))
-        for target, mode, argument in self.patches:
+        for index, (target, mode, argument) in enumerate(self.patches):
             if not isinstance(target, str) or len(target) > 200 or not TARGET.fullmatch(target):
                 raise HarnessInputError(named('forcing.patch_target', f"a patch target must be a dotted module attribute: {target!r}", {}))
             if mode not in PATCH_MODES:
@@ -137,8 +129,8 @@ class Forcing:
                 raise HarnessInputError(named('forcing.literal_bytes', f"a patch literal is limited to {FORCING_LITERAL_BYTES} bytes of JSON", {}))
             value = json.loads(argument)
             if mode == "raises" and not (isinstance(value, str) and forced_exception(value)):
-                raise HarnessInputError(named('forcing.raise_class', f"a forcing can raise only a builtin Exception other than AssertionError: "
-                                        f"{value!r}", {}))
+                facts = {'reply': self.as_json(), 'field': f'/forcing/patches/{index}/raises'}
+                raise ProofRefusal('forcing.raise_class', **facts)
             if mode == "delay_seconds" and (type(value) not in (int, float) or not 0 < value <= MAX_DELAY_SECONDS):
                 raise HarnessInputError(named('forcing.delay', f"delay_seconds must be above 0 and at most {MAX_DELAY_SECONDS}", {}))
 
@@ -171,11 +163,52 @@ class Forcing:
 
 
 class ProofRefusal(HarnessInputError):
-    """A source partition the existing tool/round repair can correct."""
+    """Shared row violations for one source partition, rendered for its caller."""
 
-    def __init__(self, reason, module='', symbol=''):
-        self.reason, self.module, self.symbol = reason, module, symbol
-        super().__init__(f"Proof assembly refused {module}{'::' + symbol if symbol else ''}: {reason}.")
+    def __init__(self, rule, *, module='', symbol='', role='maker', violations=None, **facts):
+        self.role = role
+        self.violations = tuple(violations) if violations is not None else evaluate(
+            (ROWS[rule],), {**facts, 'module': module, 'symbol': symbol}, role=role)
+        self.rule = self.violations[0].rule.id
+        first = self.violations[0].facts
+        self.module, self.symbol = first.get('module', ''), first.get('symbol', '')
+        self.reason = render_proof(self.violations, role)
+        super().__init__(named(self.rule, 'Proof assembly refused: ' + self.reason, {'violations': self.as_json()}))
+
+    @classmethod
+    def from_violations(cls, violations, *, role='maker'):
+        return cls(violations[0].rule.id, violations=violations, role=role)
+
+    def for_check(self, check, role):
+        """Bind field names to the actual editable declaration and caller."""
+        violations = []
+        for violation in self.violations:
+            facts = dict(violation.facts)
+            module, symbol = facts.get('module', ''), facts.get('symbol', '')
+            identity = module + ('::' + symbol if symbol and not symbol.startswith(module + '::') else '')
+            if symbol.startswith(module + '::') and module:
+                identity = symbol
+            groups = []
+            if check.proof:
+                groups += [('/proof/subjects', check.proof.subjects),
+                           ('/proof/observer_support', check.proof.observer_support)]
+            groups += [('/tests', check.tests)]
+            area = violation.rule.id.split('.')[1]
+            preferred = {'support': '/proof/observer_support', 'observer': '/tests', 'subject': '/proof/subjects'}.get(area)
+            groups.sort(key=lambda group: group[0] != preferred)
+            matches = [(prefix, index) for prefix, units in groups for index, unit in enumerate(units)
+                       if unit == identity]
+            if not matches:
+                matches = [(prefix, index) for prefix, units in groups for index, unit in enumerate(units)
+                           if module and unit.split('::')[0] == module]
+            if matches:
+                prefix, index = matches[0]
+                facts['field'] = f'{prefix}/{index}'
+            violations.append(Violation(violation.rule, facts))
+        return self.from_violations(violations, role=role)
+
+    def as_json(self):
+        return [violation_data(violation) for violation in self.violations]
 
 
 @dataclass(frozen=True)

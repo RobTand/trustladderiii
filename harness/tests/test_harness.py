@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+from proof_differential import preserve_proof_verdicts as preserve_proof_verdicts
 
 from tl3_harness.execution import Container, Progress, container_command, run_checks
 from tl3_harness.model import Check, Proof, FailureNotes, Custody, Kind, Outcome, Verdict, judge
@@ -349,6 +350,6 @@ def test_r1_rule_modules_import_only_the_standard_library(module):
             assert all(alias.name.split('.')[0] in sys.stdlib_module_names for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             if node.level:
-                assert node.module == 'rules', node.module
+                assert node.module in ('rules', 'terminal_forms'), node.module
             else:
                 assert node.module.split('.')[0] in sys.stdlib_module_names
