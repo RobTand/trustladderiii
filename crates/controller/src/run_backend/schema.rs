@@ -18,7 +18,9 @@ struct WireSchema {
     topology: TopologyMapping,
     receipt: Receipt,
     runtime_preflight: RuntimePreflight,
-    cleanup: CleanupFacts,
+    cleanup: CleanupEvidence,
+    cleanup_input: CleanupInput,
+    runtime_ownership: RuntimeOwnership,
 }
 
 pub fn cli() -> std::result::Result<String, serde_json::Error> {

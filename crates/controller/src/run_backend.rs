@@ -175,6 +175,8 @@ pub struct RuntimeIdentity {
     pub expected_image: Option<String>,
     pub preflight: BlobRef,
     pub host_dependency: Option<HostDependency>,
+    pub image: Option<ImageIdentity>,
+    pub cleanup: Option<CleanupProgram>,
 }
 impl RuntimeIdentity {
     pub fn placement(&self) -> Placement {
@@ -201,6 +203,32 @@ pub struct RuntimePreflight {
     pub image_identity: Option<String>,
     pub image_present: bool,
     pub identity_verified: bool,
+    pub image: Option<ImageIdentity>,
+    pub mode: Option<ContainerMode>,
+    pub no_cgroups_supported: bool,
+    pub init_available: bool,
+    pub user_scope_supported: bool,
+}
+
+/// Prepared by the runtime builder from the ops inventory, never a compiled digest catalog.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ImageIdentity {
+    pub inventory: BlobRef,
+    pub profile: String,
+    pub reference: String,
+    pub index_digest: Option<String>,
+    pub manifest_digest: String,
+    pub config_digest: String,
+    pub platform: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupProgram {
+    pub executable: PathBuf,
+    pub executable_digest: String,
+    pub arguments: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -332,6 +360,8 @@ pub struct Receipt {
     pub native_events: Vec<Event>,
     pub evidence: Vec<BlobRef>,
     pub report: Option<BlobRef>,
+    pub runtime_ownership: Option<RuntimeOwnership>,
+    pub cleanup: Option<BlobRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -447,6 +477,8 @@ pub trait RunBackend {
     fn cancel(&self, owner: &Owner) -> Result<CancelAck>;
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe>;
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext>;
+    fn retain_runtime(&self, owner: &Owner, ownership: RuntimeOwnership) -> Result<()>;
+    fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult>;
     fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport>;
 }
 
@@ -541,6 +573,7 @@ pub struct ContainerScopeFacts {
     pub cpuset_effective: String,
     pub memory_max: Option<u64>,
     pub memory_swap_max: Option<u64>,
+    pub container_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -583,25 +616,92 @@ pub struct CollectorInput {
     pub cleanup: Option<BlobRef>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+/// Retained before starting repository code. Immutable across cleanup retries.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct CleanupFacts {
-    pub schema: String,
+pub struct RuntimeOwnership {
     pub run: BackendId,
+    pub owner: Owner,
     pub request_digest: String,
-    pub scopes: Vec<OwnedScopeObservation>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OwnedScopeObservation {
-    pub kind: OwnedScopeKind,
-    pub identity: String,
-    pub present: bool,
-    pub running: Option<bool>,
-    pub reaped_status: Option<i32>,
+    pub host: String,
+    pub rank: u32,
+    pub launcher: ProcessIdentity,
+    pub process_group: u32,
+    pub container: Option<ContainerOwnership>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum OwnedScopeKind { ProcessGroup, PodmanContainer }
+#[serde(deny_unknown_fields)]
+pub struct ProcessIdentity { pub pid: u32, pub start_ticks: u64 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerOwnership {
+    pub mode: ContainerMode,
+    pub id: String,
+    pub labels: std::collections::BTreeMap<String, String>,
+    pub scope: Option<ScopeIdentity>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeIdentity { pub unit: String, pub invocation_id: String, pub cgroup: String }
+
+/// One bounded JSON stdin request to the trusted independent runtime cleanup entry.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupInput { pub schema: String, pub ownership: RuntimeOwnership }
+
+/// Raw observations from the trusted host helper, interpreted only by Rust.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupEvidence {
+    pub schema: String,
+    pub ownership: RuntimeOwnership,
+    pub launcher: ProcessStop,
+    /// kill(-owned_pgid, 0) must return ESRCH after reap/removal.
+    pub process_group_probe_errno: Option<i32>,
+    pub container: Option<ContainerStop>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProcessStop {
+    Absent,
+    Reaped { status: i32 },
+    Reused { observed_start_ticks: u64 },
+    Present { observed_start_ticks: u64 },
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerStop {
+    pub id: String,
+    pub remove_exit: i32,
+    /// Native podman container exists exact-ID status: 1 absent, 125 error.
+    pub exists_exit: i32,
+    pub scope: Option<ScopeStop>,
+    /// Label-filtered sweep may only account for the retained exact container.
+    pub sweep_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeStop {
+    pub identity: ScopeIdentity,
+    pub observed_invocation_id: Option<String>,
+    /// None means the retained cgroup path is authoritatively absent.
+    pub cgroup_events: Option<String>,
+    pub cgroup_procs: String,
+    /// systemd inactive/dead or unit-not-found, never an arbitrary boolean.
+    pub active_state: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupResult {
+    pub stopped: bool,
+    pub evidence: Option<BlobRef>,
+    pub reason: String,
+}

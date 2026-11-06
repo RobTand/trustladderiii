@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    PrepareIntent { owner: String, correlation: String, request: Box<Request> },
     Submit { request: Box<Request>, intent: SubmissionIntent },
     Attach { owner: String, correlation: String },
     Cancel { owner: String, correlation: String },
@@ -14,6 +15,9 @@ pub enum Command {
     ValidateRuntimeBinding { owner: String, correlation: String, facts: Box<RuntimeBindingInput> },
     CollectRunner { owner: String, correlation: String, facts: Box<CollectorInput> },
     DaytimePayload { owner: String, correlation: String, terminal: Terminal },
+    RetainRuntime { owner: String, correlation: String, ownership: Box<RuntimeOwnership> },
+    RetainCleanup { owner: String, correlation: String, evidence: BlobRef },
+    CleanupRuntime { owner: String, correlation: String },
     StopWatch,
 }
 
@@ -40,6 +44,7 @@ pub enum FrameBody {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CliResult {
+    PrepareIntent { intent: SubmissionIntent },
     Submit { submission: Submission },
     Attach { observation: Observation },
     Cancel { acknowledgement: CancelAck },
@@ -47,6 +52,9 @@ pub enum CliResult {
     LaunchContext { context: LaunchContext },
     ValidateRuntimeBinding { qualification: RuntimeQualification },
     CollectRunner { report: BlobRef, payload: BlobRef },
+    RetainRuntime,
+    RetainCleanup { cleanup: CleanupResult },
+    CleanupRuntime { cleanup: CleanupResult },
     DaytimePayload { report: crate::contracts::report::CheckReport },
 }
 
@@ -85,6 +93,7 @@ pub fn main() -> i32 {
         let options: Options = serde_json::from_slice(&durable::read(PathBuf::from(&args[1]).as_path())?)?;
         let backend = Flux::new(options)?;
         let result = match command {
+            Command::PrepareIntent { owner, correlation, request } => CliResult::PrepareIntent { intent: backend.prepare_intent(&request, &Owner { owner, correlation })? },
             Command::Submit { request, intent } => CliResult::Submit { submission: backend.submit(*request, intent)? },
             Command::Attach { owner, correlation } => {
                 let stop = WatchStop::default();
@@ -108,6 +117,9 @@ pub fn main() -> i32 {
                 CliResult::CollectRunner { report, payload }
             }
             Command::DaytimePayload { owner, correlation, terminal } => CliResult::DaytimePayload { report: backend.daytime_payload(&Owner { owner, correlation }, &terminal)? },
+            Command::RetainRuntime { owner, correlation, ownership } => { backend.retain_runtime(&Owner { owner, correlation }, *ownership)?; CliResult::RetainRuntime }
+            Command::RetainCleanup { owner, correlation, evidence } => CliResult::RetainCleanup { cleanup: backend.retain_cleanup(&Owner { owner, correlation }, &evidence)? },
+            Command::CleanupRuntime { owner, correlation } => CliResult::CleanupRuntime { cleanup: backend.cleanup_runtime(&Owner { owner, correlation })? },
             Command::StopWatch => return Err(BackendError::invalid("stop_watch is a second-line attach control frame only")),
         };
         writer.frame(FrameBody::Result { result: Box::new(result) })

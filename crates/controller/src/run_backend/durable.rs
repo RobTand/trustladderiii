@@ -15,6 +15,12 @@ pub struct Record {
     pub cancel_requested: bool,
     pub events: Vec<Event>,
     pub terminal: Option<Terminal>,
+    #[serde(default)]
+    pub runtime_ownership: Option<RuntimeOwnership>,
+    #[serde(default)]
+    pub cleanup_evidence: Option<BlobRef>,
+    #[serde(default)]
+    pub jobspec: Option<BlobRef>,
 }
 
 #[derive(Clone)]
@@ -52,6 +58,14 @@ impl Journal {
             return Err(BackendError { code: ErrorCode::Conflict, message: "correlation belongs to a different durable owner".into() });
         }
         f(&dir, record)
+    }
+
+    pub fn runtime_gate<T>(&self, f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
+        let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(self.root.join("runtime-lock"))?;
+        lock.lock()?;
+        let debts = self.root.join("cleanup-debt");
+        fs::create_dir_all(&debts)?;
+        f(&debts)
     }
 
     pub fn load(&self, owner: &Owner) -> Result<Record> {

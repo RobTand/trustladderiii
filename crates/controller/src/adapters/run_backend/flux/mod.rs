@@ -1,4 +1,5 @@
 //! Public Flux 0.91 CLI only. Retained instance generations are operator-owned.
+mod cleanup;
 mod evidence;
 mod process;
 mod resources;
@@ -13,13 +14,20 @@ use std::process::Stdio;
 pub struct Flux {
     options: Options,
     journal: Journal,
+    stop: WatchStop,
 }
 
 impl Flux {
     pub fn new(options: Options) -> Result<Self> {
         validate::options(&options)?;
         let journal = Journal::new(options.journal_root.clone())?;
-        Ok(Self { options, journal })
+        Ok(Self { options, journal, stop: WatchStop::default() })
+    }
+
+    pub fn prepare_intent(&self, request: &Request, owner: &Owner) -> Result<SubmissionIntent> {
+        let intent = SubmissionIntent { backend: BackendTag::Flux, instance: self.options.instance_generation.clone(), uri: self.options.uri.clone(), owner: owner.owner.clone(), correlation: owner.correlation.clone(), request_digest: digest(&serde_json::to_vec(request)?), output_dir: Path::new("/mnt/shared/flux-out/tl3").join(&owner.correlation) };
+        validate::request(request, &intent, &self.options)?;
+        Ok(intent)
     }
 
     fn instance(&self, record: &Record) -> Result<()> {
@@ -60,6 +68,8 @@ impl Flux {
             if let Some(existing) = current.binding {
                 if existing != binding { return Err(BackendError::unknown("conflicting durable binding")); }
             } else {
+                if current.runtime_ownership.as_ref().is_some_and(|owned| owned.run != binding.id) { return Err(BackendError::unknown("recovered binding conflicts with runtime ownership")); }
+                if current.runtime_ownership.as_ref().is_some_and(|owned| owned.run != binding.id) { return Err(BackendError::unknown("binding conflicts with retained runtime ownership")); }
                 current.binding = Some(binding.clone());
                 save(dir, &current)?;
             }
@@ -83,7 +93,7 @@ impl Flux {
                 request: blob(&record.intent.output_dir.join("request.json"), &serde_json::to_vec(&record.request)?)?,
                 intent: record.intent.clone(), binding: record.binding.clone(),
                 tree: record.request.tree.clone(), runner: record.request.runner.clone(), runtime: record.request.runtime.clone(),
-                reservation: record.request.reservation.clone(), ending, reason: safe(reason)?, native_events: record.events.clone(), evidence, report,
+                reservation: record.request.reservation.clone(), ending, reason: safe(reason)?, native_events: record.events.clone(), evidence, report, runtime_ownership: record.runtime_ownership.clone(), cleanup: record.cleanup_evidence.clone(),
             };
             let out = &record.intent.output_dir;
             let receipt = blob(&out.join("receipt.json"), &serde_json::to_vec(&receipt)?)?;
@@ -106,7 +116,7 @@ impl RunBackend for Flux {
                 }
                 return Ok((record, false));
             }
-            let record = Record { request, intent, dispatched: false, binding: None, cancel_requested: false, events: vec![], terminal: None };
+            let record = Record { request, intent, dispatched: false, binding: None, cancel_requested: false, events: vec![], terminal: None, runtime_ownership: None, cleanup_evidence: None, jobspec: None };
             save(dir, &record)?;
             Ok((record, true))
         })?;
@@ -124,13 +134,23 @@ impl RunBackend for Flux {
         }
         blob(&record.intent.output_dir.join("request.json"), &serde_json::to_vec(&record.request)?)?;
         blob(&record.intent.output_dir.join("intent.json"), &serde_json::to_vec(&record.intent)?)?;
+        let mut prepare_args = self.submit_args(&record)?;
+        prepare_args.insert(1, "--dry-run".into());
+        let prepared = self.capture_owned(&prepare_args)?;
+        if !prepared.success { return Ok(Submission::Unknown { reason: "native immutable jobspec preparation failed; nothing submitted; intent retained".into() }); }
+        let spec: process::Jobspec = serde_json::from_slice(&prepared.stdout)?;
+        let spec = blob(&record.intent.output_dir.join("original-jobspec.json"), &serde_json::to_vec(&spec)?)?;
+        self.journal.runtime_gate(|debts| {
+        if debts.join(&record.request.runtime.manifest_digest).exists() && std::fs::read_dir(debts.join(&record.request.runtime.manifest_digest))?.next().is_some() { return Err(BackendError::unknown("unresolved runtime cleanup debt; dispatch held")); }
         self.journal.transaction(&owner, |dir, current| {
             let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
             if current.cancel_requested { return Err(BackendError::unknown("cancel intent arrived before dispatch; submission held")); }
+            current.jobspec = Some(spec);
             current.dispatched = true;
             save(dir, &current)
+        })
         })?;
-        let args = self.submit_args(&record)?;
+        let args = vec!["job".into(), "submit".into(), record.intent.output_dir.join("original-jobspec.json").to_string_lossy().into_owned()];
         let reply = match self.capture_owned(&args) {
             Ok(reply) => reply,
             Err(_) => return Ok(Submission::Unknown { reason: "submit transport failed after dispatch; reconcile original jobspec".into() }),
@@ -144,6 +164,7 @@ impl RunBackend for Flux {
                 if current.binding.as_ref().is_some_and(|existing| existing != &binding) {
                     return Err(BackendError::unknown("submit ID conflicts with concurrently recovered binding"));
                 }
+                if current.runtime_ownership.as_ref().is_some_and(|owned| owned.run != binding.id) { return Err(BackendError::unknown("binding conflicts with retained runtime ownership")); }
                 current.binding = Some(binding.clone());
                 save(dir, &current)
             })?;
@@ -158,6 +179,72 @@ impl RunBackend for Flux {
     }
 
     fn attach(&self, owner: &Owner, stop: &WatchStop, emit: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation> {
+        let mut observer = self.clone();
+        observer.stop = stop.clone();
+        observer.attach_owned(owner, stop, emit)
+    }
+
+    fn cancel(&self, owner: &Owner) -> Result<CancelAck> {
+        let record = self.journal.transaction(owner, |dir, current| {
+            let mut current = current.ok_or_else(|| BackendError::invalid("submission intent not found"))?;
+            self.instance(&current)?;
+            current.cancel_requested = true;
+            save(dir, &current)?;
+            Ok(current)
+        })?;
+        if let Some(terminal) = record.terminal { return Ok(CancelAck { binding: record.binding, acknowledged: true, terminal: Some(terminal) }); }
+        self.mark_cleanup_debt(&record)?;
+        let binding = self.recover(owner).ok().flatten().or(record.binding);
+        let acknowledged = if let Some(binding) = &binding {
+            self.capture(&["cancel", &binding.id.job]).is_ok_and(|reply| reply.success)
+        } else { false };
+        let _ = self.run_cleanup(owner);
+        Ok(CancelAck { binding, acknowledged, terminal: None })
+    }
+
+    fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe> { self.probe_resources(reservation, placement) }
+
+    fn retain_runtime(&self, owner: &Owner, owned: RuntimeOwnership) -> Result<()> {
+        self.journal.transaction(owner, |dir, current| {
+            let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+            self.instance(&current)?;
+            cleanup::ownership(&current, &owned)?;
+            if current.cancel_requested || current.terminal.is_some() { return Err(BackendError::unknown("execution held after cancel/terminal")); }
+            if current.runtime_ownership.as_ref().is_some_and(|existing| existing != &owned) {
+                return Err(BackendError::invalid("runtime ownership is immutable"));
+            }
+            current.runtime_ownership = Some(owned);
+            save(dir, &current)
+        })
+    }
+
+    fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult> { self.run_cleanup(owner) }
+
+    fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
+        self.verified_daytime_payload(owner, terminal)
+    }
+
+    fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext> {
+        let record = self.journal.load(owner)?;
+        self.instance(&record)?;
+        if !f58(job) || record.binding.as_ref().is_some_and(|binding| binding.id.job != job) || !record.dispatched {
+            return Err(BackendError::invalid("native job does not match retained dispatch"));
+        }
+        Ok(LaunchContext {
+            schema: LaunchSchema::V1,
+            run: BackendId { backend: BackendTag::Flux, instance: record.intent.instance.clone(), uri: record.intent.uri.clone(), job: job.into() },
+            owner: record.intent.owner, correlation: record.intent.correlation, request_digest: record.intent.request_digest,
+            scratch: OwnedScratch { approved_root: record.request.scratch_root.clone(), leaf: record.request.scratch_root.join(job) },
+            output_dir: record.intent.output_dir.clone(),
+            progress: ProgressPolicy { journal: record.intent.output_dir.join("progress.json"), no_progress_seconds: record.request.no_progress_seconds },
+            native_threads: record.request.reservation.native_threads, runtime: record.request.runtime.runtime,
+            placement: LaunchPlacement::Unqualified { reason: "collect retained native R, topology and host/container facts; validate_runtime_binding before accepting evidence".into() },
+        })
+    }
+}
+
+impl Flux {
+    fn attach_owned(&self, owner: &Owner, stop: &WatchStop, emit: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation> {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
         if let Some(terminal) = record.terminal { return Ok(Observation::Terminal { binding: record.binding, terminal }); }
@@ -191,6 +278,7 @@ impl RunBackend for Flux {
                 let event_digest = digest(&bytes);
                 let event = self.journal.transaction(owner, |dir, current| {
                     let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+                    if current.terminal.is_some() { return Ok(None); }
                     if let Some(previous) = current.events.get(position) {
                         if previous.digest != event_digest { return Err(BackendError::unknown("retained history changed or was purged")); }
                         return Ok(None);
@@ -217,43 +305,4 @@ impl RunBackend for Flux {
         self.collect(owner, binding)
     }
 
-    fn cancel(&self, owner: &Owner) -> Result<CancelAck> {
-        let record = self.journal.transaction(owner, |dir, current| {
-            let mut current = current.ok_or_else(|| BackendError::invalid("submission intent not found"))?;
-            self.instance(&current)?;
-            current.cancel_requested = true;
-            save(dir, &current)?;
-            Ok(current)
-        })?;
-        if let Some(terminal) = record.terminal { return Ok(CancelAck { binding: record.binding, acknowledged: true, terminal: Some(terminal) }); }
-        let binding = self.recover(owner)?;
-        let acknowledged = if let Some(binding) = &binding {
-            self.capture(&["cancel", &binding.id.job]).is_ok_and(|reply| reply.success)
-        } else { false };
-        Ok(CancelAck { binding, acknowledged, terminal: None })
-    }
-
-    fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe> { self.probe_resources(reservation, placement) }
-
-    fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
-        self.verified_daytime_payload(owner, terminal)
-    }
-
-    fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext> {
-        let record = self.journal.load(owner)?;
-        self.instance(&record)?;
-        if !f58(job) || record.binding.as_ref().is_some_and(|binding| binding.id.job != job) || !record.dispatched {
-            return Err(BackendError::invalid("native job does not match retained dispatch"));
-        }
-        Ok(LaunchContext {
-            schema: LaunchSchema::V1,
-            run: BackendId { backend: BackendTag::Flux, instance: record.intent.instance.clone(), uri: record.intent.uri.clone(), job: job.into() },
-            owner: record.intent.owner, correlation: record.intent.correlation, request_digest: record.intent.request_digest,
-            scratch: OwnedScratch { approved_root: record.request.scratch_root.clone(), leaf: record.request.scratch_root.join(job) },
-            output_dir: record.intent.output_dir.clone(),
-            progress: ProgressPolicy { journal: record.intent.output_dir.join("progress.json"), no_progress_seconds: record.request.no_progress_seconds },
-            native_threads: record.request.reservation.native_threads, runtime: record.request.runtime.runtime,
-            placement: LaunchPlacement::Unqualified { reason: "collect retained native R, topology and host/container facts; validate_runtime_binding before accepting evidence".into() },
-        })
-    }
 }
