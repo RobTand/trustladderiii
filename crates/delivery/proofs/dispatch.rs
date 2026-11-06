@@ -8,11 +8,18 @@ spec fn no_fresh_issue(out: Action) -> bool {
     !matches!(out, Action::CommitSent { .. } | Action::Execute(_) | Action::ReadHistory(_))
 }
 
+proof fn start_has_no_fresh_issue(v: DeliveryView, out: Action)
+    requires matches!(v.state, State::Sent | State::Uncertain | State::Cancelling), start_contract(v, out),
+    ensures no_fresh_issue(out),
+{
+    reveal(no_fresh_issue);
+}
+
 fn no_fresh_dispatch_from_active(v: DeliveryView)
     requires matches!(v.state, State::Sent | State::Uncertain | State::Cancelling),
 {
     let next = action(v, Input::Start);
-    reveal(no_fresh_issue);
+    proof { start_has_no_fresh_issue(v, next); }
     assert(no_fresh_issue(next));
 }
 

@@ -339,7 +339,7 @@ def verus_proofs():
             srcs = ["tools/verus_runner.py"],
             main = "tools/verus_runner.py",
         )
-        for name, count in {"dispatch": 40, "core": 44, "once": 61, "converges": 64, "dedup": 64, "approval": 68, "fence": 38}.items():
+        for name, count in {"dispatch": 41, "core": 44, "once": 61, "converges": 65, "dedup": 64, "approval": 68, "fence": 39}.items():
             verus_test(
                 name = "verus_" + name,
                 src = "proofs/" + name + ".rs",
@@ -354,15 +354,15 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
         for mutant, group, count in [
-            ("fresh_sent", "dispatch", 40),
-            ("pending_absent", "converges", 64),
+            ("fresh_sent", "dispatch", 41),
+            ("pending_absent", "converges", 65),
             ("predecessor_bypass", "approval", 68),
             ("retain_grant", "approval", 68),
-            ("changed_revision", "dispatch", 40),
+            ("changed_revision", "dispatch", 41),
             ("omit_bridge", "core", 44),
-            ("omit_retirement", "converges", 64),
-            ("reject_equal", "fence", 38),
-            ("admit_older", "fence", 38),
+            ("omit_retirement", "converges", 65),
+            ("reject_equal", "fence", 39),
+            ("admit_older", "fence", 39),
         ]:
             verus_test(
                 name = "verus_mutant_" + mutant,

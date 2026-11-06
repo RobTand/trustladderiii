@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -48,8 +49,11 @@ def main():
             for path in paths[:-1]:
                 (ROOT / path).write_text(run('git', 'show', args.base + ':' + path, capture=True))
             path = ROOT / paths[-1]
-            text = path.read_text().replace('"dispatch": 40, "core": 44, "once": 61, "converges": 64, "dedup": 64, "approval": 68, "fence": 38',
-                                            '"dispatch": 40, "core": 18, "once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50')
+            text = path.read_text()
+            start = text.index('if native.package_name() == "crates/delivery":')
+            old_counts = {"dispatch": 41, "core": 18, "once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50}
+            text = text[:start] + re.sub(r'for name, count in \{[^\n]*\}.items\(\):',
+                'for name, count in ' + repr(old_counts) + '.items():', text[start:], count=1)
             text = text.replace('srcs = ["src/step.rs"] +', 'srcs = ["src/step.rs", "src/mirror.rs"] +')
             path.write_text(text)
             bazel('test', '--config=remote', '--jobs=80', '--nocache_test_results',

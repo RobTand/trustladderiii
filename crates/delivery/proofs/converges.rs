@@ -10,6 +10,12 @@ spec fn enqueued_only(out: Action) -> bool {
     matches!(out, Action::EnqueueCompletion(_))
 }
 
+proof fn classify_enqueue(out: Action)
+    ensures enqueued_only(out) == matches!(out, Action::EnqueueCompletion(_)),
+{
+    reveal(enqueued_only);
+}
+
 fn found_enqueues_without_committing(v: DeliveryView, pending: Continuation, ack: Ack)
     requires permission_at(pending, v),
 {
@@ -47,7 +53,7 @@ fn reconciliation_agrees_with_quiescent_upstream(v: DeliveryView, before: Upstre
         if let Action::Reconcile(pending) = second {
             let evidence = if sampled.found { Evidence::Found(Ack::Confirmed) } else { Evidence::Absent };
             let next = action(v, Input::Reconciled { pending, evidence });
-            reveal(enqueued_only);
+            proof { classify_enqueue(next); }
             assert(enqueued_only(next) == (before.copies > 0));
             if !sampled.found && v.waits.held { assert(matches!(next, Action::Wait)); }
         } else { assert(false); }

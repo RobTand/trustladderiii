@@ -21,12 +21,19 @@ spec fn zombie_allowed(entry_admitted: bool, durably_sent: bool, owns_now: bool)
     entry_admitted && durably_sent
 }
 
+proof fn loss_of_ownership_preserves_admission(admitted: bool, sent: bool)
+    requires admitted, sent,
+    ensures zombie_allowed(admitted, sent, false),
+{
+    reveal(zombie_allowed);
+}
+
 /// An entry accepted at equality can issue after losing ownership. This is an
 /// environment relation, not a new issue-time check or an exactly-once promise.
 fn zombie_issue_witness() {
     let admitted = accepts_fence(EpochOrder::Current);
     let blocked = blocks_epoch_advance(State::Sent);
-    reveal(zombie_allowed);
+    proof { loss_of_ownership_preserves_admission(admitted, blocked); }
     assert(zombie_allowed(admitted, blocked, false));
     let retired = blocks_epoch_advance(State::Cancelled); assert(!retired);
     assert(zombie_allowed(admitted, blocked, false));
