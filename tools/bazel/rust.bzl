@@ -55,12 +55,6 @@ _WAVE_B_STUB = {
 }
 
 _WAVE_B_ENTRIES = {
-    # judge (#822)
-    "judge": _WAVE_B_STUB,
-    # phase-fold (#822)
-    "phase-fold": _WAVE_B_STUB,
-    # finish-teardown (#822)
-    "finish-teardown": _WAVE_B_STUB,
     # summary-bound (#823)
     "summary-bound": {
         "srcs": ["tests/summary_bound.rs", "tests/summary_bound/reference.rs", "tests/summary_bound/conformance.rs"],
@@ -82,7 +76,13 @@ _WAVE_B_ENTRIES = {
         "tags": ["rust", "wave-b-selector-identity"],
     },
     # limits (S4)
-    "limits": _WAVE_B_STUB,
+    "limits": {
+        "srcs": ["tests/limits.rs"],
+        "crate_root": "tests/limits.rs",
+        "deps": [":tl3_harness_core", "@crates//:serde_json"],
+        "data": ["//harness:core_vectors", "tests/fixtures/limits/delay.json"],
+        "tags": ["wave-b-plan-only", "rust"],
+    },
     # red-match (S4)
     "red-match": {
         "srcs": [":sources"],
@@ -113,6 +113,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
+    "tl3-controller/p5_checker": 14,
     "tl3-controller/operations_quota": 4,
     "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 32,
@@ -143,6 +144,7 @@ _CONTROLLER_WORKERS = [
     "test_test_budget_parity",
     "test_test_worker_checker",
     "test_test_worker_budget_orchestration",
+    "test_test_p5_checker",
 ]
 _CONTROLLER_BINARIES = {
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
@@ -158,6 +160,7 @@ _CONTROLLER_BINARIES = {
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
 _CONTROLLER_RUNTIME = {
+    "test_test_p5_checker": ["//workers/tests:budget_orchestration", "//workers/tests:p5_recordings", "//workers/tests:p5_references", ":example_p5-vectors"],
     "test_test_harness_summary": ["//workers/tests:fixtures", "//workers/tests:harness_io_schedule"],
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
@@ -166,6 +169,7 @@ _CONTROLLER_RUNTIME = {
     "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
+        "//workers/tests:p5_references",
         "//harness:project_files",
         "//workers/tests:worker_process",
         "//workers/tools:scripts",
@@ -422,6 +426,8 @@ def _crate_test(kind, package, name, source, harness, options):
         sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
         if source == "tests/proof_map.rs":
             sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
+        if native.package_name() == "crates/kernel" and source == "tests/random_walks.rs":
+            sources = sources + ["tests/measure_equivalence/reference.rs"]
         if native.package_name() == "crates/store":
             sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":

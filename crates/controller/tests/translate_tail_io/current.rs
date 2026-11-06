@@ -129,3 +129,7 @@ impl Shell<'_> {
         Ok(Some(self.priority_reserve(snapshot, event)?))
     }
 }
+
+// #838 changed the findings helper. Only the current tail uses this copy;
+// the reference tail keeps the frozen findings.rs and its original pin.
+pub(super) mod findings { include!("findings-current.rs"); }

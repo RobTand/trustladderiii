@@ -1,3 +1,4 @@
+pub use tl3_controller::findings::ReviewFixes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

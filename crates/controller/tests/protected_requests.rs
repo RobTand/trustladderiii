@@ -60,6 +60,7 @@ impl Executor for Workers {
                 generation: d.generation,
                 role: role.into(),
                 reply,
+                plan_check: None,
                 model: None,
             }]))
         } else {

@@ -323,7 +323,7 @@ fn over_cap_prerequisites_fail_as_a_reply_without_network_reads() {
         .unwrap()
         .len();
     w.controller.observe("over-cap", tl3_controller::executor::Observation::WorkerReply {
-        node:tl3_kernel::NodeId(0), generation:0,role:"ingest".into(),model:None,
+        node:tl3_kernel::NodeId(0), generation:0,role:"ingest".into(),plan_check:None,model:None,
         reply:json!({"kind":"brief","brief":"Cover scanned sources","goals":[{"description":"Cover sources","verification":"test"}],"memory_ids":[],"files":[],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true},"merge_prerequisites": numbers.iter().map(|n| json!({"kind":"issue","number":n,"source_quote":format!("#{n}")})).collect::<Vec<_>>()}),
     }).unwrap();
     World::drain(&mut w.controller);

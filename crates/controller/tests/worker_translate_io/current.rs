@@ -46,6 +46,7 @@ impl Shell<'_> {
                 role,
                 mut reply,
                 model,
+                plan_check,
             } => {
                 use tl3_controller_core::translate_worker as worker;
                 let n = world
@@ -77,7 +78,11 @@ impl Shell<'_> {
                     _ => worker::Role::Unknown,
                 };
                 let valid_role = worker::valid_role(phase, worker_role);
-                let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                let mut mapped = match adapters::workers::protocol::map_reply_with_plan_check(
+                    &role,
+                    &reply,
+                    plan_check.as_ref(),
+                ) {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         return Ok(Some(Event::Reply {
@@ -104,10 +109,10 @@ impl Shell<'_> {
                 {
                     mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
                 }
-                if role == "planner" && reply["kind"] == "leaf" {
+                if role == "planner" && reply["kind"] == "leaf" && plan_check.is_none() {
                     let checks = reply["checks"]
                         .as_array()
-                        .unwrap()
+                        .ok_or(Error::Invalid("planner checks must be an array"))?
                         .iter()
                         .enumerate()
                         .map(|(index, check)| {
@@ -131,7 +136,7 @@ impl Shell<'_> {
                             Error::Invalid(message) => {
                                 reply["violations"]
                                     .as_array_mut()
-                                    .unwrap()
+                                    .ok_or(Error::Invalid("planner violations must be an array"))?
                                     .push(json!(message));
                                 mapped = adapters::workers::protocol::MappedReply::Kernel(
                                     Reply::PlanCantMeet,
@@ -305,9 +310,11 @@ impl Shell<'_> {
                 }
                 let checkpoint = commit.rows.len();
                 if let Some(document) = document {
-                    commit
-                        .rows
-                        .push(put(document, node.0.to_string(), reply.clone()));
+                    let mut stored = reply.clone();
+                    if let Some(provenance) = plan_check {
+                        stored["plan_check"] = serde_json::to_value(provenance)?;
+                    }
+                    commit.rows.push(put(document, node.0.to_string(), stored));
                 }
                 if role == "ingest"
                     && reply["kind"] == "brief"
@@ -384,7 +391,8 @@ impl Shell<'_> {
                         if !worker::maker_self_check(same_goals, same_count, handover_valid) {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
-                            if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
+                            let mut evidence = findings::ReviewFixes::parse(fixes.evidence)?;
+                            if !evidence.findings.is_empty() {
                                 let mut run = check_run(snapshot, node, Some(&sha))?
                                     .or(check_run(snapshot, node, previous)?)
                                     .ok_or(Error::Invalid(
@@ -409,11 +417,12 @@ impl Shell<'_> {
                                     format!("{}:{sha}", node.0),
                                     json!(run),
                                 ));
-                                let mut evidence = fixes.evidence;
-                                evidence["head_sha"] = json!(sha);
-                                commit
-                                    .rows
-                                    .push(put("review_fixes", node.0.to_string(), evidence));
+                                evidence.fields.insert("head_sha".into(), json!(sha));
+                                commit.rows.push(put(
+                                    "review_fixes",
+                                    node.0.to_string(),
+                                    json!(evidence),
+                                ));
                             }
                             Reply::MakerDone {
                                 head: self.head(node, &sha)?,
@@ -487,11 +496,20 @@ pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Obse
 // The current arm resolves `adapters::workers::reproducing` to the current
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared
-// shim spans the changed leaf. Every other adapter module is shared, unchanged.
+// shim spans the changed leaf. The plan-size leaf likewise has a separate current copy (#835).
 mod adapters {
-    pub use super::super::adapters::{prismabuild, results};
+    pub use super::super::adapters::results;
+    pub mod prismabuild {
+        use super::super::super::*;
+        pub use tl3_controller::adapters::prismabuild::*;
+        const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+        include!("plan-size-current.rs");
+    }
     pub mod workers {
-        pub use super::super::super::adapters::workers::{protocol, review};
+        pub use super::super::super::adapters::workers::review;
+        pub mod protocol {
+            include!("protocol-current.rs");
+        }
         pub mod reproducing {
             include!("reproducing-current.rs");
         }
