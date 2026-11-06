@@ -546,7 +546,7 @@ impl InputCase {
             Observation::Classified { .. } => Self::Classified,
             Observation::Postmortem { .. } => Self::Postmortem,
             Observation::LinkedRequest { .. } => Self::LinkedRequest,
-            Observation::Queue(..) => Self::Queue,
+            Observation::Outcome { .. } | Observation::Queue(..) => Self::Queue,
             Observation::GitHubComment { .. } => Self::GitHubComment,
             Observation::WorkerFailed { .. } => Self::WorkerFailed,
             Observation::WorkerReply { .. } => Self::WorkerReply,

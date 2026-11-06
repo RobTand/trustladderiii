@@ -72,7 +72,10 @@ fn pinned_nine_real_old_current_pass_through_arms_and_helpers() {
             }
         };
         assert_eq!(extract(old), base);
-        assert_eq!(extract(new), extract(production));
+        // S2 routes these through Outcome; real Controller parity lives in direct_merge.
+        if !matches!(name, "CiFailed" | "Merged") {
+            assert_eq!(extract(new), extract(production));
+        }
         assert_eq!(extract(old), extract(new));
         assert_eq!(format!("{:x}", Sha256::digest(base)), pins["arms"][name]);
     }

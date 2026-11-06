@@ -202,7 +202,8 @@ fn prologue(source: &str) -> &str {
         .find("        if let Observation::GitHubComment")
         .unwrap();
     let end = translate[start..]
-        .find("        let mut ci_details")
+        .find("        let observation = match observation {")
+        .or_else(|| translate[start..].find("        let mut ci_details"))
         .or_else(|| translate[start..].find("        match observation {"))
         .unwrap()
         + start;

@@ -19,7 +19,7 @@ impl Fixture {
     }
     fn open(&self) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
-        registry.register(Upstream::Mergify, self.adapter());
+        registry.register(Upstream::Delivery, self.adapter());
         Controller::open_with_clock(
             Store::open(&self.settings).unwrap(),
             registry,
@@ -165,7 +165,7 @@ fn setup_in(
     drop(controller);
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.path().join("mergify"), 0)
             .with_store(settings.clone())
             .with_clock(clock.clone()),

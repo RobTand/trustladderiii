@@ -920,7 +920,8 @@ pub(crate) fn observation_context(
 ) -> Result<(Option<IssueTarget>, String, Option<NodeId>)> {
     use tl3_kernel::Event;
     let node = match observation {
-        Observation::ScratchSaved { node, .. }
+        Observation::Outcome { node, .. }
+        | Observation::ScratchSaved { node, .. }
         | Observation::PrerequisiteRead { node, .. }
         | Observation::Steering { node, .. }
         | Observation::WorkerReply { node, .. }
