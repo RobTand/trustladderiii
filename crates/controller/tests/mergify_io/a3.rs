@@ -1171,8 +1171,7 @@ fn mandatory_a3_boundary_errors() {
             let r = io::a3_compare(&s, |new| {
                 run(
                     Inputs {
-                        kind: 1,
-                        fresh_kind: 2,
+                        kind: if op == "github.events" { 1 } else { 7 },
                         missing: true,
                         unmet: true,
                         ..Inputs::default()
