@@ -238,7 +238,7 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
         check["output"]["summary"] = json!("pass\x1b[0mword=planted-password\0\x08\x7f");
     }
 }
-fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap, head_check: bool) {
+fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap) {
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
     body["check_run"] = api.state.lock().unwrap().queue_check();
@@ -250,16 +250,7 @@ fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap, head_c
             &config.repos,
         )
         .unwrap();
-    for mut input in inputs {
-        if head_check
-            && let tl3_controller::cli::Input::Observation {
-                observation: tl3_controller::executor::Observation::Queue(fact), ..
-            } = &mut input
-            && let adapters::mergify::Evidence::CiFailed { head_check, infra, .. } = &mut fact.evidence
-        {
-            *head_check = true;
-            *infra = false;
-        }
+    for input in inputs {
         ingress::apply(controller, input).unwrap();
     }
     for _ in 0..20 {
@@ -309,7 +300,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     }
     let before = controller.world().unwrap().nodes[0];
     failure(&api, mode, false);
-    observe(&mut controller, &api, &config, mode == "diagnostics-feedback");
+    observe(&mut controller, &api, &config);
     if matches!(mode, "unparsed" | "logs-unavailable" | "diagnostics-golden") {
         // #854b: the first opaque refusal is a Q50 hold, even if fail_fast
         // would otherwise close the fixture. It never spends a failed round.
@@ -395,7 +386,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         if mode == "redelivery" {
             failure(&api, mode, false);
             let before = api.state.lock().unwrap().get_paths.clone();
-            observe(&mut controller, &api, &config, mode == "diagnostics-feedback");
+            observe(&mut controller, &api, &config);
             let snapshot = controller.snapshot().unwrap();
             let changes = serde_json::from_value(json!({"repository":"RobTand/prismabuild", "issues":[],
                 "comments":[], "labels":[], "pull_requests":[], "check_runs":[], "check_suites":[]})).unwrap();
@@ -434,7 +425,26 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             return;
         }
         failure(&api, mode, true);
-        observe(&mut controller, &api, &config, mode == "diagnostics-feedback");
+        observe(&mut controller, &api, &config);
+    }
+    if mode == "diagnostics-feedback" {
+        let facts = queue_facts(&mut controller);
+        let details: tl3_controller::findings::QueueCiEvidence = serde_json::from_value(
+            facts.last().unwrap()["evidence"]["CiFailed"]["details"].clone()
+        ).unwrap();
+        // An explicit change-attributed delivery exercises the shared feedback
+        // consumer. The GitHub-only capture above remains an unattributed hold.
+        controller.observe("ci1-change-attributed-fixture", tl3_controller::executor::Observation::Outcome {
+            node: NodeId(0),
+            outcome: tl3_controller::outcome::Outcome::CiFailed {
+                head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
+                infra: false,
+                failed_tests: details.failed_tests.clone(),
+                evidence: details,
+            },
+            receipt: None,
+        }).unwrap();
+        controller.drive_once().unwrap();
     }
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
