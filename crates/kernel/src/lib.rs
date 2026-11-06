@@ -2328,3 +2328,10 @@ mod port_review_output;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_step_frames.rs"]
 mod port_advance_step_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_admission.rs"]
+mod port_deps_admission;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_pool_grant.rs"]
+mod port_deps_pool_grant;
