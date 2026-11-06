@@ -322,10 +322,11 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     assert_eq!(fixes.evidence["findings"].as_array().unwrap().len(), 20);
     // The store, and so the reviewer, keeps the whole history.
     assert_eq!(
-        store
-            .worker_document("0", "maker_findings")
-            .unwrap()
-            .unwrap(),
+        json!(
+            crate::feedback::read(&store.load().unwrap(), tl3_kernel::NodeId(0))
+                .unwrap()
+                .maker
+        ),
         json!(stored)
     );
     drop(supervisor);

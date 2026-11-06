@@ -189,7 +189,9 @@ impl Fixture {
             &snapshot,
         );
         for (table, value) in rows {
-            commit.rows.push(crate::put(table, "0".into(), value.clone()));
+            commit
+                .rows
+                .push(crate::put(table, "0".into(), value.clone()));
         }
         self.controller.store.commit(&commit).unwrap();
     }
@@ -252,7 +254,7 @@ fn publishing_enqueue_without_inflight_enqueue_delivers_ci_feedback() {
             .unwrap()
             .rows
             .iter()
-            .any(|r| r.table == "maker_findings" || r.table == "feedback")
+            .any(|r| r.table == "feedback")
     );
 }
 
@@ -513,13 +515,12 @@ fn try_again_guidance_reaches_the_planner_through_console_intake() {
         &json!({"kind":"answer", "question":1, "choice":{"answer":"try_again", "guidance":"Use the public API"}})).unwrap();
     crate::ingress::drain(&mut f.controller).unwrap();
     for _ in 0..8 {
-        if f.controller
-            .snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|r| r.table == "findings")
-        {
+        if f.controller.snapshot().unwrap().rows.iter().any(|r| {
+            r.table == "feedback"
+                && r.value["planner"]
+                    .as_array()
+                    .is_some_and(|items| items.contains(&json!("Use the public API")))
+        }) {
             break;
         }
         assert!(f.controller.drive_once().unwrap());
@@ -647,11 +648,21 @@ fn a_failed_step_persists_only_the_canonical_feedback_document() {
         failure_message: "failed while reproducing".into(),
     });
     let snapshot = f.controller.snapshot().unwrap();
-    let document = snapshot.rows.iter().find(|row| row.table == "feedback").unwrap();
-    assert_eq!(document.value["maker"][0]["report"], "failed while reproducing");
-    assert!(!snapshot.rows.iter().any(|row| {
-        ["maker_findings", "findings", "rebase_conflicts"].contains(&row.table.as_str())
-    }), "a step must store one representation of feedback");
+    let document = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "feedback")
+        .unwrap();
+    assert_eq!(
+        document.value["maker"][0]["report"],
+        "failed while reproducing"
+    );
+    assert!(
+        !snapshot.rows.iter().any(|row| {
+            ["maker_findings", "findings", "rebase_conflicts"].contains(&row.table.as_str())
+        }),
+        "a step must store one representation of feedback"
+    );
 }
 
 #[test]
@@ -669,8 +680,18 @@ fn legacy_only_rows_yield_the_same_maker_input_as_the_canonical_document() {
     let legacy = f.maker();
     assert!(legacy["feedback"].to_string().contains("legacy check"));
     assert!(legacy["feedback"].to_string().contains("Resolve the merge"));
-    assert!(!f.controller.snapshot().unwrap().rows.iter().any(|row| row.table == "feedback"));
-    f.documents(&[("feedback", json!({"generation":10,"maker":maker,"planner":planner,"conflict":conflict}))]);
+    assert!(
+        !f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "feedback")
+    );
+    f.documents(&[(
+        "feedback",
+        json!({"generation":10,"maker":maker,"planner":planner,"conflict":conflict}),
+    )]);
     assert_eq!(f.maker(), legacy);
 }
 
@@ -680,26 +701,106 @@ fn malformed_feedback_on_closed_nodes_does_not_poison_later_steps() {
         let mut f = Fixture::new();
         f.seed(Phase::Rebasing, 1);
         f.observe(Observation::RebaseConflict {
-            node: NodeId(0), generation: 10, head: f.repo.head.clone(),
-            target: f.repo.base.clone(), files: vec!["README.md".into()],
+            node: NodeId(0),
+            generation: 10,
+            head: f.repo.head.clone(),
+            target: f.repo.base.clone(),
+            files: vec!["README.md".into()],
         });
         let snapshot = f.controller.snapshot().unwrap();
         let mut commit = Commit::new("malformed-feedback", json!(null), &snapshot);
-        commit.rows.push(tl3_store::RowChange::Delete { table:"feedback".into(), id:"0".into() });
-        commit.rows.push(crate::put(if canonical { "feedback" } else { "maker_findings" }, "0".into(), json!({"maker":"malformed", "conflict":{"head":"old"}})));
-        commit.rows.push(crate::put("rebase_conflicts", "0".into(), json!({"head":"old"})));
+        commit.rows.push(tl3_store::RowChange::Delete {
+            table: "feedback".into(),
+            id: "0".into(),
+        });
+        commit.rows.push(crate::put(
+            if canonical {
+                "feedback"
+            } else {
+                "maker_findings"
+            },
+            "0".into(),
+            json!({"maker":"malformed", "conflict":{"head":"old"}}),
+        ));
+        commit.rows.push(crate::put(
+            "rebase_conflicts",
+            "0".into(),
+            json!({"head":"old"}),
+        ));
         f.controller.store.commit(&commit).unwrap();
-        f.observe(Observation::Steering { node:NodeId(0), command:tl3_kernel::Command::Stop });
+        f.observe(Observation::Steering {
+            node: NodeId(0),
+            command: tl3_kernel::Command::Stop,
+        });
         assert!(f.controller.world().unwrap().nodes[0].phase.is_closed());
-        assert!(!f.controller.snapshot().unwrap().rows.iter().any(|row| row.table == "rebase_conflicts"));
+        assert!(
+            !f.controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "rebase_conflicts")
+        );
         if canonical {
             let snapshot = f.controller.snapshot().unwrap();
-            let document = snapshot.rows.iter().find(|row| row.table == "feedback").unwrap();
+            let document = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "feedback")
+                .unwrap();
             assert!(document.value["conflict"].is_null());
             assert_eq!(document.value["maker"], "malformed");
         }
         for _ in 0..2 {
-            f.observe(Observation::Steering { node:NodeId(0), command:tl3_kernel::Command::Resume });
+            f.observe(Observation::Steering {
+                node: NodeId(0),
+                command: tl3_kernel::Command::Resume,
+            });
         }
     }
+}
+
+#[test]
+fn postmortem_reads_canonical_planner_feedback_over_legacy_rows() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Planning { must_split: false }, 1);
+    f.worker("planner", json!({"kind":"cant_meet", "report":"Need a smaller request", "files":["README.md"], "violations":[],
+        "forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"README.md":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}}));
+    f.documents(&[("findings", json!(["obsolete legacy report"]))]);
+    let snapshot = f.controller.snapshot().unwrap();
+    let mut commit = Commit::new("feedback-postmortem", json!(null), &snapshot);
+    commit.postmortems.push(
+        crate::postmortems::owed(
+            &snapshot,
+            NodeId(0),
+            "feedback".into(),
+            crate::postmortems::Reason::RobAsked,
+            None,
+        )
+        .unwrap(),
+    );
+    f.controller.store.commit(&commit).unwrap();
+    let id = f.controller.store.owed_postmortem().unwrap().unwrap().id;
+    let mut delivery = f.repo.delivery();
+    delivery.output = crate::executor::Output::Comment {
+        node: NodeId(0),
+        kind: crate::executor::CommentKind::Postmortem,
+    };
+    delivery.steering = Some(crate::steering::Task::Postmortem {
+        id,
+        run_key: "feedback".into(),
+    });
+    let inputs = f
+        .supervisor
+        .build_request(
+            &delivery,
+            "postmortem",
+            &mut Store::open(&f.config.store).unwrap(),
+            &f.controller.snapshot().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        inputs["inputs"]["case"]["findings"],
+        json!(["Need a smaller request"])
+    );
 }

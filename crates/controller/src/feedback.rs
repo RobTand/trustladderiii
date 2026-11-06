@@ -67,8 +67,30 @@ fn row<'a>(
         .map(|r| &r.value)
 }
 
-/// Old arrays and conflict objects remain readable until this node gets its first
-/// canonical document. Legacy projections keep question and evidence readers compatible.
+fn load_value(source: &dyn Fn(&str) -> Option<Value>, clearing_conflict: bool) -> Value {
+    if let Some(mut value) = source("feedback") {
+        if clearing_conflict && let Some(fields) = value.as_object_mut() {
+            fields.insert("conflict".into(), Value::Null);
+        }
+        return value;
+    }
+    // remove the legacy fallback once the live store holds no legacy feedback rows (ops check after the R2 deploy)
+    json!({
+        "generation": 0,
+        "maker": source("maker_findings").unwrap_or_else(|| json!([])),
+        "planner": source("findings").unwrap_or_else(|| json!([])),
+        "conflict": if clearing_conflict { None } else { source("rebase_conflicts") },
+    })
+}
+
+pub(crate) fn maker_from(source: &dyn Fn(&str) -> Option<Value>) -> Value {
+    load_value(source, false)["maker"].take()
+}
+
+pub(crate) fn planner_from(source: &dyn Fn(&str) -> Option<Value>) -> Value {
+    load_value(source, false)["planner"].take()
+}
+
 fn load(
     snapshot: &Snapshot,
     changes: &[RowChange],
@@ -76,25 +98,10 @@ fn load(
     clearing_conflict: bool,
 ) -> Result<Document> {
     let id = node.0.to_string();
-    if let Some(value) = row(snapshot, changes, "feedback", &id) {
-        return crate::decode_stored(value.clone());
-    }
-    Ok(Document {
-        generation: 0,
-        maker: row(snapshot, changes, "maker_findings", &id)
-            .map(|v| crate::decode_stored(v.clone()))
-            .transpose()?
-            .unwrap_or_default(),
-        planner: row(snapshot, changes, "findings", &id)
-            .map(|v| crate::decode_stored(v.clone()))
-            .transpose()?
-            .unwrap_or_default(),
-        // Clearing old context does not need to decode fields that will be deleted.
-        conflict: row(snapshot, changes, "rebase_conflicts", &id)
-            .filter(|_| !clearing_conflict)
-            .map(|v| crate::decode_stored(v.clone()))
-            .transpose()?,
-    })
+    crate::decode_stored(load_value(
+        &|table| row(snapshot, changes, table, &id).cloned(),
+        clearing_conflict,
+    ))
 }
 
 pub(crate) fn read(snapshot: &Snapshot, node: NodeId) -> Result<Document> {
@@ -102,29 +109,11 @@ pub(crate) fn read(snapshot: &Snapshot, node: NodeId) -> Result<Document> {
 }
 
 fn save(commit: &mut Commit, node: NodeId, document: &Document) -> Result<()> {
-    let id = node.0.to_string();
-    commit
-        .rows
-        .push(put("feedback", id.clone(), serde_json::to_value(document)?));
-    if !document.maker.is_empty() {
-        commit
-            .rows
-            .push(put("maker_findings", id.clone(), json!(document.maker)));
-    }
-    if !document.planner.is_empty() {
-        commit
-            .rows
-            .push(put("findings", id.clone(), json!(document.planner)));
-    }
-    match &document.conflict {
-        Some(conflict) => commit
-            .rows
-            .push(put("rebase_conflicts", id, json!(conflict))),
-        None => commit.rows.push(RowChange::Delete {
-            table: "rebase_conflicts".into(),
-            id,
-        }),
-    }
+    commit.rows.push(put(
+        "feedback",
+        node.0.to_string(),
+        serde_json::to_value(document)?,
+    ));
     Ok(())
 }
 
@@ -196,6 +185,10 @@ fn goals(store: &mut Store, node: NodeId) -> Result<Vec<String>> {
         .as_ref()
         .and_then(|m| m.get("maker").unwrap_or(m).get("goals"))
     else {
+        eprintln!(
+            "maker finding for node {} has no goal materials; retaining unbound evidence",
+            node.0
+        );
         return Ok(vec![]);
     };
     goals
@@ -283,13 +276,6 @@ pub(crate) fn record(
             (&evidence.rebase, reply),
             (Some(Rebase::Clean), Reply::RebaseClean { .. })
         );
-        let legacy_conflict = row(
-            snapshot,
-            &commit.rows,
-            "rebase_conflicts",
-            &node.0.to_string(),
-        )
-        .is_some();
         let mut document = load(snapshot, &commit.rows, node, clearing_conflict)?;
         let before = document.clone();
         if let Some(planner) = &evidence.planner
@@ -333,7 +319,7 @@ pub(crate) fn record(
             (Some(Rebase::Clean), Reply::RebaseClean { .. }) => document.conflict = None,
             _ => {}
         }
-        if document != before || clearing_conflict && legacy_conflict {
+        if document != before || clearing_conflict {
             document.generation = world.nodes[node.0 as usize].generation;
             save(commit, node, &document)?;
         }
@@ -371,31 +357,42 @@ pub(crate) fn record_world(
                 .get(index)
                 .is_none_or(|n| !matches!(n.phase, Phase::Planning { .. }));
         let closed = node.merged.is_some() || node.phase.is_closed();
-        if !replanning && !closed {
+        let id = NodeId(index as u64);
+        if closed {
+            if previous
+                .nodes
+                .get(index)
+                .is_some_and(|n| n.merged.is_some() || n.phase.is_closed())
+            {
+                continue;
+            }
+            let key = id.0.to_string();
+            commit.rows.push(RowChange::Delete {
+                table: "rebase_conflicts".into(),
+                id: key.clone(),
+            });
+            if let Some(mut value) = row(snapshot, &commit.rows, "feedback", &key).cloned()
+                && let Some(fields) = value.as_object_mut()
+                && fields.get("conflict").is_some_and(|v| !v.is_null())
+            {
+                fields.insert("conflict".into(), Value::Null);
+                fields.insert("generation".into(), json!(node.generation));
+                commit.rows.push(put("feedback", key, value));
+            }
             continue;
         }
-        let id = NodeId(index as u64);
-        let legacy_conflict = row(
-            snapshot,
-            &commit.rows,
-            "rebase_conflicts",
-            &id.0.to_string(),
-        )
-        .is_some();
-        let mut document = load(snapshot, &commit.rows, id, closed)?;
+        if !replanning {
+            continue;
+        }
+        let mut document = load(snapshot, &commit.rows, id, false)?;
         let before = document.clone();
-        if replanning {
-            for item in &document.maker {
-                let report = item.report.as_str().to_owned();
-                if !document.planner.contains(&report) {
-                    document.planner.push(report);
-                }
+        for item in &document.maker {
+            let report = item.report.as_str().to_owned();
+            if !document.planner.contains(&report) {
+                document.planner.push(report);
             }
         }
-        if closed {
-            document.conflict = None;
-        }
-        if document != before || closed && legacy_conflict {
+        if document != before {
             document.generation = node.generation;
             save(commit, id, &document)?;
         }
@@ -435,7 +432,7 @@ fn superseded_in(feedback: &[Value], rounds: &[u64], index: usize) -> u64 {
 /// The store keeps it all.
 ///
 /// A round is one feedback event: a review (all its findings) or a check failure. The
-/// order is the append order of `maker_findings`, which only ever pushes.
+/// order is the append order of the canonical document's maker findings.
 pub(crate) fn bounded_feedback(feedback: Vec<Value>, head: Option<&str>) -> Vec<Value> {
     let last_review = feedback.iter().rposition(|item| reviewed(item).is_some());
     let last_sha = last_review.and_then(|index| reviewed(&feedback[index]));

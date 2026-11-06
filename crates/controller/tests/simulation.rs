@@ -2608,11 +2608,14 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
             assert_ne!(Some(head.clone()), original);
             let snapshot = controller.snapshot().unwrap();
             assert!(
-                !snapshot
+                snapshot
                     .rows
                     .iter()
-                    .any(|row| row.table == "rebase_conflicts" && row.id == "0"),
-                "a clean rebase must delete obsolete conflict context"
+                    .find(|row| row.table == "feedback" && row.id == "0")
+                    .unwrap()
+                    .value["conflict"]
+                    .is_null(),
+                "a clean rebase must clear canonical conflict context"
             );
             assert!(
                 snapshot

@@ -871,7 +871,7 @@ fn assert_handler_reached(case: InputCase, before: &Snapshot, after: &Snapshot) 
         InputCase::WorktreePrepared | InputCase::CheckPlan => "check_plans",
         InputCase::Checks => "check_evidence",
         InputCase::CheckExecutionFailure => "check_execution_failures",
-        InputCase::RebaseConflict | InputCase::Rebased => "rebase_conflicts",
+        InputCase::RebaseConflict | InputCase::Rebased => "feedback",
         InputCase::PullRequest => "pull_requests",
         InputCase::PrivateIntake | InputCase::PrivateReplacement => "requests",
         InputCase::PrivateIssueChange => crate::ISSUE_EDITS,
