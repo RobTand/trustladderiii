@@ -1,6 +1,13 @@
 #![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMode {
+    InJob,
+    OwnScope,
+}
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
