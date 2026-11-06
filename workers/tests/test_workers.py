@@ -718,7 +718,7 @@ def test_audit_objects_to_pq3315_structured_remote_bazel_obligations():
         "issue": {"title": "", "body": "\n".join(
             requirement.get("provenance", {}).get("quote", "")
             for requirement in case["ingest"]["evidence_contract"])},
-        "ingest": copy.deepcopy(case["ingest"]),
+        "ingest": {"brief": "", "goals": [], **copy.deepcopy(case["ingest"])},
         "tool_capabilities": case["tool_capabilities"],
     }
     reply = copy.deepcopy(case["audit"])
