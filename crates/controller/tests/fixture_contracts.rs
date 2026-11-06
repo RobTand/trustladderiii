@@ -28,6 +28,25 @@ impl Spy {
     }
 }
 impl Executor for Spy {
+    fn generator_configured(&self, repository: &tl3_controller::Repository) -> bool {
+        let _: Result<()> = self.hit(
+            "generator_configured",
+            format!("{}/{}", repository.owner, repository.name),
+        );
+        true
+    }
+    fn check_generation(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<tl3_controller::generation::Report>> {
+        self.hit("check_generation", delivery.key.clone())
+    }
+    fn prepare_generated_repair(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<tl3_controller::generation::Report>> {
+        self.hit("prepare_generated_repair", delivery.key.clone())
+    }
     fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
         self.hit("quota_model_eligible", format!("{}:{model}", delivery.key))
     }
@@ -215,6 +234,7 @@ fn delivery_router_forwards_every_method_without_changing_results() {
         );
         let d = delivery(Role::Make);
         assert_delivery_methods(&mut router, &d, mode, &calls);
+        assert!(router.generator_configured(&d.repository));
         assert_eq!(router.implementation(), "queue");
         assert_eq!(router.app_login(3).as_deref(), Some("queue"));
         let question = tl3_controller::adoption::Clarification {
@@ -253,11 +273,12 @@ fn delivery_router_forwards_every_method_without_changing_results() {
         assert!(router.configured_model("configured"));
         assert!(router.quota_model_eligible(&d, "configured").is_err());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 13);
+        assert_eq!(calls.len(), 14);
         for (selected, method, argument) in calls.iter() {
             let expected = if matches!(
                 *method,
-                "intake_question"
+                "generator_configured"
+                    | "intake_question"
                     | "issue"
                     | "reconcile_message"
                     | "prerequisite"
@@ -325,6 +346,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
             head: None,
         };
         assert_delivery_methods(&mut router, &stop, primary, &calls);
+        assert!(router.generator_configured(&stop.repository));
         assert!(router.configured_model("configured"));
         assert!(
             router
@@ -378,6 +400,11 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         assert_eq!(
             *calls.lock().unwrap(),
             vec![
+                (
+                    primary,
+                    "generator_configured",
+                    format!("{}/{}", stop.repository.owner, stop.repository.name),
+                ),
                 (primary, "configured_model", "configured".into()),
                 (
                     primary,
@@ -430,6 +457,8 @@ fn assert_delivery_methods(
     calls: &Calls,
 ) {
     calls.lock().unwrap().clear();
+    assert!(router.check_generation(d).is_err());
+    assert!(router.prepare_generated_repair(d).is_err());
     assert!(router.execute(d).is_err());
     assert!(router.observations(d).is_err());
     assert!(router.reconcile(d).is_err());
@@ -452,6 +481,8 @@ fn assert_delivery_methods(
     assert_eq!(
         *calls.lock().unwrap(),
         [
+            "check_generation",
+            "prepare_generated_repair",
             "execute",
             "observations",
             "reconcile",

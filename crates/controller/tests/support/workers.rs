@@ -71,6 +71,24 @@ impl<F: FnMut(&Delivery, &mut Completion)> Workers<F> {
 }
 
 impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
+    fn generator_configured(&self, repository: &tl3_controller::Repository) -> bool {
+        match &self.real {
+            Some(real) => real.generator_configured(repository),
+            None => self.fake.generator_configured(repository),
+        }
+    }
+    fn check_generation(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<tl3_controller::generation::Report>> {
+        self.backend(delivery).check_generation(delivery)
+    }
+    fn prepare_generated_repair(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<tl3_controller::generation::Report>> {
+        self.backend(delivery).prepare_generated_repair(delivery)
+    }
     fn configured_model(&self, model: &str) -> bool {
         match &self.real {
             Some(real) => real.configured_model(model),

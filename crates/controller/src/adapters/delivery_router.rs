@@ -35,6 +35,27 @@ impl<Q: Executor, D: Executor> Router<Q, D> {
     }
 }
 impl<Q: Executor, D: Executor> Executor for Router<Q, D> {
+    fn generator_configured(&self, repository: &Repository) -> bool {
+        if self.direct_repos.contains(repository) {
+            self.direct.generator_configured(repository)
+        } else {
+            self.queue.generator_configured(repository)
+        }
+    }
+    fn check_generation(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<crate::generation::Report>> {
+        self.selected(&delivery.repository)
+            .check_generation(delivery)
+    }
+    fn prepare_generated_repair(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Option<crate::generation::Report>> {
+        self.selected(&delivery.repository)
+            .prepare_generated_repair(delivery)
+    }
     fn input_incident(
         &mut self,
         notice: &crate::input_errors::IncidentNotice,
