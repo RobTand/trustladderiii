@@ -2971,7 +2971,7 @@ impl Controller {
         world: &mut World,
         observation: Observation,
         commit: &mut Commit,
-        queue_receipt: Option<RowChange>,
+        queue_receipt: Option<(RowChange, findings::QueueCiEvidence)>,
     ) -> Result<Option<Event>> {
         if let Observation::GitHubComment {
             repository,
@@ -3018,7 +3018,9 @@ impl Controller {
             other => other,
         };
 
-        let mut ci_details = match &observation {
+        let mut ci_details = if let Some((_, details)) = &queue_receipt {
+            details.clone()
+        } else { match &observation {
             Observation::Outcome {
                 outcome:
                     outcome::Outcome::CiFailed {
@@ -3037,7 +3039,7 @@ impl Controller {
                 ..
             }) => details.clone(),
             _ => Default::default(),
-        };
+        }};
         ci_details = adapters::mergify::ci_evidence::bounded(ci_details);
         let ci_checks = ci_details.checks.clone();
         let mut failed_tests = ci_details.failed_tests.clone();
@@ -3330,7 +3332,7 @@ impl Controller {
                             receipt: None,
                         },
                         commit,
-                        Some(put("queue_facts", identity, value)),
+                        Some((put("queue_facts", identity, value), ci_details)),
                     );
                 }
                 let fact = match kernel {
@@ -4261,7 +4263,7 @@ impl Controller {
                 return Ok(None);
             }
         };
-        if let Some(receipt) = queue_receipt {
+        if let Some((receipt, _)) = queue_receipt {
             commit.rows.push(receipt);
         }
         let finding = {

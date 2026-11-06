@@ -42,7 +42,8 @@ impl Shell<'_> {
     fn translate(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit) -> Result<Option<Event>> {
         self.translate_with_receipt(snapshot, world, observation, commit, None)
     }
-    fn translate_with_receipt(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit, queue_receipt: Option<Value>) -> Result<Option<Event>> {
+    fn translate_with_receipt(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit, queue_receipt: Option<(Value, crate::findings::QueueCiEvidence)>) -> Result<Option<Event>> {
+        let ci_details = crate::findings::QueueCiEvidence::default();
         let event = match observation {
             Observation::Queue(mut fact) => {
                 if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
@@ -273,7 +274,7 @@ impl Shell<'_> {
                             receipt: None,
                         },
                         commit,
-                        Some(put("queue_facts", identity, value)),
+                        Some((put("queue_facts", identity, value), ci_details)),
                     );
                 }
                 let fact = match kernel {
@@ -370,7 +371,7 @@ impl Shell<'_> {
             }
 
         };
-        if let Some(receipt) = queue_receipt { commit.rows.push(receipt); }
+        if let Some((receipt, _)) = queue_receipt { commit.rows.push(receipt); }
         Ok(Some(event))
     }
 }

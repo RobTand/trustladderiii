@@ -983,3 +983,44 @@ fn legacy_delivery_upstream_snapshot_still_routes() {
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
     assert!(controller.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == "legacy-delivery-incident" && r.value["open"] == false));
 }
+
+/// PRD #878 story 16: live CI failures retain the same failed round and feedback.
+#[test]
+fn fake_and_production_ci_outcomes_have_identical_findings() {
+    use tl3_controller::{executor::Observation, findings::CiFailure};
+    let mut database = support::Database::start();
+    for infra in [false, true] {
+        let mut results = Vec::new();
+        for fake in [true, false] {
+            let settings = database.create(&format!("ci_parity_{infra}_{fake}"));
+            let api = Server::new();
+            let root = tempfile::tempdir().unwrap();
+            let mut controller = queued(&settings, &api, root.path(), true);
+            let checks = vec![CiFailure { name: "unit tests".into(), summary: "assertion failed".into(), url: None }];
+            let observation = if fake {
+                Observation::CiFailed { node: NodeId(0), infra, checks }
+            } else {
+                Observation::Queue(adapters::mergify::QueueFact {
+                    repository: bootstrap().repos[0].clone(), number: 100,
+                    evidence: adapters::mergify::Evidence::CiFailed {
+                        check: 1001, completed_at: None,
+                        head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
+                        infra, head_check: true,
+                        details: tl3_controller::findings::QueueCiEvidence { checks, ..Default::default() },
+                    },
+                })
+            };
+            controller.observe("same-ci-outcome", observation).unwrap();
+            assert!(controller.drive_once().unwrap());
+            let facts: Vec<_> = Store::open(&settings).unwrap()
+                .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
+                .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].get("CiFailed").cloned()).collect();
+            let findings: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+                .filter(|row| matches!(row.table.as_str(), "maker_findings" | "findings"))
+                .map(|row| (row.table, row.id, row.value)).collect();
+            assert_eq!(facts, vec![json!({"infra":infra})]);
+            results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), findings));
+        }
+        assert_eq!(results[0], results[1], "CI classification {infra} must share facts, world rows and findings");
+    }
+}
