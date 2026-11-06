@@ -79,3 +79,26 @@ pub(super) fn rejected(signal: &Option<Arc<AtomicBool>>, line: &str) {
         }
     }
 }
+
+pub(super) fn stop_with_users() {
+    let mut database = support::Database::start();
+    let settings = database.create("stop_users_probe");
+    let mut idle = connect(&settings);
+    let mut active = connect(&settings);
+    let active_pid: i32 = active.query_one("SELECT pg_backend_pid()", &[]).unwrap().get(0);
+    let query = thread::spawn(move || active.batch_execute("SELECT pg_sleep(300)"));
+    let started = Instant::now();
+    loop {
+        let sleeping: bool = idle.query_one("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND state = 'active' AND wait_event = 'PgSleep')", &[&active_pid]).unwrap().get(0);
+        if sleeping {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(10), "owned active query did not start");
+        thread::sleep(Duration::from_millis(5));
+    }
+    database.stop();
+    assert!(query.join().unwrap().is_err(), "fast shutdown must terminate active query");
+    assert!(idle.simple_query("SELECT 1").is_err(), "idle connection must also be stale after fast shutdown");
+    println!("test fixture_fast_stop_active_and_idle_users ... ok");
+    println!("1 GitHub shutdown fixture scenarios passed; no skips");
+}

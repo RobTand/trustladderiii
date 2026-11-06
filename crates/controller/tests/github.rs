@@ -617,6 +617,17 @@ fn main() {
         println!("1 GitHub fixture lifecycle scenarios passed; no skips");
         return;
     }
+    if args.iter().any(|arg| arg == "--fixture-catchup-probe") {
+        let mut database = support::Database::start();
+        catchup_heads::run(&mut database);
+        database.stop();
+        println!("11 GitHub catch-up fixture scenarios passed; no skips");
+        return;
+    }
+    if args.iter().any(|arg| arg == "--fixture-stop-users-probe") {
+        fixture_lifecycle::stop_with_users();
+        return;
+    }
     let group = args
         .get(1)
         .and_then(|arg| arg.strip_prefix("--gate-group="));
