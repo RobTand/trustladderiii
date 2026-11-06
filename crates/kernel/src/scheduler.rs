@@ -42,8 +42,33 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
                     && slot_waiters(old(w).nodes@, old(w).nodes@.len(), old(w).nodes@[i as int].repo)
                         < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
             },
+        exists|context: AdvanceContext| context.node == i
+            && result == advance_enabled(old(w).nodes@[i as int], context)
+            && port_advance_contracts::context_safe(*old(w), i as int, context)
+            && port_advance_contracts::pool_context(*old(w), i as int, context)
+            && port_advance_contracts::exact(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).next_ticket, final(w).next_ticket, context, *old(out), *final(out)),
+        port_advance_contracts::pool_waiting(old(w).nodes@[i as int]) ==> result
+            == (pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+                && oldest_waiter(*old(w), i as int)),
+        result && old(w).nodes@[i as int].phase == Phase::Unplanned
+            && old(w).nodes@[i as int].pos == 0 && old(w).nodes@[i as int].ticket.is_none()
+            ==> final(w).nodes@[i as int] == (Node {
+                credit: Credit { withheld: false, ..old(w).nodes@[i as int].credit },
+                planning_started: true, phase: Phase::Planning { must_split: false },
+                generation: (old(w).nodes@[i as int].generation + 1) as u64,
+                pos: 0, ticket: None, ..old(w).nodes@[i as int]
+            }) && *final(out) == *old(out),
+        old(w).nodes@[i as int].phase == Phase::Ready(Resume::Making)
+            && old(w).nodes@[i as int].pos == 0 && !old(w).nodes@[i as int].waiting_incident
+            && old(w).nodes@[i as int].effect.is_none() ==>
+            port_advance_gate::gate_ready_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).next_ticket, final(w).next_ticket,
+                port_advance_gate::gate_slot(*old(w), i as int) && port_advance_gate::gate_line(*old(w), i as int),
+                result, *old(out), *final(out)),
 ] {
     kernel_snapshot! { before_advance = *w }
+    kernel_snapshot! { before_out = *out }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
     let n = &w.nodes[i];
     let mut context = AdvanceContext {
@@ -70,9 +95,22 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
     }
     kernel_proof! {
         assert(movable(*w, i as int) ==> advance_enabled(w.nodes@[i as int], context));
+        assert(port_advance_contracts::context_safe(*w, i as int, context));
+        assert(port_advance_contracts::pool_context(*w, i as int, context));
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
     kernel_proof! {
+        if changed && before_advance@.nodes@[i as int].phase == Phase::Unplanned
+            && before_advance@.nodes@[i as int].pos == 0 && before_advance@.nodes@[i as int].ticket.is_none() {
+            port_advance_contracts::admission_frame(before_advance@.nodes@[i as int], w.nodes@[i as int],
+                before_advance@.next_ticket, w.next_ticket, context, before_out@, *out, changed);
+        }
+        assert(exists|c: AdvanceContext| c.node == i
+            && changed == advance_enabled(before_advance@.nodes@[i as int], c)
+            && port_advance_contracts::context_safe(before_advance@, i as int, c)
+            && port_advance_contracts::pool_context(before_advance@, i as int, c)
+            && port_advance_contracts::exact(before_advance@.nodes@[i as int], w.nodes@[i as int],
+                before_advance@.next_ticket, w.next_ticket, c, before_out@, *out));
         reveal(advance_post);
         advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,
             before_advance@.next_ticket, w.next_ticket, changed);
@@ -84,6 +122,17 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
             }
             assert forall|j: int| 0 <= j < w.nodes@.len() implies settle_shape(w.nodes@[j]) by {}
             reveal(footprint::ordered_table);
+        }
+    }
+    kernel_proof! {
+        if before_advance@.nodes@[i as int].phase == Phase::Ready(Resume::Making)
+            && before_advance@.nodes@[i as int].pos == 0
+            && !before_advance@.nodes@[i as int].waiting_incident
+            && before_advance@.nodes@[i as int].effect.is_none() {
+            port_advance_gate::gate_grant_frame(before_advance@.nodes@[i as int], w.nodes@[i as int],
+                before_advance@.next_ticket, w.next_ticket, context.slot,
+                port_advance_gate::gate_slot(before_advance@, i as int)
+                    && port_advance_gate::gate_line(before_advance@, i as int), changed, before_out@, *out);
         }
     }
     changed
@@ -174,7 +223,9 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
         && w.gates@[w.nodes@[i as int].repo.0 as int].w > 0
         && (forall|j: int| 0 <= j < w.nodes@.len() && j != i ==> !w.nodes@[j].holds))
         ==> result,
-] {
+        result && !w.nodes@[i as int].holds ==> port_advance_contracts::slot_safe(*w, i as int),
+    result == port_advance_gate::gate_slot(*w, i as int),
+] proof [reveal(port_advance_gate::gate_slot);] {
     let me = &w.nodes[i];
     let _gate_count = w.gates.len();
     let Some(repo) = me.repo.index() else { return false; };
@@ -186,17 +237,24 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
             *me == w.nodes@[i as int], repo < w.gates.len(),
             repo as int == me.repo.0 as int, *gate == w.gates@[repo as int],
             holders as int <= open_prefix(w.nodes@, j as nat),
+            holders as nat == port_advance_gate::gate_slot_count(*w, i as int, j as nat),
+            !me.holds ==> holders as nat == progress_gate_apply::holders(*w, me.repo, j as nat),
+            forall|k: int| 0 <= k < j && k != i && w.nodes@[k].holds
+                && w.nodes@[k].repo == me.repo
+                ==> footprint::disjoint(*w, w.nodes@[k].footprint, me.footprint),
             ((forall|k: int| 0 <= k < w.nodes@.len() && k != i ==> !w.nodes@[k].holds)
                 ==> holders == 0),
         decreases w.nodes.len() - j,
     ] {
         let n = &w.nodes[j];
         kernel_proof! {
-            reveal(open_prefix);
+            reveal(open_prefix); reveal(port_advance_gate::gate_slot_count);
+            reveal(potential_prefix);
             open_prefix_monotone(w.nodes@, j as nat + 1, w.nodes@.len());
         }
         if j != i && n.holds && n.repo == me.repo {
             if !w.footprints_disjoint(n.footprint, me.footprint) {
+                kernel_proof! { reveal(port_advance_gate::gate_slot); }
                 return false;
             }
             holders += 1;
@@ -227,18 +285,26 @@ kernel_fn! {
 #[allow(clippy::collapsible_if)]
 pub(super) fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
-] {
+    ensures result == port_advance_gate::gate_overlap(*w, i as int, ticket),
+] proof [reveal(port_advance_gate::gate_overlap);] {
     let waiter = &w.nodes[i];
     let mut index = 0usize;
     kernel_while! { (index < w.nodes.len()) [
         invariant index <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
             *waiter == w.nodes@[i as int],
+            forall|k: int| 0 <= k < index && w.nodes@[k].phase is Ready && w.nodes@[k].repo == waiter.repo
+                && (match w.nodes@[k].ticket { Some(t) => t < ticket, None => false })
+                ==> footprint::disjoint(*w, w.nodes@[k].footprint, waiter.footprint),
         decreases w.nodes.len() - index,
     ] {
         let older = &w.nodes[index];
         if matches!(older.phase, Phase::Ready(_)) && older.repo == waiter.repo {
             if let Some(theirs) = older.ticket {
                 if theirs < ticket && !w.footprints_disjoint(older.footprint, waiter.footprint) {
+                    kernel_proof! {
+                        reveal(port_advance_gate::gate_overlap);
+                        assert(port_advance_gate::gate_overlapping_before(*w, i as int, index as int, ticket));
+                    }
                     return true;
                 }
             }
@@ -255,7 +321,9 @@ kernel_fn! {
 pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
     ensures oldest_waiter(*w, i as int) ==> result,
-] {
+        !(w.nodes@[i as int].phase is Ready) ==> result == oldest_waiter(*w, i as int),
+        w.nodes@[i as int].phase is Ready ==> result == port_advance_gate::gate_line(*w, i as int),
+] proof [reveal(oldest_waiter); reveal(port_advance_gate::gate_line);] {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     if !matches!(me.phase, Phase::Ready(_)) {
@@ -263,6 +331,7 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
         kernel_while! { (index < w.nodes.len()) [
             invariant index <= w.nodes.len(), i < w.nodes.len(),
                 *me == w.nodes@[i as int], !(me.phase is Ready), me.ticket == Some(mine),
+                forall|k: int| 0 <= k < index ==> !pool_precedes(w.nodes@[k], *me),
             decreases w.nodes.len() - index,
         ] {
             if earlier_in_pool(&w.nodes[index], me) { return false; }
@@ -276,8 +345,11 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
         invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
             *me == w.nodes@[i as int], me.phase is Ready, me.ticket == Some(mine),
             oldest_waiter(*w, i as int) ==> first_runnable == mine,
+            first_runnable <= mine,
+            (first_runnable == mine) == port_advance_gate::gate_line_prefix(*w, i as int, j as int),
         decreases w.nodes.len() - j,
     ] {
+        kernel_proof! { port_advance_gate::gate_prefix_step(*w, i as int, j as int); }
         let index = j;
         let waiter = &w.nodes[j];
         j += 1;
@@ -286,7 +358,14 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
             continue;
         }
         kernel_proof! { assert(!oldest_waiter(*w, i as int)); }
-        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
+        if !w.footprints_disjoint(waiter.footprint, me.footprint) {
+            kernel_proof! {
+                reveal(port_advance_gate::gate_line);
+                assert(port_advance_gate::gate_older(*w, i as int, index as int));
+                assert(!port_advance_gate::gate_eligible(*w, i as int, index as int));
+            }
+            return false;
+        }
         if theirs >= first_runnable || !slot_free(w, index) { continue; }
         if !older_overlap(w, index, theirs) { first_runnable = theirs; }
     } }

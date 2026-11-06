@@ -180,7 +180,18 @@ kernel_fn! {
     pub(super) fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) -> (result: ()) [
     requires old(m).credit.merge_credited || old(m).credit.earned < u64::MAX,
         old(out).len + 2 <= OUTBOX,
-    ensures final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
+    ensures final(out).len == old(out).len + if outcome == Outcome::Replaced { 2usize } else { 1usize },
+        final(out).items@ == if outcome == Outcome::Replaced {
+            old(out).items@.update(old(out).len as int,
+                Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Summary(outcome) }))
+                .update(old(out).len as int + 1,
+                    Some(Out::Notice { node: NodeId(i as u64), notice: Notice::FileReplacement }))
+        } else {
+            old(out).items@.update(old(out).len as int,
+                Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Summary(outcome) }))
+        },
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
         *final(m) == (Node { phase: Phase::Closed(outcome), pos: 0, ticket: None,
             credit: Credit { earned: final(m).credit.earned,
                 merge_credited: final(m).credit.merge_credited, ..old(m).credit }, ..*old(m) }),
@@ -212,7 +223,11 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(w).next_question < u64::MAX,
         old(w).nodes@[i as int].generation < u64::MAX, old(out).len < OUTBOX,
-    ensures final(w).next_question as int == old(w).next_question as int + 1,
+    ensures final(out).items@ == old(out).items@.update(old(out).len as int,
+            Some(Out::Notice { node: NodeId(i as u64),
+                notice: Notice::Ask { question: old(w).next_question } })),
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(w).next_question as int == old(w).next_question as int + 1,
         final(w).next_ticket == old(w).next_ticket,
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
@@ -322,7 +337,8 @@ pub(super) fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].next_seq < u64::MAX,
-    ensures final(w).nodes@[i as int] == (Node {
+    ensures port_review_output::effect_post(old(out).items@, old(out).len, final(out).items@, old(w).nodes@[i as int], i, kind),
+        final(w).nodes@[i as int] == (Node {
         next_seq: (old(w).nodes@[i as int].next_seq + 1) as u64,
         effect: Some(InFlight { seq: old(w).nodes@[i as int].next_seq, kind, cancelling: false }),
         worktree: old(w).nodes@[i as int].worktree || kind == EffectKind::PrepareWorktree,
@@ -351,7 +367,8 @@ kernel_fn! {
     /// #771: effect allocation increases next_seq by exactly one.
     pub(super) fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) -> (result: ()) [
     requires old(m).next_seq < u64::MAX, old(out).len < OUTBOX,
-    ensures *final(m) == (Node {
+    ensures port_review_output::effect_post(old(out).items@, old(out).len, final(out).items@, *old(m), i, kind),
+        *final(m) == (Node {
         next_seq: (old(m).next_seq + 1) as u64,
         effect: Some(InFlight { seq: old(m).next_seq, kind, cancelling: false }),
         worktree: old(m).worktree || kind == EffectKind::PrepareWorktree,
@@ -361,6 +378,9 @@ kernel_fn! {
     }),
     final(out).len == old(out).len + 1,
     ] {
+        kernel_snapshot! { emitted_node = *m }
+        kernel_snapshot! { emitted_items = out.items@ }
+        kernel_snapshot! { emitted_len = out.len }
         let seq = m.next_seq;
         m.next_seq += 1;
         m.effect = Some(InFlight {
@@ -382,11 +402,21 @@ kernel_fn! {
             }
             _ => None,
         };
+        kernel_proof! {
+            assert(head == port_review_output::selected_head(emitted_node@, kind)) by {
+                reveal(port_review_output::selected_head);
+            }
+        }
         out.push(Out::Effect {
             node: NodeId(i as u64),
             seq,
             kind,
             head,
         });
+        kernel_proof! {
+            assert(port_review_output::effect_post(emitted_items@, emitted_len@, out.items@, emitted_node@, i, kind)) by {
+                reveal(port_review_output::effect_post);
+            }
+        }
     }
 }

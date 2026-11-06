@@ -628,7 +628,10 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
+    ] proof [port_advance_contracts::blocked_frame(*node, *_next_ticket, _context, *_out);
+        reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -657,7 +660,11 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [port_advance_step_frames::finished_quiet(*node, *_next_ticket, context, *out);
+        reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { advance_out = *out }
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -666,6 +673,8 @@ kernel_fn! {
             }
             Phase::Stopping(outcome) if n.question.is_none() => {
                 close_node(node, context.node, outcome, out);
+                kernel_proof! { port_advance_step_frames::finished_close(n, *_next_ticket,
+                    context, advance_out@, *out, outcome); }
                 true
             }
             _ => false,
@@ -683,7 +692,14 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -703,7 +719,25 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
+    ] proof [
+        port_advance_step_frames::start_quiet(*node, *next_ticket, context, *out);
+        let n = *node;
+        let ticket = *next_ticket;
+        let c = context;
+        let after = if n.paused { port_advance_contracts::paused(n) }
+            else if n.ticket.is_none() { Node { ticket: Some(ticket), ..n } }
+            else if c.pool { port_advance_contracts::emitted(Node { ticket: None, pool: true,
+                run: Some(n.generation), pos: (n.pos + 1) as u8, ..n }, EffectKind::StartRun(role)) }
+            else { n };
+        let ticket_after = (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64;
+        assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c))) by {
+            reveal(advance_post); reveal(distance);
+            if n.paused {} else if n.ticket.is_none() {} else if c.pool {} else {}
+        }
+    ] {
+        kernel_snapshot! { advance_out = *out }
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -719,6 +753,7 @@ kernel_fn! {
             m.run = Some(m.generation);
             m.pos += 1;
             emit_node(node, context.node, EffectKind::StartRun(role), out);
+            kernel_proof! { port_advance_step_frames::start_emit(n, *next_ticket, context, role, advance_out@, *out); }
             return true;
         }
         false
@@ -735,7 +770,14 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -758,7 +800,14 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -782,7 +831,12 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
             result ==> final(node).phase == (Phase::Planning { must_split: false }),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(_out), *final(_out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused || !context.admit {
             return false;
@@ -805,7 +859,36 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out)),
+    ] proof [
+        port_advance_contracts::slot_frame(*node, *next_ticket, context, *_out);
+        let n = *node;
+        let ticket = *next_ticket;
+        let c = context;
+        let after = port_advance_contracts::slot_after(n, ticket, c);
+        let ticket_after = (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64;
+        assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c))) by {
+            reveal(advance_post); reveal(distance);
+            assert(n.phase is Ready);
+            let r = match n.phase { Phase::Ready(r) => r, _ => Resume::Making };
+            if n.paused {
+                assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c)));
+            } else if n.ticket.is_none() {
+                assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c)));
+            } else if c.slot {
+                match r {
+                    Resume::Making => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Checking => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Reviewing => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Publishing => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Rebasing => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                }
+            } else {
+                assert(advance_post(n, after, ticket, ticket_after, false));
+            }
+        }
+    ] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
@@ -841,7 +924,10 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
+    ] proof [port_advance_step_frames::release_frame(*node, *_next_ticket, _context, *_out);
+        reveal(advance_post); reveal(distance);] {
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
@@ -861,7 +947,27 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [
+        port_advance_step_frames::teardown_quiet(*node, *_next_ticket, context, *out, kind);
+        let n = *node;
+        let ticket = *_next_ticket;
+        let after = if n.question.is_some() { n }
+            else if port_advance_contracts::gone(n, kind) {
+                Node { pool: n.pool && kind != EffectKind::StopRun, pos: (n.pos + 1) as u8, ..n }
+            } else { port_advance_contracts::emitted(n, kind) };
+        assert(n.phase is Stopping);
+        assert(pending_rank(n) == 0 && pending_rank(after) == 0);
+        if n.question.is_some() {
+            port_advance_teardown_rank::question(n, ticket, context, kind);
+        } else if port_advance_contracts::gone(n, kind) {
+            port_advance_teardown_rank::absent(n, ticket, context, kind);
+        } else {
+            port_advance_teardown_rank::emission(n, ticket, context, kind);
+        }
+    ] {
+        kernel_snapshot! { advance_out = *out }
         let n = *node;
         if n.question.is_some() {
             return false; // waiting for Rob
@@ -883,6 +989,7 @@ kernel_fn! {
             return true;
         }
         emit_node(node, context.node, kind, out);
+        kernel_proof! { port_advance_step_frames::teardown_emit(n, *_next_ticket, context, advance_out@, *out, kind); }
         true
     }
 }
@@ -897,7 +1004,12 @@ kernel_fn! {
             advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(_node), *final(_node),
+                *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         false
     }
 }
@@ -913,7 +1025,13 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
-    ] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
+            old(node).phase == Phase::Ready(Resume::Making) && old(node).pos == 0
+                && !old(node).waiting_incident && old(node).effect.is_none() ==>
+                port_advance_gate::gate_ready_post(*old(node), *final(node),
+                    *old(next_ticket), *final(next_ticket), context.slot, result, *old(out), *final(out)),
+    ] proof [port_advance_gate::gate_ready_projection(*node, *next_ticket, context, *out);] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
             return advance_blocked(node, next_ticket, context, out);
