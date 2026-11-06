@@ -56,6 +56,7 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd, final(m).review_stop == Some(step),
+        *final(m) == retirement::stopped(Node { review_stop: Some(step), ..*old(m) }, Outcome::Stopped),
 ] {
     m.review_stop = Some(step);
     enter_stopping(m, Outcome::Stopped);
@@ -73,7 +74,10 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+        final(w).nodes@[i as int] == retirement_retry::failed(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
+        final(w).next_question as int == old(w).next_question as int + if old(w).nodes@[i as int].round != 0 && retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds);reveal(retirement_retry::failed);] {
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
@@ -98,7 +102,10 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+        final(w).nodes@[i as int] == retirement_retry::rung(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds);reveal(retirement_retry::rung);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
@@ -225,7 +232,13 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
+        (target == Phase::Ready(Resume::Checking) && retirement_retry::published_source(old(w).nodes@[i as int]))
+            ==> final(w).nodes@[i as int]
+            == retirement_retry::rechecked(old(w).nodes@[i as int], target, old(w).next_question),
+        final(w).next_question as int == old(w).next_question as int
+            + if old(w).nodes@[i as int].rechecks >= FREE_RECHECKS && !retirement_retry::can_pay(old(w).nodes@[i as int]) { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+ ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);reveal(retirement_retry::rechecked); reveal(retirement_retry::recheck_core); reveal(retirement_retry::continued);] {
     kernel_snapshot! { before_recheck = *w }
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);

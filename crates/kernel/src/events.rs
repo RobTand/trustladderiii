@@ -73,7 +73,23 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             _ => true,
         },
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+        match event {
+            Event::Fact { node, fact } => retirement_retry::selected(fact) && node.0 < old(w).nodes@.len() ==> {
+                final(w).nodes@ == old(w).nodes@.update(node.0 as int,
+                    retirement_retry::fact_result(old(w).nodes@[node.0 as int], fact, old(w).fail_fast, old(w).next_question).0)
+                && final(w).next_question as int == old(w).next_question as int
+                    + if retirement_retry::fact_result(old(w).nodes@[node.0 as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int }
+                && final(w).file_sets@ == old(w).file_sets@
+                && final(w).dependencies@ == old(w).dependencies@
+                && (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)))
+            },
+            Event::NewRequest { repo, priority } => retirement_wide::creation(*old(w), *final(w), repo, priority, None)
+                && *final(out) == *old(out),
+            Event::NewAdoption { repo, priority, head } => retirement_wide::creation(*old(w), *final(w), repo, priority, Some(head))
+                && *final(out) == *old(out),
+            _ => true,
+        },
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands); reveal(retirement_wide::creation);] {
     kernel_snapshot! { before_apply = *w }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
     match event {

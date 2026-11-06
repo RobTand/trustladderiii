@@ -55,6 +55,17 @@ const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
 
 // #806: these names retain their event/phase coverage after Kani retirement.
 const VERUS_RETIREMENTS: &[(&str, &str)] = &[
+    ("apply_ci_failed", "retirement_retry_verify_retry_apply"),
+    ("apply_new_adoption", "retirement_wide_verify_new_apply"),
+    ("apply_new_request", "retirement_wide_verify_new_apply"),
+    ("apply_outside_push", "retirement_retry_verify_retry_apply"),
+    (
+        "apply_publishing_ci_tests",
+        "retirement_publishing_verify_publishing_apply",
+    ),
+    ("apply_upstream_stalled", "retirement_verify_selected_apply"),
+    ("gate_grant_w2", "retirement_gate_verify_grant"),
+    ("gate_grant_w3", "retirement_gate_verify_grant"),
     ("apply_incident_cleared", "facts_incident_cleared"),
     ("apply_pr_dequeued", "facts_pr_dequeued"),
     (

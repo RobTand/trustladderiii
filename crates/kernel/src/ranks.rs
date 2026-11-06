@@ -805,7 +805,11 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            old(node).phase == Phase::Ready(Resume::Making) ==> *final(node) == retirement_gate::slot_node(*old(node), *old(next_ticket), context.slot),
+        old(node).phase == Phase::Ready(Resume::Making) ==> *final(next_ticket) == retirement_gate::slot_ticket(*old(node), *old(next_ticket)),
+        *final(_out) == *old(_out),
+        result == retirement_gate::slot_changed(*old(node), context.slot),
+] proof [reveal(advance_post); reveal(distance);reveal(retirement_gate::slot_node);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
@@ -913,7 +917,13 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
-    ] {
+                (old(node).phase == Phase::Ready(Resume::Making) && old(node).pos == 0 && !old(node).waiting_incident && old(node).effect.is_none()) ==> {
+                *final(node) == retirement_gate::slot_node(*old(node), *old(next_ticket), context.slot)
+                    && *final(next_ticket) == retirement_gate::slot_ticket(*old(node), *old(next_ticket))
+                    && *final(out) == *old(out)
+                    && result == retirement_gate::slot_changed(*old(node), context.slot)
+            },
+] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
             return advance_blocked(node, next_ticket, context, out);

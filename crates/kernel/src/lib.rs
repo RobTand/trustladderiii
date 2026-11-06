@@ -46,14 +46,32 @@ mod events_lemmas;
 #[path = "../verus/retirement.rs"]
 mod retirement;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_gate.rs"]
+mod retirement_gate;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_gate_witness.rs"]
+mod retirement_gate_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_merge_waiting_witness.rs"]
 mod retirement_merge_waiting_witness;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_merge_witness.rs"]
 mod retirement_merge_witness;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_publishing.rs"]
+mod retirement_publishing;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry.rs"]
+mod retirement_retry;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry_witness.rs"]
+mod retirement_retry_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_terminal_fact_witness.rs"]
 mod retirement_terminal_fact_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_wide.rs"]
+mod retirement_wide;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_witness.rs"]
 mod retirement_witness;
@@ -63,6 +81,10 @@ verus! {
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
 /// #806: complete acceptance predicate, equivalent to the real checker in this domain.
 pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
+/// #806: complete checker bridge for appended and gate worlds.
+pub closed spec fn retirement_wide_domain(w: World) -> bool { retirement_wide::domain(w) }
+/// #806: complete production acceptance on the wider construction.
+pub closed spec fn retirement_wide_accepted(w: World) -> bool { retirement_wide::accepted(w) }
 }
 use events::*;
 mod allocation;
@@ -537,18 +559,19 @@ impl Credit {
     }
 
     kernel_fn! {
-        /// State-table credit ledger: one unit per paid retry or continuation.
-        fn spend(&mut self, cost: u64) -> (result: ()) [
-            requires old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures final(self).spent as int == old(self).spent as int + cost as int,
-                final(self).start == old(self).start,
-                final(self).earned == old(self).earned,
-                final(self).added == old(self).added,
-                final(self).withheld == old(self).withheld,
-        ] {
-            self.spent += cost;
+            /// State-table credit ledger: one unit per paid retry or continuation.
+            fn spend(&mut self, cost: u64) -> (result: ()) [
+                requires old(self).spent as int + cost as int <= u64::MAX as int,
+                ensures final(self).spent as int == old(self).spent as int + cost as int,
+                    final(self).start == old(self).start,
+                    final(self).earned == old(self).earned,
+                    final(self).added == old(self).added,
+                    final(self).withheld == old(self).withheld,
+                            *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
+    ] {
+                self.spent += cost;
+            }
         }
-    }
 
     kernel_fn! {
         /// State-table credit ledger: Rob's answers top up the shortfall first.
@@ -2228,3 +2251,7 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_node_lemmas.rs"]
+mod retirement_node_lemmas;

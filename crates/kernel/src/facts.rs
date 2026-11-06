@@ -59,6 +59,12 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             && dependencies::edges_indexable(*final(w))
             && match fact { Fact::Dependency { target, .. } =>
                 dependencies::delivery_changed(*old(w), *final(w), i as int, target), _ => false }),
+        retirement_retry::selected(fact) ==> final(w).nodes@[i as int]
+            == retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).0,
+        retirement_retry::selected(fact) ==> final(w).next_question as int == old(w).next_question as int
+            + if retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement_retry::selected(fact) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
 ] proof [reveal(dependencies::dependency_frame);] {
     kernel_snapshot! { before_fact = *w }
     kernel_proof! {
@@ -139,7 +145,13 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 ==> retirement::unapproved_note(*final(out), i),
             _ => true,
         },
-] {
+        retirement_retry::selected(fact) ==> final(w).nodes@[i as int]
+            == retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).0,
+        retirement_retry::selected(fact) ==> final(w).next_question as int == old(w).next_question as int
+            + if retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement_retry::selected(fact) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
+] proof [reveal(retirement_retry::fact_result); reveal(retry_bounds); reveal(retirement::fact_node); reveal(retirement::incident);] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
@@ -350,7 +362,10 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         infra ==> final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra }),
         infra ==> final(w).next_question == old(w).next_question,
         infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retirement::fact_frame);] {
+        final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).0,
+        final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retirement::fact_frame);reveal(retirement_retry::fact_result);] {
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     let before_enqueue =
