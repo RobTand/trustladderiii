@@ -1039,3 +1039,201 @@ fn two_authored_leaves_hold_slots_rebase_regenerate_and_merge_fresh_trees() {
     assert_eq!(git(&f.g.f.remote, &["show", "main:src/a.txt"]), "1");
     assert_eq!(git(&f.g.f.remote, &["show", "main:src/b.txt"]), "1");
 }
+
+#[test]
+fn r1_blocked_generation_allows_another_input_and_stop() {
+    let mut g = Generated::new();
+    let script = g._root.path().join("transport.py");
+    let started = g._root.path().join("generation-started");
+    let released = g._root.path().join("generation-released");
+    fs::write(&script, format!(
+        "import time\nfrom pathlib import Path\nPath({:?}).touch()\nwhile not Path({:?}).exists(): time.sleep(0.01)\n{}",
+        started.to_str().unwrap(), released.to_str().unwrap(), TRANSPORT
+    )).unwrap();
+    let sha = commit(&g.checkout, "src/a.txt", "1\n");
+    let mut f = Controlled::new(g);
+    f.arm(Phase::Checking, Some(&sha));
+    let generation = f.c.world().unwrap().nodes[0].generation;
+    f.c.observe(
+        "blocked-check",
+        Observation::Checks {
+            node: NodeId(0),
+            generation,
+            action_key: "blocked-generator".into(),
+            base_sha: git(&f.g.f.source, &["rev-parse", "HEAD"]),
+            sha,
+            changed_paths: f.g.prepare.paths.clone(),
+            failed_tests: vec![],
+            report: true,
+            pass: true,
+            results: vec![],
+        },
+    )
+    .unwrap();
+    let (done, receive) = std::sync::mpsc::channel();
+    let release = released.clone();
+    // A watchdog releases the fixture even if the old drive loop blocks.
+    let watchdog = std::thread::spawn(move || {
+        let _ = receive.recv_timeout(std::time::Duration::from_secs(5));
+        fs::write(release, "").unwrap();
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while !started.exists() && std::time::Instant::now() < deadline {
+        f.c.drive_once().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let identity = worktree_fixture::identity();
+    f.c.intake(LabelledIssue {
+        delivery: "other-leaf-during-generation".into(),
+        owner: identity.owner,
+        repo: identity.name,
+        installation: identity.installation,
+        number: 43,
+        title: "Other leaf".into(),
+        actor: 42,
+        label: "tl3".into(),
+        labels: vec![],
+    })
+    .unwrap();
+    f.c.observe(
+        "stop-during-generation",
+        Observation::Steering {
+            node: NodeId(0),
+            command: tl3_kernel::Command::Stop,
+        },
+    )
+    .unwrap();
+    for _ in 0..60 {
+        f.c.drive_once().unwrap();
+        if !f
+            .c
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox")
+        {
+            break;
+        }
+    }
+    let responsive = started.exists() && !released.exists();
+    done.send(()).ok();
+    watchdog.join().unwrap();
+    assert!(
+        responsive,
+        "generator admission/completion blocked the controller before another input or Stop could be processed"
+    );
+    let world = f.c.world().unwrap();
+    assert!(
+        world.nodes.len() >= 2,
+        "another leaf must be admitted while generation is blocked"
+    );
+    assert_ne!(
+        world.nodes[0].phase,
+        Phase::Checking,
+        "Stop must leave Checking while generation is blocked"
+    );
+}
+
+#[test]
+fn r1_mandatory_protection_survives_empty_configured_paths() {
+    for path in ["pyproject.toml", ".github/generated.json"] {
+        let mut g = Generated::new();
+        let command = format!(
+            "from pathlib import Path\np = Path({path:?})\np.parent.mkdir(parents=True, exist_ok=True)\np.write_text('generated\\n')\n"
+        );
+        commit(&g.checkout, "tools/gen_manifest.py", &command);
+        g.config.github.repos[0].generated_files.push(path.into());
+        g.adapter = g.adapter.with_generation(&g.config).unwrap();
+        let mut delivery = g.rebase(2);
+        delivery.paths.push(path.into());
+        let completion = g.adapter.execute(&delivery).unwrap();
+        assert!(
+            completion
+                .observations
+                .iter()
+                .any(|o| matches!(o, Observation::RebaseGenerationFailed { .. })),
+            "mandatory protected output {path} must fail, even when declared"
+        );
+        assert!(
+            !g.checkout.join(path).exists(),
+            "protected output must never be installed"
+        );
+    }
+}
+
+#[test]
+fn r1_undeclared_output_is_durable_failure_and_queue_repair_keeps_running() {
+    for queue in [false, true] {
+        let g = Generated::new();
+        g.leaf();
+        g.upstream();
+        commit(
+            &g.f.source,
+            "tools/gen_manifest.py",
+            &(GENERATOR.to_owned() + "Path('gen/new.json').write_text('{}\\n')\n"),
+        );
+        git(&g.f.source, &["push", g.f.remote.to_str().unwrap(), "main"]);
+        let old = g.f.head(&g.prepare);
+        let mut f = Controlled::new(g);
+        if queue {
+            f.arm(Phase::Queued, Some(&old));
+            f.observe(Observation::CiFailed {
+                node: NodeId(0),
+                infra: false,
+                checks: vec![],
+            });
+            for _ in 0..80 {
+                if !f.dispatched.lock().unwrap().is_empty() {
+                    break;
+                }
+                f.c.drive_once()
+                    .expect("undeclared output must not exit the controller drive");
+            }
+            assert!(
+                !f.dispatched.lock().unwrap().is_empty(),
+                "queue failure must dispatch maker repair for scope growth"
+            );
+        } else {
+            f.arm(Phase::Rebasing, Some(&old));
+            let mut adapter = f.g.f.adapter().with_generation(&f.g.config).unwrap();
+            let delivery = f.g.rebase(2);
+            let completion = adapter
+                .execute(&delivery)
+                .expect("undeclared output must return failure evidence");
+            let report = completion
+                .observations
+                .into_iter()
+                .find_map(|o| match o {
+                    Observation::RebaseGenerationFailed { report, .. } => Some(report),
+                    _ => None,
+                })
+                .expect("must use RebaseNeedsChanges route");
+            assert!(!report.completed && report.message.contains("gen/new.json"));
+            let generation = f.c.world().unwrap().nodes[0].generation;
+            f.observe(Observation::RebaseGenerationFailed {
+                node: NodeId(0),
+                generation,
+                report,
+            });
+        }
+        assert!(matches!(
+            f.c.world().unwrap().nodes[0].phase,
+            Phase::Making | Phase::Ready(tl3_kernel::Resume::Making)
+        ));
+        let snapshot = f.c.snapshot().unwrap();
+        assert!(
+            snapshot
+                .rows
+                .iter()
+                .any(|row| ["generation_repair_evidence", "maker_findings"]
+                    .contains(&row.table.as_str())
+                    && row.value.to_string().contains("gen/new.json")),
+            "repair must name the undeclared output"
+        );
+        assert!(
+            !f.g.checkout.join("gen/new.json").exists(),
+            "undeclared output must never be installed"
+        );
+    }
+}
