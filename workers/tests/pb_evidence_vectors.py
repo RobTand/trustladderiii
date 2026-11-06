@@ -654,6 +654,9 @@ REQUIRED_CASES = {
 
 
 def message_pattern(value):
+    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+            and value.func.id == 'named' and len(value.args) >= 2):
+        return message_pattern(value.args[1])
     if isinstance(value, ast.Constant) and isinstance(value.value, str):
         return re.escape(value.value)
     if isinstance(value, ast.JoinedStr):
