@@ -57,4 +57,3 @@ pub fn views(
         })
         .collect()
 }
-

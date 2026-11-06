@@ -21,9 +21,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+use tl3_github::checks::{self, required};
 use tl3_github::{GitHub, MergeMethod, PullRequest};
 use tl3_kernel::{EffectKind, Phase};
-use tl3_github::checks::{self, required};
 use tl3_mergify::decide::enqueue as lifecycle;
 use tl3_store::{Snapshot, Store};
 
@@ -440,8 +440,7 @@ impl Adapter {
                 // C1's record folds EVERY report conjunctively, including a same-name legacy status.
                 for check in matching {
                     let view =
-                        checks::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)
-                            [0];
+                        checks::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)[0];
                     let runner = if required::needs_annotations(
                         view.status == checks::Status::Completed,
                         view.app == checks::App::Actions,
