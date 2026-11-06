@@ -289,17 +289,21 @@ impl World {
     fn dependency_path(&self, from: NodeId, to: NodeId) -> (result: bool) [
         requires from.0 < self.nodes@.len(), to.0 < self.nodes@.len(),
             edges_indexable(*self),
+        ensures self.nodes@.len() <= 64 ==> result == port_deps_graph::reaches(*self, from, to),
     ] proof [reveal(edges_indexable);] {
         if self.nodes.len() <= 64 {
             // Most worlds fit in a bitset. Repeated edge relaxation reaches
             // the same nodes as the unbounded traversal below, without allocation.
             let mut seen = 1u64 << from.0;
+            kernel_proof! { port_deps_graph::initial_mask(*self, from); }
             kernel_loop! { [
                 invariant self.nodes.len() <= 64, to.0 < self.nodes@.len(),
                     edges_indexable(*self),
+                    port_deps_graph::sound_mask(*self, from, seen),
                 decreases u64::MAX as int - seen as int,
             ] {
                 if seen & (1u64 << to.0) != 0 {
+                    kernel_proof! { port_deps_graph::marked_reachable(*self, from, seen, to); }
                     return true;
                 }
                 let before = seen;
@@ -307,6 +311,12 @@ impl World {
                 kernel_while! { (index < self.dependencies.len()) [
                     invariant index <= self.dependencies.len(), seen >= before,
                         self.nodes.len() <= 64, edges_indexable(*self),
+                        port_deps_graph::sound_mask(*self, from, seen),
+                        port_deps_graph::marked(before).subset_of(port_deps_graph::marked(seen)),
+                        forall|k: int| 0 <= k < index
+                            && port_deps_graph::active(*self, self.dependencies@[k])
+                            && port_deps_graph::marked(before).contains(self.dependencies@[k].node)
+                            ==> port_deps_graph::marked(seen).contains(self.dependencies@[k].target.request.unwrap()),
                     decreases self.dependencies.len() - index,
                 ] {
                     let dependency = self.dependencies[index];
@@ -317,13 +327,23 @@ impl World {
                     {
                         if let Some(target) = dependency.target.request {
                             let mask = 1u64 << target.0;
+                            kernel_proof! {
+                                port_deps_graph::marked_reachable(*self, from, seen, dependency.node);
+                                port_deps_graph::follow_edge(*self, from, index as int);
+                                port_deps_graph::add_mask(*self, from, seen, target);
+                            }
                             kernel_proof! { assert((seen | mask) >= seen) by(bit_vector); }
                             seen |= mask;
                         }
                     }
+                    kernel_proof! { reveal(port_deps_graph::marked); }
                     index += 1;
                 } }
                 if seen == before {
+                    kernel_proof! {
+                        assert(port_deps_graph::closed(*self, port_deps_graph::marked(seen)));
+                        port_deps_graph::fixed_mask_excludes(*self, from, to, seen);
+                    }
                     return false;
                 }
             } }
@@ -338,7 +358,7 @@ impl World {
         let mut seen = alloc::vec![false; self.nodes.len()];
         let mut pending = alloc::vec![from];
         kernel_loop! { [
-            invariant seen.len() == self.nodes.len(), edges_indexable(*self),
+            invariant self.nodes.len() > 64, seen.len() == self.nodes.len(), edges_indexable(*self),
                 forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len(),
             decreases unseen_prefix(seen@, seen@.len()) * (self.dependencies@.len() + 1)
                 + pending@.len(),
@@ -399,10 +419,14 @@ impl World {
     pub fn dependency_graph_acyclic(&self) -> (result: bool) [
         requires edges_indexable(*self),
         ensures no_active_graph_edges(*self) ==> result,
-    ] proof [reveal(edges_indexable); reveal(no_active_graph_edges);] {
+            port_deps_graph_result(*self, result),
+    ] proof [reveal(edges_indexable); reveal(no_active_graph_edges); reveal(port_deps_graph_result);] {
         let mut index = 0usize;
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), edges_indexable(*self),
+                self.nodes@.len() <= 64 ==> forall|k: int| 0 <= k < index
+                    && port_deps_graph::active(*self, self.dependencies@[k])
+                    ==> !port_deps_graph::reaches(*self, self.dependencies@[k].target.request.unwrap(), self.dependencies@[k].node),
             decreases self.dependencies.len() - index,
         ] {
             let d = &self.dependencies[index];
@@ -425,11 +449,13 @@ impl World {
     pub(super) fn check_dependencies(&self) -> (result: Result<(), Broken>) [
         requires self.nodes@.len() <= u64::MAX as int,
         ensures result.is_ok() ==> dependencies_checked(*self),
+            port_deps_specs::checker_dependencies(*self) ==> result.is_ok(),
             progress_unplanned_witness::fixture_edges(*self) ==> result.is_ok(),
             (self.dependencies@.len() == 0
                 && forall|j: int| 0 <= j < self.nodes@.len() ==> !self.nodes@[j].credit.withheld)
                 ==> result.is_ok(),
-    ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges); reveal(zero_credit);] {
+    ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges); reveal(zero_credit);
+        reveal(port_deps_specs::checker_dependencies); reveal(prerequisites_delivered); reveal(delivered);] {
         let mut node_index = 0usize;
         kernel_while! { (node_index < self.nodes.len()) [
             invariant node_index <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
@@ -467,6 +493,11 @@ impl World {
                 } }
                 kernel_proof! {
                     if progress_unplanned_witness::fixture_edges(*self) { assert(found); }
+                    if port_deps_specs::checker_dependencies(*self) && !found {
+                        assert(node_index == 0);
+                        assert(self.dependencies@.len() == 1);
+                        assert(edge == 0);
+                    }
                 }
                 if !found { return Err(Broken::Dependencies); }
             }
@@ -574,7 +605,9 @@ impl World {
     /// State-table planning admission / #771: withholding preserves ledger amounts.
     pub(super) fn withhold_dependency_credit(&mut self, i: usize) -> (result: ()) [
         requires i < old(self).nodes@.len(),
-        ensures final(self).nodes@[i as int] == (Node {
+        ensures dependency_frame(*old(self), *final(self), i as int),
+            old(self).nodes@[i as int].credit.withheld ==> final(self).nodes@[i as int].credit.withheld,
+            final(self).nodes@[i as int] == (Node {
             credit: Credit {
                 withheld: old(self).nodes@[i as int].credit.withheld
                     || (!prerequisites_delivered(*old(self), NodeId(i as u64))
@@ -609,7 +642,7 @@ impl World {
             final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] {
+    ] proof [reveal(dependency_frame);] {
         if !self.dependencies_delivered(NodeId(i as u64))
             && !self.nodes[i].planning_started
             && matches!(
@@ -687,7 +720,8 @@ impl World {
     kernel_fn! {
     /// #693 / #771: find the same first blocking declaration as the public query.
     pub(super) fn first_undelivered(&self, node: NodeId) -> (result: Option<Dependency>) [
-        ensures match result {
+        ensures result.is_none() == delivered(self.dependencies@, node),
+            match result {
             Some(d) => d.node == node && (d.rejected || d.status != DependencyStatus::Delivered)
                 && exists|j: int| 0 <= j < self.dependencies@.len() && self.dependencies@[j] == d,
             None => prerequisites_delivered(*self, node),
@@ -720,6 +754,8 @@ impl World {
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
             edges_indexable(*old(self)), old(out).len < OUTBOX,
         ensures dependency_frame(*old(self), *final(self), i as int),
+            port_deps_specs::handler_post(*old(self), *final(self), i as int,
+                target, status, *old(out), *final(out)),
             final(out).len <= old(out).len + 1,
             (status == DependencyStatus::Delivered && delivery_input(*old(self), i as int, target)
                 ==> delivery_changed(*old(self), *final(self), i as int, target)
@@ -727,12 +763,23 @@ impl World {
                     && edges_indexable(*final(self))),
     ] {
         kernel_snapshot! { before_delivery = *self }
+        kernel_snapshot! { before_output = *out }
+        kernel_proof! { reveal(port_deps_specs::handler_post); }
         let Some((existing, dependency)) = self.prepare_dependency(i, target, status) else {
             kernel_proof! { reveal(dependency_frame); }
             return;
         };
         self.record_dependency(i, existing, dependency, out);
         kernel_proof! {
+            port_deps_graph::table_extension(before_delivery@, *self, i as int, existing, dependency);
+            if before_delivery@.nodes@.len() <= 64 && port_deps_graph::acyclic(before_delivery@) {
+                port_deps_graph::record_preserves_acyclic(before_delivery@, *self, i as int, existing, dependency);
+            }
+            if port_deps_specs::pending_key(before_delivery@, i as int, target)
+                && status != DependencyStatus::Pending {
+                reveal(port_deps_specs::resolved);
+                assert(existing is Some);
+            }
             if status == DependencyStatus::Delivered && delivery_input(before_delivery@, i as int, target) {
                 reveal(delivery_input);
                 let k = existing.unwrap() as int;
@@ -754,6 +801,24 @@ impl World {
             Some((Some(index), _)) => index < self.dependencies@.len(),
             _ => true,
         },
+            (match result { None => true, Some((_, d)) => d.node == NodeId(i as u64)
+                && d.target == target && d.status == status
+                && (match d.target.request { None => true, Some(n) => n.0 < self.nodes@.len() })
+                && (self.nodes@.len() <= 64 && !d.rejected && d.status == DependencyStatus::Pending
+                    && d.target.request.is_some()
+                    ==> !port_deps_graph::reaches(*self, d.target.request.unwrap(), d.node)) }),
+            (self.nodes@.len() <= 64 && port_deps_specs::new_key(*self, i as int, target)
+                ==> result == Some((None, Dependency { node: NodeId(i as u64), target, status,
+                    rejected: port_deps_specs::cycle_rejected(*self, i as int, target, status) }))),
+            port_deps_specs::terminal_key(*self, i as int, target) ==> result.is_none(),
+            (port_deps_specs::pending_key(*self, i as int, target) && status != DependencyStatus::Pending
+                ==> match result {
+                    Some((Some(k), d)) => k < self.dependencies@.len()
+                        && port_deps_specs::key(self.dependencies@[k as int], i as int, target)
+                        && self.dependencies@[k as int].status == DependencyStatus::Pending
+                        && d == (Dependency { node: NodeId(i as u64), target, status, rejected: false }),
+                    _ => false,
+                }),
             (status == DependencyStatus::Delivered && delivery_input(*self, i as int, target)
                 ==> match result {
                     Some((Some(k), d)) => k < self.dependencies@.len()
@@ -827,7 +892,13 @@ impl World {
                 None => old(self).dependencies@.push(dependency),
             },
             final(out).len <= old(out).len + 1,
-    ] proof [reveal(dependency_frame);] {
+            port_deps_specs::recorded_output(*old(out), *final(out), i, dependency),
+            old(self).nodes@[i as int].credit.withheld ==> final(self).nodes@[i as int].credit.withheld,
+            final(self).nodes@[i as int].waiting_prerequisite.is_none()
+                == prerequisites_delivered(*final(self), NodeId(i as u64)),
+    ] {
+        kernel_snapshot! { before_record_world = *self }
+        kernel_snapshot! { before_record_output = *out }
         let node = NodeId(i as u64);
         match existing {
             Some(index) => self.dependencies[index] = dependency,
@@ -850,8 +921,21 @@ impl World {
                 }),
             );
         }
+        kernel_proof! {
+            assert(port_deps_specs::recorded_output(before_record_output@, *out, i, dependency)) by {
+                reveal(port_deps_specs::recorded_output);
+            }
+        }
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
+        kernel_proof! {
+            assert(dependency_frame(before_record_world@, *self, i as int)) by { reveal(dependency_frame); }
+        }
+        kernel_snapshot! { before_record_withhold = *self }
         self.withhold_dependency_credit(i);
+        kernel_proof! {
+            port_deps_specs::frame_transitive(before_record_world@, before_record_withhold@, *self, i as int);
+            reveal(prerequisites_delivered);
+        }
     }
     }
 

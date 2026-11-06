@@ -13,7 +13,10 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures (progress_input(*old(w), event)
+    ensures (match event { Event::Fact { node, fact: Fact::Dependency { target, status } } =>
+            node.0 < old(w).nodes@.len() ==> port_deps_specs::handler_post(*old(w), *final(w),
+                node.0 as int, target, status, *old(out), *final(out)), _ => true, }),
+        (progress_input(*old(w), event)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         forall|j: int| 0 <= j < final(w).nodes@.len() ==>

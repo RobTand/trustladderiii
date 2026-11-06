@@ -2091,11 +2091,25 @@ spec fn scheduling_safe(w: World) -> bool {
 
 }
 
+kernel_fn! {
 /// A node's place in the agent pool's line (Q39), lowest first: its priority,
 /// then the older ticket. None unless it waits for the pool.
-pub fn pool_key(n: &Node) -> Option<(Priority, u64)> {
-    let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
-    Some((n.priority, ticket))
+pub fn pool_key(n: &Node) -> (result: Option<(Priority, u64)>) [
+    ensures result == (if n.ticket.is_some() && !(n.phase is Ready) {
+        Some((n.priority, n.ticket.unwrap()))
+    } else { None }),
+] {
+    match n.ticket {
+        Some(ticket) => {
+            if matches!(n.phase, Phase::Ready(_)) {
+                None
+            } else {
+                Some((n.priority, ticket))
+            }
+        }
+        None => None,
+    }
+}
 }
 
 #[cfg(verus_keep_ghost)]
@@ -2212,6 +2226,50 @@ mod progress_unplanned_waiting;
 mod progress_unplanned_witness;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_contract_gaps.rs"]
+mod port_deps_contract_gaps;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_specs.rs"]
+mod port_deps_specs;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_terminal.rs"]
+mod port_deps_terminal;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_graph.rs"]
+mod port_deps_graph;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_witness.rs"]
+mod port_deps_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_cycles.rs"]
+mod port_deps_cycles;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_pool.rs"]
+mod port_deps_pool;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_pool_witness.rs"]
+mod port_deps_pool_witness;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806 W7: sufficient complete-checker premises for prerequisite and pool ports.
+pub closed spec fn port_deps_checker_accepted(w: World) -> bool {
+    port_deps_specs::checker_accepted(w)
+}
+/// #806 W7: bounded root representation of the real graph checker's result.
+pub closed spec fn port_deps_graph_result(w: World, result: bool) -> bool {
+    w.nodes@.len() <= 64 ==> result == port_deps_graph::acyclic(w)
+}
+}
+
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: the first Unplanned root wins the real selector's ordered outside branches.
 pub closed spec fn unplanned_first_selection(w: World, result: Option<Event>) -> bool {
@@ -2288,3 +2346,10 @@ mod port_advance_step_frames;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_teardown_rank.rs"]
 mod port_advance_teardown_rank;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_admission.rs"]
+mod port_deps_admission;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_pool_grant.rs"]
+mod port_deps_pool_grant;
