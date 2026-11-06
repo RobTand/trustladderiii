@@ -768,60 +768,6 @@ proof!(apply_rebase_needs_changes, {
     kani::cover!(accepted && !funded, "conflict fix needs credit");
 });
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
-proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
-proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
-proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));
-proof!(apply_ack_body_policy_refused, {
-    let event = ack(Ack::BodyPolicyRefused);
-    let Event::Ack { seq, .. } = event else {
-        unreachable!()
-    };
-    let before = check_apply(event);
-    let b = &before.nodes[0];
-    let open_pr = b
-        .effect
-        .is_some_and(|e| e.seq == seq && !e.cancelling && e.kind == EffectKind::OpenPr);
-    kani::cover!(open_pr && before.fail_fast, "OpenPr refusal with fail_fast");
-    kani::cover!(
-        open_pr && !before.fail_fast,
-        "OpenPr refusal without fail_fast"
-    );
-    kani::cover!(
-        b.effect.is_some_and(|e| e.seq != seq),
-        "a stale refusal is ignored"
-    );
-    kani::cover!(
-        b.effect.is_some_and(|e| e.seq == seq && e.cancelling),
-        "a cancelled effect only clears its delivery"
-    );
-    let mut refused = before.clone();
-    let mut refused_out = Outbox::new();
-    apply(&mut refused, event, &mut refused_out);
-    if open_pr {
-        assert!(
-            refused_out.is_empty(),
-            "publication refusal never asks Rob or raises an incident"
-        );
-    } else {
-        let mut permanent = before.clone();
-        let mut permanent_out = Outbox::new();
-        apply(
-            &mut permanent,
-            Event::Ack {
-                node: NodeId(0),
-                seq,
-                ack: Ack::Permanent,
-            },
-            &mut permanent_out,
-        );
-        assert_eq!(refused, permanent);
-        assert_eq!(refused_out, permanent_out);
-        kani::cover!(
-            b.effect.is_some_and(|e| e.seq == seq && !e.cancelling),
-            "other effect kinds retain permanent failure handling"
-        );
-    }
-});
 proof!(
     apply_outside_push,
     check_apply(fact(Fact::PushByOther { head: kani::any() }))
@@ -833,13 +779,6 @@ proof!(
 proof!(
     apply_upstream_stalled,
     check_apply(fact(Fact::UpstreamStalled))
-);
-proof!(apply_stop, check_apply(command(Command::Stop)));
-proof!(apply_pause, check_apply(command(Command::Pause)));
-proof!(apply_resume, check_apply(command(Command::Resume)));
-proof!(
-    apply_change_request,
-    check_apply(command(Command::ChangeRequest))
 );
 proof!(apply_answer_continue, check_apply(answer(Answer::Continue)));
 proof!(

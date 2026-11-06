@@ -76,6 +76,24 @@ pub closed spec fn dependency_retirement_accepted(w: World) -> bool { dependency
 /// #806: complete acceptance predicate, equivalent to the real checker in this domain.
 pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
 }
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_apply.rs"]
+mod port_acks_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_commands.rs"]
+mod port_acks_commands;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_frames.rs"]
+mod port_acks_frames;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_safety.rs"]
+mod port_acks_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_specs.rs"]
+mod port_acks_specs;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_witness.rs"]
+mod port_acks_witness;
 use events::*;
 mod allocation;
 use allocation::*;
@@ -2388,3 +2406,22 @@ mod port_advance_teardown_rank;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_tail_witness.rs"]
 mod port_advance_tail_witness;
+#[cfg(test)]
+#[path = "../tests/mark_handled_equivalence/cases.rs"]
+mod mark_handled_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_model.rs"]
+mod port_answers_model;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_frames.rs"]
+mod port_answers_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_apply.rs"]
+mod port_answers_apply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_handler.rs"]
+mod port_answers_handler;

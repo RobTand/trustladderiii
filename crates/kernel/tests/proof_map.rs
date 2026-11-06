@@ -152,6 +152,18 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("advance_awaiting_rob", "port_advance_phase"),
     ("advance_stopping", "port_advance_phase"),
     ("advance_closed", "port_advance_phase"),
+    // #806 W3: real apply theorems retain Ack and owner-command coverage.
+    ("apply_ack_confirmed", "port_acks_verify_ack_apply"),
+    ("apply_ack_retryable", "port_acks_verify_ack_apply"),
+    ("apply_ack_permanent", "port_acks_verify_ack_apply"),
+    (
+        "apply_ack_body_policy_refused",
+        "port_acks_verify_ack_apply",
+    ),
+    ("apply_stop", "port_acks_verify_command_apply"),
+    ("apply_pause", "port_acks_verify_command_apply"),
+    ("apply_resume", "port_acks_verify_command_apply"),
+    ("apply_change_request", "port_acks_verify_command_apply"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.
