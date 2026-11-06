@@ -181,6 +181,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 w.nodes[i].priority = priority;
             }
             kernel_proof! {
+                // Closed is final / #806: check the scalar update before the full node equation.
+                assert(w.nodes@[i as int].priority ==
+                    if before_transition@.nodes@[i as int].phase is Closed {
+                        before_transition@.nodes@[i as int].priority
+                    } else { priority }) by {};
                 assert(w.nodes@[i as int] == retirement::fact_node(
                     before_transition@.nodes@[i as int], fact)) by {
                     reveal(retirement::fact_node);
