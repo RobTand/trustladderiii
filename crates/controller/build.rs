@@ -17,11 +17,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed={}", schemas.display());
     let mut source = String::from("const PACKAGED_SCHEMAS: &[(&str, &str)] = &[\n");
     for path in files(&schemas, "json")? {
+        println!("cargo:rerun-if-changed={}", path.display());
         let name = path.file_name().ok_or("schema needs a filename")?;
         source.push_str(&format!(
-            "({:?}, include_str!({:?})),\n",
+            "({:?}, {:?}),\n",
             name.to_str().ok_or("schema filename must be UTF-8")?,
-            path.to_str().ok_or("schema path must be UTF-8")?,
+            fs::read_to_string(&path)?,
         ));
     }
     source.push_str("];\n");
