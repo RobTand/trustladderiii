@@ -43,6 +43,7 @@ def prepare():
 
 
 def identities():
+    os.chdir(Path(__file__).resolve().parents[3])
     sys.path.insert(0, str(Path('workers/tests').resolve()))
     import prompt_identity_vectors as vectors
     from tl3_workers import prompt_render
