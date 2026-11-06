@@ -408,3 +408,27 @@ def test_host_collector_never_overwrites_prior_output(tmp_path, monkeypatch):
     with pytest.raises(FileExistsError):
         runtime.collect_host_payload([sys.executable, '-c', 'raise SystemExit(99)'], timeout=10)
     assert (tmp_path / 'host.stdout').read_text() == 'retained'
+
+
+def test_host_artifact_staging_produces_executable_and_hashed_readonly_manifest(tmp_path):
+    import hashlib
+    import subprocess
+    from tl3_harness import runtime
+
+    destination = tmp_path / 'artifact'
+    executable, manifest, trusted_root = runtime.stage_host_runtime(destination, interpreter=sys.executable)
+    files = json.loads(manifest.read_text())
+    assert files['interpreter'] == sys.executable
+    assert trusted_root.joinpath('runner.py').is_file()
+    assert trusted_root.joinpath('runtime_evidence.py').is_file()
+    for entry in files['files']:
+        path = destination / entry['path']
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == entry['sha256']
+        assert path.stat().st_size == entry['bytes']
+        assert path.stat().st_mode & 0o222 == 0
+    assert manifest.stat().st_mode & 0o222 == 0
+    assert executable.stat().st_mode & 0o222 == 0
+    completed = subprocess.run([str(executable), '--help'], capture_output=True, timeout=10, check=True)
+    assert b'--timeout' in completed.stdout
+    with pytest.raises(FileExistsError):
+        runtime.stage_host_runtime(destination, interpreter=sys.executable)
