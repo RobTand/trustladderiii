@@ -80,6 +80,12 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
         self.primary().quota_model_eligible(delivery, model)
     }
+    fn quota_candidates(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Vec<tl3_controller::looks::QuotaModel>> {
+        self.primary().quota_candidates(delivery)
+    }
 
     fn input_incident(
         &mut self,
