@@ -114,6 +114,33 @@ struct Journal {
     store: tl3_config::Store,
 }
 impl Journal {
+    fn receipt_path(&self, d: &Delivery) -> Result<PathBuf> {
+        let identity = format!(
+            "{}:{}/{}#{}",
+            d.repository.installation,
+            d.repository.owner.to_ascii_lowercase(),
+            d.repository.name.to_ascii_lowercase(),
+            number(d)?
+        );
+        let key = format!("direct:{:x}", Sha256::digest(identity.as_bytes()));
+        Ok(Records::new(&self.records_root).path(&key).with_extension("merged"))
+    }
+    fn remember_merged(
+        &self,
+        d: &Delivery,
+        merged: &Merged,
+        boundary: impl Fn(Write, bool),
+    ) -> Result<()> {
+        self.remember_delivery(d, merged, |after| boundary(Write::History, after))?;
+        let path = self.receipt_path(d)?;
+        let bytes = serde_json::to_vec(merged)?;
+        let records = Records::new(&self.records_root);
+        records.fence(self.epoch)?;
+        boundary(Write::Receipt, false);
+        records.write(&path, &bytes)?;
+        boundary(Write::Receipt, true);
+        Ok(())
+    }
     fn remember_delivery(
         &self,
         d: &Delivery,
@@ -254,15 +281,7 @@ impl Adapter {
             ))
     }
     fn receipt_path(&self, d: &Delivery) -> Result<PathBuf> {
-        let identity = format!(
-            "{}:{}/{}#{}",
-            d.repository.installation,
-            d.repository.owner.to_ascii_lowercase(),
-            d.repository.name.to_ascii_lowercase(),
-            number(d)?
-        );
-        let key = format!("direct:{:x}", Sha256::digest(identity.as_bytes()));
-        Ok(self.records.path(&key).with_extension("merged"))
+        self.journal().receipt_path(d)
     }
     fn recorded(&self, d: &Delivery) -> Result<Option<Merged>> {
         read_file(&self.receipt_path(d)?)
@@ -563,28 +582,9 @@ impl Adapter {
             store: self.store.clone(),
         }
     }
-    fn remember_delivery(&self, d: &Delivery, merged: &Merged) -> Result<()> {
-        self.journal()
-            .remember_delivery(d, merged, |after| self.boundary(Write::History, after))
-    }
     fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
-        self.remember_delivery(d, &merged)?;
-        let fact = QueueFact {
-            repository: d.repository.clone(),
-            number: number(d)?,
-            evidence: Evidence::Merged {
-                head: merged.head.clone(),
-                checks_passed: merged.checks_passed,
-            },
-        };
-        if fact.recorded(&self.snapshot()?)? {
-            return self.fact(d, fact.evidence);
-        }
-        self.write(
-            Write::Receipt,
-            &self.receipt_path(d)?,
-            &serde_json::to_vec(&merged)?,
-        )?;
+        self.journal()
+            .remember_merged(d, &merged, |write, after| self.boundary(write, after))?;
         self.fact(
             d,
             Evidence::Merged {
@@ -593,35 +593,19 @@ impl Adapter {
             },
         )
     }
-    fn result(
-        &self,
-        d: &Delivery,
-        read: &Read,
-        plan: &Plan,
-        remember: bool,
-    ) -> Result<Option<Completion>> {
+    fn result(&self, d: &Delivery, read: &Read, plan: &Plan) -> Result<Option<Completion>> {
         Ok(Some(match plan.outcome {
             Outcome::Merged => {
                 let matched = read.facts.observed == read.facts.approved
                     && read.facts.checking
                     && read.facts.checked == read.facts.approved;
-                if remember {
-                    self.merged(
-                        d,
-                        Merged {
-                            head: read.pull.head.sha.clone(),
-                            checks_passed: matched,
-                        },
-                    )?
-                } else {
-                    self.fact(
-                        d,
-                        Evidence::Merged {
-                            head: read.pull.head.sha.clone(),
-                            checks_passed: matched,
-                        },
-                    )?
-                }
+                self.merged(
+                    d,
+                    Merged {
+                        head: read.pull.head.sha.clone(),
+                        checks_passed: matched,
+                    },
+                )?
             }
             Outcome::Moved => self.fact(
                 d,
@@ -653,14 +637,7 @@ impl Adapter {
     fn attempt(&mut self, d: &Delivery) -> Result<Completion> {
         number(d)?;
         if let Some(merged) = self.recorded(d)? {
-            self.remember_delivery(d, &merged)?;
-            return self.fact(
-                d,
-                Evidence::Merged {
-                    head: merged.head,
-                    checks_passed: merged.checks_passed,
-                },
-            );
+            return self.merged(d, merged);
         }
         if self.wakes.sleeping(&d.key) {
             return Err(Error::ChecksPending);
@@ -680,7 +657,7 @@ impl Adapter {
         for _ in 0..2 {
             let read = self.read(d, authorized)?;
             let plan = decide::decide(read.facts);
-            if let Some(completion) = self.result(d, &read, &plan, true)? {
+            if let Some(completion) = self.result(d, &read, &plan)? {
                 return Ok(completion);
             }
             if plan.outcome == Outcome::Observe {
@@ -771,7 +748,7 @@ impl Adapter {
                                 // Already-merged refusals converge; classify a genuine refusal from fresh evidence.
                                 let current = self.read(d, true)?;
                                 if let Some(completion) =
-                                    self.result(d, &current, &decide::decide(current.facts), true)?
+                                    self.result(d, &current, &decide::decide(current.facts))?
                                 {
                                     return Ok(completion);
                                 }
@@ -835,22 +812,14 @@ impl Executor for Adapter {
     }
     fn observations(&mut self, d: &Delivery) -> Result<Vec<Observation>> {
         if let Some(merged) = self.recorded(d)? {
-            return Ok(self
-                .fact(
-                    d,
-                    Evidence::Merged {
-                        head: merged.head,
-                        checks_passed: merged.checks_passed,
-                    },
-                )?
-                .observations);
+            return Ok(self.merged(d, merged)?.observations);
         }
         if self.wakes.sleeping(&d.key) {
             return Ok(vec![]);
         }
         let read = self.read(d, false)?;
         let plan = decide::decide(read.facts);
-        match self.result(d, &read, &plan, false) {
+        match self.result(d, &read, &plan) {
             Ok(Some(completion)) => Ok(completion.observations),
             Ok(None) | Err(Error::ChecksPending) => Ok(vec![]),
             Err(error) => Err(error),

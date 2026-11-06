@@ -94,13 +94,13 @@ impl Translator {
                             )
                         {
                             delivery.pull_request = Some(pull.number);
-                            journal.remember_delivery(
+                            journal.remember_merged(
                                 &delivery,
                                 &Merged {
                                     head: head.clone(),
                                     checks_passed: *checks_passed,
                                 },
-                                |_| {},
+                                |_, _| {},
                             )?;
                         }
                     }
