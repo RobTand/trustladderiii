@@ -11,9 +11,15 @@ from .model import NATIVE_THREAD_ENVIRONMENT
 
 
 def launch_context():
-    # PB stays the backward-compatible default. FX1's generated bootstrap will
-    # select Flux explicitly; ambient native IDs never select or attest a backend.
-    return None
+    selected = os.environ.get('TL3_EXECUTION_BACKEND', 'prismabuild')
+    if selected == 'prismabuild':
+        return None
+    if selected != 'flux':
+        raise RuntimeError('unknown execution backend')
+    return backend_request({
+        'op': 'launch_context', 'owner': os.environ['TL3_RUN_OWNER'],
+        'correlation': os.environ['TL3_RUN_CORRELATION'], 'job': os.environ['FLUX_JOB_ID'],
+    })['context']
 
 
 def podman_command(tree, image, scratch, threads, *, executable='podman', harness=None, interpreter='python3'):
@@ -82,7 +88,64 @@ class Evidence:
 
 
 def backend_request(command):
-    raise RuntimeError('Flux requires the generated CLI/bootstrap consumer')
+    """Transport one command to FX1's Rust CLI; do not interpret its domain schema."""
+    import selectors
+    import signal
+    import subprocess
+    import time
+
+    bound = 4 * 1024 * 1024
+    request = json.dumps(command).encode() + b'\n'
+    if len(request) > bound:
+        raise RuntimeError('backend command exceeds transport bound')
+    process = subprocess.Popen(
+        [os.environ['TL3_RUN_BACKEND_CLI'], '--config', os.environ['TL3_RUN_BACKEND_CONFIG']],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    output = bytearray()
+    pending = memoryview(request)
+    deadline = time.monotonic() + 30
+    try:
+        with selectors.DefaultSelector() as ready:
+            os.set_blocking(process.stdin.fileno(), False)
+            ready.register(process.stdin, selectors.EVENT_WRITE)
+            ready.register(process.stdout, selectors.EVENT_READ)
+            while ready.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError('backend CLI transport timed out')
+                for key, _ in ready.select(remaining):
+                    if key.fileobj is process.stdin:
+                        pending = pending[os.write(key.fd, pending[:65536]):]
+                        if not pending:
+                            ready.unregister(key.fileobj)
+                            process.stdin.close()
+                    else:
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            ready.unregister(key.fileobj)
+                        output.extend(chunk)
+                        if len(output) > bound:
+                            raise RuntimeError('backend CLI response exceeds transport bound')
+            code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        frames = output.splitlines()
+        if code != 0 or len(frames) != 1:
+            raise RuntimeError('backend CLI did not return one successful result')
+        frame = json.loads(frames[0])
+        if (frame['schema'] != 'tl3.run_backend.frame.v1' or frame['sequence'] != 0
+                or frame['kind'] != 'result' or frame['result']['op'] != command['op']):
+            raise RuntimeError('backend CLI returned an invalid result frame')
+        return frame['result']
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError('backend CLI transport failed') from error
+    finally:
+        # The observer process group is local plumbing, never a native cancel.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+        process.stdin.close()
+        process.stdout.close()
 
 
 def validate_runtime_binding(evidence):
