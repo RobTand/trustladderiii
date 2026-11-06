@@ -31,7 +31,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(port_review_retry::failed_run);] {
+] {
+    kernel_snapshot! { failed_before = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     abandon_operation(m);
     m.pos = operation_start(m.phase);
@@ -43,6 +44,18 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
         raise_incident(w, i, needs_rob, out);
+        kernel_proof! {
+            assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
+                reveal(port_review_retry::failed_run); reveal(port_review_retry::abandoned);
+            }
+        }
+    }
+    kernel_proof! {
+        if failed_before@.run_failures == 0 {
+            assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
+                reveal(port_review_retry::failed_run); reveal(port_review_retry::abandoned);
+            }
+        }
     }
 }
 }
