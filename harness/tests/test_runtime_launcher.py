@@ -21,6 +21,7 @@ args = sys.argv[1:]
 with pathlib.Path({str(calls)!r}).open('a') as log:
     log.write(json.dumps(args) + '\\n')
 if args[0] == 'run':
+    pathlib.Path({str(tmp_path / 'run-pid')!r}).write_text(str(os.getpid()))
     evidence = pathlib.Path({str(tmp_path / 'stderr')!r})
     if evidence.exists():
         sys.stderr.write(evidence.read_text())
@@ -29,6 +30,10 @@ if args[0] == 'run':
             sys.exit(125)
         pathlib.Path({str(tmp_path / 'payload')!r}).write_bytes(sys.stdin.buffer.read())
     print('{{"event":"start","schema":1}}', flush=True)
+    sys.exit(0)
+if args[:2] == ['container', 'inspect']:
+    pid = int(pathlib.Path({str(tmp_path / 'run-pid')!r}).read_text())
+    print(json.dumps({{'Id': 'a' * 64, 'Pid': pid, 'ConmonPid': pid}}))
     sys.exit(0)
 if args[:2] == ['container', 'exists']:
     sys.exit(int(pathlib.Path({str(tmp_path / 'exists')!r}).read_text()))
@@ -163,7 +168,7 @@ def test_runtime_evidence_is_retained_outside_report(launcher, monkeypatch, evid
     assert records[0] == {'event': 'host', **facts}
     assert records[-1] == {'event': 'cleanup', 'confirmed': True}
     assert [record['event'] for record in records] == (
-        ['host', 'container', 'cleanup'] if evidence_present else ['host', 'cleanup'])
+        ['host', 'container', 'container_processes', 'cleanup'] if evidence_present else ['host', 'cleanup'])
 
 
 def test_unqualified_binding_never_opens_payload_gate(launcher, monkeypatch):
@@ -223,3 +228,41 @@ def test_scratch_is_removed_only_after_confirmed_container_stop(launcher, monkey
     else:
         run()
         assert not leaf.exists() and not retained[0].exists()
+
+
+def test_absent_container_does_not_hide_a_live_owned_process(launcher, monkeypatch):
+    import os
+    import subprocess
+
+    from tl3_harness import runtime
+    from tl3_harness.runtime_evidence import PREFIX
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    facts = {'Cpus_allowed_list': '2-3', 'cgroup': '0::/fixture\n'}
+    monkeypatch.setattr(runtime.Evidence, 'host_snapshot', staticmethod(lambda: facts))
+    monkeypatch.setattr(runtime, 'evidence_sink', lambda name: runtime.Evidence(output, name))
+    monkeypatch.setattr(runtime, 'validate_runtime_binding', lambda evidence: None)
+    (executable.parent / 'stderr').write_text(PREFIX + json.dumps(facts) + '\n')
+    # This is a test-owned, pipe-bound process in the admitted Bazel action.
+    # It models a conmon/payload that survives both attach exit and runtime absence.
+    child = subprocess.Popen([sys.executable, '-I', '-c',
+                              'import sys; print("ready", flush=True); sys.stdin.buffer.read()'],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        assert child.stdout.readline() == b'ready\n'
+        monkeypatch.setattr(runtime, 'capture_processes', lambda *args: [os.pidfd_open(child.pid)], raising=False)
+        with calls.with_suffix('.stdin').open('w+b') as selection:
+            with pytest.raises(ExecutionFailure, match='container_cleanup_unconfirmed'):
+                with Supervised([str(executable), 'run', 'immutable-fixture'], selection, ()) as process:
+                    list(process.records())
+        assert child.poll() is None
+        assert not process.cleanup_confirmed
+        records = [json.loads(line) for line in next(output.iterdir()).read_text().splitlines()]
+        assert records[-1] == {'event': 'cleanup', 'confirmed': False}
+    finally:
+        child.kill()
+        child.wait(timeout=5)
+        child.stdin.close()
+        child.stdout.close()
