@@ -30,7 +30,7 @@ pub(super) fn verify_reply_apply(mut w: World, generation: u64, reply: Reply)
         port_replies_admission::table_frame(w, result.0),
         (reply == Reply::AuditDisagrees && w.nodes@[0].phase == Phase::Auditing
             && w.nodes@[0].audit_rounds >= 1 && current_item(w.nodes@[0]) == Some(Item::Await)
-            && w.nodes@[0].run == Some(generation) ==> result.1 == empty_outbox()),
+            && w.nodes@[0].run == Some(generation) ==> empty_outbox(result.1)),
 ] proof [reveal(retirement_domain); reveal(retirement_accepted); reveal(empty_outbox);] {
     kernel_snapshot! { before = w }
     kernel_proof! { port_replies_safety::apply_scope(w); }

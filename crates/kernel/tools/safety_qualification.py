@@ -19,7 +19,7 @@ CASES = {
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',
         'stop_for_review(m, ReviewStop::AuditDisagreement);',
-        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out);',
+        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, _out);',
         '//crates/kernel:verus_ingest_reply_audit_disagrees'),
     'plan_check_rejected_asks': (
         'crates/kernel/src/plan_check.rs',

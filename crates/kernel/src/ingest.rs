@@ -199,14 +199,14 @@ fn reply_audit_agrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ())
 kernel_fn! {
 /// Audit reply row / #806: private verbatim branch extraction under the standing rule.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(_out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
     ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
-        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        reply_bounds(*old(w), *final(w), i as int, old(_out).len, final(_out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         old(w).nodes@[i as int].phase == Phase::Auditing
             ==> port_replies_contracts::ingest_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
@@ -218,14 +218,14 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
                     && n.review_stop == Some(ReviewStop::AuditDisagreement)
                     && n.credit == old(w).nodes@[i as int].credit
             }),
-        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
         final(w).next_question == old(w).next_question,
-        *final(out) == *old(out),
+        *final(_out) == *old(_out),
 ] {
     kernel_snapshot! { ingest_before = *w }
     kernel_snapshot! { ingest_source = w.nodes@[i as int] }
     kernel_snapshot! { ingest_id = w.next_question }
-    kernel_snapshot! { ingest_out = *out }
+    kernel_snapshot! { ingest_out = *_out }
             let m = &mut w.nodes[i];
             increment_audit(m);
             kernel_snapshot! { audit_incremented = *m }
@@ -236,7 +236,7 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
                 // Ingest revises once with the audit's objections.
                 set_phase(m, Phase::Ingesting);
                 kernel_proof! {
-                    assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
+                    assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, _out.len)) by {
                         reveal(reply_bounds);
                     }
                 }
@@ -248,7 +248,7 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
                 // Q27, #832-A: intake cannot split. The one repair is spent.
                 stop_for_review(m, ReviewStop::AuditDisagreement);
                 kernel_proof! {
-                    assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, out.len)) by {
+                    assert(reply_bounds(ingest_before@, *w, i as int, ingest_out@.len, _out.len)) by {
                         reveal(reply_bounds);
                     }
                 }
