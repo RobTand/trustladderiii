@@ -655,6 +655,8 @@ def verus_proofs():
             "kernel::port_advance_witness::small_head": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_advance_witness::small": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_advance_witness::original_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_tail_witness::selected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_tail_witness::moves": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -935,6 +937,8 @@ def verus_proofs():
             "port_advance_teardown_rank_question": ("kernel::port_advance_teardown_rank#question", 1),
             "port_advance_teardown_rank_absent": ("kernel::port_advance_teardown_rank#absent", 1),
             "port_advance_teardown_rank_emission": ("kernel::port_advance_teardown_rank#emission", 1),
+            "port_advance_tail_world": ("kernel::port_advance_tail_witness#phase_world", 1),
+            "port_advance_tail_cover": ("kernel::port_advance_tail_witness#phase_cover", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
