@@ -975,6 +975,44 @@ def test_t842_loader_trust_rejects_repository_stdlib_shadows(tmp_path, t842_case
         assemble_t842_case(tmp_path, case)
 
 
+T876_PACKAGE_MEMBERS = [
+    # PB #2829 (found by: live probe): pytest vendored as a regular package;
+    # this file imports as `_pytest.pathlib`, never as `pathlib`.
+    {'qualification_deps/_pytest/__init__.py': '', 'qualification_deps/_pytest/pathlib.py': 'TOKEN = 1\n'},
+    {'vendor/lib/__init__.py': '', 'vendor/lib/unittest/__init__.py': '', 'vendor/lib/unittest/case.py': ''},
+    {'tests/helpers/__init__.py': '', 'tests/helpers/importlib.py': ''},
+]
+
+
+@pytest.mark.parametrize('files', T876_PACKAGE_MEMBERS)
+def test_t876_stdlib_named_member_of_a_regular_package_is_not_a_shadow(tmp_path, files):
+    case = t842_safe_loader_case()
+    case['before'].update(files)
+    path = 'tests/test_observer.py'
+    receipt, _, head, staged = assemble_t842_case(tmp_path, case)
+    assert (staged / path).read_bytes() == (head / path).read_bytes()
+    assert path in receipt['support_sha256']
+
+
+@pytest.mark.parametrize('files,shadow,module', [
+    ({'pathlib.py': ''}, 'pathlib.py', 'pathlib'),
+    ({'qualification_deps/pathlib.py': ''}, 'qualification_deps/pathlib.py', 'pathlib'),
+    ({'qualification_deps/unittest/__init__.py': ''}, 'qualification_deps/unittest/__init__.py', 'unittest'),
+    ({'tests/importlib/util.py': ''}, 'tests/importlib/util.py', 'importlib'),
+    ({'__init__.py': '', 'importlib.py': ''}, 'importlib.py', 'importlib'),
+])
+def test_t876_top_level_stdlib_shadow_is_refused_with_an_actionable_repair(tmp_path, files, shadow, module):
+    case = t842_safe_loader_case()
+    case['before'].update(files)
+    with pytest.raises(model.ProofRefusal) as refusal:
+        assemble_t842_case(tmp_path, case)
+    message = str(refusal.value)
+    assert shadow in message
+    assert f'importable as the top-level module `{module}`' in message
+    assert 'directory that is not a package' in message
+    assert 'existing test module' in message
+
+
 @pytest.mark.parametrize('binding', [
     'TOKEN = _DATA = 0\n_DATA = 1',
     'TOKEN, _DATA = (0, 0)\n_DATA = 1',
