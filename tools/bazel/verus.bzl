@@ -845,6 +845,7 @@ def verus_proofs():
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 3),
+            "port_failfast_diversion": ("kernel::port_failfast_diversion", 2),
         }
         for name, (module, count) in groups.items():
             verus_test(
