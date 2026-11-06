@@ -1607,39 +1607,173 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     );
 }
 
-fn bell_outage_does_not_retry_result_tools() {
-    let root = tempfile::tempdir().unwrap();
-    let delivery = run(root.path(), false);
-    let mut adapter = fixture(root.path(), "done");
-    adapter.execute(&delivery).unwrap();
-    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
-    let mut source = adapter.source();
-    let (sender, receiver) = mpsc::channel();
+fn unavailable_bell(runtime: &tokio::runtime::Runtime) -> wiremock::MockServer {
+    runtime.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        server
+    })
+}
+
+fn result_tool_calls(root: &Path) -> usize {
+    fs::read_to_string(root.join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains("--endings"))
+        .count()
+}
+
+/// #859/#817: a dispatched terminal job survives one tool error during a permanent bell outage.
+fn bell_outage_retries_transient_result_tool_error() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    for _ in 0..3 {
+    let bell = unavailable_bell(&runtime);
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture_with_bell(root.path(), "done", &bell.uri());
+    adapter.execute(&delivery).unwrap();
+    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(100)))
+            .unwrap(),
+        0
+    );
+    assert_eq!(result_tool_calls(root.path()), 1);
+    assert!(!record_path(root.path(), &delivery.key, "done").exists());
+    assert!(record_path(root.path(), &delivery.key, "job").exists());
+    fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(100)))
+            .unwrap(),
+        1,
+        "a later record rescan must complete the job without a no-progress look"
+    );
+    assert_passing_input(receiver.try_recv().unwrap());
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(result_tool_calls(root.path()), 2);
+    assert!(record_path(root.path(), &delivery.key, "done").exists());
+    assert_eq!(runtime.block_on(bell.received_requests()).unwrap().len(), 2);
+}
+
+/// #859: persistent tool failures back off in existing rescans, capped at eight rescans.
+fn bell_outage_result_tool_retry_is_bounded() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let bell = unavailable_bell(&runtime);
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture_with_bell(root.path(), "done", &bell.uri());
+    adapter.execute(&delivery).unwrap();
+    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    let mut expected = 0;
+    for rescan in 1..=32 {
         assert_eq!(
             runtime
-                .block_on(source.poll(&sender, Duration::from_secs(1)))
+                .block_on(source.poll(&sender, Duration::from_millis(100)))
                 .unwrap(),
             0
         );
+        expected += usize::from([1, 2, 4, 8, 16, 24, 32].contains(&rescan));
+        assert_eq!(result_tool_calls(root.path()), expected, "rescan {rescan}");
+        assert!(receiver.try_recv().is_err());
+        assert!(record_path(root.path(), &delivery.key, "job").exists());
+        assert!(!record_path(root.path(), &delivery.key, "done").exists());
     }
-    assert!(matches!(
-        receiver.try_recv(),
-        Err(mpsc::TryRecvError::Empty)
-    ));
-    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
     assert_eq!(
-        calls
-            .lines()
-            .filter(|line| line.contains("--endings"))
-            .count(),
-        1,
-        "bell transport backoff must not become a result-tool timer"
+        runtime.block_on(bell.received_requests()).unwrap().len(),
+        32
     );
+}
+
+/// #859/#817: recovery news must not be consumed by an outage retry countdown.
+fn bell_recovery_retries_result_tool_without_further_hints() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let bell = unavailable_bell(&runtime);
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture_with_bell(root.path(), "done", &bell.uri());
+    adapter.execute(&delivery).unwrap();
+    // Keep a live job awaited so healthy replies can advance after completion.
+    fs::write(root.path().join("queue/mode"), "pending").unwrap();
+    let mut live = delivery.clone();
+    live.key = "effect:1:5".into();
+    live.output = Out::Effect {
+        node: NodeId(1),
+        seq: 5,
+        kind: EffectKind::SubmitChecks,
+        head: None,
+    };
+    adapter.execute(&live).unwrap();
+    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    for attempt in 1..=2 {
+        assert_eq!(
+            runtime
+                .block_on(source.poll(&sender, Duration::from_millis(100)))
+                .unwrap(),
+            0
+        );
+        assert_eq!(result_tool_calls(root.path()), attempt);
+        assert!(receiver.try_recv().is_err());
+    }
+    fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
+    runtime.block_on(async {
+        bell.reset().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "epoch":"0123456789abcdef0123456789abcdef", "seq":0, "events":[]
+                })),
+            )
+            .mount(&bell)
+            .await;
+    });
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(100)))
+            .unwrap(),
+        1,
+        "the recovery rescan must retry despite the pending backoff"
+    );
+    assert_passing_input(receiver.try_recv().unwrap());
+    assert!(record_path(root.path(), &delivery.key, "done").exists());
+    for _ in 0..2 {
+        assert_eq!(
+            runtime
+                .block_on(source.poll(&sender, Duration::from_millis(100)))
+                .unwrap(),
+            0
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "recovery must deliver exactly once"
+        );
+        assert_eq!(result_tool_calls(root.path()), 3);
+    }
+    let requests = runtime.block_on(bell.received_requests()).unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "only recovery and the two healthy replies remain after reset"
+    );
+    assert_eq!(requests.last().unwrap().url.path(), "/v1/wait");
 }
 
 fn absent_withdrawal_retires_source_watch() {
@@ -3253,6 +3387,35 @@ fn main() {
         stale_always_test_notes_survive_controller_evidence();
         return;
     }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--result-tool-recovery")
+    {
+        bell_recovery_retries_result_tool_without_further_hints();
+        println!("test bell_recovery_retries_result_tool_without_further_hints ... ok");
+        println!("1 prismabuild scenarios passed");
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--result-tool-retry") {
+        let mut failures = 0;
+        for (name, test) in [
+            (
+                "bell_outage_retries_transient_result_tool_error",
+                bell_outage_retries_transient_result_tool_error as fn(),
+            ),
+            (
+                "bell_outage_result_tool_retry_is_bounded",
+                bell_outage_result_tool_retry_is_bounded as fn(),
+            ),
+        ] {
+            let passed = std::panic::catch_unwind(test).is_ok();
+            failures += usize::from(!passed);
+            println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
+        }
+        assert_eq!(failures, 0);
+        println!("2 prismabuild scenarios passed");
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--r5") {
         let mut failures = 0;
         for (name, test) in [
@@ -3438,8 +3601,16 @@ fn main() {
         ("invalid_evidence_once", invalid_evidence_is_reported_once),
         ("tool_errors_wait_for_news", tool_errors_wait_for_news),
         (
-            "bell_outage_does_not_retry_result_tools",
-            bell_outage_does_not_retry_result_tools,
+            "bell_outage_retries_transient_result_tool_error",
+            bell_outage_retries_transient_result_tool_error,
+        ),
+        (
+            "bell_outage_result_tool_retry_is_bounded",
+            bell_outage_result_tool_retry_is_bounded,
+        ),
+        (
+            "bell_recovery_retries_result_tool_without_further_hints",
+            bell_recovery_retries_result_tool_without_further_hints,
         ),
         (
             "absent_withdrawal_retires_source_watch",
@@ -3506,7 +3677,7 @@ fn main() {
     pb_probe_uses_delivery_class_and_fails_closed();
     println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
     database.stop();
-    println!("71 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("73 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
