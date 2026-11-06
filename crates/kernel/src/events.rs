@@ -81,6 +81,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                     *old(w), *final(w), node.0 as usize, id, command, *old(out), *final(out)),
             _ => true,
         },
+        port_answers_command::event_post(*old(w), *final(w), event, *old(out), *final(out)),
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
 ] hide [node_checked] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
@@ -148,6 +149,13 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 }
             }
         }
+    }
+    kernel_proof! {
+        if let Event::Command { node, id, command: Command::Answer { question, answer } } = event {
+            if node.0 < before_apply@.nodes@.len() && answers::answer_supported(answer) {
+                port_answers_command::seal_event(before_apply@, *w, node, id, question, answer, before_apply_out@, *out);
+            } else { reveal(port_answers_command::event_post); }
+        } else { reveal(port_answers_command::event_post); }
     }
     kernel_proof! {
         if before_apply@.nodes@.len() > 0

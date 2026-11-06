@@ -1104,17 +1104,6 @@ proof!(
     apply_answer_add_credit,
     check_apply(answer(Answer::AddCredit(kani::any())))
 );
-proof!(
-    apply_answer_change_request,
-    check_apply(answer(Answer::ChangeRequest))
-);
-proof!(apply_answer_stop, check_apply(answer(Answer::Stop)));
-proof!(apply_answer_unclear, check_apply(answer(Answer::Unclear)));
-proof!(apply_answer_retry, check_apply(answer(Answer::Retry)));
-proof!(
-    apply_answer_mark_handled,
-    check_apply(answer(Answer::MarkHandled))
-);
 
 // Settle's internal transitions, one phase at a time.
 proof!(advance_ingesting, check_advance(Phase::Ingesting, true));

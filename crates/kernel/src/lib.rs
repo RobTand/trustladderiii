@@ -2288,5 +2288,25 @@ mod port_answers_frames;
 mod port_answers_apply;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_witness.rs"]
+mod port_answers_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_safe.rs"]
+mod port_answers_safe;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_laws.rs"]
+mod port_answers_laws;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_projection.rs"]
+mod port_answers_projection;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_command.rs"]
+mod port_answers_command;
+
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/port_answers_handler.rs"]
 mod port_answers_handler;

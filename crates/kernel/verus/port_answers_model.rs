@@ -3,6 +3,7 @@ use super::*;
 
 verus! {
 /// Q18 / #806: a deposit pays the continuation after topping up its shortfall.
+#[verifier::opaque]
 pub(super) open spec fn funded(c: Credit, deposit: u8, cost: u8) -> Credit {
     let balance = c.start as int + c.earned as int + c.added as int
         + deposit as int - c.spent as int;
@@ -13,15 +14,19 @@ pub(super) open spec fn funded(c: Credit, deposit: u8, cost: u8) -> Credit {
 
 /// AwaitingRob continuation rows / #806: exact result of the real go_on body.
 #[verifier::opaque]
+pub(super) open spec fn rephased(n: Node, phase: Phase) -> Node { retirement::phased(n, phase) }
+
+/// AwaitingRob continuation rows / #806: exact result of the real go_on body.
+#[verifier::opaque]
 pub(super) open spec fn continued(n: Node, q: Question, deposit: u8) -> Node {
     let paid = Node { credit: funded(n.credit, deposit, q.cost), question: None, ..n };
     match q.cont {
-        Cont::Ingesting => retirement::phased(paid, Phase::Ingesting),
-        Cont::Auditing => retirement::phased(paid, Phase::Auditing),
-        Cont::Unplanned => retirement::phased(paid, Phase::Unplanned),
-        Cont::Planning { must_split } => retirement::phased(Node { plan_retries: 0, ..paid },
+        Cont::Ingesting => rephased(paid, Phase::Ingesting),
+        Cont::Auditing => rephased(paid, Phase::Auditing),
+        Cont::Unplanned => rephased(paid, Phase::Unplanned),
+        Cont::Planning { must_split } => rephased(Node { plan_retries: 0, ..paid },
             Phase::Planning { must_split }),
-        Cont::Ready(r) => retirement::phased(paid, Phase::Ready(r)),
+        Cont::Ready(r) => rephased(paid, Phase::Ready(r)),
         Cont::Stop(o) => retirement::stopped(paid, o),
         Cont::Nowhere => retirement::stopped(paid, Outcome::Stopped),
     }
@@ -30,19 +35,17 @@ pub(super) open spec fn continued(n: Node, q: Question, deposit: u8) -> Node {
 /// Stopping cleanup answers / #806: only the current teardown resource is cleared.
 #[verifier::opaque]
 pub(super) open spec fn handled(n: Node) -> Node {
-    match current_item(n) {
-        Some(Item::Teardown(kind)) => {
-            let cleared = match kind {
-                EffectKind::StopRun => Node { run: None, pool: false, ..n },
-                EffectKind::WithdrawJob => Node { job: None, ..n },
-                EffectKind::ClosePr => Node { pr_open: false, ..n },
-                EffectKind::RemoveWorktree => Node { worktree: false, ..n },
-                _ => n,
-            };
-            Node { pos: (n.pos + 1) as u8, ..cleared }
-        },
-        _ => n,
-    }
+    if n.phase is Stopping {
+        Node {
+            pos: if n.pos <= 2 || n.pos == 4 { (n.pos + 1) as u8 } else { n.pos },
+            run: if n.pos == 0 { None } else { n.run },
+            pool: if n.pos == 0 { false } else { n.pool },
+            job: if n.pos == 1 { None } else { n.job },
+            pr_open: if n.pos == 2 { false } else { n.pr_open },
+            worktree: if n.pos == 4 { false } else { n.worktree },
+            ..n
+        }
+    } else { n }
 }
 
 /// AwaitingRob offered-answer table / #806, checked against real allowed.
@@ -94,17 +97,20 @@ pub(super) open spec fn clarifies(n: Node, id: u64, answer: Answer) -> bool {
 }
 
 /// Command answer row / #806: duplicate command IDs stutter before question matching.
+#[verifier::opaque]
 pub(super) open spec fn commanded(n: Node, cmd: u64, id: u64, answer: Answer, next: u64) -> Node {
     if cmd <= n.last_cmd { n }
     else { answered(Node { last_cmd: cmd, ..n }, id, answer, next) }
 }
 
 /// #806: exact question-counter update, including duplicate commands.
+#[verifier::opaque]
 pub(super) open spec fn next_question(n: Node, cmd: u64, id: u64, answer: Answer, next: u64) -> u64 {
     if cmd > n.last_cmd && clarifies(n, id, answer) { (next + 1) as u64 } else { next }
 }
 
 /// #806 / Q54: every shared check_nodes, check_outputs and answer-specific assertion.
+#[verifier::opaque]
 pub(super) open spec fn shared(before: Node, after: Node, id: u64) -> bool {
     after.proposed == before.proposed && (before.adopted ==> after.adopted)
         && after.next_seq >= before.next_seq

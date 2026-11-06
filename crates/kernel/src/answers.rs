@@ -3,9 +3,9 @@ use super::*;
 
 #[cfg(verus_keep_ghost)]
 verus! {
-/// #806: four independently framed answer rows, without continuation or cleanup advancement.
+/// #806: five independently framed answer rows, with cleanup advancement.
 pub(super) open spec fn answer_supported(answer: Answer) -> bool {
-    matches!(answer, Answer::ChangeRequest | Answer::Stop | Answer::Unclear | Answer::Retry)
+    matches!(answer, Answer::ChangeRequest | Answer::Stop | Answer::Unclear | Answer::Retry | Answer::MarkHandled)
 }
 
 /// #806: neutral public contract for the real answer handler, including stale IDs.
@@ -114,9 +114,10 @@ fn answer_stopping(w: &mut World, i: usize, _id: u64, answer: Answer) -> (result
         final(w).fail_fast == old(w).fail_fast,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
-] {
+] hide [current_item, items, settle_shape] {
     kernel_snapshot! { before_answer = w.nodes@[i as int] }
     kernel_snapshot! { before_question = w.next_question }
+    kernel_proof! { port_answers_handler::stopping_question(before_answer@); }
     match answer {
             Answer::Retry => w.nodes[i].question = None,
             Answer::MarkHandled => {
@@ -128,6 +129,8 @@ fn answer_stopping(w: &mut World, i: usize, _id: u64, answer: Answer) -> (result
     kernel_proof! { if answer_supported(answer) {
         if answer == Answer::Retry {
             port_answers_handler::post_retry(before_answer@, _id, before_question@);
+        } else if answer == Answer::MarkHandled {
+            port_answers_handler::post_handled(before_answer@, _id, before_question@);
         } else {
             port_answers_handler::post_unchanged(before_answer@, _id, answer, before_question@);
         }
@@ -143,6 +146,7 @@ fn answer_cleanup(m: &mut Node) -> (result: ()) [
     ensures final(m).pos == if matches!(current_item(Node { question: None, ..*old(m) }), Some(Item::Teardown(_))) {
             (old(m).pos + 1) as u8
         } else { old(m).pos },
+        *final(m) == port_answers_model::handled(Node { question: None, ..*old(m) }),
         *final(m) == (Node { question: None, pos: final(m).pos, run: final(m).run,
             pool: final(m).pool, job: final(m).job, pr_open: final(m).pr_open,
             worktree: final(m).worktree, ..*old(m) }),
@@ -154,7 +158,9 @@ fn answer_cleanup(m: &mut Node) -> (result: ()) [
     kernel_snapshot! { before_answer = *m }
     kernel_proof! { port_answers_handler::stopping_question(before_answer@); }
     m.question = None;
+    kernel_snapshot! { before_cleanup = *m }
     mark_handled(m);
+    kernel_proof! { port_answers_handler::handled_result(before_cleanup@, *m); }
 }
 }
 
