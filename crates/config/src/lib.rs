@@ -623,6 +623,9 @@ impl Flux {
         }
         shared_directory("flux.staging_root", &self.staging_root, Path::new("/mnt/shared"))?;
         shared_directory("flux.output_root", &self.output_root, Path::new("/mnt/shared/flux-out/tl3"))?;
+        if self.output_root != Path::new("/mnt/shared/flux-out/tl3") {
+            return Err(invalid("flux.output_root", "the first Flux cut requires /mnt/shared/flux-out/tl3 exactly"));
+        }
         if self.staging_root.starts_with(&self.output_root) || self.output_root.starts_with(&self.staging_root) {
             return Err(invalid("flux.staging_root", "staging and output directories must be disjoint"));
         }
