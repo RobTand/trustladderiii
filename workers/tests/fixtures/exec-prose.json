@@ -1,0 +1,38 @@
+[
+  {
+    "id": "prismaquant-2648",
+    "source": "https://github.com/RobTand/prismaquant/issues/2648",
+    "route": "Run any required development checks through PrismaBuild at priority -10.",
+    "verification": "tests/test_generate_transition_rewrites.py passes."
+  },
+  {
+    "id": "prismaquant-2629",
+    "source": "https://github.com/RobTand/prismaquant/issues/2629",
+    "route": "Run any required development checks through PrismaBuild at priority -10.",
+    "verification": "tests/test_duplication_baseline.py passes."
+  },
+  {
+    "id": "prismaquant-3299",
+    "source": "https://github.com/RobTand/prismaquant/issues/3299",
+    "route": "Read each run's own verdict and log; record skips. Print only allowlisted status, returncode, hashes, sizes and timestamps.",
+    "verification": "the new or changed test fails on base and passes on head via run_tests (TL3 records both)"
+  },
+  {
+    "id": "prismabuild-2783",
+    "source": "https://github.com/RobTand/prismabuild/issues/2783",
+    "route": "Run development tests only through admitted PrismaBuild with the published entrypoints; read the execution policy and operating guide first. Reserve aggregate demand, bound native threads, preserve assigned affinity, and allow portable work on any eligible worker. Read the actual terminal verdict, logs and CAS receipts with allowlisted fields only; acknowledgement is not a pass.",
+    "verification": "Base stdout must contain a sentinel; head must equal the literal failed envelope with LF and no diagnostics."
+  },
+  {
+    "id": "prismabuild-2823",
+    "source": "https://github.com/RobTand/prismabuild/issues/2823",
+    "route": "Run validation through TL3's normal admitted PrismaBuild `run_tests`. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+    "verification": "Assert `preflight()` returns its existing 1 and stderr identifies `resolve_example_dev_pin.py` and timeout/refusal, with no pytest invocation."
+  },
+  {
+    "id": "prismaquant-2798",
+    "source": "https://github.com/RobTand/prismaquant/issues/2798",
+    "route": null,
+    "verification": "Run any required GPU or served validation through PrismaBuild; CPU checks alone do not establish serving or numerical qualification. Keep the exact original measurement scope."
+  }
+]

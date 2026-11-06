@@ -844,3 +844,71 @@ def test_audit_keeps_independent_early_end_verdict(audit_evidence_case, outcome,
     assert reply["objections"] == objections
     assert reply["evidence_errors"]
     assert reply["evidence_contract"] == [requirement]
+
+
+EXEC_PROSE = json.loads((Path(__file__).parent / 'fixtures' / 'exec-prose.json').read_text())
+
+
+def route_requirement(text, *, verification=False):
+    return {'requirement': text, 'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+            'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+            'methods': ['red_green'] if verification else [], 'protected_files': []}
+
+
+@pytest.mark.parametrize('case', EXEC_PROSE, ids=lambda case: case['id'])
+@pytest.mark.parametrize('role', ['ingest', 'audit'])
+def test_exec_prose_contract_rows(case, role):
+    """#931, found by: live probe. Route context must not become an obligation."""
+    from tl3_workers.evidence import contract_violations
+    from tl3_workers.rules import apply_edit, permits, render_all
+
+    source = '\n\n'.join(value for value in (case['route'], case['verification']) if value)
+    verification = route_requirement(case['verification'], verification=True)
+    requirement = route_requirement(case['route']) if case['route'] else verification
+    before = dict(copy.deepcopy(BRIEF if role == 'ingest' else AGREE),
+                  evidence_contract=[requirement, verification] if case['route'] else [verification])
+    inputs = {'issue': {'body': source}, 'tool_capabilities': [],
+              'ingest': dict(copy.deepcopy(BRIEF), brief=source, evidence_contract=[verification])}
+    violations = contract_violations(inputs, before, role=role)
+    if case['route'] is None:
+        assert not violations
+        runtime._checked(ROLES[role], inputs, copy.deepcopy(before))
+        return
+    assert violations, 'route-only prose must render a repair'
+    text = render_all(violations, role=role)
+    assert '/evidence_contract/0' in text
+    assert 'Permitted edit:' in text
+    repaired = copy.deepcopy(before)
+    for violation in violations:
+        repaired = apply_edit(repaired, violation.repair, violation.repair.allowed.value)
+    assert repaired['evidence_contract'] == [verification]
+    if role == 'ingest':
+        assert case['route'] in repaired['brief'], 'retain source text verbatim as context'
+    assert permits(violations, before, repaired, role=role)
+    tampered = dict(repaired, memory_ids=['unrelated'])
+    assert not permits(violations, before, tampered, role=role)
+    assert not contract_violations(inputs, repaired, role=role)
+    with pytest.raises(ValueError) as caught:
+        runtime._checked(ROLES[role], inputs, copy.deepcopy(before))
+    assert caught.value.rule_violations
+    runtime._checked(ROLES[role], inputs, repaired)
+
+
+@pytest.mark.parametrize('case', [case for case in EXEC_PROSE if case['route']], ids=lambda case: case['id'])
+def test_exec_prose_goals_and_audit_objections(case):
+    from tl3_workers.evidence import contract_violations
+    from tl3_workers.rules import apply_edit
+
+    before = dict(copy.deepcopy(BRIEF), evidence_contract=[])
+    before['goals'].append({'description': case['route'], 'verification': 'review'})
+    inputs = {'issue': {'body': case['route']}, 'tool_capabilities': []}
+    rows = contract_violations(inputs, before)
+    assert rows, 'route-only goals must move to context'
+    after = apply_edit(before, rows[0].repair, rows[0].repair.allowed.value)
+    assert after['goals'] == BRIEF['goals']
+    assert case['route'] in after['brief']
+    before = {'verdict': 'disagree', 'objections': [case['route']], 'evidence_contract': []}
+    rows = contract_violations(inputs, before, role='audit')
+    assert rows, 'route-only objections must not demand a new requirement'
+    after = apply_edit(before, rows[0].repair, rows[0].repair.allowed.value)
+    assert after == {'verdict': 'agree', 'objections': [], 'evidence_contract': []}
