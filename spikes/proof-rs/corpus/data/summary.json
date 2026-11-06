@@ -1,0 +1,8 @@
+{
+  "calls": 1037,
+  "sources": 512,
+  "pytest_exit": 1,
+  "python": "3.14.3 (main, Mar 10 2026, 18:18:50) [Clang 21.1.4 ]",
+  "accepted": 250,
+  "refused": 787
+}
