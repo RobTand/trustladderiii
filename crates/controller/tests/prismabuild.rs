@@ -197,7 +197,7 @@ fn recorded_endings() {
         let ended = completion(&mut adapter, &delivery);
         assert_eq!(
             ended.failure_class.as_deref(),
-            if mode == "infrastructure" {
+            if matches!(mode, "infrastructure" | "bad_report") {
                 Some("harness")
             } else {
                 None

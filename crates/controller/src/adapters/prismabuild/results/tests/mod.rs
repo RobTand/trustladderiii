@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 
 #[path = "before.rs"]
 mod before;
+#[path = "evidence-current.rs"]
+mod current;
 
 mod campaign_case;
 mod producer_cases;
@@ -65,14 +67,22 @@ fn producer_overrides_preserve_retained_phases() {
             report["results"][0] = cases[0].clone();
         }
         let bytes = raw(&report);
-        let (old, _) = recorded_io::run(
+        let (mut old, _) = recorded_io::run(
             vec![],
             vec![recorded_io::Step::Bytes(bytes.clone())],
             || normalized(before::run(ending(&bytes), &job)),
         );
+        // #849 intentionally changes only the class of the producer's no-report case.
+        let expected_class = if selected {
+            Value::Null
+        } else {
+            json!(HARNESS)
+        };
+        assert_eq!(old["class"], Value::Null);
+        old["class"] = expected_class.clone();
         let new = normalized(Ok(evaluate(&job, &report)));
         assert_eq!(new, old, "producer override selected={selected}");
-        assert_eq!(new["class"], Value::Null);
+        assert_eq!(new["class"], expected_class);
         assert_eq!(new["pass"], false);
         assert!(!new["results"].as_array().unwrap().is_empty());
     }
@@ -301,11 +311,21 @@ proptest! {
             if !transport_valid { ending.result.as_mut().unwrap().verified = false; }
             ending
         };
-        let (old, old_calls) = recorded_io::run(opens.clone(), schedule.clone(),
+        let (mut old, old_calls) = recorded_io::run(opens.clone(), schedule.clone(),
             || normalized(before::run(make_ending(), &job)));
+        let (pinned, pinned_calls) = recorded_io::run(opens.clone(), schedule.clone(),
+            || normalized(current::run(make_ending(), &job)));
         let (new, new_calls) = recorded_io::run(opens, schedule,
             || normalized(evidence(make_ending(), &job)));
+        prop_assert_eq!(&pinned_calls, &new_calls);
+        prop_assert_eq!(&pinned, &new);
         prop_assert_eq!(old_calls, new_calls);
+        // Q51/#849 changes the class only when the typed no-report case parsed.
+        // All reads, findings, results and other outcomes still match the frozen shell.
+        if shape == 2 && old["results"].as_array().is_some_and(|r| !r.is_empty()) {
+            prop_assert_eq!(&old["class"], &Value::Null);
+            old["class"] = json!(HARNESS);
+        }
         prop_assert_eq!(old, new);
     }
 }
@@ -626,4 +646,18 @@ async fn review_848_syntax_failure_keeps_the_base_completion() {
         .remove("verdict");
     let schema_failure = fixture_completion(&job, &raw(&report)).await;
     assert_eq!(schema_failure.failure_class.as_deref(), Some(HARNESS));
+}
+
+/// #849 differential pin: preserve the frozen reference and pin today's evidence shell.
+#[test]
+fn current_evidence_shell_matches_production() {
+    let pin = include_str!("evidence-current.rs");
+    let body = pin
+        .split("// BEGIN BODY\n")
+        .nth(1)
+        .unwrap()
+        .split("\n// END BODY")
+        .next()
+        .unwrap();
+    assert!(include_str!("../../results.rs").contains(body));
 }
