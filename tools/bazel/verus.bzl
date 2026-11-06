@@ -937,6 +937,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::apply_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_t860_contracts::permitted_stop": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::answer_equivalence::retry_resets_before_funding": "Test-only partial-state equivalence for #806 retry extraction, executed by kernel library tests.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1370,6 +1371,8 @@ def verus_proofs():
             "port_t860_link_rejected": ("kernel::port_t860_link#rejected", 1),
             "port_t860_link_admitted": ("kernel::port_t860_link#admitted", 1),
             "port_t860_link_irrelevant": ("kernel::port_t860_link#irrelevant", 1),
+            "port_answers_selected_handler": ("kernel::answers#answer_selected", 1),
+            "port_answers_try_again_handler": ("kernel::answers#answer_try_again", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

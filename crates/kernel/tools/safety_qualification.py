@@ -381,11 +381,11 @@ CASES = {
     'port_answer_change_request': ('crates/kernel/src/answers.rs',
         'enter_stopping(&mut w.nodes[i], Outcome::Replaced)',
         'enter_stopping(&mut w.nodes[i], Outcome::Stopped)',
-        '//crates/kernel:verus_port_answers_awaiting_handler'),
+        '//crates/kernel:verus_port_answers_selected_handler'),
     'port_answer_stop': ('crates/kernel/src/answers.rs',
         'enter_stopping(&mut w.nodes[i], Outcome::Stopped)',
         'enter_stopping(&mut w.nodes[i], Outcome::Replaced)',
-        '//crates/kernel:verus_port_answers_awaiting_handler'),
+        '//crates/kernel:verus_port_answers_selected_handler'),
     'port_answer_unclear': ('crates/kernel/src/answers.rs',
         'clarified: true,',
         'clarified: false,',
@@ -483,18 +483,25 @@ CASES = {
         'crates/kernel/src/answers.rs',
         'Answer::Continue => go_on(w, i, q, 0, out),',
         'Answer::Continue => go_on(w, i, q, 1, out),',
-        '//crates/kernel:verus_port_answers_awaiting_handler'),
+        '//crates/kernel:verus_port_answers_selected_handler'),
 
     'port_answer_try_again': (
         'crates/kernel/src/answers.rs',
         'm.attempt = 1;',
         'm.attempt = 0;',
-        '//crates/kernel:verus_port_answers_awaiting_handler'),
+        '//crates/kernel:verus_port_answers_try_again_handler'),
 
     'port_answer_add_credit': (
         'crates/kernel/src/answers.rs',
         'go_on(w, i, q, k, out);',
         'go_on(w, i, q, 0, out);',
+        '//crates/kernel:verus_port_answers_selected_handler'),
+
+
+    'answer_selected_duplicate': (
+        'crates/kernel/src/answers.rs',
+        '            answer_selected(w, i, q, answer, out);',
+        '            answer_selected(w, i, q, answer, out);\n            answer_selected(w, i, q, answer, out);',
         '//crates/kernel:verus_port_answers_awaiting_handler'),
 
     't860_release_run': (
@@ -605,6 +612,44 @@ CASES = {
         '    if reply == Reply::AuditDisagrees && w.nodes[i].phase.is_closed() {\n        w.nodes[i].phase = Phase::Ingesting;\n    }\n    let n = &w.nodes[i];\n    if n.phase.is_stopping() {',
         '//crates/kernel:verus_reply_admission_on_reply',
     ),
+    'answer_try_again_order': (
+        'crates/kernel/src/answers.rs',
+        (
+            'let m = &mut w.nodes[i];\n'
+            '                    m.attempt = 1;\n'
+            '                    m.review_restarted = false;\n'
+            '                    m.round = 0;\n'
+            '                    m.replanned = false;\n'
+            '                    go_on(\n'
+            '                        w,\n'
+            '                        i,\n'
+            '                        Question {\n'
+            '                            cost: q.cost.max(1),\n'
+            '                            ..q\n'
+            '                        },\n'
+            '                        0,\n'
+            '                        out,\n'
+            '                    );'
+        ),
+        (
+            'let m = &mut w.nodes[i];\n'
+            '                    m.review_restarted = false;\n'
+            '                    m.round = 0;\n'
+            '                    m.replanned = false;\n'
+            '                    go_on(\n'
+            '                        w,\n'
+            '                        i,\n'
+            '                        Question {\n'
+            '                            cost: q.cost.max(1),\n'
+            '                            ..q\n'
+            '                        },\n'
+            '                        0,\n'
+            '                        out,\n'
+            '                    );\n'
+            '                    w.nodes[i].attempt = 1;'
+        ),
+        '//crates/kernel:lib_test_tl3_kernel'),
+
 }
 
 

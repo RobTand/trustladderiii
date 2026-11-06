@@ -236,9 +236,121 @@ fn answer_awaiting(w: &mut World, i: usize, q: Question, answer: Answer,
                 } }
                 return;
             }
+            answer_selected(w, i, q, answer, out);
+    kernel_proof! {
+    if node_checked(before_world@, before_answer@) && answer_progress_input(before_answer@, q.id, answer) {
+        port_answers_continuation::awaiting_progress(before_answer@, w.nodes@[i as int], q.id,
+            answer, before_question@, w.next_question);
+    } }
+        }
+}
+
+kernel_fn! {
+/// AwaitingRob / #806: the allowed-answer match moved verbatim after its fences.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn answer_selected(w: &mut World, i: usize, q: Question, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        old(w).nodes@[i as int].phase == Phase::AwaitingRob,
+        old(w).nodes@[i as int].question == Some(q),
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        answer != Answer::Unclear, port_answers_model::offered(q.kind, answer),
+    ensures answer_supported(answer) ==> answer_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            q.id, answer, old(w).next_question, final(w).next_question),
+        (answer_supported(answer) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] {
+
+    kernel_snapshot! { before_answer = w.nodes@[i as int] }
+    kernel_snapshot! { before_question = w.next_question }
             match answer {
                 Answer::Continue => go_on(w, i, q, 0, out),
                 Answer::TryAgain => {
+                    answer_try_again(w, i, q, out);
+                }
+                Answer::AddCredit(k) => {
+                    go_on(w, i, q, k, out);
+                }
+                Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
+                Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
+                _ => {}
+            }
+    kernel_proof! { if answer_supported(answer) {
+        if matches!(answer, Answer::Continue | Answer::AddCredit(_)) {
+            port_answers_continuation::post_paid(before_answer@, w.nodes@[i as int], q, answer, before_question@);
+        } else if matches!(answer, Answer::Stop | Answer::ChangeRequest) {
+            port_answers_handler::post_stopping(before_answer@, q.id, answer, before_question@);
+        } else if answer != Answer::TryAgain {
+            port_answers_handler::post_unchanged(before_answer@, q.id, answer, before_question@);
+        }
+    }
+    }
+}
+}
+
+kernel_fn! {
+/// CantMeet / #806: isolate the original resets and generic max from the dispatch context.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn answer_try_again(w: &mut World, i: usize, q: Question,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        old(w).nodes@[i as int].phase == Phase::AwaitingRob,
+        old(w).nodes@[i as int].question == Some(q),
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        q.kind == QKind::CantMeet,
+    ensures answer_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            q.id, Answer::TryAgain, old(w).next_question, final(w).next_question),
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] {
+
+    kernel_snapshot! { before_answer = w.nodes@[i as int] }
+    kernel_snapshot! { before_question = w.next_question }
+
                     let m = &mut w.nodes[i];
                     m.attempt = 1;
                     m.review_restarted = false;
@@ -254,28 +366,12 @@ fn answer_awaiting(w: &mut World, i: usize, q: Question, answer: Answer,
                         0,
                         out,
                     );
-                }
-                Answer::AddCredit(k) => {
-                    go_on(w, i, q, k, out);
-                }
-                Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
-                Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
-                _ => {}
-            }
-    kernel_proof! { if answer_supported(answer) {
-        if matches!(answer, Answer::Continue | Answer::TryAgain | Answer::AddCredit(_)) {
-            port_answers_continuation::post_paid(before_answer@, w.nodes@[i as int], q, answer, before_question@);
-        } else if matches!(answer, Answer::Stop | Answer::ChangeRequest) {
-            port_answers_handler::post_stopping(before_answer@, q.id, answer, before_question@);
-        } else {
-            port_answers_handler::post_unchanged(before_answer@, q.id, answer, before_question@);
-        }
+
+    kernel_proof! {
+        port_answers_continuation::post_paid(before_answer@, w.nodes@[i as int], q,
+            Answer::TryAgain, before_question@);
     }
-    if node_checked(before_world@, before_answer@) && answer_progress_input(before_answer@, q.id, answer) {
-        port_answers_continuation::awaiting_progress(before_answer@, w.nodes@[i as int], q.id,
-            answer, before_question@, w.next_question);
-    } }
-        }
+}
 }
 
 #[cfg(test)]

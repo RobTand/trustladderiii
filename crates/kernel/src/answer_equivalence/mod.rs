@@ -417,3 +417,23 @@ fn continuation_funds_before_changing_phase() {
     };
     compare_continuation(world, q, 1, Outbox::new());
 }
+
+#[test]
+fn retry_resets_before_funding() {
+    let mut world = World::new(&[1], 1);
+    let mut n = Node::new(RepoId(0));
+    n.phase = Phase::AwaitingRob;
+    n.attempt = 0;
+    n.credit.start = u64::MAX;
+    n.credit.spent = u64::MAX;
+    n.question = Some(Question {
+        id: 0,
+        kind: QKind::CantMeet,
+        cont: Cont::Nowhere,
+        cost: 1,
+        clarified: false,
+    });
+    world.nodes.push(n);
+    world.next_question = 1;
+    compare(world, 0, Answer::TryAgain, Outbox::new());
+}
