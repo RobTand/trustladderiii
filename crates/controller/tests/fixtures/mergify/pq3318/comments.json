@@ -1,0 +1,13 @@
+[
+ {
+  "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-11-06T14:42:50.547574+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-11-06T15:13:32.238775+00:00\", \"dequeue_reason\": {\"code\": \"CHECKS_TIMEOUT\", \"label\": \"checks timeout\", \"message\": \"The merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\"}}\n-*- Mergify Payload End -*-\n-->\n\n### \u274c Left the queue \u00b7 checks timed out\n\n31 min in the queue, 30 min of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 6 Nov, 14:42 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \u274c **Checks timed out** \u00b7 draft #3344\n- \ud83d\udeab **Left the queue** 15:13 \u00b7 `b3d3d0b`\n\n**Reason**\n\nThe merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\n\nThese checks never reported on this pull request:\n- `gate`\n\n**To get back in the queue**\n\n- Make the check names in your merge conditions match what your CI publishes: a check that never reports can never satisfy its merge condition.\n- Then comment `@mergifyio queue` to queue the pull request again.\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = gate`\n\n<details>\n<summary>1 merge condition met</summary>\n\n- [x] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) \u00b7 required by GitHub branch protection\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/queues/status?branch=main&pull=3343) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+  "created_at": "2026-11-06T15:13:33Z",
+  "id": 6688169665,
+  "issue_url": "local",
+  "updated_at": "2026-11-06T15:13:33Z",
+  "user": {
+   "id": 37929162,
+   "login": "mergify[bot]"
+  }
+ }
+]

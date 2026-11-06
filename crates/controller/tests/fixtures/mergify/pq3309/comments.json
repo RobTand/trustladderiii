@@ -1,0 +1,35 @@
+[
+ {
+  "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-11-06T03:43:00.098305+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-11-06T04:13:34.635285+00:00\", \"dequeue_reason\": {\"code\": \"CHECKS_TIMEOUT\", \"label\": \"checks timeout\", \"message\": \"The merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\"}}\n-*- Mergify Payload End -*-\n-->\n\n### \u274c Left the queue \u00b7 checks timed out\n\n31 min in the queue, 30 min of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 6 Nov, 03:43 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \u274c **Checks timed out** \u00b7 draft #3334\n- \ud83d\udeab **Left the queue** 04:13 \u00b7 `7458bd1`\n\n**Reason**\n\nThe merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\n\nThese checks never reported on this pull request:\n- `gate`\n\n**To get back in the queue**\n\n- Make the check names in your merge conditions match what your CI publishes: a check that never reports can never satisfy its merge condition.\n- Then comment `@mergifyio queue` to queue the pull request again.\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = gate`\n\n<details>\n<summary>1 merge condition met</summary>\n\n- [x] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) \u00b7 required by GitHub branch protection\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/queues/status?branch=main&pull=3333) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+  "created_at": "2026-11-06T04:13:35Z",
+  "id": 6676693431,
+  "issue_url": "local",
+  "updated_at": "2026-11-06T04:13:35Z",
+  "user": {
+   "id": 37929162,
+   "login": "mergify[bot]"
+  }
+ },
+ {
+  "body": "@mergifyio queue\n\n<!-- tl3:effect:6d6572676966792d726571756575653a726f6274616e642f707269736d617175616e743a333333333a37343538626431633063373663663230386366346462656136303936333236356239616433303936 -->",
+  "created_at": "2026-11-06T04:14:51Z",
+  "id": 6676710820,
+  "issue_url": "local",
+  "updated_at": "2026-11-06T04:14:51Z",
+  "user": {
+   "id": 350304049,
+   "login": "tl3-robtand[bot]"
+  }
+ },
+ {
+  "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-11-06T04:15:31.319240+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-11-06T04:46:14.544186+00:00\", \"dequeue_reason\": {\"code\": \"CHECKS_TIMEOUT\", \"label\": \"checks timeout\", \"message\": \"The merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\"}}\n-*- Mergify Payload End -*-\n-->\n\n### \u274c Left the queue \u00b7 checks timed out\n\n31 min in the queue, 30 min of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 6 Nov, 04:15 \u00b7 rule `default` \u00b7 triggered by the [`@mergifyio queue` command](https://github.com/RobTand/prismaquant/pull/3333#issuecomment-6676710820)\n- \u274c **Checks timed out** \u00b7 draft #3337\n- \ud83d\udeab **Left the queue** 04:46 \u00b7 `7458bd1`\n\n**Reason**\n\nThe merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\n\nThese checks never reported on this pull request:\n- `gate`\n\n**To get back in the queue**\n\n- Make the check names in your merge conditions match what your CI publishes: a check that never reports can never satisfy its merge condition.\n- Then comment `@mergifyio queue` to queue the pull request again.\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = gate`\n\n<details>\n<summary>1 merge condition met</summary>\n\n- [x] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) \u00b7 required by GitHub branch protection\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/queues/status?branch=main&pull=3333) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+  "created_at": "2026-11-06T04:46:15Z",
+  "id": 6677144599,
+  "issue_url": "local",
+  "updated_at": "2026-11-06T04:46:15Z",
+  "user": {
+   "id": 37929162,
+   "login": "mergify[bot]"
+  }
+ }
+]

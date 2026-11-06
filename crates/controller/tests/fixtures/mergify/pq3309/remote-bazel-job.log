@@ -1,0 +1,12 @@
+2026-11-06T03:42:54.5031996Z Remote Bazel plan: 4f89479e-c3d0-4263-a2a8-1edae77f87b6
+2026-11-06T03:43:28.2085851Z Remote Bazel shard: 0ebcfc20-5a07-44ce-b023-9c610bcae6a8
+2026-11-06T03:43:30.5918757Z Remote Bazel shard: e2f93190-3b0b-4e52-8010-9e091252a55a
+2026-11-06T04:38:28.0370868Z Remote evidence refused at shard-await
+2026-11-06T04:38:43.5351025Z Remote evidence refused at shard-await
+2026-11-06T04:38:43.5351477Z Remote gate refused at remote-evidence; upload refused
+2026-11-06T04:38:43.5557536Z ##[error]Process completed with exit code 75.
+2026-11-06T04:38:43.5613868Z ##[group]Run test "$OUTCOME" = success || { echo "Mergify scopes were not uploaded"; exit 1; }
+2026-11-06T04:38:43.5614319Z [36;1mtest "$OUTCOME" = success || { echo "Mergify scopes were not uploaded"; exit 1; }[0m
+2026-11-06T04:38:43.5625777Z shell: /usr/bin/bash -e {0}
+2026-11-06T04:38:43.5625968Z env:
+2026-11-06T04:38:43.5626128Z   PYTHONPATH: .

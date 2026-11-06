@@ -24,7 +24,7 @@ impl executor::Executor for Adapter {
             execute_core::Start::Proceed => {}
         }
         let snapshot = self.snapshot()?;
-        let (state, _) = self.read(delivery, snapshot.as_ref())?;
+        let (state, facts) = self.read(delivery, snapshot.as_ref())?;
         let (number, head) = enqueue(delivery)?;
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
@@ -119,9 +119,9 @@ impl executor::Executor for Adapter {
                     }
                 }
                 lifecycle::Effect::Read(lifecycle::Need::Command) => {
-                    if let Some(completion) =
-                        execute_core::found(execution_receipt(self.queue_command(delivery, None)?))
-                    {
+                    if let Some(completion) = execute_core::found(execution_receipt(
+                        self.queue_command(delivery, None, Some((&state, facts.as_slice())))?,
+                    )) {
                         return Ok(*completion);
                     }
                 }
@@ -143,7 +143,7 @@ impl executor::Executor for Adapter {
                 }
                 lifecycle::Effect::Complete(lifecycle::Complete::Retryable) => {
                     return match execute_core::found(execution_receipt(
-                        self.completion(delivery, self.snapshot()?.as_ref())?,
+                        self.completion(delivery, self.snapshot()?.as_ref())?.0,
                     )) {
                         Some(completion) => Ok(*completion),
                         None => Err(Error::Invalid("PR changed during enqueue")),
