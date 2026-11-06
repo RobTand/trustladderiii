@@ -63,6 +63,7 @@ pub(super) fn leaf_world(width: u8, case: u8) -> (result: World) [
         // The exact original chained_waiter condition, evaluated with real queries.
         assert!(matches!(w.nodes[2].phase, Phase::Ready(_)));
         assert!(matches!(w.nodes[3].phase, Phase::Ready(_)));
+        kernel_proof! { retirement_gate_bridge::queries(w, 2); }
         assert!(slot_free(&w, 2));
         assert!(w.nodes[2].ticket.unwrap() < w.nodes[3].ticket.unwrap());
         assert!(!w.footprints_disjoint(w.nodes[0].footprint, w.nodes[2].footprint));

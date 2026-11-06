@@ -50,6 +50,7 @@ pub(super) fn leaf_progress(mut w: World) -> (result: (World, bool, bool)) [
             reveal_with_fuel(open_prefix, 5);
         }
     }
+    kernel_proof! { retirement_gate_bridge::queries(w, 0); }
     assert!(slot_free(&w, 0));
     kernel_snapshot! { freed = w }
     let held2 = w.nodes[2].holds;
