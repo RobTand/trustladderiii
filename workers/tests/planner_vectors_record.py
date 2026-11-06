@@ -589,10 +589,12 @@ def generate(selection=None):
     paths = [f'tests/test_{source}.py' for source in SOURCES if source not in ('workers', 'recall')]
     paths += ['tests/test_workers.py', 'tests/test_branch_publication.py']
     # Only the generated-scope and memory-citation scenarios belong to this slice.
+    # The #1574 footprint table reads this corpus, so recording it would never reach a fixed point.
     class Selection:
         def pytest_collection_modifyitems(self, items):
-            items[:] = [item for item in items if item.path.stem != 'test_workers' or
-                        any(word in item.name for word in ('generated', 'freeze', 'freezes', 'memories'))]
+            items[:] = [item for item in items if (item.path.stem != 'test_workers' or
+                        any(word in item.name for word in ('generated', 'freeze', 'freezes', 'memories')))
+                        and 'every_footprint_repair_line' not in item.name]
     # Fixture commits are facts too; fix their timestamps before setup creates them.
     dates = dict.fromkeys(('GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE'), '2000-01-01T00:00:00+00:00')
     with patch.dict(os.environ, dates):
@@ -606,6 +608,21 @@ def generate(selection=None):
             citation({'memories': []}, reply)
         except ValueError:
             pass
+    # #839: a planner input carrying a non-empty prerequisite_closures (closed-not-planned prerequisite).
+    recorder.source, recorder.node, recorder.ordinal = 'planner_protocol', 'extra/t839/prerequisite-closures', 0
+    validate = recorder.pure('contracts.validate', modules()['contracts'].validate)
+    validate('planner-input', {
+        'must_split': False, 'findings': [],
+        'protected_paths': ['.github/**', '.mergify.yml', '**/conftest.py', 'pytest.ini', 'tox.ini',
+                            'noxfile.py', 'setup.cfg', 'pyproject.toml'],
+        'ingest': {'kind': 'brief', 'brief': 'hello world',
+                   'goals': [{'description': 'Return hello.', 'verification': 'test'},
+                             {'description': 'Keep the API clear.', 'verification': 'review'}],
+                   'memory_ids': []},
+        'forecast': {'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'making': 84000},
+                     'generated_files': ['**/BUILD.bazel'], 'generator': 'tools/bazel/generate.sh'},
+        'prerequisite_closures': [{'kind': 'issue', 'number': 2763, 'reason': 'not_planned'}],
+    })
     document = {'format': 'tl3.planner-vectors.v1', 'cases': recorder.cases,
                 'scenarios': recorder.scenarios, 'english': heuristics(), 'globs': globs()}
     divergences = {
