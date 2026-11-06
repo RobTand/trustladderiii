@@ -511,13 +511,6 @@
    "seconds": 184.6,
    "tier": "pr"
   },
-  "fail_fast_plan_cant_meet": {
-   "cpu_seconds": 155.0,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 2.92,
-   "seconds": 147.1,
-   "tier": "pr"
-  },
   "fail_fast_reviewer_out_of_room": {
    "cpu_seconds": 164.6,
    "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",

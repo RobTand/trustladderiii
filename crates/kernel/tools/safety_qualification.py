@@ -365,6 +365,13 @@ CASES = {
                                   '            reply_transition(w, i, reply, out);',
                                   '//crates/kernel:lib_test_tl3_kernel'),
 
+    # Q54 / #440: the unchanged diversion cover depends on real stale admission.
+    'port_failfast_stale_generation': (
+        'crates/kernel/src/reply_admission.rs',
+        '    if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation))',
+        '    if n.current() != Some(Item::Await)',
+        '//crates/kernel:verus_reply_admission_on_reply'),
+
 }
 
 

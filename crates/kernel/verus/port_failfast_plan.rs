@@ -37,6 +37,7 @@ pub(super) proof fn accepted_result(before: World, after: World, generation: u64
         retirement::notices_only(initial_out) ==> retirement::notices_only(out),
 {
     reveal(port_review_reply::reply_post);
+    reveal(port_review_reply::reply_result); reveal(port_review_reply::accepted_reply);
     reveal(port_review_reply::transition_post);
     worker_result(before, after, port_review_reply::ended(before.nodes@[0]), initial_out, out);
 }
@@ -60,6 +61,24 @@ pub(super) proof fn stopped_reply(before: World, after: World, generation: u64,
         after.nodes@[0].question.is_none(), out.len == initial_out.len,
 {
     accepted_result(before, after, generation, initial_out, out);
+    completed_result(before, after);
+}
+
+/// Q54 / #440: isolate the accepted planner's local stop normalization from
+/// admission and its output relation before composing the complete world frame.
+pub(super) proof fn completed_result(before: World, after: World)
+    requires retirement::domain(before), retirement::accepted(before),
+        before.nodes@[0].phase is Planning, node_headroom(before.nodes@[0]),
+        port_failfast_pair_frame::frame(before, after),
+        port_failfast_pair::retry_post(port_review_reply::ended(before.nodes@[0]),
+            (after.nodes@[0], after.next_question), true, before.next_question, 2, ReviewStop::PlanCantMeet),
+    ensures retirement::domain(after), retirement::accepted(after),
+        port_failfast_safety::node_post(before.nodes@[0], after.nodes@[0]),
+        after.nodes@[0].credit == before.nodes@[0].credit,
+        after.nodes@[0].question.is_none(), after.next_question == before.next_question,
+        after.nodes@[0].phase == Phase::Stopping(Outcome::Stopped),
+        after.nodes@[0].review_stop == Some(ReviewStop::PlanCantMeet),
+{
     port_failfast_retry::stop_node(port_review_reply::ended(before.nodes@[0]),
         after.nodes@[0], before.next_question, after.next_question, 2, ReviewStop::PlanCantMeet);
     port_failfast_frame::completed_stop(before, after, ReviewStop::PlanCantMeet);

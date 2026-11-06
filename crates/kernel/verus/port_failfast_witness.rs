@@ -11,6 +11,7 @@ pub(super) fn world(planning: bool, split: bool, funding: bool) -> (result: Worl
         !result.fail_fast, result.next_question == 0,
         result.nodes@[0].phase == if planning { Phase::Planning { must_split: split } } else { Phase::Making },
         result.nodes@[0].generation == 0 && result.nodes@[0].run == Some(0),
+        result.nodes@[0].job.is_none(),
         current_item(result.nodes@[0]) == Some(Item::Await),
         result.nodes@[0].effect.is_none() && result.nodes@[0].question.is_none(),
         result.nodes@[0].review_stop.is_none(),

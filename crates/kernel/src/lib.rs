@@ -2326,3 +2326,7 @@ mod port_review_admission;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_apply.rs"]
+mod port_failfast_apply;

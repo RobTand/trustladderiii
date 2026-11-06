@@ -27,6 +27,7 @@ pub(super) proof fn inactive_pair(before: World, off: World, on: World,
             ==> off_out == initial_out && on_out == initial_out,
 {
     reveal(port_review_reply::reply_post);
+    reveal(port_review_reply::reply_result); reveal(port_review_reply::accepted_reply);
     let files = match reply {
         Reply::MakerNeedsFiles { files, .. } => files,
         Reply::PlanLeaf { footprint, .. } => footprint,

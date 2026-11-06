@@ -1035,6 +1035,10 @@ def verus_proofs():
             "review_admission_rejected": ("kernel::port_review_admission#rejected", 1),
             "review_admission_unselected": ("kernel::port_review_admission#unselected", 1),
             "review_admission_accepted": ("kernel::port_review_admission#accepted", 1),
+            "port_failfast_plan_completed_result": ("kernel::port_failfast_plan#completed_result", 1),
+            "port_failfast_apply_plan": ("kernel::port_failfast_apply#plan", 1),
+            "port_failfast_apply_plan_diverted": ("kernel::port_failfast_apply#plan_diverted", 1),
+            "port_failfast_apply_plan_unchanged": ("kernel::port_failfast_apply#plan_unchanged", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

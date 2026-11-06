@@ -1546,15 +1546,6 @@ proof!(apply_publishing_ci_tests, check_publishing_ci_tests());
 
 // Q54: one proof per event that can reach a retry, in the phase that accepts it.
 proof!(
-    fail_fast_plan_cant_meet,
-    check_fail_fast_diverts(
-        Phase::Planning {
-            must_split: kani::any()
-        },
-        reply(Reply::PlanCantMeet)
-    )
-);
-proof!(
     fail_fast_maker_needs_files,
     check_fail_fast_diverts(
         Phase::Making,
