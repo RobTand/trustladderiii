@@ -228,7 +228,7 @@ impl Name {
             NameKind::Symbol => self.value.split_once("::").is_some_and(|(path, symbol)| {
                 source_path(path) && (path.ends_with(".py") || path.ends_with(".rs")) && symbol.split('.').all(|part| {
                     let mut chars = part.chars();
-                    chars.next().is_some_and(|c| c == '_' || c.is_alphabetic()) && chars.all(|c| c == '_' || c.is_alphanumeric())
+                    chars.next().is_some_and(|c| c == '_' || unicode_ident::is_xid_start(c)) && chars.all(|c| unicode_ident::is_xid_continue(c))
                 })
             }),
         };

@@ -135,3 +135,50 @@ fn json_types_and_const_wording_survive_the_shared_form() {
         assert!(!permits(&[row.clone()], &json!({"value":"bad"}), &json!({"value":different}), Role::Maker, &policy()).unwrap());
     }
 }
+
+#[test]
+fn root_pointer_and_independent_edits_keep_their_permissions() {
+    let policy = policy();
+    let base = registered().evaluate(&json!({"value":"bad"}), Role::Maker, &policy).unwrap().remove(0);
+    let mut root = base.clone();
+    root.names[0].value = String::new();
+    root.repair = Repair::Edit { pointer: String::new().try_into().unwrap(), op: EditOp::Replace, allowed: Allowed::Finite { values: vec![json!({"value":"good"})] } };
+    assert!(permits(&[root], &json!({"value":"bad"}), &json!({"value":"good"}), Role::Maker, &policy).unwrap());
+    let mut other = base.clone();
+    other.names[0].value = "/other".into();
+    other.repair = Repair::Edit { pointer: "/other".to_owned().try_into().unwrap(), op: EditOp::Add, allowed: allowed() };
+    let rows = [base,other];
+    assert!(permits(&rows,&json!({"value":"bad"}),&json!({"value":"good","other":"good"}),Role::Maker,&policy).unwrap());
+    assert!(!permits(&rows,&json!({"value":"bad"}),&json!({"value":"good","other":true}),Role::Maker,&policy).unwrap());
+    let many: Vec<_> = (0..1000).map(|_| rows[0].clone()).collect();
+    let rendered = render_all(&many,Role::Maker,RenderContext::Reply,&policy).unwrap();
+    assert_eq!(rendered.matches("reply.value:").count(),1000);
+    assert!(rendered.chars().count()>65536, "the adapter owns the fail-loud limit; no whole-message clipping here");
+}
+
+#[test]
+fn callback_witness_maps_and_all_advertised_alternatives_are_checked() {
+    let mut fixture = Registration { example: json!({"value":"bad"}), reply: json!({"value":"bad"}), with_reply: |_, reply| reply.clone(), witness: Witness::Shared(json!({"value":"good"})) };
+    assert!(row().register(&fixture,&policy()).is_err());
+    fixture.witness = Witness::ByRole([(Role::Maker,json!({"value":"good"}))].into());
+    assert!(row().register(&fixture,&policy()).is_err());
+    fixture.witness = Witness::ByRole([(Role::Maker,json!({"value":"good"})),(Role::Planner,json!({"kind":"cant_meet"}))].into());
+    let mut invalid = row();
+    invalid.repair=Callback::Static(Repair::Edit { pointer: "/value".to_owned().try_into().unwrap(),op:EditOp::Replace,allowed:Allowed::Finite { values:vec![json!("good"),json!("still bad")] } });
+    invalid.roles=vec![Role::Maker];
+    assert!(invalid.register(&fixture,&policy()).is_err());
+}
+
+#[test]
+fn schema_membership_is_an_explicit_adapter_and_callbacks_stay_off_wire() {
+    let mut policy = policy();
+    let mut rows=registered().evaluate(&json!({"value":"bad"}),Role::Maker,&policy).unwrap();
+    rows[0].repair=Repair::Edit {pointer:"/value".to_owned().try_into().unwrap(),op:EditOp::Replace,allowed:Allowed::Schema {keyword:SchemaKeyword::MinLength,value:json!(3)}};
+    assert!(permits(&rows,&json!({"value":"bad"}),&json!({"value":"good"}),Role::Maker,&policy).is_err());
+    policy.schema_membership=Some(|keyword,limit,value| {assert_eq!(keyword,SchemaKeyword::MinLength);Ok(value.as_str().is_some_and(|text|text.chars().count()>=limit.as_u64().unwrap() as usize))});
+    assert!(permits(&rows,&json!({"value":"bad"}),&json!({"value":"good"}),Role::Maker,&policy).unwrap());
+    assert!(!permits(&rows,&json!({"value":"bad"}),&json!({"value":true}),Role::Maker,&policy).unwrap());
+    assert!(!serde_json::to_string(&rows).unwrap().contains("callback"));
+    assert!(serde_json::from_value::<Role>(json!("unresolved")).is_err());
+    assert!(serde_json::from_value::<Name>(json!({"kind":"symbol","value":"backend[test]"})).is_err());
+}

@@ -2,7 +2,7 @@
 //! #741). Serde reads and writes them; schemars renders their JSON Schemas, which are
 //! committed and checked for drift. Python validates against the committed files.
 //!
-//! This module depends only on std, serde, serde_json and schemars, never on the rest of
+//! This module depends only on std, serde, serde_json, schemars and unicode-ident, never on the rest of
 //! the controller, so it can become its own crate unchanged.
 
 pub mod bounded;
