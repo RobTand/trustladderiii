@@ -598,7 +598,11 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
                 b["name"] = json!("B");
                 b["id"] = json!(99101);
                 b["app"] = Value::Null;
-                checks["check_runs"] = if unidentified { json!([a, b]) } else { json!([a]) };
+                checks["check_runs"] = if unidentified {
+                    json!([a, b])
+                } else {
+                    json!([a])
+                };
                 let mut state = api.state.lock().unwrap();
                 state.cause_fixture.as_mut().unwrap().checks = Some(checks);
                 if unidentified {
@@ -608,27 +612,56 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             set_reporters(false);
             failure(&mut controller, &api, &config);
             let before = controller.snapshot().unwrap();
-            let original = before.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            let original = before
+                .rows
+                .iter()
+                .find(|r| r.table == "queue_holds")
+                .unwrap();
             assert_eq!(original.value["reporters_complete"], true);
             assert_eq!(original.value["reporters"].as_array().unwrap().len(), 1);
             if mode == "reporter-revalidate" {
-                batch_health(&mut controller, &api, &config, &["A"],
-                    "ffffffffffffffffffffffffffffffffffffffff", "main");
-                assert!(controller.snapshot().unwrap().rows.iter().any(|r|
-                    r.table == "queue_holds" && !r.value["witness"].is_null()));
+                batch_health(
+                    &mut controller,
+                    &api,
+                    &config,
+                    &["A"],
+                    "ffffffffffffffffffffffffffffffffffffffff",
+                    "main",
+                );
+                assert!(
+                    controller
+                        .snapshot()
+                        .unwrap()
+                        .rows
+                        .iter()
+                        .any(|r| r.table == "queue_holds" && !r.value["witness"].is_null())
+                );
             }
             set_reporters(true);
             failure(&mut controller, &api, &config);
             if mode == "reporter-union" {
-                batch_health(&mut controller, &api, &config, &["A"],
-                    "ffffffffffffffffffffffffffffffffffffffff", "main");
+                batch_health(
+                    &mut controller,
+                    &api,
+                    &config,
+                    &["A"],
+                    "ffffffffffffffffffffffffffffffffffffffff",
+                    "main",
+                );
             }
             controller.look_now().unwrap();
             controller.look_now().unwrap();
-            assert_eq!(api.state.lock().unwrap().requeues, 0,
-                "r2.A: a later unidentified reporter must invalidate A-only health");
+            assert_eq!(
+                api.state.lock().unwrap().requeues,
+                0,
+                "r2.A: a later unidentified reporter must invalidate A-only health"
+            );
             let after = controller.snapshot().unwrap();
-            let hold = after.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            let hold = after
+                .rows
+                .iter()
+                .find(|r| r.table == "queue_holds")
+                .unwrap();
             assert!(hold.value["witness"].is_null());
             assert_eq!(hold.value["reporters_complete"], false);
             assert_eq!(hold.value["since_ms"], original.value["since_ms"]);
@@ -640,23 +673,44 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             // #854b r2.B: create the hold before retargeting the same head.
             failure(&mut controller, &api, &config);
             let before = controller.snapshot().unwrap();
-            let original = before.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            let original = before
+                .rows
+                .iter()
+                .find(|r| r.table == "queue_holds")
+                .unwrap();
             assert_eq!(original.value["context"]["branch"], "main");
             if mode == "retarget-attached" {
-                health(&mut controller, &api, &config, "2026-11-06T03:00:00Z",
-                    "ffffffffffffffffffffffffffffffffffffffff");
+                health(
+                    &mut controller,
+                    &api,
+                    &config,
+                    "2026-11-06T03:00:00Z",
+                    "ffffffffffffffffffffffffffffffffffffffff",
+                );
             }
             api.state.lock().unwrap().pull["base"]["ref"] = json!("release");
             if mode == "retarget-held" {
-                health(&mut controller, &api, &config, "2026-11-06T03:00:00Z",
-                    "ffffffffffffffffffffffffffffffffffffffff");
+                health(
+                    &mut controller,
+                    &api,
+                    &config,
+                    "2026-11-06T03:00:00Z",
+                    "ffffffffffffffffffffffffffffffffffffffff",
+                );
             }
             controller.look_now().unwrap();
             controller.look_now().unwrap();
-            assert_eq!(api.state.lock().unwrap().requeues, 0,
-                "r2.B: a retained main hold must not requeue a release PR on main health");
+            assert_eq!(
+                api.state.lock().unwrap().requeues,
+                0,
+                "r2.B: a retained main hold must not requeue a release PR on main health"
+            );
             let after = controller.snapshot().unwrap();
-            let hold = after.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            let hold = after
+                .rows
+                .iter()
+                .find(|r| r.table == "queue_holds")
+                .unwrap();
             assert_eq!(hold.value["context"]["branch"], "release");
             assert!(hold.value["witness"].is_null());
             assert_eq!(hold.value["since_ms"], original.value["since_ms"]);

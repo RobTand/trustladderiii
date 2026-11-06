@@ -352,7 +352,8 @@ impl Adapter {
         let snapshot = self.snapshot()?;
         let (fresh, _) = self.read(delivery, snapshot.as_ref())?;
         if let Some(snapshot) = &snapshot
-            && let Some(hold) = queue_retry::held(snapshot, delivery.node(), enqueue(delivery)?.1)?
+            && let Some(hold) =
+                queue_retry::held(snapshot, delivery.node(), enqueue(delivery)?.1)?
             && (hold.context.branch != fresh.pull_request.base.branch
                 || hold.witness.as_ref().is_none_or(|gate| {
                     gate.context.branch != fresh.pull_request.base.branch
@@ -545,7 +546,7 @@ fn refused(class: &'static str) -> Reconciliation {
 }
 
 impl Adapter {
-    fn reconcile_queue_destination(
+    pub(super) fn reconcile_queue_destination(
         &self,
         delivery: &Delivery,
         fresh: &tl3_mergify::Observation,
@@ -558,7 +559,8 @@ impl Adapter {
         let Some(mut hold) = queue_retry::held(snapshot, delivery.node(), head)? else {
             return Ok(());
         };
-        if hold.repository != delivery.repository || hold.number != number
+        if hold.repository != delivery.repository
+            || hold.number != number
             || fresh.pull_request.head.sha != head
             || hold.context.branch == fresh.pull_request.base.branch
         {
@@ -573,10 +575,20 @@ impl Adapter {
         hold.witness = None;
         hold.witnessed_ms = None;
         let mut commit = tl3_store::Commit::new(
-            format!("queue-destination:{}:{}:{}", delivery.node().0, head, hold.context.branch),
-            json!({"queue_destination":hold.context.branch}), snapshot,
+            format!(
+                "queue-destination:{}:{}:{}",
+                delivery.node().0,
+                head,
+                hold.context.branch
+            ),
+            json!({"queue_destination":hold.context.branch}),
+            snapshot,
         );
-        commit.rows.push(queue_retry::put("queue_holds", queue_retry::key(delivery.node(), head), json!(hold)));
+        commit.rows.push(queue_retry::put(
+            "queue_holds",
+            queue_retry::key(delivery.node(), head),
+            json!(hold),
+        ));
         tl3_store::Store::open(settings)?.commit(&commit)?;
         Ok(())
     }
@@ -600,7 +612,8 @@ impl Adapter {
             || hold.witness.as_ref().is_none_or(|gate| {
                 gate.context.branch != fresh.pull_request.base.branch
                     || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
-            }) {
+            })
+        {
             return Ok(None);
         }
         let mut before = vec![hold.identity];
