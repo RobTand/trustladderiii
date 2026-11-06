@@ -43,6 +43,20 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
         _ => {}
     }
     kernel_proof! {
+        if worker_before@.nodes@[i as int].phase is Planning {
+            match reply {
+                Reply::PlanCantMeet => port_replies_handlers::plan_exact(worker_before@.nodes@[i as int],
+                    w.nodes@[i as int], worker_before@.next_question, worker_before@.fail_fast, true),
+                Reply::PlanLeaf { footprint, fits } => {
+                    if !fits || footprint::footprint_empty(footprint)
+                        || worker_before@.nodes@[i as int].phase == (Phase::Planning { must_split: true }) {
+                        port_replies_handlers::plan_exact(worker_before@.nodes@[i as int], w.nodes@[i as int],
+                            worker_before@.next_question, worker_before@.fail_fast, false);
+                    }
+                },
+                _ => {},
+            }
+        }
         assert(port_replies_contracts::transition_post(worker_before@, *w, i as int,
             worker_before@.nodes@[i as int], reply, worker_outputs@, *out)) by {
             reveal(port_replies_contracts::transition_post);

@@ -3,6 +3,12 @@ use super::port_replies_contracts::*;
 use super::*;
 
 verus! {
+/// Planner retry row / #806: reconstruct the exact node from its normalized fields.
+pub(super) proof fn plan_exact(n: Node, after: Node, id: u64, fast: bool, cant: bool)
+    requires n.phase is Planning, plan_post(n, after, id, fast, cant),
+    ensures after == plan_retry_node(n, id, fast, cant),
+{ reveal(plan_post); reveal(plan_retry_node); reveal(retirement::stopped); }
+
 /// Q54 / #806: compose the real stop helper with the preceding retry-count update.
 pub(super) proof fn plan_stop_result(n: Node, mid: Node, after: Node, id: u64, fast: bool, cant: bool)
     requires fast && cant,

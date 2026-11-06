@@ -225,7 +225,7 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
             + if !(old(w).fail_fast && cant_meet) && old(w).nodes@[i as int].plan_retries >= 1
                 { 1u64 } else { 0u64 }) as u64,
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retry_bounds); reveal(port_replies_contracts::plan_post); reveal(retirement::stopped);] {
+] hide [retirement::notices_only] proof [reveal(retry_bounds); reveal(port_replies_contracts::plan_post); reveal(retirement::stopped);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);

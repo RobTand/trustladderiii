@@ -88,7 +88,7 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
             + if matches!(reply, Reply::AuditDisagrees) && old(w).nodes@[i as int].audit_rounds >= 1
                 { 1u64 } else { 0u64 }) as u64,
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds); reveal(port_replies_contracts::node_post); reveal(port_replies_contracts::transitioned); reveal(port_replies_contracts::ingested); reveal(retirement::stopped);] {
+] hide [retirement::notices_only] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds); reveal(port_replies_contracts::node_post); reveal(port_replies_contracts::transitioned); reveal(port_replies_contracts::ingested); reveal(retirement::stopped);] {
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);

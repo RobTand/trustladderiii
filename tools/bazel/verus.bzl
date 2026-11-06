@@ -923,6 +923,7 @@ def verus_proofs():
             "port_replies_verify_reply_apply": ("kernel::port_replies_exec#verify_reply_apply", 1),
             "port_replies_witness_cover": ("kernel::port_replies_witness#cover", 1),
             "port_replies_plan_stop_result": ("kernel::port_replies_handlers#plan_stop_result", 1),
+            "port_replies_plan_exact": ("kernel::port_replies_handlers#plan_exact", 1),
             "port_replies_plan_again_result": ("kernel::port_replies_handlers#plan_again_result", 1),
             "port_replies_plan_ask_result": ("kernel::port_replies_handlers#plan_ask_result", 1),
             "port_replies_handler_ingest_done": ("kernel::port_replies_handlers#ingest_done", 1),
