@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+pub use tl3_config::ContainerMode;
 
 pub mod durable;
 
@@ -134,12 +135,15 @@ pub struct ProgressPolicy {
 pub enum ExecutionRuntime {
     Native { interpreter: PathBuf },
     RootlessPodman {
+        mode: ContainerMode,
         executable: PathBuf,
         image: String,
         trusted_root: PathBuf,
         interpreter: PathBuf,
+        memory_limit_bytes: Option<std::num::NonZeroU64>,
     },
 }
+
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -327,6 +331,7 @@ pub struct Receipt {
     pub reason: String,
     pub native_events: Vec<Event>,
     pub evidence: Vec<BlobRef>,
+    pub report: Option<BlobRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -442,6 +447,7 @@ pub trait RunBackend {
     fn cancel(&self, owner: &Owner) -> Result<CancelAck>;
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe>;
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext>;
+    fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport>;
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -523,6 +529,18 @@ pub struct RuntimeBindingInput {
     pub topology: BlobRef,
     pub host: ProcessPlacement,
     pub container: Option<ProcessPlacement>,
+    pub container_scope: Option<ContainerScopeFacts>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerScopeFacts {
+    pub unit: String,
+    pub invocation_id: String,
+    pub cgroup: String,
+    pub cpuset_effective: String,
+    pub memory_max: Option<u64>,
+    pub memory_swap_max: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

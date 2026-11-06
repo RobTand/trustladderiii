@@ -74,7 +74,7 @@ impl Flux {
         evidence::runtime_binding(&record, facts)
     }
 
-    fn terminal(&self, owner: &Owner, ending: Ending, reason: &str, evidence: Vec<BlobRef>) -> Result<Terminal> {
+    fn terminal(&self, owner: &Owner, ending: Ending, reason: &str, evidence: Vec<BlobRef>, report: Option<BlobRef>) -> Result<Terminal> {
         self.journal.transaction(owner, |dir, record| {
             let mut record = record.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
             if let Some(terminal) = record.terminal { return Ok(terminal); }
@@ -83,7 +83,7 @@ impl Flux {
                 request: blob(&record.intent.output_dir.join("request.json"), &serde_json::to_vec(&record.request)?)?,
                 intent: record.intent.clone(), binding: record.binding.clone(),
                 tree: record.request.tree.clone(), runner: record.request.runner.clone(), runtime: record.request.runtime.clone(),
-                reservation: record.request.reservation.clone(), ending, reason: safe(reason)?, native_events: record.events.clone(), evidence,
+                reservation: record.request.reservation.clone(), ending, reason: safe(reason)?, native_events: record.events.clone(), evidence, report,
             };
             let out = &record.intent.output_dir;
             let receipt = blob(&out.join("receipt.json"), &serde_json::to_vec(&receipt)?)?;
@@ -119,7 +119,7 @@ impl RunBackend for Flux {
             return Ok(Submission::Unknown { reason: "output directory unavailable or already exists; nothing dispatched".into() });
         }
         if let Err(error) = validate::preflight(&record.request) {
-            let terminal = self.terminal(&owner, Ending::Refused, &error.message, vec![])?;
+            let terminal = self.terminal(&owner, Ending::Refused, &error.message, vec![], None)?;
             return Ok(Submission::Refused { terminal });
         }
         blob(&record.intent.output_dir.join("request.json"), &serde_json::to_vec(&record.request)?)?;
@@ -234,6 +234,10 @@ impl RunBackend for Flux {
     }
 
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe> { self.probe_resources(reservation, placement) }
+
+    fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
+        self.verified_daytime_payload(owner, terminal)
+    }
 
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext> {
         let record = self.journal.load(owner)?;

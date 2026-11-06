@@ -76,7 +76,7 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
         ExecutionRuntime::Native { interpreter } => {
             if !absolute(interpreter) { return Err(BackendError::invalid("explicit native interpreter required")); }
         }
-        ExecutionRuntime::RootlessPodman { executable, image, trusted_root, interpreter } => {
+        ExecutionRuntime::RootlessPodman { mode, executable, image, trusted_root, interpreter, memory_limit_bytes } => {
             let digest = image.rsplit_once("sha256:").map(|(_, digest)| digest);
             if !absolute(executable) || !absolute(trusted_root) || !absolute(interpreter) || !trusted_root.starts_with("/mnt/shared")
                 || !digest.is_some_and(|digest| hex(digest, 64)) || request.runtime.expected_image.as_ref() != Some(image)
@@ -86,6 +86,9 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
             let Some(host) = &request.runtime.host_dependency else { return Err(BackendError::invalid("rootless image/architecture availability requires a justified eligible host")); };
             if !token(&host.host) || host.reason.is_empty() || host.reason.len() > 4096 || safe(&host.reason)? != host.reason {
                 return Err(BackendError::invalid("invalid image/runtime host dependency"));
+            }
+            if (*mode == ContainerMode::OwnScope) != memory_limit_bytes.is_some() {
+                return Err(BackendError::invalid("own_scope requires explicit per-container memory cap; in_job does not infer enforcement"));
             }
         }
     }
@@ -116,8 +119,9 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
         || (matches!(request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) && !preflight.image_present) {
         return Err(BackendError::invalid("runtime/image identity or architecture is missing or unqualified"));
     }
-    if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime {
-        if !trusted_root.join("runner.py").is_file() { return Err(BackendError::invalid("trusted_root must directly contain runner.py")); }
+    if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime
+        && !trusted_root.join("runner.py").is_file() {
+        return Err(BackendError::invalid("trusted_root must directly contain runner.py"));
     }
     for (path, expected) in [(&request.tree.manifest, &request.tree.input_digest), (&request.runner.executable, &request.runner.executable_digest),
         (&request.runner.manifest, &request.runner.manifest_digest), (&request.runtime.manifest, &request.runtime.manifest_digest)] {
