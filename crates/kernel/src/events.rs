@@ -147,6 +147,13 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                     }
                 }
             }
+            kernel_proof! {
+                // #860 / #806: discharge the reply relations in the Reply arm, not at the join.
+                if node == NodeId(0) && reply == Reply::AuditDisagrees && before_apply@.nodes@.len() > 0 {
+                    assert(port_t860_contracts::reply_post(before_apply@, *w, 0,
+                        generation, Reply::AuditDisagrees, before_apply_out@, *out));
+                }
+            }
         }
         Event::Ack { node, seq, ack } => {
             if let Some(i) = w.index(node) {
