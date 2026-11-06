@@ -311,6 +311,11 @@ CASES = {
         '            return Footprint::inline(a | b);',
         '            return Footprint::inline(a & b);',
         '//crates/kernel:verus_footprint'),
+    'port_failfast_rung_diversion': (
+        'crates/kernel/src/retries.rs',
+        '    if fail_fast {\n        stop_for_review(m, step);\n    } else if m.attempt < 3 {',
+        '    if false && fail_fast {\n        stop_for_review(m, step);\n    } else if m.attempt < 3 {',
+        '//crates/kernel:verus_review_retry_rung'),
 }
 
 

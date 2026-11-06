@@ -902,6 +902,10 @@ def verus_proofs():
             "port_failfast_pair_frame": ("kernel::port_failfast_pair_frame", 1),
             "port_failfast_witness_fast_copy": ("kernel::port_failfast_witness#fast_copy", 1),
             "port_failfast_stale_world": ("kernel::port_failfast_admission#stale_world", 1),
+            "port_failfast_retry_run": ("kernel::port_failfast_retry#run", 1),
+            "port_failfast_retry_completed_stop": ("kernel::port_failfast_retry#completed_stop", 1),
+            "port_failfast_retry_pair": ("kernel::port_failfast_retry#pair", 1),
+            "port_failfast_retry_stop_node": ("kernel::port_failfast_retry#stop_node", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

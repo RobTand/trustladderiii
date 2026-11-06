@@ -2,15 +2,17 @@
 use super::*;
 
 verus! {
-/// Q54: consume the real retry contracts. Planner ordinary branches need only
-/// their asserted retry outcome; all other shared retries forward exact results.
+/// Q54: consume the real retry contracts. The ladder and planner ordinary
+/// branches need only the retry outcome asserted by the original paired check.
 pub(super) open spec fn retry_post(n: Node, after: (Node, u64), fast: bool,
     id: u64, kind: u8, step: ReviewStop) -> bool {
     if kind == 2 {
         port_failfast_diversion::plan_fields(n, after.0, fast, true, id)
             && after.1 == if fast || n.plan_retries == 0 { id } else { (id + 1) as u64 }
-    } else if kind == 0 { after == port_review_retry::rung(n, fast, id, step) }
-    else if kind == 1 { after == port_review_retry::room(n, fast, id, step) }
+    } else if kind == 0 {
+        if fast { after == (port_review_retry::review_stopped(n, step), id) }
+        else { retried(n, after.0) }
+    } else if kind == 1 { after == port_review_retry::room(n, fast, id, step) }
     else { after == port_review_retry::round(n, fast, id, step) }
 }
 
