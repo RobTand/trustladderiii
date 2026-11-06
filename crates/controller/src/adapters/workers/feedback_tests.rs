@@ -43,7 +43,10 @@ impl Fixture {
         n.generation = 10;
         n.run = matches!(phase, Phase::Making | Phase::Reviewing | Phase::Planning { .. }).then_some(10);
         n.job = (phase == Phase::Checking).then_some(10);
-        n.effect = None;
+        n.effect = (phase == Phase::Publishing).then_some(tl3_kernel::InFlight {
+            kind: tl3_kernel::EffectKind::PostApproval, seq: 1, cancelling: true,
+        });
+        n.next_seq = 2;
         n.pool = n.run.is_some();
         n.holds = !matches!(phase, Phase::Planning { .. });
         n.footprint = footprint;
@@ -80,9 +83,9 @@ impl Fixture {
 }
 
 #[test]
-fn publishing_enqueue_without_inflight_effect_delivers_ci_feedback() {
+fn publishing_enqueue_without_inflight_enqueue_delivers_ci_feedback() {
     let mut f = Fixture::new();
-    // #862: the kernel agenda is at Enqueue, but there is no in-flight effect.
+    // #862: the agenda is at Enqueue while an earlier effect is retiring.
     f.seed(Phase::Publishing, 3);
     f.observe(Observation::CiFailed {
         node: NodeId(0), infra: false,
