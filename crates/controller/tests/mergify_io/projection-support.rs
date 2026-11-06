@@ -44,6 +44,12 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::Gate(gate) => format!(
+                "gate:{}:{}:{}",
+                gate.context.base,
+                gate.context.batch.as_deref().unwrap_or("main"),
+                gate.at
+            ),
             Evidence::ChecksUnavailable { permissions } => {
                 let mut gaps = permissions.clone();
                 gaps.sort();
@@ -108,6 +114,7 @@ impl QueueFact {
             self.number
         )
     }
+
     fn unresolved_hold(&self, snapshot: &Snapshot) -> Result<bool> {
         if !completion_core::hold_candidate(completion_hold(&self.evidence)) {
             return Ok(false);

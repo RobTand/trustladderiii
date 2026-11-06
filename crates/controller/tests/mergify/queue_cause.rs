@@ -65,7 +65,7 @@ fn observe(
     }
     for _ in 0..12 {
         controller.drive_once().unwrap();
-        if matches!(controller.world().unwrap().nodes[0].phase, Phase::Making | Phase::Closed(_)) { break; }
+        if matches!(controller.world().unwrap().nodes[0].phase, Phase::Making | Phase::Stopping(_) | Phase::Closed(_)) { break; }
     }
 }
 
@@ -175,6 +175,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     }
     failure(&mut controller, &api, &config);
     if mode == "own-batch" {
+        drain(&mut controller);
         assert_eq!(
             controller.world().unwrap().nodes[0].phase,
             Phase::Closed(Outcome::Stopped)
@@ -302,6 +303,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 }
             }
             failure(&mut controller, &api, &config);
+            drain(&mut controller);
             assert_eq!(
                 controller.world().unwrap().nodes[0].phase,
                 Phase::Closed(Outcome::Merged)
@@ -317,16 +319,6 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 if mode == "q58-after-hold" { state.cause_fixture.as_mut().unwrap().parsed = true; }
             }
             failure(&mut controller, &api, &config);
-            let phase = controller.world().unwrap().nodes[0].phase;
-            assert_eq!(
-                phase,
-                if config.fail_fast {
-                    Phase::Closed(Outcome::Stopped)
-                } else {
-                    Phase::Making
-                },
-                "SECOND failure is Change and follows today's Q54 failed round"
-            );
             let facts = queue_facts(&mut controller);
             assert!(
                 facts
@@ -340,6 +332,18 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             assert!(text.contains("Remote Bazel selection and shards"));
             let findings = Store::open(settings).unwrap().worker_document("0", "maker_findings").unwrap().unwrap();
             assert!(findings.to_string().contains("Remote Bazel selection and shards"), "both Q54 outcomes retain actual failing checks");
+            if config.fail_fast { drain(&mut controller); }
+            let phase = controller.world().unwrap().nodes[0].phase;
+            assert_eq!(
+                phase,
+                if config.fail_fast {
+                    Phase::Closed(Outcome::Stopped)
+                } else {
+                    Phase::Making
+                },
+                "SECOND failure is Change and follows today's Q54 failed round"
+            );
+
         }
         assert_eq!(api.state.lock().unwrap().requeues, 1);
     }

@@ -1,4 +1,4 @@
-//! #854b boundary: existing PR/check payloads provide passive cause evidence.
+// #854b boundary: existing PR/check payloads provide passive cause evidence.
 use super::*;
 use crate::queue_cause::{GateEvidence, QueueContext};
 
