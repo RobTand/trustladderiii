@@ -784,7 +784,7 @@ mod tests {
         let mut store = Store::open(&settings).unwrap();
         let value = serde_json::json!({
             "key":"t894-stored", "epoch":0, "generation":0,
-            "output":{"Effect":{"node":0,"kind":{"StartRun":"Maker"},"seq":0,"head":null}},
+            "output":{"Effect":{"node":0,"kind":{"StartRun":"Make"},"seq":0,"head":null}},
             "repository":{"owner":"owner","name":"repo","installation":1},
             "issue":1,"paths":["./x.py","x.py"],"attempt":1,"round":0
         });
