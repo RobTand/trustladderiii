@@ -95,7 +95,8 @@ class SourceReads:
             # A normal import may read source or bytecode on the observer's
             # stack. get_source used by inspect/linecache is deliberately not
             # exempt: it is an observer read, not module loading.
-            if (frame.f_globals.get('__name__') in ('_frozen_importlib', '_frozen_importlib_external')
+            if (frame.f_globals.get('__name__') in ('_frozen_importlib', '_frozen_importlib_external',
+                                                  'importlib._bootstrap', 'importlib._bootstrap_external')
                     and frame.f_code.co_name in ('get_code', 'exec_module')):
                 return
             if not filename.startswith('<'):
