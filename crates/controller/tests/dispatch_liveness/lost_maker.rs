@@ -2,10 +2,10 @@
 //! PB #2821 request 369 `effect:369:4`; ops issue #865): a maker's recorded
 //! attempt whose processes are gone, with progress on stdout, a Pending
 //! supervisor record and no `exit.json`, is an infrastructure failure. The real
-//! supervisor, its event source and the real store run exactly as a tl3d start
-//! runs them: the next start (and every later one) must reclaim the run as an
-//! ending, a Q7 retry in a new generation and, on the second loss, an incident.
-//! It must never hold the request's slot silently.
+//! supervisor, its event source and the real store run as tl3d runs them,
+//! including stops and starts. A running tl3d, and every later start, must
+//! reclaim the run in bounded work: a Q7 retry in a new generation, then an
+//! incident on the second loss. It must never hold the request's slot silently.
 //!
 //! The recorded files mirror ops/fixtures/817-pb2819 (no credentials file was
 //! copied or reproduced). Each recorded process identity names a real process
@@ -372,55 +372,65 @@ fn intake(daemon: &mut Daemon, number: u64) {
     daemon.drain();
 }
 
-/// PB #2819: progress, then no exit record and no process, across tl3d
-/// restarts hours apart. Each restart must leave the request in a bounded
-/// outcome: a Q7 retry (the slot released and re-granted) after the first
-/// loss, an incident after the second, never a silent Making wait.
+/// PB #2819: the maker wrote its progress, then its processes ended with no
+/// exit record while tl3d kept running, and tl3d later restarted several times.
+/// The running tl3d must reclaim it within bounded work (its source poll and
+/// the looks due over hours of silence): a Q7 infrastructure failure and a
+/// retry in a new generation, which releases and re-grants the slot. The
+/// retry's loss across a restart raises the incident, and later restarts keep
+/// that one incident without launching again. It is never a silent wait.
 #[test]
 fn pb2819_dead_maker_without_exit_is_reclaimed_across_restarts() {
     let fixture = Fixture::new("pb2819_dead_maker");
     let mut daemon = fixture.start();
     intake(&mut daemon, 2819);
+    daemon.settle();
     let launched = daemon.seen(&fixture.settings);
     assert_eq!(launched.phase, Phase::Making);
-    assert_eq!(fixture.launches.borrow().keys.len(), 1, "one maker launch");
-    // The maker dies while this tl3d runs, after its progress, with no exit.
+    assert_eq!(launched.failures, 0, "a live maker is not a failure");
+    // The maker dies after its progress; this tl3d keeps running for hours.
     fixture.launches.borrow_mut().kill();
+    for hour in 1..=15 {
+        fixture.clock.0.set(fixture.clock.0.get() + 3_600_000);
+        daemon.settle();
+        let seen = daemon.seen(&fixture.settings);
+        if seen.failures > 0 || seen.incidents > 0 {
+            break;
+        }
+        assert!(
+            hour < 15,
+            "PB #2819 shape silent for {hour} h while tl3d ran: {seen:?}"
+        );
+    }
+    let reclaimed = daemon.seen(&fixture.settings);
+    let launches = fixture.launches.borrow().keys.clone();
+    assert_eq!(
+        reclaimed.failures, 1,
+        "the loss is one infrastructure failure"
+    );
+    assert!(reclaimed.generation > launched.generation, "{reclaimed:?}");
+    assert_eq!(launches.len(), 2, "Q7 retries the lost maker once");
+    assert_ne!(launches[0], launches[1], "the retry is a new operation");
+    assert_eq!(reclaimed.incidents, 0, "the first loss is not an incident");
+    // The retry is lost while tl3d is down; tl3d restarts across the silence.
     fixture.stop(daemon);
-    // tl3d restarts across the 14.5 h silence (deploys at 10:14Z and 11:41Z).
-    let mut last = None;
+    fixture.launches.borrow_mut().kill();
     for restart in 1..=3 {
         fixture.clock.0.set(fixture.clock.0.get() + 5 * 3_600_000);
-        // A retried maker is lost the same way while tl3d is down.
-        fixture.launches.borrow_mut().kill();
         let mut daemon = fixture.start();
         daemon.settle();
         let seen = daemon.seen(&fixture.settings);
-        let launches = fixture.launches.borrow().keys.len();
-        assert!(
-            (seen.failures >= 1 && seen.generation > launched.generation) || seen.incidents > 0,
-            "PB #2819 shape silent after restart {restart}: {seen:?}, {launches} maker launches"
+        assert_eq!(
+            seen.incidents, 1,
+            "the retry's loss must raise one incident by restart {restart}: {seen:?}"
         );
-        if restart == 1 {
-            assert_eq!(
-                seen.failures, 1,
-                "the first loss is one infrastructure failure"
-            );
-            assert_eq!(launches, 2, "Q7 retries the lost maker once");
-        }
-        last = Some((seen, launches));
+        assert_eq!(
+            fixture.launches.borrow().keys.len(),
+            2,
+            "no launch after the second loss"
+        );
         fixture.stop(daemon);
     }
-    let (seen, launches) = last.unwrap();
-    assert_eq!(
-        seen.failures, 2,
-        "the retried maker's loss is the second failure"
-    );
-    assert_eq!(
-        seen.incidents, 1,
-        "the second loss raises one visible incident"
-    );
-    assert_eq!(launches, 2, "no launch after the incident");
 }
 
 /// PB #2821: the maker was alive when tl3d stopped for a deploy, and gone with
