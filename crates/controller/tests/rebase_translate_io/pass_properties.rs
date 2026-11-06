@@ -80,7 +80,9 @@ fn pinned_nine_real_old_current_pass_through_arms_and_helpers() {
         assert_eq!(format!("{:x}", Sha256::digest(base)), pins["arms"][name]);
     }
     for name in ["head", "footprint"] {
-        assert_eq!(method(old, name), method(production, name));
+        if name == "head" {
+            assert_eq!(method(old, name), method(production, name));
+        }
         assert_eq!(method(new, name), method(production, name));
         assert_eq!(
             format!("{:x}", Sha256::digest(method(old, name))),
@@ -183,7 +185,7 @@ fn mandatory_plan_shell_interns_repo_then_paths_and_footprint() {
             let mut s = schedule(8);
             s.steps[0].files = paths.clone();
             s.steps[0].conflict = fits;
-            let r = compare(&s);
+            let r = io::current(&s);
             assert_eq!(
                 r.results[0]["event"]["Reply"]["reply"]["PlanLeaf"]["fits"],
                 fits
@@ -240,7 +242,7 @@ fn mandatory_passthrough_errors_and_existing_dictionary() {
     }
     let mut s = schedule(8);
     s.steps[0].files = vec!["a.rs".into(), "".into()];
-    let r = compare(&s);
+    let r = io::historical(&s);
     assert_eq!(r.writes, 2);
     assert!(
         r.results[0]["error"]
@@ -249,6 +251,18 @@ fn mandatory_passthrough_errors_and_existing_dictionary() {
             .contains("path must be nonempty")
     );
     assert!(r.persisted_intern.is_empty());
+    let current = io::current(&s);
+    assert_eq!(
+        current.writes, 0,
+        "invalid intake cannot intern a valid prefix"
+    );
+    assert!(
+        current.results[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("TL3 invariant")
+    );
+    assert!(current.persisted_intern.is_empty());
     for kind in 5..=8 {
         for index in 0..if kind == 8 { 4 } else { 2 } {
             let mut s = schedule(kind);
@@ -266,7 +280,7 @@ fn fixed_seed_passthrough_sequences_and_crash_schedules() {
         (
             0u8..9,
             any::<bool>(),
-            prop::collection::vec("[a-z/]{1,12}", 0..5),
+            prop::collection::btree_set("[a-z]{1,4}(/[a-z]{1,4}){0,2}", 0..5),
         ),
         1..9,
     );
@@ -287,7 +301,7 @@ fn fixed_seed_passthrough_sequences_and_crash_schedules() {
                     .map(|(kind, flag, files)| Step {
                         passthrough: Some(kind),
                         conflict: flag,
-                        files,
+                        files: files.into_iter().collect(),
                         sha: if flag { SHA.into() } else { OTHER.into() },
                         ..Step::default()
                     })

@@ -204,3 +204,19 @@ def test_pb_verified_log_for_another_forcing_or_selection_is_not_evidence(rehear
     assert result['status'] == 'infrastructure_error'
     assert result['forced']['status'] == 'infrastructure_error'
     assert ledger.failure is None
+
+
+
+def test_rehearsal_refusal_uses_a_tool_argument_pointer_even_with_check_three(rehearsal):
+    ledger, _, inputs, calls = rehearsal
+    draft = plan()
+    draft['checks'] = [dict(draft['checks'][0], kind='regression', forcing=None) for _ in range(3)] + draft['checks']
+    inputs['draft'] = draft
+    forcing = deepcopy(FORCING)
+    forcing['patches'] = [{'target': 'publisher.Publisher.decide', 'raises': 'AssertionError'}]
+    result = ledger.run([NODE], forcing, goal_ids=[0])
+    assert result['status'] == 'refused'
+    assert '/forcing/patches/0/raises' in result['message']
+    assert '/checks/0/' not in result['message']
+    assert 'tool argument' in result['message'].lower()
+    assert calls == []

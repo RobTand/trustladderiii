@@ -131,13 +131,9 @@ fn ordinary_planner_reply(reply: &Value) -> Result<Reply> {
 }
 
 pub(crate) fn relative_file(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.contains(['\\', '\0'])
-        && path
-            .split('/')
-            .all(|part| !matches!(part, "" | "." | ".." | ".git"))
+    tl3_contracts::footprint::Footprint::new(vec![path.into()]).is_ok()
 }
+
 fn validators() -> Result<&'static BTreeMap<String, jsonschema::Validator>> {
     static VALIDATORS: OnceLock<
         std::result::Result<BTreeMap<String, jsonschema::Validator>, String>,

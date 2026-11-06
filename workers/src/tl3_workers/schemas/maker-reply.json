@@ -232,6 +232,7 @@
                     "grep",
                     "write",
                     "edit",
+                    "delete",
                     "run_tests",
                     "run_generator",
                     "recall"
@@ -331,6 +332,7 @@
             "glob",
             "write",
             "edit",
+            "delete",
             "run_tests"
           ]
         },

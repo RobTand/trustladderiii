@@ -3,6 +3,51 @@ struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> { type Target=Controller; fn deref(&self)->&Controller { self.0 } }
 impl std::ops::DerefMut for Shell<'_> { fn deref_mut(&mut self)->&mut Controller { self.0 } }
 impl Shell<'_> {
+    fn footprint(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        node: NodeId,
+        paths: &[String],
+    ) -> Result<tl3_kernel::Footprint> {
+        let request = request(snapshot, node)?;
+        let paths = tl3_contracts::footprint::Footprint::new(paths.to_vec()).map_err(|reason| {
+            let n = &world.nodes[node.0 as usize];
+            Error::FootprintInvariant {
+                path: paths
+                    .iter()
+                    .find(|path| {
+                        tl3_contracts::footprint::Footprint::new(vec![(*path).clone()]).is_err()
+                    })
+                    .expect("Footprint rejects an invalid individual path")
+                    .clone(),
+                request: format!(
+                    "{}/{}#{}",
+                    request.repo.owner, request.repo.name, request.issue
+                ),
+                node: node.0,
+                attempt: n.attempt,
+                run: n
+                    .run
+                    .map_or_else(|| "<absent>".into(), |run| run.to_string()),
+                reason,
+            }
+        })?;
+        let repo = self
+            .store
+            .intern_repo(&request.repo.owner, &request.repo.name)?;
+        let files = paths
+            .iter()
+            .map(|p| {
+                self.store
+                    .intern_path(repo, p)
+                    .map_err(Error::from)
+                    .map(|id| tl3_kernel::FileId(id.get() as u64))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(world.intern_footprint(files))
+    }
+
     fn translate(&mut self, snapshot: &Snapshot, world: &mut World, observation: Observation, commit: &mut Commit) -> Result<(Option<Event>, bool)> {
         let mut detailed_review = false;
         let event = self.arm(snapshot, world, observation, commit, &mut detailed_review)?;
@@ -432,6 +477,8 @@ impl Shell<'_> {
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
+                        let paths = tl3_contracts::footprint::Footprint::new(paths)
+                            .map_err(Error::Invalid)?;
                         let request = request(snapshot, node)?;
                         let repo = self
                             .store
@@ -440,9 +487,9 @@ impl Shell<'_> {
                             .files(n.footprint)
                             .ok_or(Error::Invalid("unknown footprint"))?
                             .collect::<Vec<_>>();
-                        for path in paths {
+                        for path in paths.iter() {
                             files.push(tl3_kernel::FileId(
-                                self.store.intern_path(repo, &path)?.get() as u64,
+                                self.store.intern_path(repo, path)?.get() as u64,
                             ));
                         }
                         Reply::MakerNeedsFiles {

@@ -22,6 +22,28 @@ For an existing-test outcome observer, assembly leaves the base subject untouche
 
 The receipt binds the base and head revisions, the staged tree identities, subject source hashes, observer source hashes, support declarations, selectors, forcing, and declared symptom. Worker action identity includes the projection and both input trees. A result from different source, selectors, forcing, or projection cannot be reused. The reporting path carries this record to review without reconstructing it from prose.
 
+## Subject source reads during the test call
+
+Under **Rob 2026-11-06, Q27 #855 option E**, the trusted pytest runner guards
+subject source reads during each proof test's call phase on both proof sides.
+The runner receives a per-selector mapping to the receipt's subject files.
+An observer or support read of those files or their compiled caches produces a
+non-assertion call error with the existing `Outcome.ERROR`. Its
+`subject_source_read` message names the file and nearest repository reader
+file:line, and says "assert on behaviour; don't read subject source".
+The runner records the violation and raises at call exit, so catching a read
+exception cannot hide it. Normal imports, subject self-source reads, pytest
+diagnostics, other pytest phases, and tests outside the proof selection remain
+allowed. The runner checks mmap and descriptor reads, including descriptors
+opened during setup. Each test starts with fresh guard state, including under
+xdist and declared-symptom reporting. A guard error cannot supply a declared
+symptom. This standard-library-only Python check belongs to the approved pytest
+runner adapter. It runs in the test process; code-object inspection and
+deliberate interpreter tampering still require independent review.
+
+Symmetric assembled GREEN is tracked separately in #932. The static support
+checker reduction is #934 and follows both #932 and #933.
+
 ## Forcing the repository's own reference
 
 A dotted patch such as `prismabuild.pool.time.monotonic` may resolve through an imported stdlib module. The runner must replace the repository module's local reference with a private proxy carrying the patched attribute. It must never mutate the shared `time` module. The proxy delegates unchanged attributes and disappears after the check. Direct global targets, imported aliases with no repository-local attachment point, and paths outside the served repository remain refusals. Static preflight and runtime validation agree on that distinction. Existing reachability, fork accounting, and tamper checks remain binding.
@@ -44,6 +66,6 @@ Assertion RED always declares `proof.red_message`. A reason-only declaration use
 
 Support cannot access dynamic namespace APIs, including aliases obtained through `globals`, `locals`, `vars`, reflection, dynamic compilation or namespace modules. Refusals name the module and API. This replaces the incomplete list of recognized global mutation methods.
 
-The threat model is accidental fix leakage onto base, not an adversarial observer. Assembly preserves the base subject's source bytes, adds only named head observers and new support, and binds the trees and assertion reason into the receipt. Support may add names but cannot rebind base or declared subject names, and its dynamic namespace APIs are refused statically. Normal observer code may use Python's namespace APIs and honest base code may update its own state. An observer that deliberately patches its subject is outside this proof rule and belongs in independent code review. There is no runtime subject-integrity manifest or instrumentation; repository code executes only in the admitted runner, never during assembly or maker staging.
+Assembly guards accidental fix leakage onto base. It preserves the base subject's source bytes, adds only named head observers and new support, and binds the trees and assertion reason into the receipt. Support may add names but cannot rebind base or declared subject names, and its dynamic namespace APIs are refused statically. Normal observer code may use Python's namespace APIs and honest base code may update its own state. The runtime source-read guard rejects observer file inspection; it does not track general subject mutation. An observer that deliberately patches its subject still belongs in independent code review. Repository code executes only in the admitted runner, never during assembly or maker staging.
 
 Maker review reproductions carry the same `proof` declaration in `done.reproductions`. The controller preserves it in the reproducing check and finding evidence, so the assertion reason remains bound through Checking and review.

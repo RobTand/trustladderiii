@@ -82,6 +82,12 @@ use allocation::*;
 mod reply_admission;
 use reply_admission::*;
 mod ingest;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/ingest_facts.rs"]
+mod ingest_facts;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/teardown_facts.rs"]
+mod teardown_facts;
 use ingest::*;
 mod work_replies;
 use work_replies::*;
@@ -2278,3 +2284,11 @@ mod port_t860_link;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retries_facts.rs"]
+mod retries_facts;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+#[path = "../tests/mark_handled_equivalence/cases.rs"]
+mod mark_handled_equivalence;

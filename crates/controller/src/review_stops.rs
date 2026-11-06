@@ -111,7 +111,7 @@ pub(crate) fn budget_text(budget: &Value) -> Option<String> {
         .filter(|value| {
             matches!(
                 *value,
-                "write" | "edit" | "read" | "grep" | "glob" | "run_tests"
+                "write" | "edit" | "delete" | "read" | "grep" | "glob" | "run_tests"
             )
         })
         .unwrap_or("none");

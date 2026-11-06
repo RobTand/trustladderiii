@@ -14,19 +14,27 @@ impl Footprint {
         let mut seen = BTreeSet::new();
         let mut canonical = Vec::new();
         for path in paths {
+            if path.contains(['\r', '\n']) {
+                return Err("Use a single-line relative path without carriage returns or newlines");
+            }
             if path.is_empty() || path.starts_with('/') || path.contains(['\\', '\0']) {
-                return Err(
-                    "footprint entries must be nonempty repository-relative POSIX paths without NUL",
-                );
+                return Err("Use a relative worktree path");
+            }
+            if path.split('/').any(|part| part == "..") {
+                return Err("Parent traversal is forbidden");
             }
             let parts: Vec<_> = path
                 .split('/')
                 .filter(|part| !matches!(*part, "" | "."))
                 .collect();
-            if parts.is_empty() || parts.iter().any(|part| matches!(*part, ".." | ".git")) {
-                return Err(
-                    "footprint entries must name repository files without parent traversal or Git metadata",
-                );
+            if parts.contains(&".git") {
+                return Err("Git metadata paths are forbidden");
+            }
+            if path.len() > 3072 || parts.iter().any(|part| part.len() > 255) {
+                return Err("Path is too long");
+            }
+            if parts.is_empty() {
+                return Err("expected a declared file");
             }
             let path = parts.join("/");
             if seen.insert(path.clone()) {
@@ -119,6 +127,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(footprint.as_slice(), ["x.py", "a/b.py", "dir"]);
+    }
+
+    #[test]
+    fn footprint_limits_are_utf8_bytes_and_reject_line_breaks() {
+        let full = vec!["x".repeat(255); 12].join("/") + "/x";
+        assert_eq!(full.len(), 3073);
+        for path in [
+            "x\n.py".into(),
+            "x\r.py".into(),
+            "é".repeat(128),
+            full.clone(),
+        ] {
+            assert!(
+                Footprint::new(vec![path.clone()]).is_err(),
+                "accepted {path:?}"
+            );
+        }
+        for path in ["x".repeat(255), "é".repeat(127), full[..3072].into()] {
+            assert!(
+                Footprint::new(vec![path.clone()]).is_ok(),
+                "rejected {path:?}"
+            );
+        }
     }
 
     #[test]

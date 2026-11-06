@@ -109,3 +109,11 @@ vectors with `TL3_WRITE_CONTRACT_VECTORS=1` and `test_contract_vectors.py` on
 BuildBuddy. Copy the produced vectors into a new `contracts/released/<set>/`
 directory, then append their producing commit, harness source tree, report version
 and generated schema SHA-256 to `released-contracts.json`. Never edit old sets.
+
+
+#899 adds `tl3.checks.v3` and the optional test field `proof_refusal`.
+Ordinary messages retain their 1,000-character bound. Complete shared proof rows
+are retained in `proof_refusal`, bounded at 65,536 characters and by the existing
+8 MiB result byte budget. Oversize rows fail validation instead of being clipped.
+The controller sends the full diagnostic in maker `failed_tests`; `report` remains
+a bounded summary. Previous released report vectors remain unchanged.

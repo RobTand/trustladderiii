@@ -83,11 +83,11 @@ fn evidence_with_read(
                 .take(MAX_FAILED_TESTS)
                 .map(|test| FailedTest {
                     test: clipped(test.test.as_str(), 4096),
-                    message: if test.message().trim().is_empty() {
+                    message: if test.failure_message().trim().is_empty() {
                         "The harness rejected this named test; no failure message was supplied."
                             .into()
                     } else {
-                        clipped(test.message(), MAX_MESSAGE_CHARS)
+                        test.failure_message().to_owned()
                     },
                 })
                 .collect();
