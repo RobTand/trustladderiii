@@ -873,7 +873,14 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-] proof [reveal(advance_post); reveal(distance);] {
+] proof [
+        let n = *node;
+        let after = Node { pool: n.pool && kind != EffectKind::StopRun,
+            pos: (n.pos + 1) as u8, ..n };
+        assert(n.phase is Stopping);
+        assert(pending_rank(n) == 0 && pending_rank(after) == 0);
+        teardown_facts::absent(n, *_next_ticket, _context, kind);
+    ] {
         let m = &mut *node;
         if kind == EffectKind::StopRun {
             m.pool = false;

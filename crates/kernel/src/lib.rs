@@ -85,6 +85,9 @@ mod ingest;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/ingest_facts.rs"]
 mod ingest_facts;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/teardown_facts.rs"]
+mod teardown_facts;
 use ingest::*;
 mod work_replies;
 use work_replies::*;

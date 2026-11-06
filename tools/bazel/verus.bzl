@@ -1003,6 +1003,7 @@ def verus_proofs():
             "ranks_advance_sum_bounds": ("kernel::ranks#advance_sum_bounds", 1),
             "ranks_advance_teardown": ("kernel::ranks#advance_teardown", 1),
             "ranks_advance_teardown_missing": ("kernel::ranks#advance_teardown_missing", 1),
+            "teardown_facts_absent": ("kernel::teardown_facts#absent", 1),
             "ranks_advance_teardown_emitting": ("kernel::ranks#advance_teardown_emitting", 1),
             "ranks_distance": ("kernel::ranks#Node::distance", 1),
             "ranks_finite_minimum": ("kernel::ranks#finite_minimum", 1),
