@@ -81,6 +81,8 @@ pub mod executor {
     use ::tl3_store;
     pub use tl3_controller::executor::{Delivery, Output};
     #[derive(Clone, Debug, Serialize, Deserialize)]
+    // The harness records real QueueFact values with the production call shape.
+    #[allow(clippy::large_enum_variant)]
     pub enum Observation {
         Queue(QueueFact),
         Kernel(tl3_kernel::Event),
@@ -194,6 +196,15 @@ fn checks_settled(state: &tl3_mergify::Observation) -> bool {
 }
 mod tl3_store {
     pub(super) use super::io::Store;
+    pub(super) use ::tl3_store::RowChange;
+    pub(super) struct Commit {
+        pub rows: Vec<RowChange>,
+    }
+    impl Commit {
+        pub fn new(_: String, _: super::Value, _: &super::Snapshot) -> Self {
+            Self { rows: vec![] }
+        }
+    }
 }
 
 struct BodyPolicy {
@@ -363,6 +374,9 @@ mod reference {
 mod current {
     mod queue_entry {
         include!("queue-entry-current.rs");
+    }
+    mod queue_cause {
+        include!("queue-cause-current.rs");
     }
     adapter!();
     include!("current.rs");
@@ -700,6 +714,9 @@ mod properties {
                     "recovery",
                     "has_recovery",
                     "save_recovery",
+                    "reconcile_queue_destination",
+                    "queue_retry_binding",
+                    "publish_queue_retry",
                     "recovery_eligible",
                     "command_budget",
                     "reconcile_command",
@@ -719,7 +736,9 @@ mod properties {
                     ""
                 };
                 assert_eq!(
-                    function(actual, name, after),
+                    function(actual, name, after)
+                        .replace("crate::queue_cause::", "queue_retry::")
+                        .replace("crate::put(", "queue_retry::put("),
                     function(copy, name, ""),
                     "production copy drifted: {name}"
                 );
@@ -732,6 +751,10 @@ mod properties {
     }
     #[test]
     fn expanded_helpers_are_verbatim() {
+        assert_eq!(
+            include_str!("../../src/adapters/mergify/queue_cause.rs"),
+            include_str!("queue-cause-current.rs")
+        );
         assert_eq!(
             include_str!("../../src/adapters/mergify/queue_entry.rs"),
             include_str!("queue-entry-current.rs")
@@ -990,6 +1013,13 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::Gate(gate) => format!(
+                "gate:{}:{}:{}",
+                gate.context.base,
+                gate.context.batch.as_deref().unwrap_or("main"),
+                gate.at
+            ),
+
             Evidence::ChecksUnavailable { permissions } => {
                 let mut gaps = permissions.clone();
                 gaps.sort();
@@ -2082,7 +2112,7 @@ macro_rules! a2_entry {
             if heal {
                 let mut pull = io::c1_pull();
                 if config.foreign { pull.head.branch = "foreign".into(); }
-                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false };
+                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false, revision: ::tl3_store::Revision::ZERO };
                 match a.heal_body(d, &pull, Some(&snapshot)) {
                     Ok(edited) => json!({"edited":edited}),
                     Err(error) => json!({"error":error.to_string()}),
@@ -2123,6 +2153,9 @@ mod a2_reference {
 mod a2_current {
     mod queue_entry {
         include!("queue-entry-current.rs");
+    }
+    mod queue_cause {
+        include!("queue-cause-current.rs");
     }
     adapter!();
     include!("current.rs");

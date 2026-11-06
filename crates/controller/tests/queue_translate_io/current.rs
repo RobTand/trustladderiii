@@ -1,4 +1,23 @@
-use super::*;
+use super::{Controller, Snapshot, World, Commit, Result, Error, NodeId, Event, Fact, check_run, put, commit_sha, looks, decode_stored, json, Value};
+mod adapters {
+    pub use super::super::adapters::prismabuild;
+    pub mod mergify {
+        use super::super::super::*;
+        pub use super::super::boundary::{Evidence, QueueFact};
+        pub use super::super::super::adapters::mergify::RequiredCheck;
+        pub mod ci_evidence { use super::super::super::super::*; include!("ci-evidence-current.rs"); }
+    }
+}
+mod boundary {
+    use super::super::*;
+    use super::adapters::mergify::RequiredCheck;
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct QueueFact { pub repository: Repository, pub number: u64, pub evidence: Evidence }
+    include!("queue-fact-current.rs");
+}
+use boundary::{QueueFact, Evidence};
+enum Observation { Queue(QueueFact) }
+
 struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> {type Target=Controller;fn deref(&self)->&Controller { self.0 }}
 impl std::ops::DerefMut for Shell<'_> {fn deref_mut(&mut self)->&mut Controller { self.0 }}
@@ -6,6 +25,10 @@ impl Shell<'_> {
     fn translate(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit) -> Result<Option<Event>> {
         let event = match observation {
             Observation::Queue(mut fact) => {
+                if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
+                    self.queue_gate(snapshot, &fact, gate, commit)?;
+                    return Ok(None);
+                }
                 let identity = fact.identity();
                 let Some(translation) =
                     tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
@@ -38,7 +61,10 @@ impl Shell<'_> {
                 };
                 // A closed node takes only a merge it has not recorded. A later
                 // active enqueue must still be able to consume head evidence.
-                if !queue::admit(fact.evidence.kind(), view) {
+                let Some(kind) = fact.evidence.kind() else {
+                    return Ok(None);
+                };
+                if !queue::admit(kind, view) {
                     return Ok(None);
                 }
                 if let Evidence::CiFailed {
@@ -83,6 +109,13 @@ impl Shell<'_> {
                     *infra = classified;
                     details.decision = Some(decision.as_str().into());
                 }
+                let q58 = matches!(&fact.evidence, Evidence::CiFailed { details, .. } if details.decision.as_deref() == Some("outside_change"));
+                let current_failure = matches!(&fact.evidence, Evidence::CiFailed { head, .. } if commit_sha(snapshot, current.head) == Some(head));
+                if current_failure
+                    && self.queue_failure_cause(snapshot, &mut fact, node, q58, commit)?
+                {
+                    return Ok(None);
+                }
                 let value = json!(&fact);
                 let head_current = match &fact.evidence {
                     Evidence::CiFailed { head, .. }
@@ -99,25 +132,29 @@ impl Shell<'_> {
                     }
                     _ => false,
                 };
-                let route =
-                    match queue::route(fact.evidence.kind(), view, head_current, approved_head) {
-                        queue::Route::Record => core::Route::Record,
-                        queue::Route::Skip => core::Route::Skip,
-                        queue::Route::SetupIncident
-                        | queue::Route::MissingIncident
-                        | queue::Route::BlockedIncident
-                        | queue::Route::ClearIncident => core::Route::Incident,
-                        queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
-                            queue::KernelFact::PrMerged { checks_passed } => {
-                                KernelFact::PrMerged { checks_passed }
-                            }
-                            queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
-                            queue::KernelFact::Conflict => KernelFact::Conflict,
-                            queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
-                            queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
-                            queue::KernelFact::PushByOther => KernelFact::PushByOther,
-                        }),
-                    };
+                let route = match queue::route(
+                    fact.evidence.kind().expect("queue evidence"),
+                    view,
+                    head_current,
+                    approved_head,
+                ) {
+                    queue::Route::Record => core::Route::Record,
+                    queue::Route::Skip => core::Route::Skip,
+                    queue::Route::SetupIncident
+                    | queue::Route::MissingIncident
+                    | queue::Route::BlockedIncident
+                    | queue::Route::ClearIncident => core::Route::Incident,
+                    queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
+                        queue::KernelFact::PrMerged { checks_passed } => {
+                            KernelFact::PrMerged { checks_passed }
+                        }
+                        queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
+                        queue::KernelFact::Conflict => KernelFact::Conflict,
+                        queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
+                        queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
+                        queue::KernelFact::PushByOther => KernelFact::PushByOther,
+                    }),
+                };
                 let kind = match &fact.evidence {
                     Evidence::ChecksUnavailable { .. } => core::EvidenceKind::Setup,
                     Evidence::CheckMissing { .. } => core::EvidenceKind::Missing,
@@ -258,6 +295,9 @@ impl Shell<'_> {
         Ok(Some(event))
     }
 }
-pub(super) fn translate(controller: &mut Controller, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit) -> Result<Option<Event>> {
+pub(super) fn translate(controller: &mut Controller, snapshot: &Snapshot, world: &World, observation: super::Observation, commit: &mut Commit) -> Result<Option<Event>> {
+    let observation = match observation { super::Observation::Queue(fact) => Observation::Queue(serde_json::from_value(json!(fact))?) };
     Shell(controller).translate(snapshot, world, observation, commit)
 }
+
+include!("cause-methods-current.rs");

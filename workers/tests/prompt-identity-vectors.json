@@ -32,11 +32,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-0480fc409e498656080412f252725e4b1e3c96d7a52fb411",
+          "prompt_cache_identity": "tl3-cache-7ada04de2d779d227b6fd925dadc2d634d38394b1a9c3273",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "58b38fe49f4fc8ccc3e03b9e78968cd803eabffbf8a76a02f4012a3b494be003",
-            "utf8_bytes": 8841
+            "sha256": "552364ab099cbb5d3f0410816fb4a6c6a0720adcd91f0645a9f7c18d92676fc5",
+            "utf8_bytes": 9788
           }
         },
         {
@@ -68,11 +68,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-c2c6a7ceb944890a8cfbd0fe96a185d0aee9685adf9581cb",
+          "prompt_cache_identity": "tl3-cache-98bcf03b24af800e8b72594cfb1e8105317b1ce78cc26786",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "1bdb17d15c01d00d65d9aa1fc735bc028d80e14d2ddf2dfdb8351a5d8de3360d",
-            "utf8_bytes": 1372
+            "sha256": "d60ba622e952ee48b431e8b0b2d84618f6312b3f2a5b36f29d9a40e99556415b",
+            "utf8_bytes": 1658
           }
         },
         {
@@ -100,11 +100,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-fc2c866f9c0e85e4821c5e07659b72516d552cb94f5214f7",
+          "prompt_cache_identity": "tl3-cache-b36ff58ef3952f9d2cf992e5b00df353f32c004a16519bcb",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "9808cabd1bc7fd2ef2e66af7fd4856ee8121e84a357567f8d494e2bbc912a9e0",
-            "utf8_bytes": 8841
+            "sha256": "ffd4c23b54f81a031aa67cb306829f58c00dd4e25ce77e3493a5f7f335efd80a",
+            "utf8_bytes": 9788
           }
         },
         {
@@ -136,11 +136,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-bbc89178ddc2df6f6e3539058946e79c15f8cd023a7e37be",
+          "prompt_cache_identity": "tl3-cache-90309757526e907d9106f5fbe04d5fe838e6c127efc00bc4",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "9e19bbe391178146517c162d9dca3a4013fc7f837b596b5924a4d84c211389a8",
-            "utf8_bytes": 1372
+            "sha256": "d6f80188a73c6b46c2e7aa1210ac0d59e83bfb6aac0b5e94b013b8a44b4de308",
+            "utf8_bytes": 1658
           }
         }
       ],
