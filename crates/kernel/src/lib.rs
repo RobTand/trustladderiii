@@ -27,6 +27,10 @@ use vstd::prelude::*;
 mod verification;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_apply.rs"]
+mod port_replies_apply;
+
+#[cfg(verus_keep_ghost)]
 pub mod ranks;
 #[cfg(not(verus_keep_ghost))]
 mod ranks;
