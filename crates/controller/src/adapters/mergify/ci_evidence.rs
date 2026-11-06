@@ -153,7 +153,7 @@ fn diagnostic_lines(text: &str) -> Vec<String> {
         let exception = traceback && EXCEPTION.is_match(line) && !python_header;
         let panic = message.starts_with("thread ") && message.contains(" panicked at ");
         let rust_context = panic_context > 0 && !message.is_empty();
-        if python_header
+        let diagnostic = python_header
             || exception
             || panic
             || rust_context
@@ -162,11 +162,9 @@ fn diagnostic_lines(text: &str) -> Vec<String> {
             || message.contains("##[error]")
             || message.starts_with("ERROR:")
             || lower.contains("fix with ")
-            || GATE_FAILURE.is_match(message)
-        {
-            if seen.insert(message.to_owned()) {
-                diagnostics.push(message.to_owned());
-            }
+            || GATE_FAILURE.is_match(message);
+        if diagnostic && seen.insert(message.to_owned()) {
+            diagnostics.push(message.to_owned());
         }
         if python_header {
             traceback = true;
@@ -205,7 +203,7 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
     }
     let mut excerpt = String::new();
     let mut count = 0;
-    for line in &diagnostics {
+    for (index, line) in diagnostics.iter().enumerate() {
         let remaining =
             MAX_DIAGNOSTICS_BYTES.saturating_sub(excerpt.len() + DIAGNOSTICS_OMITTED.len() + 2);
         if count == MAX_DIAGNOSTICS || remaining < "[diagnostic clipped]".len() + 1 {
@@ -219,7 +217,7 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
             MAX_DIAGNOSTIC_BYTES.min(remaining),
             "[diagnostic clipped]",
         ));
-        count += 1;
+        count = index + 1;
     }
     if count < diagnostics.len() {
         excerpt.push('\n');
