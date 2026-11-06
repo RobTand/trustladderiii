@@ -83,6 +83,11 @@ pub(super) const PENDING: &[(&str, &str)] = &[
 
 const RULE: &str = "Rule: Queue TL3-approved PRs (queue)";
 
+/// Installs a captured upstream state.
+type Captured = fn(&mut State);
+/// Ends a publish drive once the request's node reaches a state.
+type Stop = fn(&tl3_kernel::Node) -> bool;
+
 fn split(checks: &str) -> (Value, Value) {
     let checks: Vec<Value> = serde_json::from_str(checks).unwrap();
     let (rule, checks): (Vec<_>, Vec<_>) = checks.into_iter().partition(|c| c["name"] == RULE);
@@ -730,7 +735,7 @@ fn scenario_route(settings: &tl3_config::Store, mode: &str) {
     let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
         std::time::SystemTime::now(),
     )));
-    let (upstream, stop): (fn(&mut State), fn(&tl3_kernel::Node) -> bool) = match mode {
+    let (upstream, stop): (Captured, Stop) = match mode {
         "pq3309-late" => (pq3309_late, |_| false),
         "pq3309-change" => (pq3309_change, |node| node.round > 0),
         "pq3309-conflict" => (pq3309_conflict, |node| node.phase == Phase::Rebasing),
