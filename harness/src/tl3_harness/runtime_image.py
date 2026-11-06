@@ -9,7 +9,7 @@ import subprocess
 
 
 # Inspect only metadata needed for identity. Never export image environment into logs.
-INSPECT = '{"Id":{{json .Id}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"RepoDigests":{{json .RepoDigests}}}'
+INSPECT = '{"Id":{{json .ID}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"RepoDigests":{{json .RepoDigests}}}'
 
 
 def resolve_profile(map_path, profile, *, host, platform):

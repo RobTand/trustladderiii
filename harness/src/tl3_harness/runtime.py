@@ -478,7 +478,7 @@ def capture_processes(executable, container, evidence, timeout):
     """Hold kernel process identities while the trusted container wrapper is gated."""
     import subprocess
 
-    template = '{"Id":{{json .Id}},"Pid":{{.State.Pid}},"ConmonPid":{{.State.ConmonPid}}}'
+    template = '{"Id":{{json .ID}},"Pid":{{.State.Pid}},"ConmonPid":{{.State.ConmonPid}}}'
     inspected = subprocess.run([executable, 'container', 'inspect', '--format', template, container],
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                timeout=timeout, check=True)
@@ -613,7 +613,7 @@ def cleanup_observations(ownership, *, podman, systemctl, cgroup_root='/sys/fs/c
             raise RuntimeError('label-filtered sweep differs from retained container')
         present = status([podman, 'container', 'exists', identifier])
         if present == 0:
-            template = '{"Id":{{json .Id}},"Labels":{{json .Config.Labels}}}'
+            template = '{"Id":{{json .ID}},"Labels":{{json .Config.Labels}}}'
             actual = json.loads(capture([podman, 'container', 'inspect', '--format', template, identifier]))
             if actual['Id'] != identifier or actual['Labels'] != container['labels']:
                 raise RuntimeError('exact container ownership labels changed')
