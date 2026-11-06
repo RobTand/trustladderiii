@@ -1,0 +1,166 @@
+{
+  "issue": 1455,
+  "trace": {
+    "trace_id": "tr-ee512c9efd63799295e84e0866da9fe2",
+    "request_time": "2026-11-05T16:14:09.625Z",
+    "execution_duration": "195.419s",
+    "state": "OK",
+    "tags": {
+      "repo": "RobTand/tessera",
+      "issue": "1455",
+      "request": "312",
+      "node": "312",
+      "generation": "3",
+      "role": "planner",
+      "outcome": "succeeded",
+      "base_sha": "72fb362e1b724c445e9fc59c12d5f74e9b13c807"
+    }
+  },
+  "base_sha": "72fb362e1b724c445e9fc59c12d5f74e9b13c807",
+  "goals": [
+    {
+      "description": "Add a scoped accepted-wire handle in src/tessera/cached_unit.py. verify_cached_unit must keep the parsed container in this handle. A tiny valid immutable wire must reach the real container parser exactly once. This holds across cached-unit verification and accepted-wire decoding. A test must count the calls at the real container parser (tessera.container.parse as imported by cached_unit and unit_artifact). The test must use a self-contained tiny-wire fixture, with no model download.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add an additive accepted-wire decode path. Extract the metadata construction from parse_unit_metadata into a shared helper that takes a parsed artifact. The ordinary bytes-taking reader must use the same helper. The accepted-wire path must return the same metadata and the same decoded values as read_unit_artifact on the same bytes. It must still run every metadata, profile, plane, geometry and reconstruction check. A test must compare metadata and decoded values between the two paths.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add refusal tests that go through the real reader. Cover these cases: corrupt wire bytes, receipt mismatch (size, sha256 and record fields), expected-identity mismatch, incomplete planes (terminal prefix), wrong recipe, a handle that verification did not issue (foreign handle, including a handle for other bytes), and malformed metadata. Each case must refuse. The accepted-wire path must refuse whatever the ordinary reader or verify_cached_unit refuses. Existing refusal behavior must not change.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Keep the retained parse inside the scoped accepted-wire handle. Add no process-global digest-to-artifact cache. Add no extra copy of the large plane region. The retained parse must have a bounded lifetime. Existing bytes-taking APIs (read_unit_artifact, parse_unit_artifact, parse_unit_metadata, verify_cached_unit, make_unit_record) must keep their signatures and behavior. Callers that use AcceptedUnit.blob, .manifest and .wire_bytes must keep working. Keep serialized bytes, receipt fields, recipes, historical-producer verification and serving admission unchanged. Do not repeat the plane-region digest fix in container.parse.",
+      "stage": "maker",
+      "verification": "review"
+    },
+    {
+      "description": "Run the new and changed tests through PrismaBuild run_tests with the native_threads_2 runner feature. Cover tests/test_cached_producer.py and tests/test_cached_unit_reader_gamut.py. Run the read-only controls tests/test_parse_digest_once.py, tests/test_compact_loader.py, tests/test_issue_refs.py and tests/test_impacted_tests.py. Record the exit status, logs, terminal verdict, CAS receipts, skips and missing tools. Report any detail that the receipt does not show (priority -10, admitted CPU and memory, worker count) as a gap. Do not report it as observed. Do not run any GPU work.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Independent checking must run the targeted tests again through PrismaBuild. It must confirm that the new parse-count and refusal tests pass on the head. It must confirm that the new tests are self-contained, with no GPU, checkpoint or model download. It must confirm that the diff stays inside the declared footprint and touches no protected path.",
+      "stage": "checking",
+      "verification": "test"
+    }
+  ],
+  "draft": {
+    "kind": "leaf",
+    "files": [
+      "src/tessera/cached_unit.py",
+      "src/tessera/unit_artifact.py",
+      "tests/test_cached_producer.py",
+      "tests/test_cached_unit_reader_gamut.py"
+    ],
+    "checks": [
+      {
+        "kind": "demonstrating",
+        "node_ids": [
+          "tests/test_cached_producer.py::test_accepted_wire_reaches_the_container_parser_once"
+        ],
+        "goal_ids": [
+          0,
+          4,
+          5
+        ],
+        "proof": {
+          "subjects": [],
+          "observer_support": [],
+          "red_message": "accepted-wire decode is missing"
+        }
+      },
+      {
+        "kind": "demonstrating",
+        "node_ids": [
+          "tests/test_cached_producer.py::test_accepted_wire_decode_matches_the_bytes_reader"
+        ],
+        "goal_ids": [
+          1,
+          4,
+          5
+        ],
+        "proof": {
+          "subjects": [],
+          "observer_support": [],
+          "red_message": "accepted-wire decode is missing"
+        }
+      },
+      {
+        "kind": "demonstrating",
+        "node_ids": [
+          "tests/test_cached_unit_reader_gamut.py::test_accepted_wire_decode_refuses_what_the_readers_refuse",
+          "tests/test_cached_unit_reader_gamut.py::test_accepted_wire_decode_refuses_a_foreign_handle"
+        ],
+        "goal_ids": [
+          2,
+          4,
+          5
+        ],
+        "proof": {
+          "subjects": [],
+          "observer_support": [],
+          "red_message": "accepted-wire decode is missing"
+        }
+      },
+      {
+        "kind": "regression",
+        "node_ids": [
+          "tests/test_cached_producer.py::test_sealed_historical_identity_accepts_original_without_relabelling",
+          "tests/test_cached_producer.py::test_cached_blob_round_trip_keeps_original_unit_name_and_bytes",
+          "tests/test_cached_producer.py::test_each_input_identity_mismatch_refuses",
+          "tests/test_cached_producer.py::test_source_values_are_bound_not_only_shape",
+          "tests/test_cached_producer.py::test_digest_covers_header_and_payload",
+          "tests/test_cached_producer.py::test_relabelled_wrong_rung_cannot_pass_receipt_comparison",
+          "tests/test_cached_producer.py::test_cached_packaging_never_calls_encoder",
+          "tests/test_cached_producer.py::test_dense_resume_uses_same_record_and_wire_validation",
+          "tests/test_cached_producer.py::test_cached_record_refuses_reach_disagreeing_with_profile",
+          "tests/test_cached_producer.py::test_cached_record_refuses_single_incomplete_terminal",
+          "tests/test_cached_unit_reader_gamut.py::test_permissive_adoption_never_relaxes_wire_verification",
+          "tests/test_cached_unit_reader_gamut.py::test_permissive_adoption_still_refuses_identity_changes"
+        ],
+        "goal_ids": [
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      {
+        "kind": "regression",
+        "node_ids": [
+          "tests/test_parse_digest_once.py::test_a_complete_artifact_hashes_its_region_once",
+          "tests/test_parse_digest_once.py::test_a_truncation_hashes_its_prefix_once",
+          "tests/test_parse_digest_once.py::test_the_manifest_digest_is_still_compared_on_a_complete_artifact",
+          "tests/test_compact_loader.py::test_metadata_agrees_with_the_materialising_reader",
+          "tests/test_compact_loader.py::test_mutated_wires_are_refused_identically",
+          "tests/test_compact_loader.py::test_compact_span2_refusals_are_the_packers",
+          "tests/test_issue_refs.py::test_every_issue_reference_in_the_docs_resolves",
+          "tests/test_issue_refs.py::test_a_triage_document_exists_to_check",
+          "tests/test_issue_refs.py::test_every_triaged_finding_has_a_disposition",
+          "tests/test_impacted_tests.py::test_this_repository_narrows_for_a_leaf_source_edit",
+          "tests/test_impacted_tests.py::test_this_repository_has_no_unreadable_source",
+          "tests/test_impacted_tests.py::test_reads_every_doc"
+        ],
+        "goal_ids": [
+          3,
+          4,
+          5
+        ]
+      }
+    ],
+    "no_design_questions": true,
+    "lands_on_its_own": true,
+    "estimated_tool_turns": 120,
+    "estimated_exploration_turns": 20
+  },
+  "objections": [
+    "Existing check must name a test defined at the base: tests/test_impacted_tests.py::test_reads_every_doc. A new assertion observer needs a demonstrating check; adding it only at head cannot repair an original-base regression."
+  ],
+  "raw_model_reply_truncated": true,
+  "projection_note": "Completed planner declarations only. Model-span drafts were truncated. Tests supply synthetic base source facts, not a reconstructed repository."
+}

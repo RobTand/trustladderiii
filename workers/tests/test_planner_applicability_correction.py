@@ -135,21 +135,19 @@ def test_non_omission_applicability_and_substantive_failures_stop_immediately(
                           if 'proof' in check else LEAF)
     events = []
     runtime.run(planner_request, events.append)
-    assert len(model.calls) == 1
+    assert len(model.calls) == (1 if obstacle == 'disabled' else 2)
     assert events[-1]['reply']['violations']
 
 
 def test_unrelated_subject_does_not_fix_the_omission(planner_request, applicability_plan, monkeypatch):
     from tl3_workers import runtime
-    from tl3_workers.turns import InvalidReply
-    from tl3_workers.tracing import failure_tags
 
     model = planner_model(monkeypatch, applicability_plan, corrected(applicability_plan, 'greeting.py::unrelated'))
-    with pytest.raises(InvalidReply) as caught:
-        runtime.run(planner_request, lambda _: None)
+    events = []
+    runtime.run(planner_request, events.append)
     assert len(model.calls) == 2
-    diagnostic = failure_tags(caught.value)['failure_message']
-    assert SUBJECT in diagnostic and 'repaired reply' in diagnostic
+    assert SUBJECT in '\n'.join(events[-1]['reply']['violations'])
+    assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
 
 
 @pytest.mark.parametrize('supported', [True, False])
@@ -173,6 +171,7 @@ def test_empty_subject_omission_preserves_capability_preflight(
         assert events[-1]['reply']['checks'] == fixed['checks']
         assert events[-1]['reply']['evidence_contract'][0]['methods'] == ['subject_observer']
     else:
-        assert len(model.calls) == 1, 'unsupported required proof is substantive before correction'
+        assert len(model.calls) == 2
+        assert events[-1]['plan_check']
         assert events[-1]['reply']['kind'] == 'cant_meet'
         assert 'Unsupported evidence requirement' in events[-1]['reply']['report']

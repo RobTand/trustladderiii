@@ -27,7 +27,11 @@ pub fn adapter_with_bell(root: &Path, bell_url: &str, ownership: &mut Ownership)
         tool: tool.clone(),
         bell_url: bell_url.into(),
     })
-    .unwrap();
+    .unwrap()
+    .with_status_tool(Tool {
+        program: "false".into(),
+        args: vec![],
+    });
     Adapter::new(
         client,
         Settings {
