@@ -6,7 +6,7 @@ use vstd::prelude::*;
 verus! {
 /// TL3 #751 K-write-ahead requires recorded intent before every upstream write.
 /// Infrastructure rerun context: Q47, docs/state-machine.md:681-688 and
-/// docs/state-table.md:541,575; these do not define receipt ordering or encoding.
+/// docs/state-table.md:555,589; these do not define receipt ordering or encoding.
 /// #760 preserves the shell; #608 records served incident RobTand/prismabuild#2705.
 /// Immediate predecessor/receipt encoding: preserved existing behaviour (no rule).
 /// Full typed input domains and the actual Vec; no bound or trusted body.

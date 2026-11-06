@@ -6,7 +6,7 @@ use vstd::prelude::*;
 verus! {
 /// TL3 #751 K-write-ahead; #608 requires durable intent before command dispatch
 /// and fresh exact-head/eligibility checks. #760 preserves that I/O order.
-/// Recovery context: docs/state-table.md:541,575. Q41 exact reviewed commit is
+/// Recovery context: docs/state-table.md:555,589. Q41 exact reviewed commit is
 /// docs/state-machine.md:132,487. Served incident: RobTand/prismabuild#2705 in #608.
 /// Immediate predecessor/receipt encoding: preserved existing behaviour (no rule).
 /// Full typed input domains and the actual Vec; no bound or trusted body.
