@@ -7,7 +7,7 @@ verus! {
 /// TL3 #608 requires about five minutes of eligibility and one command per head;
 /// #751 K-recovery-grace requires the grace window and only-once dispatch.
 /// #760 explicitly forbids rechecking grace against the later budget reread.
-/// Infrastructure recovery context: docs/state-table.md:555,589, not a timer rule.
+/// Infrastructure recovery context: docs/state-table.md:572,606, not a timer rule.
 /// Served incident: RobTand/prismabuild#2705 as recorded in #608.
 /// Exact timer encoding: preserved existing behaviour (no rule).
 /// Both Option<Recovery> samples and every u64 timestamp remain arbitrary.
