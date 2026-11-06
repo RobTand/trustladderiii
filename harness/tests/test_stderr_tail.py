@@ -90,6 +90,8 @@ os._exit(125)
             _, peak = tracemalloc.get_traced_memory()
         assert records == 128, 'stderr must not block stdout'
         assert len(retained) <= 16_384
+        assert len(process.stderr_redacted.encode('utf-8')) <= 16_384
+        assert len(process.stderr_redacted) == len(retained.decode('utf-8'))
         assert failure.operator_json().get('stderr_tail', '').endswith('last diagnostic\n')
         assert peak < 1_048_576, f'8 MiB of stderr grew host Python memory to {peak} bytes'
     finally:
