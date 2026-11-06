@@ -107,7 +107,7 @@ pub mod executor {
         Absent,
         Pending,
     }
-    include!("router_executor.rs");
+    include!("router-executor-current.rs");
 }
 
 // #830: compile the real router. Its forwarded method bodies have no test replacements.
@@ -2008,8 +2008,12 @@ mod router_queue {
     }
     #[test]
     fn router_queue_copies_are_complete_production_bodies() {
+        assert_eq!(
+            format!("{:x}", Sha256::digest(include_bytes!("router_executor.rs"))),
+            "da06a1169ce6b64b383b06607251d10d919551ad000b5a024775aa2fcf359fe4"
+        );
         let actual = include_str!("../../src/executor.rs");
-        let copy = include_str!("router_executor.rs")
+        let copy = include_str!("router-executor-current.rs")
             .split_once('\n')
             .unwrap()
             .1;
