@@ -87,8 +87,8 @@ pub(super) proof fn ci_frame(before: World, prepared: World, after: World, i: us
 /// #806: an ignored CI fact preserves the complete world and output frame.
 pub(super) proof fn noop_frame(w: World, i: usize, out: Outbox)
     requires i < w.nodes@.len(),
-    ensures forall|after: World| (after.nodes@ == w.nodes@
-        || after.nodes@ == w.nodes@.update(i as int, w.nodes@[i as int]))
+    ensures forall|after: World| after.nodes@.len() == w.nodes@.len()
+        && (forall|j: int| 0 <= j < w.nodes@.len() ==> after.nodes@[j] == w.nodes@[j])
         && after.gates@ == w.gates@ && after.file_sets@ == w.file_sets@
         && after.dependencies@ == w.dependencies@ && after.next_ticket == w.next_ticket
         && after.next_question == w.next_question && after.fail_fast == w.fail_fast
