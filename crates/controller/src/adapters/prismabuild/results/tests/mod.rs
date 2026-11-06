@@ -764,7 +764,7 @@ fn proof_refusal_rows_reach_maker_feedback_without_clipping() {
     report["results"][0]["tests"][0]["message"] = json!(&full[..1000]);
     report["results"][0]["tests"][0]["proof_refusal"] = json!(full);
     let evidence = evaluate(&job, &report);
-    let failed = &evidence.failed_tests;
+    let failed = &evidence.3;
     assert_eq!(failed.len(), 1, "{evidence:?}");
     let feedback = crate::findings::check_report(false, true, failed, &[], 0);
     for text in ["proof.support.call_allowlist", "proof.support.member_write", "repair-first-tail", "repair-second-tail"] {
