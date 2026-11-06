@@ -14,13 +14,22 @@ impl Shell<'_> {
         let paths = tl3_contracts::footprint::Footprint::new(paths.to_vec()).map_err(|reason| {
             let n = &world.nodes[node.0 as usize];
             Error::FootprintInvariant {
-                path: paths.iter().find(|path| {
-                    tl3_contracts::footprint::Footprint::new(vec![(*path).clone()]).is_err()
-                }).expect("Footprint rejects an invalid individual path").clone(),
-                request: format!("{}/{}#{}", request.repo.owner, request.repo.name, request.issue),
+                path: paths
+                    .iter()
+                    .find(|path| {
+                        tl3_contracts::footprint::Footprint::new(vec![(*path).clone()]).is_err()
+                    })
+                    .expect("Footprint rejects an invalid individual path")
+                    .clone(),
+                request: format!(
+                    "{}/{}#{}",
+                    request.repo.owner, request.repo.name, request.issue
+                ),
                 node: node.0,
                 attempt: n.attempt,
-                run: n.run.map_or_else(|| "<absent>".into(), |run| run.to_string()),
+                run: n
+                    .run
+                    .map_or_else(|| "<absent>".into(), |run| run.to_string()),
                 reason,
             }
         })?;
@@ -473,7 +482,11 @@ impl Shell<'_> {
                             .files(n.footprint)
                             .ok_or(Error::Invalid("unknown footprint"))?
                             .collect::<Vec<_>>();
-                        files.extend(world.files(additional).ok_or(Error::Invalid("unknown footprint"))?);
+                        files.extend(
+                            world
+                                .files(additional)
+                                .ok_or(Error::Invalid("unknown footprint"))?,
+                        );
                         Reply::MakerNeedsFiles {
                             files: world.intern_footprint(files),
                             fits,

@@ -133,11 +133,22 @@ mod tests {
     fn footprint_limits_are_utf8_bytes_and_reject_line_breaks() {
         let full = vec!["x".repeat(255); 12].join("/") + "/x";
         assert_eq!(full.len(), 3073);
-        for path in ["x\n.py".into(), "x\r.py".into(), "é".repeat(128), full.clone()] {
-            assert!(Footprint::new(vec![path.clone()]).is_err(), "accepted {path:?}");
+        for path in [
+            "x\n.py".into(),
+            "x\r.py".into(),
+            "é".repeat(128),
+            full.clone(),
+        ] {
+            assert!(
+                Footprint::new(vec![path.clone()]).is_err(),
+                "accepted {path:?}"
+            );
         }
         for path in ["x".repeat(255), "é".repeat(127), full[..3072].into()] {
-            assert!(Footprint::new(vec![path.clone()]).is_ok(), "rejected {path:?}");
+            assert!(
+                Footprint::new(vec![path.clone()]).is_ok(),
+                "rejected {path:?}"
+            );
         }
     }
 
