@@ -108,6 +108,24 @@ def sole_import(tree, name, source):
             and ast.dump(statements[0]) == ast.dump(ast.parse(source).body[0]))
 
 
+def validate_partial_definition_uses(tree, module, name):
+    """Every remaining reference to a partially copied definition is a direct call."""
+    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            root = node
+            while isinstance(root, (ast.Attribute, ast.Subscript)):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id == name:
+                raise ProofRefusal('partial support definition is changed elsewhere in its module; '
+                                   'move that setup into the observer or a new support factory', module, name)
+        if isinstance(node, ast.Name) and node.id == name:
+            parent = parents.get(id(node))
+            if not (isinstance(parent, ast.Call) and parent.func is node):
+                raise ProofRefusal('partial support definition may only be called directly elsewhere in its module; '
+                                   'move other uses into the observer', module, name)
+
+
 def validate_partial_literal(source, module_source, module, symbol):
     """Only immutable, singly bound data can be copied without its context."""
     statements = ast.parse(textwrap.dedent(source)).body
@@ -125,6 +143,11 @@ def validate_partial_literal(source, module_source, module, symbol):
             if not remover.removed or statement.name in binding_names(ast.unparse(stripped)):
                 raise ProofRefusal('partial support definition must be bound exactly once; '
                                    'remove later rebinding or move setup into the observer', module, statement.name)
+            # #842 r3: only the definition is copied, so the rest of the module may
+            # only call it. Aliases, attribute access and arguments could mutate the
+            # object (for example __defaults__) in GREEN but not in RED.
+            validate_partial_definition_uses(stripped, module, statement.name)
+            validate_namespace_apis(ast.parse(module_source), module)
         if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
             continue
         try:
