@@ -98,6 +98,7 @@ if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate"
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from tl3_workers import runtime
+from tl3_workers.rules import Allowed
 
 
 class ConsistencyModel(FakeMessagesListChatModel):
@@ -114,8 +115,19 @@ class ConsistencyModel(FakeMessagesListChatModel):
         assert self.turns <= 2, "consistency correction must stay within one turn"
         if self.turns == 2:
             assert not self.offered
-            assert "test_control" in messages[-1].content
-            assert "no demonstrating check" in messages[-1].content
+            refusal = next(line for line in messages[-1].content.splitlines()
+                           if line.startswith("edit.uncovered:"))
+            assert 'symbol "tests/test_greeting.py::test_control"' in refusal
+            _, separator, rendered = refusal.partition(" Allowed: schema ")
+            assert separator
+            constraint, _ = json.JSONDecoder().raw_decode(rendered)
+            allowed = Allowed("schema", constraint)
+            repair = json.loads(self.responses[1].content)
+            assert allowed.accepts(repair)
+            unrelated = copy.deepcopy(repair)
+            unrelated["files"].append("unrelated.py")
+            assert not allowed.accepts(unrelated)
+            assert 'Permitted edit: replace reply field ""' in refusal
         with marker.with_suffix(".consistency-turns").open("a") as output:
             output.write(json.dumps({"tools": self.offered}) + "\n")
         self.offered = False
