@@ -64,6 +64,7 @@ impl RunBackend for Backend {
         assert!(saved["binding"].is_null());
         let mut state = self.state.lock().unwrap();
         state.submits += 1;
+        state.terminal = None;
         let binding = RunBinding { id: BackendId { backend: BackendTag::Flux, instance: intent.instance.clone(), uri: intent.uri.clone(), job: "f123".into() }, intent };
         state.binding = Some(binding.clone());
         Ok(if state.unknown_submit { Submission::Unknown { reason: "acceptance reply lost".into() } } else { Submission::Accepted { binding } })
@@ -177,4 +178,78 @@ fn flux_checks_withdraw_waits_for_terminal_and_replays_durable_completion() {
     assert!(matches!(restored.reconcile(&d).unwrap(), Reconciliation::Found(_)));
     assert_eq!(backend.state.lock().unwrap().submits, 1);
     drop((restored, ownership)); database.stop();
+}
+
+#[path = "../support/workers.rs"]
+mod fake_workers;
+
+fn drain(controller: &mut tl3_controller::Controller) {
+    for _ in 0..200 {
+        if !controller.drive_once().unwrap() { return; }
+    }
+    panic!("controller did not settle");
+}
+
+/// #850: the real controller closes the first service incident on an eligible busy census,
+/// then submits a fresh check through the selected adapter. Unknown census retains the incident.
+#[test]
+fn flux_checks_controller_incident_clearance_allows_fresh_dispatch() {
+    use tl3_controller::{adapters, Bootstrap, Controller, LabelledIssue, executor::{Observation, Upstream}};
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership = Ownership::claim(Store::open(&database.create("flux_incident")).unwrap()).unwrap();
+    let (mut adapter, backend, attached, _) = setup(root.path(), &mut ownership);
+    let source = adapter.source().unwrap();
+    let fakes = root.path().join("fakes");
+    let mut registry = adapters::simulation(&fakes).unwrap();
+    registry.register(Upstream::PrismaBuild, adapter);
+    registry.register(Upstream::Workers, fake_workers::Workers::new(None, adapters::workers::Fake::new(&fakes), vec![], |_: &Delivery, completion: &mut tl3_controller::executor::Completion| {
+        for observation in &mut completion.observations {
+            match observation {
+                Observation::Made { sha, .. } => *sha = "b".repeat(40),
+                Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+                _ => {}
+            }
+        }
+    }));
+    let mut c = Controller::open_owned(ownership, registry, Bootstrap { repos: vec![delivery().repository], operations: None, rob: 42, slots: 1, pool: 1, fail_fast: false }).unwrap();
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.prismabuild.silence_secs = 1;
+    allowances.prismabuild.no_progress_secs = 3;
+    c.set_allowances(allowances);
+    c.intake(LabelledIssue { delivery: "flux-incident-intake".into(), owner: "owner".into(), repo: "sandbox".into(), installation: 3,
+        number: 12, title: "Flux incident recovery".into(), actor: 42, label: "tl3".into(), labels: vec![] }).unwrap();
+    drain(&mut c);
+    let (sender, inputs) = mpsc::channel();
+    let running = source.spawn(sender);
+    let mut plan = delivery().checks.unwrap();
+    plan.plan = serde_json::from_value(json!([{"name":"regression", "kind":"regression", "tests":["test_value.py::test_value"]}])).unwrap();
+    for round in 1..=2 {
+        c.observe(&format!("flux-plan-{round}"), Observation::CheckPlan { node: NodeId(0), sha: "b".repeat(40), run: plan.clone() }).unwrap();
+        drain(&mut c);
+        attached.recv_timeout(Duration::from_secs(5)).unwrap();
+        backend.terminal(Ending::InfraLost);
+        let input = inputs.recv_timeout(Duration::from_secs(5)).unwrap();
+        tl3_controller::ingress::apply(&mut c, input).unwrap();
+        drain(&mut c);
+    }
+    let incident = c.snapshot().unwrap().rows.into_iter().find(|r| r.table == "incidents" && r.value["open"] == true && r.value["blocking"] == true).unwrap();
+    assert_eq!(incident.value["needs_rob"], false);
+    assert!(incident.value["effect"].is_null(), "terminal job must leave a service incident");
+    assert!(c.world().unwrap().nodes[0].waiting_incident);
+    backend.state.lock().unwrap().probe = Some(Availability::Unknown);
+    std::thread::sleep(Duration::from_millis(1100));
+    c.look_due().unwrap(); drain(&mut c);
+    assert!(c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == incident.id && r.value["open"] == true));
+    backend.state.lock().unwrap().probe = Some(Availability::Busy);
+    std::thread::sleep(Duration::from_millis(1100));
+    c.look_due().unwrap(); drain(&mut c);
+    assert!(c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == incident.id && r.value["open"] == false));
+    assert!(!c.world().unwrap().nodes[0].waiting_incident);
+    let before = backend.state.lock().unwrap().submits;
+    c.observe("flux-plan-after-clearance", Observation::CheckPlan { node: NodeId(0), sha: "b".repeat(40), run: plan }).unwrap();
+    drain(&mut c);
+    assert_eq!(backend.state.lock().unwrap().submits, before + 1, "healthy capacity must permit a fresh dispatch");
+    running.stop().unwrap(); running.join().unwrap();
+    drop(c); database.stop();
 }
