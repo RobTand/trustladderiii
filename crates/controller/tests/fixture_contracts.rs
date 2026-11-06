@@ -257,6 +257,11 @@ fn delivery_router_forwards_every_method_without_changing_results() {
                 .prerequisite(&d.repository, tl3_kernel::PrerequisiteKind::Issue, 17)
                 .is_err()
         );
+        assert!(
+            router
+                .prerequisite_detail(&d.repository, tl3_kernel::PrerequisiteKind::Issue, 17)
+                .is_err()
+        );
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.probe_memory().is_err());
@@ -264,7 +269,7 @@ fn delivery_router_forwards_every_method_without_changing_results() {
         assert!(router.configured_model("configured"));
         assert!(router.quota_model_eligible(&d, "configured").is_err());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 13);
+        assert_eq!(calls.len(), 14);
         for (selected, method, argument) in calls.iter() {
             let expected = if matches!(
                 *method,
@@ -272,6 +277,7 @@ fn delivery_router_forwards_every_method_without_changing_results() {
                     | "issue"
                     | "reconcile_message"
                     | "prerequisite"
+                    | "prerequisite_detail"
                     | "quota_model_eligible"
             ) {
                 mode

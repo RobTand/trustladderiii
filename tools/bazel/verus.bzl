@@ -518,6 +518,17 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::dependency_retirement_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::edge_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::edge_rules": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::revocable": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::expected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::fact_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::pristine": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::progress_gate_check_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::gate_apply_checker_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::gate_apply_checker_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
