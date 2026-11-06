@@ -675,11 +675,6 @@
     "owner": "#915"
   },
   {
-    "path": "crates/controller/tests/rebase_translate_io/conflict_current.rs",
-    "detector": "frozen-copy",
-    "owner": "#923"
-  },
-  {
     "path": "crates/controller/tests/rebase_translate_io/pass_current.rs",
     "detector": "frozen-copy",
     "owner": "#923"
@@ -697,11 +692,6 @@
   {
     "path": "crates/controller/tests/rebase_translate_io/properties.rs",
     "detector": "source-include",
-    "owner": "#923"
-  },
-  {
-    "path": "crates/controller/tests/rebase_translate_io/rebased_current.rs",
-    "detector": "frozen-copy",
     "owner": "#923"
   },
   {

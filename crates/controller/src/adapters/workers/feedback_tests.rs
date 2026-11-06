@@ -247,6 +247,19 @@ fn failed_run_details_reach_the_retry_maker() {
         failure_class: "worker_exit".into(),
         failure_message: "maker exited during reproduction".into(),
     });
+    f.observe(Observation::Kernel(Event::Command {
+        node: NodeId(0),
+        id: 1,
+        command: tl3_kernel::Command::Resume,
+    }));
+    let snapshot = f.controller.snapshot().unwrap();
+    assert!(
+        snapshot.pending_effects.iter().any(|effect| {
+            let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+            protocol::delivery_role(&delivery) == Some("maker")
+        }),
+        "the accepted failure must schedule a retry maker after resume"
+    );
     let inputs = f.maker();
     assert!(
         inputs["feedback"]
@@ -499,19 +512,43 @@ fn try_again_guidance_reaches_the_planner_through_console_intake() {
 fn legacy_rows_survive_the_first_canonical_feedback_write() {
     let mut f = Fixture::new();
     f.seed(Phase::Making, 2);
-    crate::git_tests::documents(&mut f.controller.store, &[
-        ("maker_findings", json!([{"kind":"failed_check", "goal_ids":[], "report":"legacy check"}])),
-        ("findings", json!(["legacy planner guidance"])),
-        ("rebase_conflicts", json!({"head":f.repo.head,"target":f.repo.base,"files":["README.md"]})),
-        ("worker_failures", json!({"failure_message":"old failure must not be reused"})),
-    ]);
+    crate::git_tests::documents(
+        &mut f.controller.store,
+        &[
+            (
+                "maker_findings",
+                json!([{"kind":"failed_check", "goal_ids":[], "report":"legacy check"}]),
+            ),
+            ("findings", json!(["legacy planner guidance"])),
+            (
+                "rebase_conflicts",
+                json!({"head":f.repo.head,"target":f.repo.base,"files":["README.md"]}),
+            ),
+            (
+                "worker_failures",
+                json!({"failure_message":"old failure must not be reused"}),
+            ),
+        ],
+    );
     assert!(f.maker()["feedback"].to_string().contains("legacy check"));
-    assert!(f.maker()["feedback"].to_string().contains("Resolve the merge"));
+    assert!(
+        f.maker()["feedback"]
+            .to_string()
+            .contains("Resolve the merge")
+    );
     assert_eq!(f.planner()["findings"], json!(["legacy planner guidance"]));
-    f.observe(Observation::Kernel(Event::Reply {node:NodeId(0),generation:10,reply:Reply::RunFailed}));
+    f.observe(Observation::Kernel(Event::Reply {
+        node: NodeId(0),
+        generation: 10,
+        reply: Reply::RunFailed,
+    }));
     let inputs = f.maker();
     assert!(inputs["feedback"].to_string().contains("legacy check"));
     assert!(inputs["feedback"].to_string().contains("Resolve the merge"));
-    assert!(!inputs["feedback"].to_string().contains("old failure must not be reused"));
+    assert!(
+        !inputs["feedback"]
+            .to_string()
+            .contains("old failure must not be reused")
+    );
     assert_eq!(f.planner()["findings"], json!(["legacy planner guidance"]));
 }

@@ -4043,6 +4043,9 @@ impl Controller {
                         }),
                     ));
                 }
+                if mapped == Reply::MakerCantMeet {
+                    feedback.cant_meet = Some(reply.to_string());
+                }
                 Event::Reply {
                     node,
                     generation,
