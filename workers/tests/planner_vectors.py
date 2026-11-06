@@ -17,6 +17,7 @@ from unittest.mock import patch
 from jsonschema import ValidationError
 
 from tl3_workers.roles import planner
+from tl3_harness.model import Diagnostic
 
 CORPUS = Path(__file__).with_name('planner-vectors.json.gz')
 SOURCES = (
@@ -34,6 +35,10 @@ def mismatch_fields():
 
 def packed(value):
     """Keep sets/tuples and integer map keys distinct from JSON lists/keys."""
+    if isinstance(value, Diagnostic):
+        return {'$diagnostic': [str(value), value.rule, packed(value.items)]}
+    if isinstance(value, planner.BaseDefinition):
+        return {'$base_definition': [*value, value.size, value.source]}
     if isinstance(value, set):
         return {'$set': sorted((packed(item) for item in value), key=repr)}
     if isinstance(value, tuple):
@@ -56,6 +61,11 @@ def unpacked(value):
     if isinstance(value, list):
         return [unpacked(item) for item in value]
     if isinstance(value, dict):
+        if '$diagnostic' in value:
+            text, rule, items = value['$diagnostic']
+            return Diagnostic(text, rule, unpacked(items))
+        if '$base_definition' in value:
+            return planner.BaseDefinition(*value['$base_definition'])
         if '$set' in value:
             return set(unpacked(item) for item in value['$set'])
         if '$tuple' in value:
@@ -83,6 +93,12 @@ def exception(error, *, observation=False):
         result.update(local=error.local, violations=deepcopy(error.violations),
                       node_ids=packed(error.node_ids), draft=deepcopy(error.draft),
                       mismatch=packed({name: getattr(error, name) for name in mismatch_fields()}))
+        if hasattr(error, 'contract'):
+            result['semantic'] = {'raw': deepcopy(error.raw_draft), 'completed': packed(error.completed_reply),
+                                  'objections': packed(error.objections), 'inputs': deepcopy(error.contract.inputs),
+                                  'base_nodes': sorted(error.contract.base_nodes), 'base_sources': dict(error.contract.base_sources)}
+        if hasattr(error, 'contract') and hasattr(error.contract, 'manifest'):
+            result['manifest'] = deepcopy(error.contract.manifest)
         if hasattr(error, 'repair_text'):
             result['repair_text'] = error.repair_text
     if hasattr(error, 'result'):
@@ -152,8 +168,12 @@ class ForecastFacts:
 
     @property
     def problems(self):
-        # Decisions use the rendered diagnostics, not exception identities.
-        return self.tape.call('Forecaster.problems', (), {}, lambda: [str(p) for p in self.original.problems])
+        from tl3_workers.forecast import DeclaredFileError
+        from tl3_harness.model import named
+        rows = self.tape.call('Forecaster.problems', (), {}, lambda: [
+            {'path': p.path, 'reason': str(p.reason), 'size': p.size, 'rule': p.rule} for p in self.original.problems])
+        return [DeclaredFileError(row['path'], named(row['rule'], row['reason'], {'path': row['path']}), row['size'])
+                for row in rows]
 
 
 class RehearsalFacts:
@@ -268,8 +288,12 @@ def check_case(case, function=None, rehearsals=None):
     tape = Tape(case.get('facts'))
     with facts(tape):
         ledger = RehearsalFacts(tape, rehearsals) if case['has_rehearsals'] else None
-        result = outcome(lambda: (function or planner.check_reply)(inputs, reply, rehearsals=ledger))
+        captured = []
+        result = outcome(lambda: (function or planner.check_reply)(inputs, reply, rehearsals=ledger,
+            **({'plan_errors': captured} if case.get('has_plan_errors') else {})))
     result['reply'] = reply
+    if case.get('has_plan_errors'):
+        result['plan_errors'] = [exception(error) for error in captured]
     if tape.recording:
         case['facts'], case['outcome'] = tape.rows, result
     else:
@@ -279,8 +303,16 @@ def check_case(case, function=None, rehearsals=None):
 
 
 def mismatch_from(value):
-    return planner.PlanConsistencyError(
-        **unpacked(value['mismatch']), draft=deepcopy(value['draft']))
+    error = planner.PlanConsistencyError(**unpacked(value['mismatch']), draft=deepcopy(value['draft']))
+    if 'semantic' in value:
+        semantic = value['semantic']
+        error.base_nodes = set(semantic['base_nodes'])
+        error.base_sources = dict(semantic.get('base_sources', {}))
+        error = planner.PlanConsistencyError.semantic(semantic['raw'], unpacked(semantic['completed']),
+            unpacked(semantic['objections']), semantic['inputs'], error)
+    if 'manifest' in value:
+        error.contract.manifest = deepcopy(value['manifest'])
+    return error
 
 
 def correction_case(case, mismatch=None, function=None):
@@ -288,7 +320,9 @@ def correction_case(case, mismatch=None, function=None):
     tape = Tape(case.get('facts'))
     with facts(tape):
         mismatch = mismatch or mismatch_from(case['mismatch'])
-        result = outcome(lambda: (function or getattr(planner.PlanConsistencyError, case['operation']))(mismatch, reply))
+        result = outcome(lambda: ((function(mismatch, reply) if function else mismatch.contract.check(reply))
+                                 if case['operation'] == 'repair_contract' else
+                                 (function or getattr(planner.PlanConsistencyError, case['operation']))(mismatch, reply)))
     result['reply'] = reply
     if tape.recording:
         case['facts'], case['outcome'] = tape.rows, result
@@ -299,7 +333,7 @@ def correction_case(case, mismatch=None, function=None):
 
 
 PURE = {
-    'planner': ('base_definition', 'proof_omissions', 'planner_schema_reply', 'proof_for_validation', 'execution_budget_details', 'edit_violations',
+    'planner': ('message', 'wire', 'base_definition', 'proof_omissions', 'planner_schema_reply', 'proof_for_validation', 'execution_budget_details', 'edit_violations',
                 'mentions', 'asks_to_edit', 'valid_forcing', 'function'),
     'evidence': ('preflight', 'proof_applicability', 'subject_covers', 'branch_satisfies',
                  'branch_objections', 'forcing_capabilities', 'forcing_guidance'),
@@ -341,7 +375,16 @@ def pure_case(case, function=None, defined=None):
 def replay(case):
     if case['operation'] == 'check_reply':
         check_case(case)
-    elif case['operation'] in ('constrain', 'constrain_local'):
+    elif case['operation'] == 'plan_terminal':
+        tape = Tape(case['facts'])
+        origin = mismatch_from(case['origin'])
+        latest = origin if case['same_error'] else mismatch_from(case['latest']) if case['latest'] is not None else None
+        with facts(tape):
+            result = outcome(lambda: planner.terminal(origin, latest,
+                unpacked(case['completed']), deepcopy(case['candidate']), **case['kwargs']))
+        assert_same(result, case['outcome'], case['id'])
+        tape.exhausted()
+    elif case['operation'] in ('constrain', 'constrain_local', 'repair_contract'):
         correction_case(case)
     else:
         pure_case(case)
@@ -371,8 +414,11 @@ def strings(document):
                 for item in value:
                     diagnostics(item)
         diagnostics(result.get('reply', {}))
+        diagnostics(unpacked(result.get('return')))
         diagnostics(unpacked(result.get('args')))
         diagnostics(unpacked(result.get('kwargs')))
+        if case.get('mismatch'):
+            values.append(case['mismatch']['message'])
         error = result.get('error', {})
         values.extend(error.get('violations', []))
         if error:
@@ -395,6 +441,8 @@ def diagnostic_rules():
     import re
 
     def pattern(node):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'named':
+            return pattern(node.args[1])
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return re.escape(node.value), len(node.value)
         if isinstance(node, ast.JoinedStr):

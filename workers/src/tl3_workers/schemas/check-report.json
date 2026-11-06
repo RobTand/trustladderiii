@@ -510,11 +510,20 @@
       "type": "string"
     },
     "RedMessageMatch": {
-      "enum": [
-        "message",
-        "source-assertion"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "message",
+            "source-assertion"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "mismatch",
+          "description": "The base failure did not satisfy the declared RED reason (#848).",
+          "type": "string"
+        }
+      ]
     },
     "ReportSchema": {
       "enum": [
