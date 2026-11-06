@@ -830,11 +830,6 @@
     "owner": "#922"
   },
   {
-    "path": "crates/controller/tests/worker_translate_io/base-helpers.rs.txt",
-    "detector": "frozen-copy",
-    "owner": "#922"
-  },
-  {
     "path": "crates/controller/tests/worker_translate_io/base-memory.rs.txt",
     "detector": "frozen-copy",
     "owner": "#922"
@@ -876,11 +871,6 @@
   },
   {
     "path": "crates/controller/tests/worker_translate_io/goals.rs",
-    "detector": "frozen-copy",
-    "owner": "#922"
-  },
-  {
-    "path": "crates/controller/tests/worker_translate_io/helpers.rs",
     "detector": "frozen-copy",
     "owner": "#922"
   },

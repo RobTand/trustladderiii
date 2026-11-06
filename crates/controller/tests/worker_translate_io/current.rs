@@ -477,16 +477,21 @@ impl Shell<'_> {
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
-                        let additional = self.footprint(snapshot, world, node, &paths)?;
+                        let paths = tl3_contracts::footprint::Footprint::new(paths)
+                            .map_err(Error::Invalid)?;
+                        let request = request(snapshot, node)?;
+                        let repo = self
+                            .store
+                            .intern_repo(&request.repo.owner, &request.repo.name)?;
                         let mut files = world
                             .files(n.footprint)
                             .ok_or(Error::Invalid("unknown footprint"))?
                             .collect::<Vec<_>>();
-                        files.extend(
-                            world
-                                .files(additional)
-                                .ok_or(Error::Invalid("unknown footprint"))?,
-                        );
+                        for path in paths.iter() {
+                            files.push(tl3_kernel::FileId(
+                                self.store.intern_path(repo, path)?.get() as u64,
+                            ));
+                        }
                         Reply::MakerNeedsFiles {
                             files: world.intern_footprint(files),
                             fits,
