@@ -176,18 +176,24 @@ def test_selector_correction_uses_original_base(planner_request, file_plan, monk
         (root / FILE).unlink()
     else:
         (root / FILE).write_text(SOURCE)
-    # A demonstrating observer is allowed to be new. Only selector correction
-    # requires its replacement to be an exact definition from the original base.
+    # Retain this file's original-base observation through an unchanged control.
+    # The demonstrating correction may replace only its rejected selector slot.
+    file_plan['checks'][1]['node_ids'].append(NODES[1])
     file_plan['checks'][2].update(kind='demonstrating', proof={
         'subjects': [], 'observer_support': [], 'red_message': 'expected regression'})
-    fixed = corrected(file_plan)
-    fixed['checks'][2]['node_ids'] = [NODES[0]]
+    fixed = copy.deepcopy(file_plan)
+    fixed['checks'][2]['node_ids'][-1] = NODES[0]
     model = model_for(monkeypatch, file_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)
 
     assert len(model.calls) == 2
-    expected = [] if at_base else [
-        f'Corrected check must name a test defined at the base: {NODES[0]}']
-    assert events[-1]['reply']['violations'] == expected
+    if at_base:
+        assert events[-1]['reply']['violations'] == []
+        assert 'plan_check' not in events[-1]
+    else:
+        assert events[-1]['reply']['violations']
+        assert events[-1]['plan_check']['repair'] == {'status': 'attempted'}
+        assert any(item['rule'] == 'check.base_missing'
+                   for item in events[-1]['plan_check']['objections'])
     assert events[-1]['reply']['checks'] == fixed['checks']
