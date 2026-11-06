@@ -301,6 +301,19 @@ CASES = {
                                '    if !approved {',
                                '    if approved {',
                                '//crates/kernel:verus_facts_merge'),
+    't860_admitted_no_end': (
+        'crates/kernel/src/reply_admission.rs',
+        '    end_operation(&mut w.nodes[i]);',
+        '    let _ = i;',
+        '//crates/kernel:verus_port_t860_on_admitted_reply',
+    ),
+    't860_admitted_duplicate': (
+        'crates/kernel/src/reply_admission.rs',
+        '            reply_transition(w, i, reply, out);',
+        '            reply_transition(w, i, reply, out);\n            reply_transition(w, i, reply, out);',
+        '//crates/kernel:lib_test_tl3_kernel',
+    ),
+
 }
 
 

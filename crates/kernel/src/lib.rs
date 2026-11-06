@@ -2245,3 +2245,6 @@ mod facts_merge_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_t860_red.rs"]
 mod port_t860_red;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+mod reply_equivalence;

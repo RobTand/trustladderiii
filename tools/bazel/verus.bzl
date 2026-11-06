@@ -662,6 +662,18 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_equivalence::reference::on_reply": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::outcome": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::resume": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::effect_kind": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::phase": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::question": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::node": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::output": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::outbox": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::compare": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::admitted_extraction_matches_original": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::reply_equivalence::audit_disagreement_runs_once_before_reset": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -889,6 +901,11 @@ def verus_proofs():
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 5),
+            "port_t860_release_run": ("kernel::reply_admission#release_run", 1),
+            "port_t860_release_job": ("kernel::reply_admission#release_job", 1),
+            "port_t860_on_stopping_reply": ("kernel::reply_admission#on_stopping_reply", 1),
+            "port_t860_on_rejected_reply": ("kernel::reply_admission#on_rejected_reply", 1),
+            "port_t860_on_admitted_reply": ("kernel::reply_admission#on_admitted_reply", 1),
             "port_t860_red": ("kernel::port_t860_red", 1),
         }
         for name, (module, count) in groups.items():
