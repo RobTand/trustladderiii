@@ -521,6 +521,12 @@ fn reference_is_pinned_and_matches_original_rust_fv_source() {
 #[test]
 fn dequeue_reference_is_pinned_to_original_rust_fv() {
     let source = include_str!("dequeue_reference.rs.txt");
-    assert_eq!(sha256(source), "1d52b695dce76bc0790af96bd847a50fd5b7253b5577084889b0b4a9657b7d5e");
-    assert_eq!(original_function(source, "dequeue_pending"), original_function(BASE, "dequeue_pending"));
+    assert_eq!(
+        sha256(source),
+        "1d52b695dce76bc0790af96bd847a50fd5b7253b5577084889b0b4a9657b7d5e"
+    );
+    assert_eq!(
+        original_function(source, "dequeue_pending"),
+        original_function(BASE, "dequeue_pending")
+    );
 }
