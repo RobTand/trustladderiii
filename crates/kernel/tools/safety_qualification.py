@@ -314,8 +314,20 @@ CASES = {
                               '//crates/kernel:verus_ranks_advance_slot'),
     'advance_checks_output_node': ('crates/kernel/src/ranks.rs',
                                    'emit_node(node, context.node, EffectKind::SubmitChecks, out);',
-                                   'emit_node(node, 0, EffectKind::SubmitChecks, out);',
+                                   'emit_node(node, context.node ^ 1, EffectKind::SubmitChecks, out);',
                                    '//crates/kernel:verus_ranks_advance_checks'),
+    'advance_gate_capacity': ('crates/kernel/src/scheduler.rs',
+                               'holders < gate.w as u32', 'holders <= gate.w as u32',
+                               '//crates/kernel:verus_scheduler_slot_free'),
+    'advance_gate_overlap': ('crates/kernel/src/scheduler.rs',
+                              'theirs < ticket && !w.footprints_disjoint(older.footprint, waiter.footprint)',
+                              'theirs <= ticket && !w.footprints_disjoint(older.footprint, waiter.footprint)',
+                              '//crates/kernel:verus_scheduler_older_overlap'),
+    'advance_gate_line': ('crates/kernel/src/scheduler.rs',
+                           'if theirs >= first_runnable || !slot_free(w, index)',
+                           'if theirs <= first_runnable || !slot_free(w, index)',
+                           '//crates/kernel:verus_scheduler_first_in_line'),
+
 }
 
 
