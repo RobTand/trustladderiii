@@ -615,6 +615,10 @@ impl Adapter {
     /// 4g / #864, found by live probe (PQ #3309): Mergify answered a Sent
     /// receipt when, on the same open head, its queue check later completed in
     /// a dequeue. Such a receipt is spent, not awaiting acceptance.
+    /// GitHub stamps the comment and Mergify the check, so a few seconds of
+    /// skew are possible (#3318: left_at 15:13:32Z, check 15:13:35Z). A check
+    /// completed within that skew after a command can only be read as answered;
+    /// in `execute` the state is read before any command, which narrows it.
     fn answered(
         sent_at: Option<chrono::DateTime<chrono::Utc>>,
         head: &str,

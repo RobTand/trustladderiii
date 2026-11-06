@@ -766,10 +766,13 @@ impl Controller {
                 && row.value["evidence"]["CiFailed"]["details"]["cause"].is_null()
         }) {
             let mut fact: QueueFact = crate::decode_stored(row.value.clone())?;
-            let Evidence::CiFailed { details, .. } = &fact.evidence else {
+            let Evidence::CiFailed { check, details, .. } = &fact.evidence else {
                 continue;
             };
-            if fact.repository != repository || fact.number != number {
+            if fact.repository != repository
+                || fact.number != number
+                || !recorded_dequeue(snapshot, &state.delivery.key, *check)?
+            {
                 continue;
             }
             let q58 = details.decision.as_deref() == Some("outside_change");
@@ -3192,4 +3195,30 @@ fn wait_status(result: &Result<crate::executor::WaitRecord>) -> state_decisions:
         Ok(crate::executor::WaitRecord::Ended) => state_decisions::WaitStatus::Ended,
         Err(_) => state_decisions::WaitStatus::Failed,
     }
+}
+
+/// 4g r1 (review): the queue state the existing look last read, as its
+/// `record_progress` token persisted it, shows this fact's own Mergify queue
+/// check completed in a dequeue, and no merge. This adds no read; it is one
+/// look behind. A PR the old executor re-queued shows a running check instead.
+fn recorded_dequeue(snapshot: &Snapshot, key: &str, check: u64) -> Result<bool> {
+    let Some(progress) = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "watches" && row.id == key)
+        .and_then(|row| row.value.get("progress"))
+    else {
+        return Ok(false);
+    };
+    let progress: crate::executor::WatchProgress = crate::decode_stored(progress.clone())?;
+    let crate::executor::ProgressToken::Mergify(token) = progress.current;
+    Ok(token.merged_at.is_none()
+        && token.queue_check.is_some_and(|queue| {
+            queue.id == check
+                && queue.status == "completed"
+                && queue
+                    .title
+                    .as_deref()
+                    .is_some_and(|title| title.starts_with("Dequeued"))
+        }))
 }
