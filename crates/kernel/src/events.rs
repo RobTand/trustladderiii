@@ -16,7 +16,8 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
     ensures report::agrees_except_fact_stops_and_ci_failed(event,
             phase_view(old(w).nodes@), phase_view(final(w).nodes@), report_input(*old(w), event),
-            old(report).entries@, final(report).entries@),
+            old(report).entries@, final(report).entries@,
+            (phase_view(final(w).nodes@), final(report).entries@)),
 (progress_input(*old(w), event)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),

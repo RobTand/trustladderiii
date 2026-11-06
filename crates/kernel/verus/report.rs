@@ -259,7 +259,7 @@ pub(in super::super) proof fn observe(event: Event, before: Seq<Phase>, after: S
                     stop_kind(after[node.0 as int], review, false, user_stop(event))),
             _ => forwards(r0, r1, Seq::empty()),
         }),
-    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r1),
+    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r1, (after, r1)),
 {
     reveal(agrees_except_fact_stops_and_ci_failed);
     if event is Fact {
@@ -267,12 +267,6 @@ pub(in super::super) proof fn observe(event: Event, before: Seq<Phase>, after: S
             implies terminal_phase_frame(after[j], after[j]) by { phase_refl(after[j]); }
         settle_result(after, after, r1, r1);
         assert(before.len() == after.len());
-        let boundary = (after, r1);
-        assert(boundary.0.len() == before.len()
-            && settled_forwards(boundary.0, after, boundary.1, r1));
-        assert(exists|fact_result: (Seq<Phase>, Seq<ReportEntry>)|
-            fact_result.0.len() == before.len()
-            && settled_forwards(fact_result.0, after, fact_result.1, r1));
     } else {
         if let Some(node) = event_target(event) {
             if node.0 < before.len() {
@@ -286,9 +280,9 @@ pub(in super::super) proof fn observe(event: Event, before: Seq<Phase>, after: S
 
 pub(in super::super) proof fn through_settle(event: Event, before: Seq<Phase>, applied: Seq<Phase>,
     after: Seq<Phase>, input: ReplyInput, r0: Seq<ReportEntry>, r1: Seq<ReportEntry>, r2: Seq<ReportEntry>)
-    requires agrees_except_fact_stops_and_ci_failed(event, before, applied, input, r0, r1),
+    requires agrees_except_fact_stops_and_ci_failed(event, before, applied, input, r0, r1, (applied, r1)),
         settled_forwards(applied, after, r1, r2),
-    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r2),
+    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r2, (applied, r1)),
 {
     reveal(agrees_except_fact_stops_and_ci_failed);
     reveal(settled_forwards);
@@ -304,30 +298,14 @@ pub(in super::super) proof fn through_settle(event: Event, before: Seq<Phase>, a
             implies !(after[j] is Stopping || after[j] is Closed) by {
             reveal(terminal_phase_frame);
         }
-        if event is Fact {
-            let fact_result = choose|fact_result: (Seq<Phase>, Seq<ReportEntry>)|
-                fact_result.0.len() == before.len()
-                && settled_forwards(fact_result.0, applied, fact_result.1, r1);
-            reveal(settled_forwards);
-            read_forwards(fact_result.1, r1, Seq::empty());
-            assert(fact_result.1 + Seq::empty() =~= fact_result.1);
-            assert forall|j: int| 0 <= j < fact_result.0.len()
-                implies terminal_phase_frame(fact_result.0[j], after[j]) by {
-                phase_trans(fact_result.0[j], applied[j], after[j]);
-            }
-            settle_result(fact_result.0, after, fact_result.1, r2);
-            assert(fact_result.0.len() == before.len()
-                && settled_forwards(fact_result.0, after, fact_result.1, r2));
-            assert(exists|boundary: (Seq<Phase>, Seq<ReportEntry>)|
-                boundary.0.len() == before.len()
-                && settled_forwards(boundary.0, after, boundary.1, r2));
-        } else if let Some(node) = event_target(event) {
+        if !(event is Fact) { if let Some(node) = event_target(event) {
             if node.0 < before.len() {
                 let witness = choose|witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>)|
                     stop_trace(witness, event, node, before[node.0 as int], applied[node.0 as int], input, r0, r1);
                 phase_trans(witness.0, applied[node.0 as int], after[node.0 as int]);
                 assert(stop_trace(witness, event, node, before[node.0 as int], after[node.0 as int], input, r0, r2));
             }
+        }
         }
     }
 }

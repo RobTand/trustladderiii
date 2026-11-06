@@ -82,6 +82,9 @@ pub struct StepResult {
     pub world: World,
     pub outputs: Vec<Out>,
     pub report: Report,
+    /// Verification-only observation of the actual input to settlement.
+    #[cfg(verus_keep_ghost)]
+    pub settlement_input: Ghost<(Seq<Phase>, Seq<ReportEntry>)>,
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -141,11 +144,13 @@ pub open spec fn stop_trace(witness: (Phase, Option<ReviewStop>, Seq<ReportEntry
 /// entries and CiFailed failed-round entry. Neither exclusion covers replies,
 /// commands, acknowledgements, or settlement. A Fact event retains the length,
 /// new-node, and other-node phase frames. Its unconstrained post-fact report
-/// is the boundary input to the same proven settlement relation used elsewhere.
+/// is the actual boundary input to the proven settlement relation, retained
+/// in StepResult's erased ghost observation rather than existentially chosen.
 #[verifier::opaque]
 pub closed spec fn agrees_except_fact_stops_and_ci_failed(event: Event,
     before: Seq<Phase>, after: Seq<Phase>, input: ReplyInput,
-    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>) -> bool {
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
+    settlement_input: (Seq<Phase>, Seq<ReportEntry>)) -> bool {
     before.len() <= after.len() <= before.len() + 1
         && (forall|j: int| 0 <= j < before.len()
             && event_target(event) != Some(NodeId(j as u64))
@@ -153,9 +158,8 @@ pub closed spec fn agrees_except_fact_stops_and_ci_failed(event: Event,
         && (forall|j: int| before.len() <= j < after.len()
             ==> !(after[j] is Stopping || after[j] is Closed))
         && if event is Fact {
-            exists|fact_result: (Seq<Phase>, Seq<ReportEntry>)|
-                fact_result.0.len() == before.len()
-                && settled_forwards(fact_result.0, after, fact_result.1, r1)
+            settlement_input.0.len() == before.len()
+                && settled_forwards(settlement_input.0, after, settlement_input.1, r1)
         } else { match event_target(event) {
             Some(node) if node.0 < before.len() =>
                 exists|witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>)|
