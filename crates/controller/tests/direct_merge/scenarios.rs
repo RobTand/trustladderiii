@@ -93,7 +93,7 @@ impl DirectFixture {
         allowances.github_mergify.silence_secs = 1;
         controller.set_allowances(allowances);
         controller.reconcile_repository_delivery(&[direct_repo()]).unwrap();
-        controller.register_github_translator("mergify", direct_merge::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
+        controller.register_github_translator("mergify", tl3_controller::adapters::delivery_router::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
         controller
     }
     fn start(&self, settings: &tl3_config::Store) -> (Controller, Delivery) {

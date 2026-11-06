@@ -40,9 +40,9 @@ impl std::ops::Deref for Shell<'_> {type Target=Controller;fn deref(&self)->&Con
 impl std::ops::DerefMut for Shell<'_> {fn deref_mut(&mut self)->&mut Controller { self.0 }}
 impl Shell<'_> {
     fn translate(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit) -> Result<Option<Event>> {
-        let mut observation = observation;
-        let mut queue_receipt = None;
-        let event = loop {
+        self.translate_with_receipt(snapshot, world, observation, commit, None)
+    }
+    fn translate_with_receipt(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit, queue_receipt: Option<tl3_store::RowChange>) -> Result<Option<Event>> {
         let event = match observation {
             Observation::Queue(mut fact) => {
                 if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
@@ -264,9 +264,10 @@ impl Shell<'_> {
                     }
                 };
                 if let Some(outcome) = fact.evidence.outcome() {
-                    queue_receipt = Some(put("queue_facts", identity, value));
-                    observation = Observation::Outcome { node, outcome, receipt: None };
-                    continue;
+                    return self.translate_with_receipt(
+                        snapshot, world, Observation::Outcome { node, outcome, receipt: None }, commit,
+                        Some(put("queue_facts", identity, value)),
+                    );
                 }
                 let fact = match kernel {
                     KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
@@ -338,8 +339,6 @@ impl Shell<'_> {
                 Event::Fact { node, fact }
             },
 
-        };
-        break event;
         };
         if let Some(receipt) = queue_receipt { commit.rows.push(receipt); }
         Ok(Some(event))

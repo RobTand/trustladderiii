@@ -44,7 +44,7 @@ impl Controller {
     }
 }
 
-pub(super) fn direct(snapshot: &Snapshot, repo: &Repository) -> Result<bool> {
+pub(crate) fn direct(snapshot: &Snapshot, repo: &Repository) -> Result<bool> {
     for row in snapshot.rows.iter().filter(|row| row.table == "repos") {
         if crate::decode_stored::<Repository>(row.value.clone())? == *repo {
             let mode = row

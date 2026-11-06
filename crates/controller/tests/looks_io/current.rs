@@ -1090,7 +1090,7 @@ fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
     match source {
         Upstream::Workers => decisions::StallUpstream::Workers,
         Upstream::GitHub => decisions::StallUpstream::GitHub,
-        Upstream::Delivery => decisions::StallUpstream::Delivery,
+        Upstream::Delivery => decisions::StallUpstream::Mergify,
         Upstream::PrismaBuild => decisions::StallUpstream::PrismaBuild,
         Upstream::Worktrees => decisions::StallUpstream::Worktrees,
     }

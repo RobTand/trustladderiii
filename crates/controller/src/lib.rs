@@ -2953,6 +2953,17 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        self.translate_with_receipt(snapshot, world, observation, commit, None)
+    }
+
+    fn translate_with_receipt(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        observation: Observation,
+        commit: &mut Commit,
+        queue_receipt: Option<RowChange>,
+    ) -> Result<Option<Event>> {
         if let Observation::GitHubComment {
             repository,
             issue,
@@ -2963,7 +2974,7 @@ impl Controller {
             return Ok(None);
         }
 
-        let mut observation = match observation {
+        let observation = match observation {
             Observation::Merged { node, sha, checks_passed } => Observation::Outcome {
                 node, outcome: outcome::Outcome::Merged { head: sha, checks_passed }, receipt: None,
             },
@@ -2995,8 +3006,6 @@ impl Controller {
         let mut outside_paths = Vec::new();
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
-        let mut queue_receipt = None;
-        let event = loop {
         let event = match observation {
             Observation::PrerequisiteRead {
                 repository,
@@ -3274,9 +3283,10 @@ impl Controller {
                     }
                 };
                 if let Some(outcome) = fact.evidence.outcome() {
-                    queue_receipt = Some(put("queue_facts", identity, value));
-                    observation = Observation::Outcome { node, outcome, receipt: None };
-                    continue;
+                    return self.translate_with_receipt(
+                        snapshot, world, Observation::Outcome { node, outcome, receipt: None }, commit,
+                        Some(put("queue_facts", identity, value)),
+                    );
                 }
                 let fact = match kernel {
                     KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
@@ -4180,8 +4190,6 @@ impl Controller {
                 self.record_kernel_result(snapshot, world.clone(), outputs, commit)?;
                 return Ok(None);
             }
-        };
-        break event;
         };
         if let Some(receipt) = queue_receipt {
             commit.rows.push(receipt);
