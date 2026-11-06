@@ -33,6 +33,9 @@ py_library(
         "report.py",
         "rules.py",
         "runner.py",
+        "runtime.py",
+        "runtime_evidence.py",
+        "runtime_image.py",
         "scratch.py",
         "selection.py",
         "selector_identity.py",
@@ -50,6 +53,13 @@ py_library(
 py_binary(
     name = "generator",
     srcs = ["generator.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "runtime_evidence",
+    srcs = ["runtime_evidence.py"],
     imports = [".."],
     visibility = ["//visibility:public"],
 )
