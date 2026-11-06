@@ -7,7 +7,7 @@ use super::recorded_io::File;
 pub(super) type CheckEvidence = (
     bool,
     bool,
-    Vec<Value>,
+    Vec<serde_json::Value>,
     Vec<FailedTest>,
     Option<&'static str>,
 );
