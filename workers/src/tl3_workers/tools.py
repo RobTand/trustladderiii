@@ -574,7 +574,11 @@ class Worktree:
                 _parts(name)
             except ValueError:
                 continue
-            info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            try:
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                # A declared deletion can race a read-only enumeration.
+                continue
             if stat.S_ISDIR(info.st_mode):
                 yield name, True
             elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
@@ -696,7 +700,7 @@ class Worktree:
                     continue
                 try:
                     yield from in_file(str(PurePosixPath(path) / name))
-                except UnicodeDecodeError:
+                except (UnicodeDecodeError, MissingWorktreeFile):
                     continue
         parts = _parts(path)
         if self._is_file(parts):
