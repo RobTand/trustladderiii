@@ -575,12 +575,16 @@ def test_a1_each_registered_rule_renders_and_enforces_its_repair(rule_id):
     """PRD #878: every rule and all 43 footprints have an executable interface contract."""
     from dataclasses import replace
     from tl3_workers.roles.planner import rows
-    from tl3_workers.rules import CantMeet, apply_edit, evaluate, permits, register
+    from tl3_workers.rules import CantMeet, Edit, apply_edit, evaluate, permits, register
 
     row = next(row for row in rows() if row.id == rule_id)
     facts, witness = _row_case(rule_id)
     found = evaluate((row,), facts, role='planner')
     assert found, rule_id
+    terminal_footprints = {'NONE', 'FILE_DROP', 'PROTECTED', 'TESTS_FILL', 'FORCING_RULE',
+                           'FORCING_RESERVED', 'FORCING_TEXT', 'RECEIPT_SELECT', 'OBSERVER_SELECT', 'EDIT_SELECT'}
+    expected = CantMeet if _rule_inventory()[rule_id]['footprint'] in terminal_footprints else Edit
+    assert all(isinstance(item.repair, expected) for item in found), rule_id
     terminal = any(isinstance(row.repair(item.facts), CantMeet) for item in found)
     if terminal:
         witness = copy.deepcopy(CANT_MEET)
@@ -723,3 +727,146 @@ def test_a1_subject_addition_composes_with_proof_deduplication():
     after = copy.deepcopy(facts['draft'])
     after['checks'][0]['proof']['subjects'] = ['pkg.py::kept', 'pkg.py::target']
     assert permits(violations(facts), facts['draft'], after, role='planner')
+
+
+@pytest.mark.parametrize('case', ['edit.base_missing', 'edit.frozen', 'memory.claim_absent',
+    'memory.flag_uncited', 'memory.mixed', 'forcing.combined', 'coverage.forced', 'coverage.selector'])
+def test_r1_composition(case):
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import Edit, evaluate, permits
+
+    first = {'forcing.combined': 'forcing.extra_keys', 'coverage.forced': 'edit.uncovered',
+             'coverage.selector': 'edit.uncovered', 'memory.mixed': 'memory.claim_absent'}.get(case, case)
+    facts, _ = _row_case(first)
+    draft = facts['draft']
+    a, b, kept = ('test.py::test_' + suffix for suffix in ('a', 'b', 'kept'))
+    if case == 'edit.base_missing':
+        draft['edits_tests'] = [a, b]
+        draft['checks'][0]['node_ids'] = [a, b]
+        diagnostics = [named(first, '', {'node': node}) for node in (a, b)]
+    elif case == 'edit.frozen':
+        draft['checks'][0].update(kind='regression', node_ids=[a, b, kept])
+        diagnostics = [named(first, '', {'node': node}) for node in (a, b)]
+    elif case.startswith('memory.'):
+        draft['memory_flags'] = [{'id': key, 'claim': 'absent', 'reason': 'keep'} for key in ('a', 'b')]
+        diagnostics = ([named('memory.flag_uncited', '', {'ids': [key]}) for key in ('a', 'b')]
+            if case == 'memory.flag_uncited' else [named('memory.claim_absent', '', {'flag': i}) for i in (0, 1)])
+        if case == 'memory.mixed':
+            diagnostics[1] = named('memory.flag_uncited', '', {'ids': ['b']})
+    elif case == 'forcing.combined':
+        draft['checks'][0]['forcing'] = {'symptom': 'x', 'environment': {}, 'extra': True,
+            'patches': [{'target': 'pkg.VALUE', 'value': 1, 'extra': True}]}
+        diagnostics = [named(rule, '', {'check': 0}) for rule in ('forcing.extra_keys', 'forcing.patch_mode')]
+    else:
+        draft['edits_tests'] = [b]
+        draft['checks'][0]['node_ids'] = [a]
+        diagnostics = [named('edit.uncovered', '', {'nodes': [b]}),
+            named('forced.base_missing' if case == 'coverage.forced' else 'check.selector_inexact',
+                  '', {'check': 0, 'nodes': [a]})]
+        facts['base_sources'] = {'test.py': 'def test_kept(): assert True\n'}
+    facts['reply'] = copy.deepcopy(draft)
+    facts['diagnostics'] = diagnostics
+    after = copy.deepcopy(draft)
+    if case == 'edit.base_missing':
+        after['edits_tests'] = []
+    elif case == 'edit.frozen':
+        after['checks'][0]['node_ids'] = [kept]
+    elif case.startswith('memory.'):
+        after['memory_flags'] = []
+    elif case == 'forcing.combined':
+        after['checks'][0]['forcing'].pop('extra')
+        after['checks'][0]['forcing']['patches'][0].pop('extra')
+    else:
+        after['checks'][0]['node_ids'] = [kept, b]
+    found = violations(facts)
+    assert len(found) >= 2 and all(isinstance(v.repair, Edit) for v in found)
+    assert permits(found, draft, after, role='planner')
+    assert not evaluate(tuple({v.rule.id: v.rule for v in found}.values()), {**facts, 'reply': after}, role='planner')
+    after['files'].append('unrelated.py')
+    assert not permits(found, draft, after, role='planner')
+
+
+def test_r1_flag_claim_accepts_exact_supplied_passage():
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+    facts, _ = _row_case('memory.claim_absent')
+    facts['inputs']['memories'] = [{'id': 'm', 'content': 'prefix exact supplied passage suffix'}]
+    after = copy.deepcopy(facts['draft'])
+    after['memory_flags'][0]['claim'] = 'exact supplied passage'
+    found = violations(facts)
+    assert permits(found, facts['draft'], after, role='planner')
+    after['memory_flags'][0]['claim'] = 'invented passage'
+    assert not permits(found, facts['draft'], after, role='planner')
+
+
+@pytest.mark.parametrize('kind', ['leaf', 'split'])
+def test_r1_terminal_reply_cannot_grow_footprint(kind):
+    from tl3_workers.roles.planner import PlanConsistencyError
+    facts, _ = _row_case('leaf.design_open')
+    if kind == 'split':
+        facts['draft'] = {'kind': 'split', 'pieces': [{'files': ['pkg.py']}]}
+    error = PlanConsistencyError(facts['draft'], facts['draft'], facts['diagnostics'], facts['inputs'])
+    assert not error.check({**CANT_MEET, 'files': ['pkg.py']})
+    errors = error.check({**CANT_MEET, 'files': ['pkg.py', 'unrelated.py']})
+    assert errors and errors[0].rule == 'guard.fields_changed'
+    assert errors[0].items['paths'] == ['/files']
+
+
+def test_r1_allowed_rendering_is_bounded_without_changing_membership():
+    from tl3_workers.roles.planner import Allowed
+    allowed = Allowed('enum', list(range(100)))
+    text = allowed.render()
+    assert 'and ' in text and 'more' in text and 'total 100' in text
+    assert len(text.encode()) < 256
+    assert allowed.accepts(99) and not allowed.accepts(100)
+
+
+def test_r1_pb2710_large_message_keeps_message_limit_provenance():
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import PlanConsistencyError, terminal
+    facts, _ = _row_case('goal.coverage')
+    facts['inputs']['repair_plan_consistency'] = True
+    facts['inputs']['ingest']['goals'] *= 500
+    facts['diagnostics'] = [named('goal.coverage', '', {'goals': list(range(500)), 'descriptions': {}}),
+                           named('edit.uncovered', '', {'nodes': ['test.py::test_' + str(i) for i in range(200)]})]
+    error = PlanConsistencyError(facts['draft'], facts['draft'], facts['diagnostics'], facts['inputs'])
+    assert error.unavailable_reason == 'message_limit'
+    reply, provenance = terminal(error, error, facts['draft'], facts['draft'], attempted=False,
+                                 unavailable=error.unavailable_reason)
+    assert provenance['repair'] == {'status': 'unavailable', 'reason': 'message_limit'}
+    assert '"unavailable_reason": "message_limit"' in '\n'.join(reply['violations'])
+
+
+def test_r1_p2a_live_python_replay():
+    import json
+    from pathlib import PurePosixPath
+    from tl3_workers import prerequisites, recall, evidence
+    from tl3_workers.roles.planner import asks_to_edit, mentions
+    fixture = json.loads((Path(__file__).resolve().parents[2] / 'crates/plan-check/tests/fixtures/p2a.json').read_text())
+
+    def decode(value):
+        if isinstance(value, list):
+            return [decode(v) for v in value]
+        if isinstance(value, dict):
+            if '$tuple' in value:
+                return tuple(decode(v) for v in value['$tuple'])
+            if '$dict' in value:
+                return {decode(k): decode(v) for k, v in value['$dict']}
+        return value
+
+    for case in fixture['english']:
+        found = list(mentions(case['description'], case['test']))
+        assert found == decode(case['mentions']), case['id']
+        assert any(asks_to_edit(*item) for item in found) == case['verdict'], case['id']
+    for case in fixture['globs']:
+        assert PurePosixPath(case['path']).full_match(case['pattern']) == case['verdict'], case['id']
+    modules = {'prerequisites': prerequisites, 'recall': recall, 'evidence': evidence}
+    for case in fixture['cases']:
+        module, name = case['operation'].split('.')
+        try:
+            result = getattr(modules[module], name)(*decode(case['args']))
+        except ValueError as error:
+            assert 'error' in case['outcome'] and str(error) == case['outcome']['error']['message'], case['id']
+        else:
+            assert 'return' in case['outcome'] and result == decode(case['outcome']['return']), case['id']
