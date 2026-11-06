@@ -423,6 +423,24 @@ def conftest_subjects(base, head, plan):
     return allowed
 
 
+def stdlib_shadow(head: Path, modules):
+    """First file that imports as one of `modules` at top level (#876).
+
+    pytest runs with `--rootdir=.`, and its rootdir insertion puts on sys.path the
+    nearest ancestor of a test file that has no `__init__.py`. Any such directory,
+    and the repository root, is a possible import root. A file inside a regular
+    package (a directory with `__init__.py`) imports under the package's dotted
+    name, so `_pytest/pathlib.py` is `_pytest.pathlib`, never `pathlib`."""
+    for path in sorted(head.rglob('*.py')):
+        relative = path.relative_to(head)
+        for depth, part in enumerate(relative.parts):
+            stem = part[:-3] if depth == len(relative.parts) - 1 else part
+            package = depth and (head.joinpath(*relative.parts[:depth]) / '__init__.py').is_file()
+            if stem in modules and not package:
+                return stem, relative.as_posix()
+    return None
+
+
 def assemble_proof(base: Path, head: Path, destination: Path, check, config):
     """Base subject plus head observers. No head subject code is ever copied to RED."""
     if destination.exists():
@@ -459,12 +477,13 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         if observer_context:
             # Canonical import spelling cannot authenticate a repository-local
             # replacement of the stdlib inputs used by the loader exception.
-            trusted = {'pathlib', 'unittest', 'importlib'}
-            for path in head.rglob('*.py'):
-                relative = path.relative_to(head)
-                if relative.stem in trusted or trusted.intersection(relative.parts[:-1]):
-                    raise ProofRefusal('observer loader requires unshadowed standard-library modules; '
-                                       'rename repository-local support', name, relative.as_posix())
+            shadow = stdlib_shadow(head, {'pathlib', 'unittest', 'importlib'})
+            if shadow:
+                module, relative = shadow
+                raise ProofRefusal(f'observer loader requires unshadowed standard-library modules, and {relative} is '
+                                   f'importable as the top-level module `{module}` because it sits in a directory '
+                                   'that is not a package (no __init__.py) or at the repository root; move or rename '
+                                   'it, or put the observer in an existing test module', name, relative)
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
