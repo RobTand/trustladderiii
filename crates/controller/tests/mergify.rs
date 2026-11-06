@@ -2779,7 +2779,9 @@ fn main() {
     }
     if std::env::args().nth(1).as_deref() == Some("--queue-cause") {
         let mut database = support::Database::start();
-        queue_cause::scenario(&database.create("queue_cause"));
+        for mode in queue_cause::MODES {
+            queue_cause::scenario(&database.create(&format!("queue_cause_{mode}")), mode);
+        }
         database.stop();
         return;
     }
@@ -3008,7 +3010,7 @@ fn main() {
         .iter()
         .copied()
         .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
-        .chain(std::iter::once(10))
+        .chain(std::iter::repeat_n(10, queue_cause::MODES.len()))
         .chain(seconds[tail..].iter().copied())
         .enumerate()
         .map(|(index, seconds)| (index, 1, seconds))
@@ -3364,7 +3366,9 @@ fn main() {
             mode
         ));
     }
-    scenario!(queue_cause::scenario(&database.create("queue_cause")));
+    for mode in queue_cause::MODES {
+        scenario!(queue_cause::scenario(&database.create(&format!("queue_cause_{mode}")), mode));
+    }
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));
     scenario_count += 6;

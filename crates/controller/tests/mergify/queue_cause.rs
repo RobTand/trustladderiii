@@ -19,12 +19,49 @@ impl Fixture {
 }
 
 /// #854b / Q50: real PQ #3221 queue refusal must hold without a failed round.
-pub(super) fn scenario(settings: &tl3_config::Store) {
+pub(super) const MODES: &[&str] = &["hold", "restart", "witness-pass", "retry-fail-fast", "retry-making", "timeout", "own-batch", "in-progress", "change", "q58"];
+
+fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap, body: Value, event: &str) {
+    for input in Translator::new(api.clients()).unwrap().webhook(
+        &parsed(event, body), &controller.snapshot().unwrap(), &config.repos,
+    ).unwrap() { ingress::apply(controller, input).unwrap(); }
+    for _ in 0..12 { controller.drive_once().unwrap(); }
+}
+
+fn failure(controller: &mut Controller, api: &Server, config: &Bootstrap) {
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().queue_check();
+    observe(controller, api, config, body, "check_run");
+}
+
+// A real merge webhook on the held PR's destination, after the failure, advances
+// that branch to this commit. No health endpoint or additional polling is used.
+fn health(controller: &mut Controller, api: &Server, config: &Bootstrap, at: &str, sha: &str) {
+    let mut body = webhook_fixture();
+    let mut pull = api.state.lock().unwrap().pull.clone();
+    pull["number"] = json!(101);
+    pull["head"]["sha"] = json!("cccccccccccccccccccccccccccccccccccccccc");
+    pull["base"]["ref"] = json!("main");
+    pull["state"] = json!("closed");
+    pull["merged"] = json!(true);
+    pull["merged_at"] = json!(at);
+    pull["merge_commit_sha"] = json!(sha);
+    body["pull_request"] = pull;
+    body["action"] = json!("closed");
+    observe(controller, api, config, body, "pull_request");
+}
+
+pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
+    if mode == "change" { queue_entry::scenario(settings, "repair"); return; }
+    if mode == "in-progress" { queue_entry::scenario(settings, "queue-running"); return; }
+    if mode == "q58" { ci_evidence::scenario(settings, "repeat"); return; }
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut config = bootstrap();
-    config.fail_fast = true;
-    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), None);
+    config.fail_fast = mode != "retry-making";
+    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now())));
+    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), Some(clock.clone()));
     // PQ's failed fix round had fail_fast enabled; preserve that decision state.
     let snapshot = controller.snapshot().unwrap();
     let row = snapshot.rows.iter().find(|row| row.table == "nodes" && row.id == "0").unwrap();
@@ -47,18 +84,80 @@ pub(super) fn scenario(settings: &tl3_config::Store) {
         state.pull["base"]["sha"] = json!("ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
         state.cause_fixture = Some(Fixture);
     }
-    let mut body = webhook_fixture();
-    body["action"] = json!("completed");
-    body["check_run"] = api.state.lock().unwrap().queue_check();
-    for input in Translator::new(api.clients()).unwrap().webhook(
-        &parsed("check_run", body), &controller.snapshot().unwrap(), &config.repos,
-    ).unwrap() { ingress::apply(&mut controller, input).unwrap(); }
-    for _ in 0..12 { controller.drive_once().unwrap(); }
+    if mode == "own-batch" {
+        health(&mut controller, &api, &config, "2026-11-05T01:00:00Z", "ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
+    }
+    failure(&mut controller, &api, &config);
+    if mode == "own-batch" {
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Stopped));
+        println!("test queue_cause_{mode} ... ok");
+        return;
+    }
     let after = controller.world().unwrap().nodes[0];
     assert_eq!(after.round, before.round, "opaque PQ refusal must hold, never consume a fix round");
     assert_eq!(after.credit.spent, before.credit.spent);
-    assert_eq!(after.phase, Phase::Queued, "hold keeps the PR open without fail_fast");
+    assert_eq!(after.phase, Phase::Queued, "FIRST opaque failure holds even with fail_fast enabled");
     assert_eq!(api.state.lock().unwrap().requeues, 0);
     assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "queue_holds"));
-    println!("test queue_cause_pq_unattributed ... ok");
+    assert_eq!(api.state.lock().unwrap().pull["state"], "open");
+    if mode == "restart" {
+        drop(controller);
+        let mut registry = adapters::simulation(root.path()).unwrap();
+        registry.register(Upstream::Mergify, api.adapter(&root.path().join("mergify"), 0).with_store(settings.clone()).with_clock(clock.clone()));
+        controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, config.clone(), clock.clone()).unwrap();
+        controller.look_now().unwrap();
+        failure(&mut controller, &api, &config);
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(api.state.lock().unwrap().requeues, 0);
+    }
+    if mode == "timeout" {
+        let mut allowances = tl3_config::Allowances::default();
+        allowances.github_mergify.no_progress_secs = 3;
+        allowances.github_mergify.silence_secs = 1;
+        controller.set_allowances(allowances);
+        clock.0.set(clock.0.get() + Duration::from_secs(3600));
+        controller.look_now().unwrap();
+        for _ in 0..12 { controller.drive_once().unwrap(); }
+        let snapshot = controller.snapshot().unwrap();
+        let incident = snapshot.rows.iter().find(|row| row.table == "incidents" && row.value["signature"]["class"] == "queue_environment").expect("bounded hold must raise a Q51 environment incident");
+        assert_eq!(incident.value["cause"], "tl3");
+        assert_eq!(incident.value["needs_rob"], false);
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(controller.world().unwrap().nodes[0].credit.spent, before.credit.spent);
+    }
+    if matches!(mode, "witness-pass" | "retry-fail-fast" | "retry-making") {
+        // Earlier or same-base merges are not a new-base health witness.
+        health(&mut controller, &api, &config, "2026-11-05T01:00:00Z", "ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
+        controller.look_now().unwrap();
+        assert_eq!(api.state.lock().unwrap().requeues, 0);
+        health(&mut controller, &api, &config, "2026-11-06T03:00:00Z", "ffffffffffffffffffffffffffffffffffffffff");
+        controller.look_now().unwrap();
+        controller.look_now().unwrap();
+        assert_eq!(api.state.lock().unwrap().requeues, 1, "one command after health, including duplicate looks");
+        if mode == "witness-pass" {
+            {
+                let mut state = api.state.lock().unwrap();
+                state.merged(false);
+                let head = state.pull["head"]["sha"].clone();
+                state.checks = fixture("merged", "checks");
+                for check in state.checks.as_array_mut().unwrap() { check["head_sha"] = head.clone(); }
+            }
+            failure(&mut controller, &api, &config);
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+        } else {
+            {
+                let mut state = api.state.lock().unwrap();
+                state.queue_check_mut()["completed_at"] = json!("2026-11-06T04:00:00Z");
+            }
+            failure(&mut controller, &api, &config);
+            let phase = controller.world().unwrap().nodes[0].phase;
+            assert_eq!(phase, if config.fail_fast { Phase::Closed(Outcome::Stopped) } else { Phase::Making }, "SECOND failure is Change and follows today's Q54 failed round");
+            let facts = queue_facts(&mut controller);
+            assert!(facts.iter().any(|fact| fact["evidence"]["CiFailed"]["details"]["cause"].get("Change").is_some()), "second failure must retain typed Change evidence");
+            let text = serde_json::to_string(&facts).unwrap();
+            assert!(text.contains("Remote Bazel selection and shards"));
+        }
+        assert_eq!(api.state.lock().unwrap().requeues, 1);
+    }
+    println!("test queue_cause_{mode} ... ok");
 }
