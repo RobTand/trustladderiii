@@ -1282,6 +1282,24 @@ impl GitHub {
         .await
     }
 
+    /// #854 D1: a positive zero-count response, not an empty/truncated page.
+    pub async fn check_suite_has_no_runs(&self, repo: &str, suite: u64) -> Result<bool, Error> {
+        #[derive(Deserialize)]
+        struct Runs {
+            total_count: u64,
+            check_runs: Vec<CheckRun>,
+        }
+        let runs: Runs = self
+            .request(
+                Method::GET,
+                format!("{}/check-suites/{suite}/check-runs", repo_path(repo)?),
+                vec![],
+                None,
+            )
+            .await?;
+        Ok(runs.total_count == 0 && runs.check_runs.is_empty())
+    }
+
     pub async fn pull_request(&self, repo: &str, number: u64) -> Result<PullRequest, Error> {
         self.request(
             Method::GET,
