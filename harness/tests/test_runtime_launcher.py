@@ -56,3 +56,40 @@ def test_launcher_exit_does_not_certify_podman_cleanup(launcher, exists):
     assert failed.value.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE
     assert failed.value.termination_reason == 'container_cleanup_unconfirmed'
     assert not process.cleanup_confirmed
+
+
+def test_pb_docker_cleanup_keeps_managed_runtime(launcher):
+    runtime, calls = launcher
+    docker = runtime.with_name('docker')
+    runtime.rename(docker)
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        with Supervised([str(docker), 'run', 'immutable-fixture'], selection, ()) as process:
+            list(process.records())
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    name = commands[0][commands[0].index('--name') + 1]
+    assert commands[1:] == [['rm', '--force', name]]
+
+
+def test_flux_command_at_launcher_boundary(launcher):
+    from tl3_harness.runtime import podman_command
+
+    runtime, calls = launcher
+    scratch = runtime.parent / 'private'
+    scratch.mkdir(mode=0o700)
+    command = podman_command(runtime.parent / 'checkout', 'sha256:' + '1' * 64, scratch, 1)
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        selection.write(b'[{"test": "private-selector"}]')
+        selection.seek(0)
+        with Supervised(command, selection, ()) as process:
+            list(process.records())
+    arguments = json.loads(calls.read_text().splitlines()[0])
+    for flag in ('--cgroups=disabled', '--network=none', '--read-only', '--init', '--userns=keep-id',
+                 '--pull=never', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private'):
+        assert flag in arguments
+    mounts = [arguments[i + 1] for i, flag in enumerate(arguments) if flag == '--mount']
+    assert len(mounts) == 3
+    assert len([mount for mount in mounts if mount.endswith(',readonly')]) == 2
+    assert f'type=bind,src={scratch},dst=/tmp' in mounts
+    assert not any('flux-out' in mount or 'token' in mount for mount in mounts)
+    assert '--cpuset-cpus' not in arguments
+    assert arguments[-2:] == ['/harness/runtime_evidence.py', '-']
