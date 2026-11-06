@@ -103,37 +103,6 @@ pub fn read(before: Upstream, class: Class) -> Upstream {
     }
 }
 
-/// State-table messages / Q27: one successful upstream DELETE or PATCH. A crash
-/// can occur after this write and before any local receipt. A restart rereads.
-/// HTTP failures with unknown application are represented by delaying this step.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires (before.repair_debt as int) > 0,
-        class == Class::Approval ==> (before.incorrect as int) >= (before.repair_debt as int),
-        class == Class::Deduplicated ==> (before.copies as int) > (before.repair_debt as int),
-    ensures out.outstanding == (before.outstanding as int), out.found == before.found,
-        out.repair_debt == (before.repair_debt as int)-1,
-        out.copies == if class == Class::Deduplicated {(before.copies as int)-1} else {(before.copies as int)},
-        out.incorrect == if class == Class::Approval {(before.incorrect as int)-1} else {(before.incorrect as int)},
-))]
-pub fn repair_one(before: Upstream, class: Class) -> Upstream {
-    let copies = if class == Class::Deduplicated {
-        before.copies - 1
-    } else {
-        before.copies
-    };
-    let incorrect = if class == Class::Approval {
-        before.incorrect - 1
-    } else {
-        before.incorrect
-    };
-    Upstream {
-        copies,
-        incorrect,
-        repair_debt: before.repair_debt - 1,
-        ..before
-    }
-}
-
 /// State-table :753 / Q27: crash/restart drops the list cursor, not upstream
 /// writes or outstanding requests. A zombie can land before or after this step.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
@@ -268,4 +237,111 @@ pub fn finish_repair(before: RepairFlight) -> RepairFlight {
         issued: false,
         ..before
     }
+}
+
+/// The cursor advances when a listed repair is issued. It is not evidence that
+/// the upstream application occurred. Restart may now discard this cursor safely.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    requires before.repair_debt > 0,
+    ensures out.copies == before.copies, out.incorrect == before.incorrect,
+        out.outstanding == before.outstanding, out.found == before.found,
+        out.repair_debt == before.repair_debt - 1,
+))]
+pub fn advance_repair_cursor(before: Upstream) -> Upstream {
+    Upstream {
+        repair_debt: before.repair_debt - 1,
+        ..before
+    }
+}
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RepairResult {
+    pub upstream: Upstream,
+    pub copy: CopyState,
+}
+/// Count projection of a SINGLE identity-specific application. The target's
+/// pre-application value belongs to upstream state, not a stale GET. Replaying
+/// a request after either process repairs it must use that current object value.
+/// `copies`/`incorrect` summarize the finite matching set. Quiescence includes
+/// creation flights AND issued repair flights, independently of list debt.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    requires
+        flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Delete ==> before.copies > 0,
+        flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Patch &&
+            (copy.conclusion != flight.request.conclusion || copy.output != flight.request.output) ==> before.incorrect > 0,
+    ensures
+        out.copy.id == copy.id,
+        out.copy.exists == (copy.exists && !(flight.issued && copy.id == flight.request.target && flight.request.kind == RepairKind::Delete)),
+        out.copy.conclusion == if flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Patch {flight.request.conclusion} else {copy.conclusion},
+        out.copy.output == if flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Patch {flight.request.output} else {copy.output},
+        out.upstream.copies == if copy.exists && !out.copy.exists {before.copies - 1} else {before.copies},
+        out.upstream.incorrect == if flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Patch &&
+            (copy.conclusion != flight.request.conclusion || copy.output != flight.request.output) {before.incorrect - 1} else {before.incorrect},
+        out.upstream.repair_debt == before.repair_debt,
+        out.upstream.found == before.found, out.upstream.outstanding == before.outstanding,
+))]
+pub fn apply_counted_repair(
+    before: Upstream,
+    copy: CopyState,
+    flight: RepairFlight,
+) -> RepairResult {
+    let applied = apply_repair(copy, flight);
+    let copies = if copy.exists && !applied.exists {
+        before.copies - 1
+    } else {
+        before.copies
+    };
+    let changed = flight.issued
+        && copy.exists
+        && copy.id == flight.request.target
+        && flight.request.kind == RepairKind::Patch
+        && (copy.conclusion != flight.request.conclusion || copy.output != flight.request.output);
+    RepairResult {
+        copy: applied,
+        upstream: Upstream {
+            copies,
+            incorrect: if changed {
+                before.incorrect - 1
+            } else {
+                before.incorrect
+            },
+            ..before
+        },
+    }
+}
+
+/// State-table :753: teardown's branch-last deletion closes remaining PRs.
+/// Like creation, its issue and application are separate; a late creation may
+/// occur after it and require restart's closed-node look to schedule more cleanup.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    requires before.outstanding > 0,
+    ensures out.copies == 0, out.incorrect == 0,
+        out.outstanding == before.outstanding - 1,
+        out.repair_debt == before.repair_debt, out.found == before.found,
+))]
+pub fn land_teardown(before: Upstream) -> Upstream {
+    Upstream {
+        copies: 0,
+        incorrect: 0,
+        outstanding: before.outstanding - 1,
+        ..before
+    }
+}
+
+/// Named Once boundary law. NOT ESTABLISHED UPSTREAM in this workstream: sealed
+/// PB key reuse is not a proof of atomic service deduplication, and supervisor
+/// operation-ID atomicity still requires adapter/service qualification.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OnceLaws {
+    pub atomic_original_key_dedup: bool,
+    pub stable_operation_identity: bool,
+}
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (laws.atomic_original_key_dedup && laws.stable_operation_identity),
+))]
+pub fn once_key_deduplication(laws: OnceLaws) -> bool {
+    laws.atomic_original_key_dedup && laws.stable_operation_identity
 }

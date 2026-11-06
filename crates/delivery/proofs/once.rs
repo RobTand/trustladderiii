@@ -8,8 +8,8 @@ verus! {
 /// State-table Once: induction step for arbitrary schedules and restarts.
 /// u64 accounting bound only; no bound on schedule length. External key
 /// deduplication is explicit in land, not inferred from a local receipt.
-fn once_application_is_idempotent(before: Upstream)
-    requires before.copies <= 1, before.incorrect == 0,
+fn once_application_is_idempotent(before: Upstream, laws: OnceLaws)
+    requires once_key_deduplication(laws), before.copies <= 1, before.incorrect == 0,
         before.outstanding > 0, before.outstanding < u64::MAX,
 {
     let delayed = lose_response(before);
@@ -23,6 +23,8 @@ fn once_application_is_idempotent(before: Upstream)
 }
 /// State-table Once / F3: timed-out epoch A lands after restart and retry B.
 fn once_late_landing_witness() {
+    let laws=OnceLaws {atomic_original_key_dedup:true,stable_operation_identity:true};
+    assert(once_key_deduplication(laws));
     let empty = Upstream {copies:0,incorrect:0,outstanding:0,repair_debt:0,found:false};
     let old = issue(empty);
     let timed_out = lose_response(old);

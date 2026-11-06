@@ -489,3 +489,32 @@ pub fn recovery(state: State, closed_restart: bool, teardown: bool, watch: bool)
 pub fn continue_after_observations(revision_changed: bool) -> bool {
     !revision_changed
 }
+
+/// approval_delivery.rs:126-209: identity-checked news queues REPAIRS even when
+/// the effect is final and absent from pending_effects.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out.repair, out.state == before.state, out.grant == before.grant,
+    out.lineage_safe == before.lineage_safe, out.unresolved == before.unresolved,
+    out.incident_open == before.incident_open,
+))]
+pub fn approval_news(before: Approval) -> Approval {
+    Approval {
+        repair: true,
+        ..before
+    }
+}
+
+/// approval_delivery.rs:255-281: successful repair consumes REPAIRS; UNRESOLVED
+/// persists until identity-checked copies account for every durable Sent intent.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    !out.repair, out.unresolved == (before.unresolved && copies < dispatches),
+    out.state == before.state, out.grant == before.grant,
+    out.lineage_safe == before.lineage_safe, out.incident_open == before.incident_open,
+))]
+pub fn repaired_approval(before: Approval, copies: u64, dispatches: u64) -> Approval {
+    Approval {
+        repair: false,
+        unresolved: before.unresolved && !crate::accounts_for_dispatches(copies, dispatches),
+        ..before
+    }
+}
