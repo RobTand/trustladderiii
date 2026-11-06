@@ -683,6 +683,23 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::ingest_equivalence::reference::reference": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::ingest_equivalence::option": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::ingest_equivalence::phase": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::ingest_equivalence::node": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::ingest_equivalence::dispatcher_matches_verbatim_reference": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::outcome": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::resume": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::effect_kind": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::phase": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::question": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::node": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::output": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::outbox": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::compare": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::branch_extraction_matches_original": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::teardown_equivalence::reference::advance_teardown": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::ingest_facts::audit_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependency_retirement_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependency_retirement_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependency_retirement::domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
