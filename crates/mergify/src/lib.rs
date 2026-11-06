@@ -1,8 +1,5 @@
 #![forbid(unsafe_code)]
 
-#[macro_use]
-extern crate tl3_github;
-
 use base64::{
     Engine, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},

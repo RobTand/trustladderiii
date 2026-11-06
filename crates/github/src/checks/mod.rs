@@ -1,5 +1,6 @@
 //! Typed check views and required-check evaluation.
 #[macro_use]
+#[allow(unused_macros)]
 mod verification;
 
 pub mod check;

@@ -16,6 +16,10 @@
 //! The module does no I/O and uses no `std` item. It has no `unsafe`, no
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
 
+#[macro_use]
+#[path = "../../../github/src/checks/verification.rs"]
+mod verification;
+
 pub use tl3_github::checks::check;
 pub mod enqueue;
 pub mod facts;
