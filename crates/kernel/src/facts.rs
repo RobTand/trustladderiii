@@ -174,12 +174,22 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
             }
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! {
+                assert(w.nodes@[i as int] == retirement::fact_node(
+                    before_transition@.nodes@[i as int], fact)) by {
+                    reveal(retirement::fact_node);
+                }
+            }
         }
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
-                kernel_proof! { reveal(retirement::fact_node); }
+                kernel_proof! {
+                    assert(*m == retirement::fact_node(
+                        before_transition@.nodes@[i as int], fact)) by {
+                        reveal(retirement::fact_node);
+                    }
+                }
                 return;
             }
             m.pr_open = false;
@@ -187,7 +197,12 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 notice(out, i, Notice::Note(NoteKind::PrClosed));
                 enter_stopping(m, Outcome::Stopped);
             }
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! {
+                assert(w.nodes@[i as int] == retirement::fact_node(
+                    before_transition@.nodes@[i as int], fact)) by {
+                    reveal(retirement::fact_node);
+                }
+            }
         }
         Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
         Fact::PushByOther { head } => {
@@ -229,9 +244,8 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 set_phase(m, Phase::Rebasing);
             }
             kernel_proof! {
-                reveal(retirement::fact_node);
                 assert(*m == retirement::fact_node(before_transition@.nodes@[i as int],
-                    Fact::Conflict)) by {};
+                    Fact::Conflict)) by { reveal(retirement::fact_node); };
             }
         }
         Fact::UpstreamStalled => {
