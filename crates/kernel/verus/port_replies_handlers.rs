@@ -114,6 +114,15 @@ pub(super) proof fn exact_protected(n: Node, after: Node, id: u64, fast: bool, r
     ensures node_post(n, after, id, fast, reply),
 { reveal(ingest_post); reveal(ingest_stable); reveal(ingest_changes); reveal(node_post); reveal(transitioned); reveal(ingested); reveal(retirement::stopped); }
 
+/// Auditing / #860 / Q27 #832-A: W1's exact audit result is #860's audit_node, in its own query.
+pub(super) proof fn audit_t860(n: Node, after: Node, id: u64, fast: bool)
+    requires n.phase == Phase::Auditing, ingest_post(n, after, id, Reply::AuditDisagrees),
+    ensures after == port_t860_contracts::audit_node(n),
+{
+    exact_audit_disagrees(n, after, id, fast, Reply::AuditDisagrees);
+    reveal(node_post); reveal(transitioned); reveal(port_t860_contracts::audit_node);
+}
+
 /// Ingest/audit rows / #806: select a separately verified reconstruction lemma.
 pub(super) proof fn ingest_exact(n: Node, after: Node, id: u64, fast: bool, reply: Reply)
     requires ingest_accepted(n, reply), ingest_post(n, after, id, reply),

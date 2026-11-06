@@ -139,6 +139,9 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
                 reveal(reply_bounds);
             }
         }
+        if reply == Reply::AuditDisagrees && ingest_source@.phase == Phase::Auditing {
+            port_replies_handlers::audit_t860(ingest_source@, w.nodes@[i as int], ingest_id@, ingest_fast@);
+        }
         assert(port_t860_contracts::transition_post(ingest_before@, *w, i as int, reply,
             ingest_out@, *out)) by {
             reveal(port_t860_contracts::transition_post);
@@ -226,7 +229,6 @@ fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result:
         retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
         final(w).next_question == old(w).next_question,
         *final(_out) == *old(_out),
-        final(w).nodes@[i as int] == port_t860_contracts::audit_node(old(w).nodes@[i as int]),
         final(w).file_sets@ == old(w).file_sets@,
 ] {
     kernel_snapshot! { ingest_before = *w }
@@ -251,7 +253,6 @@ fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result:
                     port_replies_handlers::fields_audit_first(ingest_source@,
                         w.nodes@[i as int], ingest_id@, audit_incremented@);
                 } }
-                kernel_proof! { port_t860_link::audit_finished(ingest_source@, w.nodes@[i as int]); }
             } else {
                 // Q27, #832-A: intake cannot split. The one repair is spent.
                 stop_for_review(m, ReviewStop::AuditDisagreement);
@@ -264,7 +265,6 @@ fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result:
                     port_replies_handlers::fields_audit_stop(ingest_source@,
                         w.nodes@[i as int], ingest_id@, audit_incremented@);
                 } }
-                kernel_proof! { port_t860_link::audit_finished(ingest_source@, w.nodes@[i as int]); }
             }
 
 }

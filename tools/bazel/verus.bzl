@@ -1265,6 +1265,7 @@ def verus_proofs():
             "port_replies_exact_audit_disagrees": ("kernel::port_replies_handlers#exact_audit_disagrees", 1),
             "port_replies_exact_protected": ("kernel::port_replies_handlers#exact_protected", 1),
             "port_replies_ingest_exact": ("kernel::port_replies_handlers#ingest_exact", 1),
+            "port_replies_audit_t860": ("kernel::port_replies_handlers#audit_t860", 1),
             "port_replies_output_bound": ("kernel::port_replies_handlers#reply_output_bound", 1),
             "ingest_reply_audit_agrees": ("kernel::ingest#reply_audit_agrees", 1),
             "ingest_reply_audit_disagrees": ("kernel::ingest#reply_audit_disagrees", 1),
