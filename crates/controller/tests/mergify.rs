@@ -2868,6 +2868,13 @@ fn main() {
         );
         return;
     }
+    if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--queue-cause-r1-").map(str::to_owned)) {
+        let mut database = support::Database::start();
+        queue_cause::review(&database.create("queue_cause_r1"), &mode);
+        database.stop();
+        println!("1 Mergify scenarios passed; no skips; no live upstream calls");
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--queue-cause") {
         let mut database = support::Database::start();
         for mode in queue_cause::MODES {
@@ -3106,6 +3113,7 @@ fn main() {
         .copied()
         .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
         .chain(std::iter::repeat_n(10, queue_cause::MODES.len()))
+        .chain(std::iter::repeat_n(10, queue_cause::REVIEW_MODES.len()))
         .chain(seconds[tail..].iter().copied())
         .enumerate()
         .map(|(index, seconds)| (index, 1, seconds))
@@ -3466,6 +3474,9 @@ fn main() {
             &database.create(&format!("queue_cause_{mode}")),
             mode
         ));
+    }
+    for mode in queue_cause::REVIEW_MODES {
+        scenario!(queue_cause::review(&database.create(&format!("queue_cause_r1_{mode}")), mode));
     }
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));

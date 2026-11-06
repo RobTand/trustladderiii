@@ -2,14 +2,15 @@ use super::*;
 
 pub(super) struct Fixture {
     parsed: bool,
+    draft: Option<Value>,
+    checks: Option<Value>,
 }
 impl Fixture {
     pub(super) fn respond(&self, path: &str) -> Option<ResponseTemplate> {
         let body: Value = if path.ends_with("/pulls/3331") {
-            serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft.json")).unwrap()
+            self.draft.clone().unwrap_or_else(|| serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft.json")).unwrap())
         } else if path.contains("/commits/4a3d6c618043e1875de665093edfe83f87f255ea/") {
-            serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft-checks.json"))
-                .unwrap()
+            self.checks.clone().unwrap_or_else(|| serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft-checks.json")).unwrap())
         } else if path.ends_with("/pulls/100/files") {
             json!([{"filename":"src/change.rs"}])
         } else if path.contains("/actions/jobs/") && path.ends_with("/logs") {
@@ -163,6 +164,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.pull["base"]["sha"] = json!("ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
         state.cause_fixture = Some(Fixture {
             parsed: mode == "positive-environment",
+            draft: None,
+            checks: None,
         });
     }
     if mode == "own-batch" {
@@ -433,4 +436,44 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         assert_eq!(api.state.lock().unwrap().requeues, 1);
     }
     println!("test queue_cause_{mode} ... ok");
+}
+
+
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before"];
+
+/// #854b r1: real Controller/adapter schedules requested by the review.
+pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut config = bootstrap();
+    config.fail_fast = true;
+    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), None);
+    let snapshot = controller.snapshot().unwrap();
+    let row = snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == "0").unwrap();
+    let mut value = row.value.clone();
+    value["round"] = json!(1);
+    let mut seed = tl3_store::Commit::new("r1-fix-round", json!({}), &snapshot);
+    seed.rows.push(tl3_store::RowChange::Put {table:"nodes".into(),id:"0".into(),value});
+    Store::open(settings).unwrap().commit(&seed).unwrap();
+    {
+        let mut state = api.state.lock().unwrap();
+        let head = state.pull["head"]["sha"].clone();
+        let mut checks:Value = serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json")).unwrap();
+        for check in checks["check_runs"].as_array_mut().unwrap() {check["head_sha"] = head.clone();check["pull_requests"] = json!([]);}
+        state.checks = checks["check_runs"].clone();
+        state.queue_rule["conclusion"] = json!("success");
+        state.pull["base"]["sha"] = json!("ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
+        state.cause_fixture = Some(Fixture {parsed:false,draft:None,checks:None});
+    }
+    match mode {
+        "witness-before" => {
+            // T2 is delivered first; the later-delivered failed check completed at T1<T2.
+            health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
+            failure(&mut controller,&api,&config);
+            controller.look_now().unwrap();
+            assert_eq!(api.state.lock().unwrap().requeues,1,"r1.1: journaled T2 witness must recover delayed T1 failure");
+        }
+        _ => panic!("unknown review schedule {mode}"),
+    }
+    println!("test queue_cause_r1_{mode} ... ok");
 }
