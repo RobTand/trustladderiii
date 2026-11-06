@@ -663,7 +663,7 @@ fn a3_routing_schedules() {
         rng_seed: RngSeed::Fixed(0x0075_1760_2026),
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
             crate::mergify_io::writable_regressions(),
-        )))),
+        ))),
         ..ProptestConfig::default()
     });
     runner

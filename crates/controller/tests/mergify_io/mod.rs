@@ -392,7 +392,7 @@ mod properties {
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
             failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
                 crate::mergify_io::writable_regressions(),
-            )))),
+            ))),
             ..Config::default()
         });
         let strategy = (
@@ -440,7 +440,7 @@ mod properties {
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
             failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
                 crate::mergify_io::writable_regressions(),
-            )))),
+            ))),
             ..Config::default()
         });
         runner
@@ -881,7 +881,7 @@ mod a1_schedules {
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
             failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
                 crate::mergify_io::writable_regressions(),
-            )))),
+            ))),
             ..Config::default()
         });
         let runs = ::std::cell::Cell::new(0);
@@ -1223,7 +1223,7 @@ mod required_c1 {
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
             failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
                 crate::mergify_io::writable_regressions(),
-            )))),
+            ))),
             ..Config::default()
         })
     }
@@ -1604,7 +1604,7 @@ mod required_payload_c1 {
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
             failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
                 crate::mergify_io::writable_regressions(),
-            )))),
+            ))),
             ..Config::default()
         })
     }
