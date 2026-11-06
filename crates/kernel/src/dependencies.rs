@@ -24,6 +24,49 @@ pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> boo
         ==> !dependencies[i].rejected && dependencies[i].status == DependencyStatus::Delivered
 }
 
+/// Prerequisite wait rows / #771: exact node write, hidden from declaration composition.
+#[verifier::opaque]
+pub(super) open spec fn wait_nodes(nodes: Seq<Node>, i: int,
+    waiting: Option<Dependency>) -> Seq<Node> {
+    nodes.update(i, Node {
+        waiting_prerequisite: match waiting { Some(d) => Some(d.target.number), None => None },
+        ..nodes[i]
+    })
+}
+
+/// #771: the isolated wait write preserves its own storage bound.
+pub(super) proof fn wait_nodes_length(nodes: Seq<Node>, i: int, waiting: Option<Dependency>)
+    requires 0 <= i < nodes.len(),
+    ensures wait_nodes(nodes, i, waiting).len() == nodes.len(),
+{
+    reveal(wait_nodes);
+}
+
+/// #771: consumers need the changed node and frame, not the sequence-update equation.
+pub(super) proof fn wait_nodes_frame(nodes: Seq<Node>, i: int, waiting: Option<Dependency>)
+    requires 0 <= i < nodes.len(),
+    ensures wait_nodes(nodes, i, waiting)[i] == (Node {
+        waiting_prerequisite: match waiting { Some(d) => Some(d.target.number), None => None },
+        ..nodes[i]
+    }),
+        forall|j: int| 0 <= j < nodes.len() && j != i
+            ==> wait_nodes(nodes, i, waiting)[j] == nodes[j],
+{
+    reveal(wait_nodes);
+}
+
+/// #839: the original one-edge consumer gets delivery without unfolding it in the handler.
+pub(super) proof fn single_dependency_delivery(w: World, dependency: Dependency)
+    requires w.dependencies@.len() == 1, w.dependencies@[0] == dependency,
+        dependency.node == NodeId(0), !dependency.rejected,
+    ensures prerequisites_delivered(w, NodeId(0))
+        == (dependency.status == DependencyStatus::Delivered),
+{
+    reveal(prerequisites_delivered);
+    reveal(delivered);
+    assert forall|j: int| 0 <= j < w.dependencies@.len() implies j == 0 by {}
+}
+
 /// #693 / #806: blocked credit is unavailable or has zero ledger balance.
 #[verifier::opaque]
 pub(super) open spec fn zero_credit(credit: Credit) -> bool {
@@ -269,6 +312,25 @@ fn update_allowed(previous: DependencyStatus, rejected: bool, incoming: Dependen
         DependencyStatus::Delivered => revocable && incoming == DependencyStatus::Pending,
         DependencyStatus::Abandoned => incoming == DependencyStatus::Delivered
             || (revocable && incoming == DependencyStatus::Pending),
+    }
+}
+}
+
+kernel_fn! {
+/// Prerequisite wait rows / #771: the original assignment with an opaque exact result.
+fn set_dependency_wait(nodes: &mut Vec<Node>, i: usize, waiting: Option<Dependency>)
+    -> (result: ()) [
+    requires i < old(nodes)@.len(),
+    ensures final(nodes)@ == wait_nodes(old(nodes)@, i as int, waiting),
+        final(nodes)@.len() == old(nodes)@.len(),
+] {
+    kernel_snapshot! { before_wait = nodes@ }
+    nodes[i].waiting_prerequisite = match waiting {
+        Some(d) => Some(d.target.number), None => None,
+    };
+    kernel_proof! {
+        reveal(wait_nodes);
+        wait_nodes_length(before_wait@, i as int, waiting);
     }
 }
 }
@@ -928,9 +990,9 @@ impl World {
             }
         }
         let waiting = self.first_undelivered(node);
-        self.nodes[i].waiting_prerequisite = match waiting {
-            Some(d) => Some(d.target.number), None => None,
-        };
+        kernel_snapshot! { before_wait = self.nodes@ }
+        set_dependency_wait(&mut self.nodes, i, waiting);
+        kernel_proof! { wait_nodes_frame(before_wait@, i as int, waiting); }
         kernel_proof! {
             if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
                 && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
@@ -944,11 +1006,7 @@ impl World {
             if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
                 && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
                 && !dependency.rejected {
-                assert(prerequisites_delivered(before_withhold@, NodeId(0))
-                    == (dependency.status == DependencyStatus::Delivered)) by {
-                    reveal(prerequisites_delivered);
-                    reveal(delivered);
-                }
+                single_dependency_delivery(before_withhold@, dependency);
             }
         }
     }
