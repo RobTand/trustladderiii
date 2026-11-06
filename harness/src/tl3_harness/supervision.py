@@ -131,13 +131,16 @@ class Supervised:
 
     def capture_stderr(self, chunk):
         context = self.stderr_tail + chunk
-        # A prior byte cut may have removed a credential's label or token prefix.
-        # Redact with that line's remaining context before omitting it conservatively.
-        self.stderr_diagnostic = safe_stderr(context.decode('utf-8', errors='replace'),
-                                             incomplete=self.stderr_boundary)
+        text = context.decode('utf-8', errors='replace')
+        if len(context) > MAX_STDERR_BYTES:
+            # Commit redaction before losing context: later captures must never
+            # reconstruct a recognized secret from retained unredacted bytes.
+            text = _redactor.window(text, 0, len(text))
+            context = text.encode('utf-8')
+        self.stderr_diagnostic = safe_stderr(text, incomplete=self.stderr_boundary)
         if self.stderr_boundary and not self.stderr_diagnostic:
             self.stderr_diagnostic = '[stderr omitted: incomplete capture boundary]'
-        # The shared redactor saw the complete retained context before this byte cut.
+        # An uncut buffer keeps the full context needed by subsequent split writes.
         if len(context) > MAX_STDERR_BYTES:
             self.stderr_boundary = True
         self.stderr_tail = context[-MAX_STDERR_BYTES:]
