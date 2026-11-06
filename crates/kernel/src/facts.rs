@@ -388,7 +388,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_runtime::ci_post(old(w).nodes@[i as int], final(w).nodes@[i as int], infra,
             old(w).fail_fast, old(w).next_question, final(w).next_question),
-] {
+] hide [current_item, items, settle_shape, ordinary_await] {
     kernel_snapshot! { ci_world = *w }
     kernel_snapshot! { ci_out = *out }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
