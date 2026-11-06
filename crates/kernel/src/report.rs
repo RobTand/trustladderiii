@@ -116,7 +116,7 @@ pub closed spec fn counter_exhausted(headroom: bool, refused: bool) -> bool {
 }
 
 #[verifier::opaque]
-pub closed spec fn round_entries(node: NodeId, cause: Option<FailedRoundCause>) -> Seq<ReportEntry> {
+pub(super) closed spec fn round_entries(node: NodeId, cause: Option<FailedRoundCause>) -> Seq<ReportEntry> {
     match cause {
         Some(cause) => seq![ReportEntry::FailedRound { node, cause }],
         None => Seq::empty(),
@@ -124,7 +124,7 @@ pub closed spec fn round_entries(node: NodeId, cause: Option<FailedRoundCause>) 
 }
 
 #[verifier::opaque]
-pub closed spec fn failure_cause(step: ReviewStop) -> FailedRoundCause {
+pub(super) closed spec fn failure_cause(step: ReviewStop) -> FailedRoundCause {
     match step {
         ReviewStop::ChecksFailed => FailedRoundCause::ChecksFailed,
         ReviewStop::ChangesRequested => FailedRoundCause::ChangesRequested,
@@ -134,7 +134,7 @@ pub closed spec fn failure_cause(step: ReviewStop) -> FailedRoundCause {
 }
 
 #[verifier::opaque]
-pub closed spec fn work_failure(reply: Reply) -> Option<FailedRoundCause> {
+pub(super) closed spec fn work_failure(reply: Reply) -> Option<FailedRoundCause> {
     match reply {
         Reply::MakerCantMeet => Some(FailedRoundCause::MakerCantMeet),
         Reply::ChecksDone { pass, in_footprint, .. } => if pass && in_footprint {
@@ -146,7 +146,7 @@ pub closed spec fn work_failure(reply: Reply) -> Option<FailedRoundCause> {
 }
 
 #[verifier::opaque]
-pub closed spec fn ci_failure(phase: Phase, current: Option<Item>, infra: bool)
+pub(super) closed spec fn ci_failure(phase: Phase, current: Option<Item>, infra: bool)
     -> Option<FailedRoundCause> {
     if !infra && (phase == Phase::Queued
         || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue))) {
@@ -155,7 +155,7 @@ pub closed spec fn ci_failure(phase: Phase, current: Option<Item>, infra: bool)
 }
 
 #[verifier::opaque]
-pub closed spec fn fact_failure(phase: Phase, current: Option<Item>, fact: Fact)
+pub(super) closed spec fn fact_failure(phase: Phase, current: Option<Item>, fact: Fact)
     -> Option<FailedRoundCause> {
     match fact { Fact::CiFailed { infra } => ci_failure(phase, current, infra), _ => None }
 }
