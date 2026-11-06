@@ -656,3 +656,34 @@ fn startup_revokes_closed_delivery_before_resume() {
         Phase::Unplanned
     );
 }
+
+/// #839: a stale detail response cannot replace a newer observed reopen at ingest.
+#[test]
+fn older_closed_read_cannot_override_newer_reopen_at_ingest() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_stale_detail");
+    c.observe(
+        "newer-reopen-before-ingest",
+        Observation::Prerequisite(ExternalFact {
+            updated_at: Some("2026-11-05T23:35:00Z".parse().unwrap()),
+            repository: repository.clone(),
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+            status: DependencyStatus::Pending,
+            reason: None,
+        }),
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    set_issue(&repo, 2761, "closed", Some("not_planned"));
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761]);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    assert_eq!(
+        c.world().unwrap().nodes[waiter.0 as usize].phase,
+        Phase::Unplanned
+    );
+}
