@@ -29,6 +29,7 @@ enum Answer {
 #[derive(Default)]
 struct Script {
     answers: VecDeque<Answer>,
+    target: Option<String>,
     calls: Vec<String>,
 }
 struct Recording(Arc<Mutex<Script>>, tl3_config::Store);
@@ -51,6 +52,13 @@ impl Executor for Recording {
             "Sent must be durable before execute"
         );
         let mut script = self.0.lock().unwrap();
+        if script
+            .target
+            .as_ref()
+            .is_some_and(|key| *key != delivery.key)
+        {
+            return Ok(Completion::confirmed(vec![]));
+        }
         script.calls.push(format!("execute:{}", delivery.key));
         match script.answers.pop_front().unwrap() {
             Answer::Found => Ok(Completion::confirmed(vec![])),
@@ -69,6 +77,15 @@ impl Executor for Recording {
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
         let mut script = self.0.lock().unwrap();
+        if script
+            .target
+            .as_ref()
+            .is_some_and(|key| *key != delivery.key)
+        {
+            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                vec![],
+            ))));
+        }
         script.calls.push(format!("reconcile:{}", delivery.key));
         Ok(match script.answers.pop_front().unwrap() {
             Answer::Found => Reconciliation::Found(Box::new(Completion::confirmed(vec![]))),
@@ -345,6 +362,7 @@ fn traced_open(
     key: &str,
     script: Arc<Mutex<Script>>,
 ) -> (Controller, Trace) {
+    script.lock().unwrap().target = Some(key.into());
     let mut sql = fixture_connection(settings);
     controller_restart::wait_for_owner_release(&mut sql);
     let mut store = Store::open(settings).unwrap();

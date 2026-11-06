@@ -30,7 +30,7 @@ fn late_landing_after_final_uses_closed_node_recovery() {
     let cancelled=mirror::committed(State::Cancelling,mirror::Action::Cancel,Ack::Retryable);
     assert(cancelled == State::Cancelled);
     assert(mirror::recovery(cancelled,false,false,false) == mirror::Recovery::None);
-    let zombie=land(restart(absent),Class::Converges,true);
+    let zombie=land(restart(absent),Class::Converges,true,OnceLaws {atomic_original_key_dedup:false,stable_operation_identity:false});
     // looks::restart_closed durably schedules a closed-node look; the original
     // Cancelled key stays final and cleanup is a distinct operation.
     let scheduled=mirror::recovery(cancelled,true,false,false);

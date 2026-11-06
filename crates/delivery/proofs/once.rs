@@ -15,8 +15,8 @@ fn once_application_is_idempotent(before: Upstream, laws: OnceLaws)
     let delayed = lose_response(before);
     let restarted = restart(delayed);
     let retried = issue(restarted);
-    let first = land(retried, Class::Once, true);
-    let second = land(first, Class::Once, true);
+    let first = land(retried, Class::Once, true,laws);
+    let second = land(first, Class::Once, true,laws);
     assert(first.copies == 1);
     assert(second.copies == 1);
     assert(second.outstanding == before.outstanding - 1);
@@ -29,8 +29,8 @@ fn once_late_landing_witness() {
     let old = issue(empty);
     let timed_out = lose_response(old);
     let new = issue(restart(timed_out));
-    let new_landed = land(new,Class::Once,true);
-    let zombie = land(new_landed,Class::Once,true);
+    let new_landed = land(new,Class::Once,true,laws);
+    let zombie = land(new_landed,Class::Once,true,laws);
     assert(zombie.copies == 1);
     assert(zombie.outstanding == 0);
 }

@@ -33,10 +33,10 @@ fn dedup_late_witness() {
     let old = issue(initial);
     let absent = read(lose_response(old),Class::Deduplicated);
     let retry = issue(restart(absent));
-    let first = land(retry,Class::Deduplicated,true);
+    let first = land(retry,Class::Deduplicated,true,OnceLaws {atomic_original_key_dedup:false,stable_operation_identity:false});
     let confirmed_read = read(first,Class::Deduplicated);
     assert(confirmed_read.found && confirmed_read.copies >= 1);
-    let zombie = land(restart(confirmed_read),Class::Deduplicated,true);
+    let zombie = land(restart(confirmed_read),Class::Deduplicated,true,OnceLaws {atomic_original_key_dedup:false,stable_operation_identity:false});
     assert(zombie.copies == 2);
     let fixed = deduplicate_after_quiescence(zombie);
     assert(fixed.copies == 1);

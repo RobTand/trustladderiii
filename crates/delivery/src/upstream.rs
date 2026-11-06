@@ -46,7 +46,8 @@ pub fn issue(before: Upstream) -> Upstream {
 /// (prismabuild/src/submit.rs:310-319); supervisor start reuses its operation ID.
 /// Adapters' external implementations must satisfy this law for Once to hold.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires (before.outstanding as int) > 0, (before.copies as int) < u64::MAX,
+    requires class == Class::Once ==> once_key_deduplication(laws),
+        (before.outstanding as int) > 0, (before.copies as int) < u64::MAX,
         (before.incorrect as int) <= (before.copies as int),
     ensures out.outstanding == (before.outstanding as int) - 1,
         out.copies == if matches!(class, Class::Once | Class::Converges) { 1 }
@@ -56,7 +57,8 @@ pub fn issue(before: Upstream) -> Upstream {
             else {(before.incorrect as int)},
         out.repair_debt == (before.repair_debt as int), out.found == before.found,
 ))]
-pub fn land(before: Upstream, class: Class, correct: bool) -> Upstream {
+pub fn land(before: Upstream, class: Class, correct: bool, laws: OnceLaws) -> Upstream {
+    let _ = laws;
     let copies = match class {
         Class::Once | Class::Converges => 1,
         _ => before.copies + 1,

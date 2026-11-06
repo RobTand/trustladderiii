@@ -122,9 +122,9 @@ fn approval_late_witness() {
     let retry_sent=mirror::send_approval(grant);
     assert(retry_sent.grant == mirror::Grant::None);
     let retry=issue(restart(delayed));
-    let first=land(retry,Class::Approval,true);
+    let first=land(retry,Class::Approval,true,OnceLaws {atomic_original_key_dedup:false,stable_operation_identity:false});
     let confirmed=mirror::Approval {state:State::Confirmed,..retry_sent};
-    let zombie=land(restart(first),Class::Approval,false);
+    let zombie=land(restart(first),Class::Approval,false,OnceLaws {atomic_original_key_dedup:false,stable_operation_identity:false});
     let scheduled=mirror::approval_news(confirmed);
     assert(scheduled.repair);
     let fixed=approval_converges(zombie);
