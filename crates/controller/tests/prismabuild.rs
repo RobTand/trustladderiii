@@ -3430,7 +3430,8 @@ fn main() {
         startup_ownership::with_database(|database| {
             proof_rows_survive_check_observation(&database.create("pb_proof_feedback"));
         });
-        println!("1 proof feedback scenario passed; no skips");
+        println!("test proof_rows_survive_check_observation ... ok");
+        println!("1 proof feedback scenarios passed; no skips");
         return;
     }
     if args
