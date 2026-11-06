@@ -121,6 +121,45 @@ impl Executor for Orphans {
     fn stop_stalled(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
         self.real.stop_stalled(delivery)
     }
+    fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
+        self.real.retire(store)
+    }
+    fn configured_model(&self, model: &str) -> bool {
+        self.real.configured_model(model)
+    }
+    fn probe_memory(&mut self) -> tl3_controller::Result<()> {
+        self.real.probe_memory()
+    }
+    fn probe(&mut self, delivery: &Delivery) -> tl3_controller::Result<bool> {
+        self.real.probe(delivery)
+    }
+    fn resume_after_quota(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<Option<Completion>> {
+        self.real.resume_after_quota(delivery)
+    }
+    fn quota_candidates(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<Vec<tl3_controller::looks::QuotaModel>> {
+        self.real.quota_candidates(delivery)
+    }
+    fn quota_model_eligible(
+        &mut self,
+        delivery: &Delivery,
+        model: &str,
+    ) -> tl3_controller::Result<bool> {
+        self.real.quota_model_eligible(delivery, model)
+    }
+    fn quota_resume_ms(
+        &mut self,
+        delivery: &Delivery,
+        announced: u64,
+        now: u64,
+    ) -> tl3_controller::Result<u64> {
+        self.real.quota_resume_ms(delivery, announced, now)
+    }
 }
 
 fn identity(pid: u32, start: u64) -> serde_json::Value {
@@ -354,6 +393,29 @@ impl Daemon {
     }
 }
 
+/// The recorded inputs, so a run log shows which ending reclaimed the maker.
+fn print_events(settings: &tl3_config::Store, label: &str) {
+    let mut reader = Reader::open(settings).unwrap();
+    let mut tx = reader.transaction().unwrap();
+    for row in tx
+        .query(
+            "SELECT event_key, payload FROM tl3_events ORDER BY revision DESC LIMIT 12",
+            &[],
+        )
+        .unwrap()
+        .into_iter()
+        .rev()
+    {
+        let payload: serde_json::Value = row.get(1);
+        let text = payload.to_string();
+        println!(
+            "{label}: {} {}",
+            row.get::<_, String>(0),
+            &text[..text.len().min(400)]
+        );
+    }
+}
+
 fn intake(daemon: &mut Daemon, number: u64) {
     daemon
         .controller
@@ -403,6 +465,7 @@ fn pb2819_dead_maker_without_exit_is_reclaimed_across_restarts() {
         );
     }
     let reclaimed = daemon.seen(&fixture.settings);
+    print_events(&fixture.settings, "PB #2819 reclaim");
     let launches = fixture.launches.borrow().keys.clone();
     assert_eq!(
         reclaimed.failures, 1,
@@ -451,6 +514,7 @@ fn pb2821_maker_lost_across_deploy_restart_is_reclaimed_at_first_start() {
     let mut daemon = fixture.start();
     daemon.settle();
     let seen = daemon.seen(&fixture.settings);
+    print_events(&fixture.settings, "PB #2821 first start");
     let launches = fixture.launches.borrow().keys.len();
     assert!(
         seen.failures == 1 && seen.generation > launched.generation && launches == 2,
