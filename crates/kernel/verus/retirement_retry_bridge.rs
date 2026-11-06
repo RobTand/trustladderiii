@@ -30,4 +30,11 @@ pub(super) proof fn recheck(n: Node, target: Phase, id: u64)
     reveal(retirement_retry::rechecked); reveal(port_review_retry::rechecked); reveal(retirement_retry::recheck_core);
     reveal(retirement_retry::continued);
 }
+/// Q50 / #806 / #860: W2's exact failed run and #860's failed node agree in run_failed's domain.
+pub(super) proof fn failed_node(n: Node)
+    requires n.run_failures <= 1, n.run_incidents <= 2,
+    ensures port_review_retry::failed_run(n) == port_t860_contracts::failed_node(n),
+{
+    reveal(port_review_retry::failed_run); reveal(port_t860_contracts::failed_node);
+}
 }

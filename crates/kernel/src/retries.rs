@@ -61,9 +61,9 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
                 port_review_failure::restarted(before_failed@, w.nodes@[i as int]);
             }
         }
+        retirement_retry_bridge::failed_node(before_failed@);
         assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
             reveal(port_t860_contracts::failed_post);
-            reveal(port_t860_contracts::failed_node);
         }
     }
 }

@@ -1275,6 +1275,7 @@ def verus_proofs():
             "retirement_retry_bridge_rung": ("kernel::retirement_retry_bridge#rung", 1),
             "retirement_retry_bridge_round": ("kernel::retirement_retry_bridge#round", 1),
             "retirement_retry_bridge_recheck": ("kernel::retirement_retry_bridge#recheck", 1),
+            "retirement_retry_bridge_failed_node": ("kernel::retirement_retry_bridge#failed_node", 1),
             "retirement_gate_bridge_count": ("kernel::retirement_gate_bridge#count", 1),
             "retirement_gate_bridge_queries": ("kernel::retirement_gate_bridge#queries", 1),
             "retirement_gate_bridge_post": ("kernel::retirement_gate_bridge#post", 1),
