@@ -179,10 +179,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
-                kernel_proof! {
-        assert(retirement_retry::selected(fact) ==> w.nodes@[i as int] == retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).0) by { reveal(retirement_retry::fact_result); }
-        assert(retirement_retry::selected(fact) ==> w.next_question as int == before_transition@.next_question as int + if retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).1 { 1int } else { 0int }) by { reveal(retirement_retry::fact_result); }
-    }
+                kernel_proof! { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
                 return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
@@ -192,13 +189,15 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             );
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
-                kernel_snapshot! { recheck_before = *w }
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
                 kernel_proof! {
-                    reveal(port_review_retry::recheck_post);
-                    retirement_retry_bridge::recheck(recheck_before@.nodes@[i as int], Phase::Ready(Resume::Checking), recheck_before@.next_question);
+                    retirement_runtime::outside_retry(before_transition@.nodes@[i as int], head,
+                        before_transition@.fail_fast, before_transition@.next_question,
+                        w.nodes@[i as int], w.next_question);
                 }
                 kernel_proof! { reveal(retry_bounds); }
+            } else {
+                kernel_proof! { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
             }
         }
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
@@ -222,10 +221,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
-    kernel_proof! {
-        assert(retirement_retry::selected(fact) ==> w.nodes@[i as int] == retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).0) by { reveal(retirement_retry::fact_result); }
-        assert(retirement_retry::selected(fact) ==> w.next_question as int == before_transition@.next_question as int + if retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).1 { 1int } else { 0int }) by { reveal(retirement_retry::fact_result); }
-    }
+
     kernel_proof! {
         if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
@@ -387,15 +383,10 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
     if m.phase != Phase::Queued && !before_enqueue {
-        kernel_proof! { reveal(retirement::fact_node); }
-        kernel_proof! {
-        assert(w.nodes@[i as int] == retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).0) by {
-            reveal(retirement_retry::fact_result);
+        kernel_proof! { reveal(retirement::fact_node);
+            retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
         }
-        assert(w.next_question as int == ci_world@.next_question as int + if retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).1 { 1int } else { 0int }) by {
-            reveal(retirement_retry::fact_result);
-        }
-    }
+
         return;
     }
     if before_enqueue {
@@ -409,30 +400,18 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         failed_round(w, i, ReviewStop::CiFailed, out);
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
-            retirement_retry_bridge::round(prepared_ci@.nodes@[i as int], prepared_ci@.fail_fast, prepared_ci@.next_question, ReviewStop::CiFailed);
+            retirement_runtime::ci_retry(ci_world@.nodes@[i as int], ci_world@.fail_fast,
+                ci_world@.next_question, w.nodes@[i as int], w.next_question);
         }
-        kernel_proof! {
-        assert(w.nodes@[i as int] == retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).0) by {
-            reveal(retirement_retry::fact_result);
-        }
-        assert(w.next_question as int == ci_world@.next_question as int + if retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).1 { 1int } else { 0int }) by {
-            reveal(retirement_retry::fact_result);
-        }
-    }
+
         return;
     }
     kernel_proof! {
         facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
     }
     ci_infrastructure(w, i, out);
-    kernel_proof! {
-        assert(w.nodes@[i as int] == retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).0) by {
-            reveal(retirement_retry::fact_result);
-        }
-        assert(w.next_question as int == ci_world@.next_question as int + if retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).1 { 1int } else { 0int }) by {
-            reveal(retirement_retry::fact_result);
-        }
-    }
+    kernel_proof! { retirement_runtime::ci_infra(ci_world@.nodes@[i as int], ci_world@.fail_fast, ci_world@.next_question); }
+
 }
 }
 

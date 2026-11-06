@@ -33,9 +33,15 @@ pub(super) proof fn queries(w: World, i: int)
     reveal(port_advance_gate::gate_overlap);
     count(w, i, w.nodes@.len());
     assert forall|j: int| 0 <= j < w.nodes@.len() implies
-        retirement_gate::slot(w, j) == port_advance_gate::gate_slot(w, j) by {
+        retirement_gate::slot(w, j) == port_advance_gate::gate_slot(w, j)
+        && retirement_gate::eligible(w, i, j) == port_advance_gate::gate_eligible(w, i, j) by {
         count(w, j, w.nodes@.len());
+        assert forall|t: u64| retirement_gate::overlap(w, j, t)
+            == port_advance_gate::gate_overlap(w, j, t) by {}
     }
+    assert forall|j: int| 0 <= j < w.nodes@.len() implies
+        retirement_gate::older(w, i, j) == port_advance_gate::gate_older(w, i, j) by {}
+
 }
 /// Q30 / Q39 / #806: project W6's proven scheduler postcondition onto the stable grant API.
 pub(super) proof fn post(n: Node, m: Node, ticket: u64, next: u64, grant: bool,
