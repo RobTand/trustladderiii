@@ -219,11 +219,11 @@ pub(super) fn verify_grant(mut w: World) -> (result: (World, Outbox, bool)) [
     let checked_before = w.check();
     assert!(checked_before.is_ok());
     kernel_proof! { world_checked_definition(w); }
-    kernel_proof! { rank_definitions(w.nodes@[0]); }
+    kernel_proof! { node_distance_definition(w.nodes@[0]); }
     let before_rank = w.nodes[0].settle_rank();
     let mut out = Outbox::new();
     let changed = advance(&mut w, 0, &mut out);
-    kernel_proof! { rank_definitions(w.nodes@[0]); }
+    kernel_proof! { node_distance_definition(w.nodes@[0]); }
     let after_rank = w.nodes[0].settle_rank();
     if changed { assert!(after_rank < before_rank); }
     kernel_proof! { grant_safe(before@, w); }

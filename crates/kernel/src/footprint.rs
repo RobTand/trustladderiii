@@ -89,13 +89,6 @@ pub(super) proof fn inline_disjoint_symmetric(world: World, a: Footprint, b: Foo
     }
 }
 
-/// Q30 / #806: exact inline exclusion for the original four-file witnesses.
-pub(super) proof fn inline_disjoint(world: World, a: u64, b: u64)
-    ensures disjoint(world, inline_footprint(a), inline_footprint(b)) == (a & b == 0),
-{
-    reveal(disjoint); reveal(inline_footprint);
-}
-
 /// #771: stored file lists are strictly increasing, as produced by the interner.
 pub open spec fn ordered(files: Seq<FileId>) -> bool {
     forall|i: int, j: int| 0 <= i < j < files.len() ==> files[i].0 < files[j].0
