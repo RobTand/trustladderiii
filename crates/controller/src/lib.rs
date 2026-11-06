@@ -2408,7 +2408,7 @@ impl Controller {
                 issue: request.issue,
                 pull_request,
                 proposed: request.proposed,
-                paths,
+                paths: tl3_contracts::footprint::Footprint::new(paths).map_err(Error::Invalid)?,
                 attempt: n.attempt,
                 round: n.round,
                 replanned: n.replanned,

@@ -315,7 +315,7 @@ impl Controller {
                 issue,
                 pull_request: None,
                 proposed: None,
-                paths: vec![],
+                paths: Default::default(),
                 attempt: n.attempt,
                 round: n.round,
                 replanned: n.replanned,

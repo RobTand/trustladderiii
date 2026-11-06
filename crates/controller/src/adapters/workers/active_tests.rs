@@ -21,7 +21,7 @@ fn retiring_quota_attempt_keeps_resumed_process_active() {
         issue: 1,
         head_sha: None,
         pull_request: None,
-        paths: vec![],
+        paths: Default::default(),
         attempt: 1,
         round: 1,
         replanned: false,

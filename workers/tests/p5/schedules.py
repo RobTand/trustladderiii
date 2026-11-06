@@ -15,7 +15,7 @@ from maker_reference import _check_inputs as old_check
 
 
 def cases():
-    base = {'goals': [{'id': 'a'}, {'id': 'b', 'stage': 'checking'}],
+    base = {'goals': [{'id': 'a'}, {'id': 'b', 'stage': 'checking'}], 'footprint': ['a.py'],
             'plan': {'files': ['a.py'], 'checks': [{'goal_ids': ['a', 'b']}]}}
     for kind in ['duplicate', 'empty', 'parent', 'git', 'absolute', 'long', 'unknown',
                  'feedback', 'maker-coverage', 'checking-coverage']:
