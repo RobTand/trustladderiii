@@ -600,20 +600,36 @@ fn rejudged(report: &Report, job: &Job) -> bool {
         {
             return false;
         }
-        if result.proof.as_ref().and_then(|proof| proof.red_classes.as_ref()).is_some_and(|classes| {
-            classes.iter().any(|(node, class)| {
-                result.tests.iter().find(|test| test.test.as_str() == node).is_none_or(|test| {
-                    !test.passed || match class {
-                        RedClass::Assertion => result.declared_symptom.is_some()
-                            || !matches!(test.base, Outcome::Assertion),
-                        RedClass::AddedName => result.declared_symptom.is_some()
-                            || !matches!(test.base, Outcome::AddedName),
-                        RedClass::Symptom => result.declared_symptom.is_none()
-                            || !matches!(test.base, Outcome::Error),
-                    }
+        if result
+            .proof
+            .as_ref()
+            .and_then(|proof| proof.red_classes.as_ref())
+            .is_some_and(|classes| {
+                classes.iter().any(|(node, class)| {
+                    result
+                        .tests
+                        .iter()
+                        .find(|test| test.test.as_str() == node)
+                        .is_none_or(|test| {
+                            !test.passed
+                                || match class {
+                                    RedClass::Assertion => {
+                                        result.declared_symptom.is_some()
+                                            || !matches!(test.base, Outcome::Assertion)
+                                    }
+                                    RedClass::AddedName => {
+                                        result.declared_symptom.is_some()
+                                            || !matches!(test.base, Outcome::AddedName)
+                                    }
+                                    RedClass::Symptom => {
+                                        result.declared_symptom.is_none()
+                                            || !matches!(test.base, Outcome::Error)
+                                    }
+                                }
+                        })
                 })
             })
-        }) {
+        {
             return false;
         }
         if result.declared_symptom.is_some() {
