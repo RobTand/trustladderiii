@@ -160,6 +160,75 @@ def backend_request(command):
         process.stdout.close()
 
 
+def collect_host_payload(command, *, timeout):
+    """Retain raw action bytes. Rust alone extracts and validates the check report."""
+    import hashlib
+    import selectors
+    import signal
+    import subprocess
+    import time
+
+    if not command or not 0 < timeout <= 86400:
+        raise ValueError('bounded host payload command required')
+    context = launch_context()
+    if context is None:
+        raise RuntimeError('host collector requires explicit Flux bootstrap')
+    root = Path(context['output_dir'])
+    stdout_path, stderr_path = root / 'host.stdout', root / 'host.stderr'
+    with stdout_path.open('xb') as stdout, stderr_path.open('xb') as stderr:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, start_new_session=True)
+        total = 0
+        deadline = time.monotonic() + timeout
+        try:
+            with selectors.DefaultSelector() as ready:
+                ready.register(process.stdout, selectors.EVENT_READ, stdout)
+                ready.register(process.stderr, selectors.EVENT_READ, stderr)
+                while ready.get_map():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise RuntimeError('host payload timed out; container cleanup remains unknown')
+                    for key, _ in ready.select(remaining):
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            ready.unregister(key.fileobj)
+                        total += len(chunk)
+                        if total > 4 * 1024 * 1024:
+                            raise RuntimeError('host payload output exceeds byte bound')
+                        key.data.write(chunk)
+                code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            process.stdout.close()
+            process.stderr.close()
+            for stream in (stdout, stderr):
+                stream.flush()
+                os.fsync(stream.fileno())
+    raw = stdout_path.read_bytes()
+    result = backend_request({
+        'op': 'collect_runner', 'owner': context['owner'], 'correlation': context['correlation'],
+        'facts': {'run': context['run'], 'stdout': {'path': str(stdout_path), 'bytes': len(raw),
+                  'sha256': hashlib.sha256(raw).hexdigest()}, 'runtime_binding': None, 'cleanup': None},
+    })
+    return code, result
+
+
+def collector_main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Collect raw host action output through the shared Rust backend')
+    parser.add_argument('--timeout', required=True, type=float)
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    code, _ = collect_host_payload(command, timeout=args.timeout)
+    raise SystemExit(code if code >= 0 else 128 - code)
+
+
 def validate_runtime_binding(evidence):
     context = evidence.context
     placement = context['placement']
