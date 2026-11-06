@@ -1163,6 +1163,10 @@ def verus_proofs():
             "review_stopping_release": ("kernel::reply_admission#release_stopping_reply", 1),
             "port_replies_maker_unselected": ("kernel::port_replies_maker#unselected_maker", 1),
             "port_replies_audit_stop_reply": ("kernel::port_replies_admission#audit_stop_reply", 1),
+            "port_failfast_replies_admitted": ("kernel::port_failfast_replies#admitted", 1),
+            "port_failfast_replies_ordinary": ("kernel::port_failfast_replies#ordinary", 1),
+            "port_failfast_files_inline_input": ("kernel::port_failfast_files#inline_input", 1),
+            "port_failfast_files_compare": ("kernel::port_failfast_files#compare", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

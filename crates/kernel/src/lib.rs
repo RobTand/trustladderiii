@@ -2381,3 +2381,11 @@ mod port_review_failure;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_dispatch.rs"]
 mod port_review_dispatch;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_replies.rs"]
+mod port_failfast_replies;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_files.rs"]
+mod port_failfast_files;
