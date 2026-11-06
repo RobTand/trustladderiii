@@ -1043,7 +1043,7 @@ fn two_authored_leaves_hold_slots_rebase_regenerate_and_merge_fresh_trees() {
 
 #[test]
 fn r1_blocked_generation_allows_another_input_and_stop() {
-    let mut g = Generated::new();
+    let g = Generated::new();
     let script = g._root.path().join("transport.py");
     let started = g._root.path().join("generation-started");
     let released = g._root.path().join("generation-released");
