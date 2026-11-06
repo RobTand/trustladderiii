@@ -35,6 +35,7 @@ impl Fixture {
     fn seed(&mut self, phase: Phase, pos: u8) {
         let snapshot = self.controller.snapshot().unwrap();
         let mut world = self.controller.world().unwrap();
+        let footprint = world.intern_footprint([tl3_kernel::FileId(0)]);
         let n = &mut world.nodes[0];
         n.phase = phase;
         n.pos = pos;
@@ -44,11 +45,19 @@ impl Fixture {
         n.job = (phase == Phase::Checking).then_some(10);
         n.effect = None;
         n.pool = n.run.is_some();
-        n.holds = true;
+        n.holds = !matches!(phase, Phase::Planning { .. });
+        n.footprint = footprint;
+        n.checked = n.head;
+        n.approved = n.head;
+        n.pr_open = matches!(phase, Phase::Publishing | Phase::Queued);
+        n.had_pr = n.pr_open;
+        n.paused = true;
         n.ticket = None;
         n.round = 0;
         n.attempt = 1;
         n.credit.start = 100;
+        n.credit.ready = true;
+        assert!(world.valid(), "seed must be a valid settled world: {:?}", world.check());
         let mut commit = Commit::new("feedback-seed", json!(null), &snapshot);
         commit.rows.extend(crate::snapshot::changes(&crate::snapshot::encode(&self.controller.world().unwrap()).unwrap(), crate::snapshot::encode(&world).unwrap()));
         self.controller.store.commit(&commit).unwrap();
