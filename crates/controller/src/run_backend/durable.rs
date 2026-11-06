@@ -106,7 +106,9 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub fn save(dir: &Path, record: &Record) -> Result<()> {
-    atomic(&dir.join("state.json"), &serde_json::to_vec(record)?)
+    let bytes = serde_json::to_vec(record)?;
+    if bytes.len() > MAX_BYTES { return Err(BackendError::unknown("durable journal byte bound reached; retain last valid observation")); }
+    atomic(&dir.join("state.json"), &bytes)
 }
 
 pub fn digest(bytes: &[u8]) -> String {

@@ -55,6 +55,8 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
         let pus: BTreeSet<_> = grant.os_pus.into_iter().collect();
         let cgroup = cgroup_path(&facts.host.cgroup)?;
         if let ExecutionRuntime::RootlessPodman { mode, memory_limit_bytes, .. } = record.request.runtime.runtime {
+            let owned = record.runtime_ownerships.iter().find(|owned| owned.execution == facts.execution).and_then(|owned| owned.container.as_ref()).ok_or_else(|| BackendError::invalid("container execution ownership missing"))?;
+            if facts.container_id.as_ref() != Some(&owned.id) { return Err(BackendError::invalid("observed container identity differs from retained execution")); }
             let container = facts.container.as_ref().ok_or_else(|| BackendError::invalid("inside-container affinity/cgroup evidence missing"))?;
             if container.rank != facts.host.rank || container.host != facts.host.host || resources::idset(&container.allowed_cpus)? != pus {
                 return Err(BackendError::invalid("container CPU affinity differs from native grant"));
@@ -283,8 +285,8 @@ impl Flux {
             return Ok(false);
         }
         if report.cleanup_complete {
-            let Some(cleanup) = &report.cleanup else { return Ok(false); };
-            if !cleanup_stopped(record, &binding.id, cleanup)? { return Ok(false); }
+            if let Some(cleanup) = &report.cleanup
+                && !cleanup_stopped(record, &binding.id, cleanup)? { return Ok(false); }
             if !super::cleanup::all_stopped(record) { return Ok(false); }
         }
         if matches!(report.outcome, ReportOutcome::RefusedBeforeTests) {

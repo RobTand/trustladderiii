@@ -590,6 +590,7 @@ pub struct CpuGrant {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeBindingInput {
     pub execution: String,
+    pub container_id: Option<String>,
     pub run: BackendId,
     pub request_digest: String,
     pub allocation: BlobRef,
@@ -774,6 +775,7 @@ pub struct PrepareBundleInput {
     pub cleanup: PathBuf,
     pub trusted_root: PathBuf,
     pub producer_commit: String,
+    pub container_interpreter: PathBuf,
     pub image_inventory: PathBuf,
     pub image_inspect: PathBuf,
     pub profile: String,
@@ -806,6 +808,7 @@ pub struct RuntimeBundleManifest {
     pub producer_commit: String,
     pub interpreter: PathBuf,
     pub podman: PathBuf,
+    pub container_interpreter: PathBuf,
     pub collector: PathBuf,
     pub cleanup: PathBuf,
     pub trusted_root: PathBuf,
