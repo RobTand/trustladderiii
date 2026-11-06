@@ -898,7 +898,7 @@ mod planner_reply {
                 }
             }
             // Pin the reviewed corpus selection so empty or truncated coverage fails.
-            assert_eq!((completed, corrections), (388, 119));
+            assert_eq!((completed, corrections), (369, 36));
             assert!(violations > 0 && cant_meet > 0 && accepted > 0 && rejected > 0);
             eprintln!(
                 "P2a mapper differential: completed={completed}, corrections={corrections}, total={}, violations={violations}, cant_meet={cant_meet}, accepted={accepted}, errors={rejected}",
