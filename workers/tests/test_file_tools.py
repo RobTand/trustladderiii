@@ -956,7 +956,7 @@ def test_change_tool_table(tree, op, case, path, refusal):
             assert canonical.read_text().startswith("changed")
 
 
-@pytest.mark.parametrize("kind", ["missing", "directory", "symlink", "fifo", "hardlink"])
+@pytest.mark.parametrize("kind", ["directory", "symlink", "fifo", "hardlink"])
 def test_delete_refuses_nonfiles_without_changing_them(tree, kind):
     root, outside = tree
     target = root / "target"
@@ -974,6 +974,132 @@ def test_delete_refuses_nonfiles_without_changing_them(tree, kind):
     assert "worktree.change.delete_target" in result.text
     assert (outside / "secret.txt").read_text() == "external fixture\n"
     assert target.exists() == (kind != "missing")
+
+
+def test_delete_requires_a_footprint(tree):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/code.py")
+    assert result.status == "error"
+    assert "footprint" in result.text.lower()
+    assert (root / "src/code.py").exists()
+
+
+@pytest.mark.parametrize("path", ["src/code.py", "missing/parent/file.py"])
+def test_delete_already_absent_is_idempotent(tree, path):
+    root, _ = tree
+    with Worktree(root, footprint=[path]) as worktree:
+        tool = tools_for(worktree, {"delete"})["delete"]
+        assert invoke(tool, path).status == "success"
+        again = invoke(tool, path)
+    assert again.status == "success"
+    assert "already absent" in again.text.lower()
+
+
+def test_delete_keeps_the_checked_parent_when_its_name_is_swapped(tree, monkeypatch):
+    root, outside = tree
+    (outside / "code.py").write_text("outside\n")
+    real_stat, real_unlink = os.stat, os.unlink
+    checked = []
+    unlinked = []
+
+    def swap(path, *args, **kwargs):
+        info = real_stat(path, *args, **kwargs)
+        if path == "code.py" and kwargs.get("follow_symlinks") is False and not checked:
+            checked.append(kwargs["dir_fd"])
+            (root / "src").rename(root / "old-src")
+            (root / "src").symlink_to(outside)
+        return info
+
+    def unlink(path, *args, **kwargs):
+        if path == "code.py":
+            unlinked.append(kwargs.get("dir_fd"))
+        return real_unlink(path, *args, **kwargs)
+
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        monkeypatch.setattr(os, "stat", swap)
+        monkeypatch.setattr(os, "unlink", unlink)
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/code.py")
+    assert result.status == "success", result.text
+    assert checked == unlinked
+    assert not (root / "old-src/code.py").exists()
+    assert (outside / "code.py").read_text() == "outside\n"
+
+
+@pytest.mark.parametrize("path", ["src/code.py\n", "src/code.py\r", "src/Code.py", "src/e\u0301.py"])
+def test_delete_refuses_line_break_case_and_unicode_aliases(tree, path):
+    root, _ = tree
+    (root / "src/é.py").write_text("composed\n")
+    with Worktree(root, footprint=["src/code.py", "src/é.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], path)
+    assert result.status == "error"
+    if "\n" in path or "\r" in path:
+        assert "single-line" in result.text
+    else:
+        assert "worktree.change.footprint" in result.text
+    assert (root / "src/code.py").exists()
+    assert (root / "src/é.py").exists()
+
+
+def test_nearest_path_search_is_bounded_and_prefers_basename(tree, monkeypatch):
+    from tl3_workers import tools
+
+    root, _ = tree
+    path = "/".join(["a" * 200] * 3 + ["target.py"])
+    footprint = [f"a/{i:04d}.py" for i in range(400)] + ["z/target.py"]
+    calls = []
+    original = tools.get_close_matches
+
+    def bounded(query, candidates, **kwargs):
+        candidates = list(candidates)
+        calls.append((query, candidates))
+        assert len(query.encode("utf-8")) <= 512
+        assert len(candidates) <= 200
+        assert candidates[0] == "z/target.py"
+        return original(query, candidates, **kwargs)
+
+    monkeypatch.setattr(tools, "get_close_matches", bounded)
+    with Worktree(root, footprint=footprint) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], path)
+    assert result.status == "error"
+    assert calls
+
+
+def test_delete_waits_for_the_mutation_lock(tree):
+    from threading import Event
+
+    root, _ = tree
+    entered = Event()
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        tool = tools_for(worktree, {"delete"})["delete"]
+
+        def remove():
+            entered.set()
+            return invoke(tool, "src/code.py")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with worktree._mutation_lock:
+                future = pool.submit(remove)
+                assert entered.wait(5)
+                assert not future.done()
+                assert (root / "src/code.py").exists()
+            assert future.result(timeout=5).status == "success"
+
+
+def test_protected_precedes_generated_for_delete(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"], generated_files=["src/*"]) as worktree:
+        worktree.protected_paths = ("src/*",)
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/code.py")
+    assert result.status == "error"
+    assert "worktree.change.protected" in result.text
+
+
+def test_undeclared_change_explains_the_needs_files_reply(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/new.py")
+    assert 'reply kind needs_files with files ["src/new.py"]' in result.text
 
 
 @pytest.mark.parametrize("op", ["write", "edit", "delete"])

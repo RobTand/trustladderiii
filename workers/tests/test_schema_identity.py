@@ -50,3 +50,22 @@ def test_t839_current_schema_preserves_frozen_values_and_order(name):
     assert [key for key, _ in properties].count("prerequisite_closures") == 1
     properties[:] = [pair for pair in properties if pair[0] != "prerequisite_closures"]
     assert pairs == BASE["schemas"][name]
+
+
+def test_t895_maker_reply_delta_adds_only_delete():
+    pairs = json.loads(json.dumps(CURRENT["schemas"]["maker-reply.json"]))
+    additions = []
+
+    def remove_additions(value):
+        if not isinstance(value, list):
+            return
+        for item in value:
+            if isinstance(item, list) and len(item) == 2 and item[0] == "enum" and "delete" in item[1]:
+                item[1].remove("delete")
+                additions.append("delete")
+            else:
+                remove_additions(item)
+
+    remove_additions(pairs)
+    assert additions == ["delete", "delete"]
+    assert pairs == BASE["schemas"]["maker-reply.json"]
