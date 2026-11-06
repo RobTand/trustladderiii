@@ -6,7 +6,7 @@ verus! {
 pub(super) proof fn shape(before: World, after: World, generation: u64, reply: Reply,
     out_before: Outbox, out_after: Outbox)
     requires retirement::domain(before), retirement::accepted(before),
-        port_review_reply::selected(reply), !(reply is ChecksDone), before.next_question < u64::MAX,
+        port_review_reply::selected(reply), before.next_question < u64::MAX,
         port_review_reply::reply_post(before, after, 0, generation, reply, out_before, out_after),
     ensures after.next_question >= before.next_question,
         after.file_sets@ == before.file_sets@,
@@ -34,7 +34,7 @@ pub(super) proof fn shape(before: World, after: World, generation: u64, reply: R
 pub(super) proof fn actor_rules(before: World, after: World, generation: u64, reply: Reply,
     out_before: Outbox, out_after: Outbox)
     requires retirement::domain(before), retirement::accepted(before),
-        port_review_reply::selected(reply), !(reply is ChecksDone), before.next_question < u64::MAX,
+        port_review_reply::selected(reply), before.next_question < u64::MAX,
         node_headroom(before.nodes@[0]),
         port_review_reply::reply_post(before, after, 0, generation, reply, out_before, out_after),
         after.next_question >= before.next_question, after.file_sets@ == before.file_sets@,
@@ -60,6 +60,7 @@ pub(super) proof fn actor_rules(before: World, after: World, generation: u64, re
             Reply::ReviewerOutOfRoom => port_review_frames::reviewer_rules(after, n, before.fail_fast, before.next_question),
             Reply::RebaseClean { head } => port_review_frames::rebase_clean_rules(after, n, before.fail_fast, before.next_question, head),
             Reply::RebaseNeedsChanges => port_review_frames::rebase_needs_rules(after, n, before.fail_fast, before.next_question),
+            Reply::ChecksDone { .. } => port_review_frames::checks_rules(after, n, before.fail_fast, before.next_question, reply),
             _ => {},
         }
     }
@@ -69,7 +70,7 @@ pub(super) proof fn actor_rules(before: World, after: World, generation: u64, re
 pub(super) proof fn world_rules(before: World, after: World, generation: u64, reply: Reply,
     out_before: Outbox, out_after: Outbox)
     requires retirement::domain(before), retirement::accepted(before),
-        port_review_reply::selected(reply), !(reply is ChecksDone), before.next_question < u64::MAX,
+        port_review_reply::selected(reply), before.next_question < u64::MAX,
         node_headroom(before.nodes@[0]),
         port_review_reply::reply_post(before, after, 0, generation, reply, out_before, out_after),
     ensures retirement::domain(after), retirement::accepted(after),
@@ -91,11 +92,11 @@ pub(super) proof fn world_rules(before: World, after: World, generation: u64, re
 }
 
 kernel_fn! {
-/// #806 slice 1: real apply and real complete checker, on a domain weaker than Kani's.
+/// #806 review/checks slices: real apply and complete checker on a weaker domain than Kani's.
 /// One event, no unwind. Counters may reach 2^40 and heads, gates and pool are unbounded.
 pub(super) fn verify_apply(mut w: World, generation: u64, reply: Reply) -> (result: (World, Outbox)) [
     requires retirement::domain(w), retirement::accepted(w), retirement::bounded(w),
-        storage_ordered(w), port_review_reply::selected(reply), !(reply is ChecksDone),
+        storage_ordered(w), port_review_reply::selected(reply),
     ensures retirement::domain(result.0), retirement::accepted(result.0),
         retirement::notices_only(result.1),
         port_review_properties::specific_post(w, result.0, generation, reply),

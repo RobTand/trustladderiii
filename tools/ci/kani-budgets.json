@@ -217,13 +217,6 @@
    "seconds": 261.1,
    "tier": "pr"
   },
-  "apply_checks_done": {
-   "cpu_seconds": 286.9,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 4.47,
-   "seconds": 274.6,
-   "tier": "pr"
-  },
   "apply_ci_failed": {
    "cpu_seconds": 1872.6,
    "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
@@ -363,13 +356,6 @@
    "peak_gb": 36.76,
    "seconds": 1974.5,
    "tier": "nightly"
-  },
-  "apply_rebase_progress_gate": {
-   "cpu_seconds": 1.8,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 0.19,
-   "seconds": 2.0,
-   "tier": "pr"
   },
   "apply_resume": {
    "cpu_seconds": 313.5,

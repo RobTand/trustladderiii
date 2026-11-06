@@ -18,6 +18,18 @@ pub(super) proof fn question_frame(before: World, after: World, n: Node)
     }
 }
 
+/// Checking / #806: either checked head advances to review or the exact failed-round retry runs.
+pub(super) proof fn checks_rules(w: World, n: Node, fail_fast: bool, id: u64, reply: Reply)
+    requires retirement::node_rules(w, n), node_headroom(n), n.phase == Phase::Checking,
+        reply is ChecksDone, id < u64::MAX,
+        port_review_reply::transition(port_review_reply::ended(n), fail_fast, id, reply).1 <= w.next_question,
+    ensures retirement::node_rules(w,
+        port_review_reply::transition(port_review_reply::ended(n), fail_fast, id, reply).0),
+{
+    reveal(retirement::node_rules); reveal(port_review_reply::transition);
+    reveal(port_review_retry::round); reveal(port_review_retry::rung); reveal(retirement::stopped);
+}
+
 /// State-table Approved row: end the accepted operation and publish the checked head.
 pub(super) proof fn approved_rules(w: World, n: Node, head: HeadId)
     requires retirement::node_rules(w, n), node_headroom(n),

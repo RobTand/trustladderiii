@@ -1000,14 +1000,6 @@ proof!(
     apply_maker_out_of_room,
     check_apply(reply(Reply::MakerOutOfRoom))
 );
-proof!(
-    apply_checks_done,
-    check_apply(reply(Reply::ChecksDone {
-        report: kani::any(),
-        pass: kani::any(),
-        in_footprint: kani::any()
-    }))
-);
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
 proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));
@@ -1391,17 +1383,6 @@ proof!(gate_grant_w3, check_gate_grant(3));
 proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
 
-proof!(apply_rebase_progress_gate, {
-    let mut node = Node::new(RepoId(0));
-    node.phase = Phase::Rebasing;
-    node.run = Some(node.generation);
-    node.pos = kani::any();
-    kani::assume(node.pos < 2);
-    let awaiting = node.current() == Some(Item::Await);
-    kani::cover!(!awaiting, "the rebase has not reached Await");
-    kani::cover!(awaiting, "the rebase is awaiting its reply");
-    assert_eq!(rebase_progress_applies(&node, node.generation), awaiting);
-});
 
 fn publishing_ci_transition(infra: bool) -> (World, World) {
     let before = any_settled_world(Some(Phase::Publishing));

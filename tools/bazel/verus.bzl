@@ -945,6 +945,12 @@ def verus_proofs():
             "review_retry_room_shape": ("kernel::port_review_retry_lemmas#room_shape", 1),
             "review_failure_restarted": ("kernel::port_review_failure#restarted", 1),
             "review_failure_incident": ("kernel::port_review_failure#incident", 1),
+            "review_frame_checks": ("kernel::port_review_frames#checks_rules", 1),
+            "review_checks_world": ("kernel::port_review_checks#world", 1),
+            "review_checks_cover": ("kernel::port_review_checks#cover", 1),
+            "review_rebase_gate": ("kernel::port_review_checks#rebase_gate", 1),
+            "review_rebase_before_await": ("kernel::port_review_checks#before_await", 1),
+            "review_rebase_awaiting": ("kernel::port_review_checks#awaiting", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

@@ -357,6 +357,11 @@ CASES = {
         '    m.rechecks = 0;',
         '//crates/kernel:verus_review_retry_recheck'),
 
+    'review_rebase_agenda': ('crates/kernel/src/lib.rs',
+        'Phase::Rebasing => &[I::StartRebase, I::Await],',
+        'Phase::Rebasing => &[I::Await, I::StartRebase],',
+        '//crates/kernel:verus_kernel_agenda'),
+
 }
 
 
