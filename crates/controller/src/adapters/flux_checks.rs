@@ -133,7 +133,7 @@ impl Shared {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
             Err(error) => return Err(error.into()),
         };
-        if incoming < accepted || incoming <= 0 { return Err(Error::Invalid("check adapter refused an older epoch")); }
+        if incoming < accepted || incoming < 0 { return Err(Error::Invalid("check adapter refused an older epoch")); }
         durable::atomic(&path, &serde_json::to_vec(&incoming)?).map_err(adapter_error)
     }
     fn observe(&self, owner: &backend::Owner, observed: backend::Observation) -> Result<Option<Input>> {
