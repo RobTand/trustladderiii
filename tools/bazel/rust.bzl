@@ -436,6 +436,9 @@ def _crate_test(kind, package, name, source, harness, options):
             use_libtest_harness = harness,
             aliases = aliases(normal = True, normal_dev = True),
             deps = options["deps"],
-            gate_args = (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
-                         (["--gate-group=" + group] if group else [])),
+            # Shared-mount Flux fixtures run in the admitted PB check script. RBE
+            # cannot create the fixed /mnt/shared output root; select its wire tests.
+            gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed"] if name == "run_backend_cli" else
+                         (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
+                          (["--gate-group=" + group] if group else []))),
         )

@@ -583,6 +583,12 @@ fn own_scope_runtime_mapping_compares_golden_dl380_sets_and_effective_cap() {
         host: ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: "0::/user.slice/native-broker".into() },
         container: Some(ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: format!("0::{}", scope.cgroup) }),
         container_scope: Some(ContainerScopeFacts { unit: scope.unit.clone(), invocation_id: scope.invocation_id.clone(), cgroup: format!("0::{}", scope.cgroup), cpuset_effective: "21-23,30,61-63,70".into(), memory_max: Some(1_073_741_824), memory_swap_max: Some(0), container_id: owned.container.as_ref().unwrap().id.clone() }) };
+    let allocation = AllocationInput { run: facts.run.clone(), request_digest: facts.request_digest.clone(), allocation: facts.allocation.clone(), topology: facts.topology.clone(), host: facts.host.clone() };
+    let granted = f.call(json!({"op":"validate_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":allocation}));
+    assert_eq!(granted.last().unwrap()["result"]["grant"]["os_pus"], json!([21,22,23,30,61,62,63,70]), "{granted:?}");
+    let context = f.call(json!({"op":"launch_context","owner":f.intent.owner,"correlation":f.intent.correlation,"job":"fABC"}));
+    assert_eq!(context.last().unwrap()["result"]["context"]["runtime_identity"]["image"]["profile"], "fixture");
+    assert_eq!(context.last().unwrap()["result"]["context"]["placement"]["os_pus"], json!([21,22,23,30,61,62,63,70]));
     let frames = f.call(json!({"op":"validate_runtime_binding","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":facts}));
     assert_eq!(frames.last().unwrap()["result"]["qualification"]["qualified"], true, "{frames:?}");
     facts.container_scope.as_mut().unwrap().memory_max = None;

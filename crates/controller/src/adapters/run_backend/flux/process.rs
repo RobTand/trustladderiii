@@ -52,6 +52,10 @@ impl Flux {
         let mut command = Command::new("/usr/bin/systemctl");
         command.env_clear().envs(&self.options.environment)
             .args(["--user", "show", &format!("flux-vanilla-{run}.service"), "-p", "InvocationID", "--value"]);
+        self.check_generation(command, expected)
+    }
+
+    fn check_generation(&self, command: Command, expected: &str) -> Result<()> {
         let output = self.capture_command(command, None)?;
         if !output.success || output.stdout.len() > 128 || std::str::from_utf8(&output.stdout).ok().map(str::trim) != Some(expected) {
             return Err(BackendError::unknown("rank-zero systemd InvocationID unavailable or changed; retained IDs remain unknown"));
@@ -196,4 +200,36 @@ pub(super) fn parse_event(bytes: &[u8]) -> Result<NativeFact> {
         },
         _ => NativeFact::Other { name: safe(&event.name)? },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generation_guard_process_stops_and_reaps_while_silent() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("systemctl");
+        let marker = root.path().join("guard-pid");
+        std::fs::write(&script, b"#!/bin/sh\nprintf '%s' \"$$\" > \"$1\"\nsleep 300\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let mut command = Command::new(&script); command.env_clear().env("PATH", "/usr/bin:/bin").arg(&marker);
+        let backend = Flux::new(Options { executable: "/bin/true".into(), arguments: vec![], environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+            instance_generation: "fixture".into(), uri: "local:///fixture".into(), journal_root: root.path().join("journal"),
+            bootstrap: HostBootstrap { cli: "/bin/true".into(), config: root.path().join("options.json") } }).unwrap();
+        let stop = backend.stop.clone();
+        let watch = std::thread::spawn(move || backend.check_generation(command, &"a".repeat(32)));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid = std::fs::read_to_string(marker).unwrap();
+        let started = Instant::now(); stop.stop();
+        assert!(watch.join().unwrap().is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!Path::new("/proc").join(pid).exists(), "generation guard was not reaped");
+    }
 }
