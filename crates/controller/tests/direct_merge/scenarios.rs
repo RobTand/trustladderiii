@@ -881,3 +881,54 @@ fn r3_b_unmasked_controller_recovery_keeps_history_before_merged_fact() {
     assert!(rows.requests[0].direct_delivery, "unmasked recovery must keep the board's direct delivery marker");
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
+
+/// PRD #878 story 16: repeated delivery of the same outcome has one kernel path.
+#[test]
+fn fake_and_production_merge_outcomes_have_identical_receipts() {
+    use tl3_controller::executor::Observation;
+    let mut database = support::Database::start();
+    let mut results = Vec::new();
+    for fake in [true, false] {
+        let settings = database.create(if fake { "outcome_fake" } else { "outcome_production" });
+        let api = Server::new();
+        let root = tempfile::tempdir().unwrap();
+        let mut controller = queued(&settings, &api, root.path(), true);
+        if fake {
+            let snapshot = controller.snapshot().unwrap();
+            let row = snapshot.rows.iter().find(|row| row.table == "watches").unwrap();
+            let delivery: Delivery = serde_json::from_value(row.value.clone()).unwrap();
+            let mut adapter = adapters::mergify::Fake::new(root.path());
+            for key in ["first", "repeat"] {
+                let completion = adapter.execute(&delivery).unwrap();
+                for observation in completion.observations {
+                    controller.observe(key, observation).unwrap();
+                }
+                drain(&mut controller);
+            }
+            controller.observe("late-ci", Observation::CiFailed {
+                node: NodeId(0), infra: false, checks: vec![],
+            }).unwrap();
+            drain(&mut controller);
+        } else {
+            api.state.lock().unwrap().merged(false);
+            catch_up(&settings, &api, &mut controller);
+            catch_up(&settings, &api, &mut controller);
+            // A late check still comes through the production queue adapter vocabulary.
+            controller.observe("late-ci", Observation::Queue(adapters::mergify::QueueFact {
+                repository: bootstrap().repos[0].clone(), number: 100,
+                evidence: adapters::mergify::Evidence::CiFailed {
+                    check: 1001, completed_at: None,
+                    head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
+                    infra: false, head_check: true, details: Default::default(),
+                },
+            })).unwrap();
+            drain(&mut controller);
+        }
+        let facts: Vec<_> = Store::open(&settings).unwrap()
+            .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
+            .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].as_object().cloned())
+            .map(Value::Object).collect();
+        results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap()));
+    }
+    assert_eq!(results[0], results[1], "fake and production must apply identical facts and world rows");
+}
