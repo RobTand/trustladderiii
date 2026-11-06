@@ -295,7 +295,7 @@ fn prior_evidence(value: &mut Value) {
         Value::Array(values) => for value in values { prior_evidence(value); },
         Value::Object(fields) => {
             if let Some(details) = fields.get_mut("CiFailed").and_then(|value| value.get_mut("details")).and_then(Value::as_object_mut) {
-                details.remove("context"); details.remove("fingerprint");
+                details.remove("context"); details.remove("fingerprint"); details.remove("reporters");
             }
             for value in fields.values_mut() { prior_evidence(value); }
         }

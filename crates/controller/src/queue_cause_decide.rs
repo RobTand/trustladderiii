@@ -60,3 +60,10 @@ pub fn hold(witness: bool, spent: bool, expired: bool) -> HoldAction {
         HoldAction::Wait
     }
 }
+
+/// #854b / Q50: Unattributed and Environment never enter a charged failed round
+/// or Q54. Their only actions are the bounded hold, retest and TL3-side incident.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
+    ensures out == (cause == Attribution::Change),
+))]
+pub fn failed_round(cause: Attribution) -> bool { cause == Attribution::Change }

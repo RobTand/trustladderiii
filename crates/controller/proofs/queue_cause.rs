@@ -7,6 +7,7 @@ use vstd::prelude::*;
 verus! {
 fn attribution_witness() {
     let opaque = attribute(false, false, false); assert(opaque == Attribution::Unattributed);
+    let uncharged = failed_round(opaque); assert(!uncharged);
     let changed = attribute(true, false, false); assert(changed == Attribution::Change);
     let environment = attribute(false, true, false); assert(environment == Attribution::Environment);
     let second = attribute(false, true, true); assert(second == Attribution::Change);

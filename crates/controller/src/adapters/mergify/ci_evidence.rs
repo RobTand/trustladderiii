@@ -148,7 +148,10 @@ pub(super) async fn read_checks(
     };
     let mut seen = BTreeSet::new();
     let mut fingerprint_parts = Vec::new();
+    let mut identified = true;
     for check in failed.into_iter().take(20) {
+        if let Some(app) = &check.app { details.reporters.push(crate::queue_cause::CheckIdentity { app: app.id, name: check.name.clone() }); }
+        else { identified = false; }
         let mut summary = vec![format!(
             "Conclusion: {}",
             check.conclusion.as_deref().unwrap_or("unknown")
@@ -213,7 +216,7 @@ pub(super) async fn read_checks(
             url: check.details_url.clone(),
         });
     }
-    if details.complete {
+    if details.complete && identified {
         details.fingerprint = Some(crate::queue_cause::fingerprint(&mut fingerprint_parts));
     }
     bounded(details)

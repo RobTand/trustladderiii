@@ -129,6 +129,7 @@ pub(super) fn check_run(_: &Snapshot, node: NodeId, sha: Option<&str>) -> Result
     })
 }
 impl Controller {
+    pub(super) fn now_ms(&self) -> u64 { call("clock.now", json!(0)); 0 }
     pub(super) fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
         tl3_worktrees::CommitId::new(sha)?;
         Ok(HeadId(self.store.intern_commit(&node.0.to_string(), sha)?))
@@ -325,16 +326,35 @@ fn run(s: &Schedule, new: bool, cut: Option<Cut>) -> Run {
         recording.run
     })
 }
+// #854b adds typed attribution metadata. Keep the prior transition and every
+// prior row/call field in the differential; real Controller scenarios assert
+// the new hold/retest behavior and its durable metadata.
+fn prior_fields(value: &mut Value) {
+    match value {
+        Value::Array(values) => for value in values { prior_fields(value); },
+        Value::Object(fields) => {
+            if let Some(details) = fields.get_mut("CiFailed").and_then(|value| value.get_mut("details")).and_then(Value::as_object_mut) {
+                for key in ["cause", "context", "fingerprint", "reporters"] { details.remove(key); }
+            }
+            for value in fields.values_mut() { prior_fields(value); }
+        }
+        _ => {}
+    }
+}
+fn prior_run(mut run: Run) -> Run {
+    for value in run.calls.iter_mut().chain(run.rows.iter_mut()).chain(run.persisted_rows.iter_mut()) { prior_fields(value); }
+    run
+}
 pub(super) fn compare(s: &Schedule) -> Run {
-    let old = run(s, false, None);
-    let new = run(s, true, None);
+    let old = prior_run(run(s, false, None));
+    let new = prior_run(run(s, true, None));
     assert_eq!(old, new, "Queue I/O schedule {s:?}");
     for write in 0..old.writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
             assert_eq!(
-                run(s, false, cut),
-                run(s, true, cut),
+                prior_run(run(s, false, cut)),
+                prior_run(run(s, true, cut)),
                 "Queue crash {cut:?}, schedule {s:?}"
             );
         }

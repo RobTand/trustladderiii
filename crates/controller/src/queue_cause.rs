@@ -32,12 +32,22 @@ pub struct QueueContext {
 
 /// Observed main merge or settled independent queue batch. A merge's resulting
 /// commit is the new base; mere SHA inequality is never itself a health event.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckIdentity { pub app: u64, pub name: String }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GateEvidence {
     pub context: QueueContext,
     pub at: DateTime<Utc>,
     pub fingerprint: Option<String>,
     pub successful: bool,
+    #[serde(default)]
+    pub passed: Vec<CheckIdentity>,
+}
+impl GateEvidence {
+    pub fn healthy_for(&self, reporters: &[CheckIdentity]) -> bool {
+        self.successful && (self.context.batch.is_none() || !reporters.is_empty() && reporters.iter().all(|reporter| self.passed.contains(reporter)))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,6 +62,8 @@ pub(crate) struct Hold {
     pub since_ms: u64,
     pub witness: Option<GateEvidence>,
     pub witnessed_ms: Option<u64>,
+    #[serde(default)]
+    pub reporters: Vec<CheckIdentity>,
 }
 
 pub(crate) fn key(node: NodeId, head: &str) -> String {
@@ -102,7 +114,7 @@ impl Controller {
             .filter(|row| row.table == "queue_holds")
         {
             let mut hold: Hold = decode_stored(row.value.clone())?;
-            if hold.repository != fact.repository
+            if !gate.healthy_for(&hold.reporters) || hold.repository != fact.repository
                 || hold.context.branch != gate.context.branch
                 || hold.context.base == gate.context.base
                 || decision::hold(true, hold.witness.is_some(), false)
@@ -162,7 +174,8 @@ impl Controller {
                 && row.value["evidence"]["CiFailed"]["head"] == *head
                 && row.value["evidence"]["CiFailed"]["infra"] == true
         });
-        let retried = q58_used || prior.as_ref().is_some_and(|hold| hold.witness.is_some());
+        let completed = completed_at.as_ref().and_then(|at| DateTime::parse_from_rfc3339(at).ok()).map(|at| at.with_timezone(&Utc));
+        let retried = (q58_used && details.failed_tests.is_empty()) || prior.as_ref().is_some_and(|hold| hold.witness.as_ref().is_some_and(|witness| completed.is_some_and(|at| at > witness.at)));
         let context = details.context.clone().unwrap_or(QueueContext {
             base: String::new(),
             branch: String::new(),
@@ -225,7 +238,7 @@ impl Controller {
         if retried {
             *infra = false;
         }
-        if (q58 && !retried) || kind == Attribution::Change {
+        if (q58 && !retried && kind != Attribution::Environment) || decision::failed_round(kind) {
             return Ok(false);
         }
         let fact_identity = fact.identity();
@@ -250,6 +263,7 @@ impl Controller {
                 since_ms: self.now_ms(),
                 witness: None,
                 witnessed_ms: None,
+                reporters: match &fact.evidence { Evidence::CiFailed { details, .. } => details.reporters.clone(), _ => vec![] },
             };
             commit
                 .rows

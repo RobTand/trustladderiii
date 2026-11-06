@@ -3102,7 +3102,8 @@ impl Controller {
                     details.decision = Some(decision.as_str().into());
                 }
                 let q58 = matches!(&fact.evidence, Evidence::CiFailed { details, .. } if details.decision.as_deref() == Some("outside_change"));
-                if self.queue_failure_cause(snapshot, &mut fact, node, q58, commit)? {
+                let current_failure = matches!(&fact.evidence, Evidence::CiFailed { head, .. } if commit_sha(snapshot, current.head) == Some(head));
+                if current_failure && self.queue_failure_cause(snapshot, &mut fact, node, q58, commit)? {
                     return Ok(None);
                 }
                 let value = json!(&fact);

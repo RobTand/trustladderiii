@@ -704,7 +704,9 @@ impl Adapter {
         {
             return Ok(());
         }
-        self.queue_hold_command(delivery, &snapshot)?;
+        let mut authorized = delivery.clone();
+        authorized.epoch = snapshot.epoch.get();
+        self.queue_hold_command(&authorized, &snapshot)?;
         Ok(())
     }
 }

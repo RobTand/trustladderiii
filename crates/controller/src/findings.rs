@@ -38,6 +38,8 @@ pub struct QueueCiEvidence {
     pub context: Option<crate::queue_cause::QueueContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reporters: Vec<crate::queue_cause::CheckIdentity>,
     #[serde(default)]
     pub checks: Vec<CiFailure>,
     #[serde(default)]

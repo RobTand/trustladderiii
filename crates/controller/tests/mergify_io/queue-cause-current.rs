@@ -90,6 +90,7 @@ pub(super) fn merge(repo: &Repository, pull: &tl3_github::PullRequest) -> Option
             at,
             fingerprint: None,
             successful: true,
+            passed: vec![],
         }),
     })
 }
@@ -100,22 +101,28 @@ pub(super) fn batch(
     checks: &[CheckRun],
 ) -> Option<QueueFact> {
     let context = batch_context(pull)?;
-    let checks: Vec<_> = checks
-        .iter()
-        .filter(|check| check.head_sha == pull.head.sha)
-        .collect();
-    if checks.is_empty() || checks.iter().any(|check| check.status != "completed") {
-        return None;
+    let mut latest = BTreeMap::new();
+    for check in checks.iter().filter(|check| check.head_sha == pull.head.sha) {
+        let entry = latest.entry((check.app.as_ref().map(|app| app.id), &check.name)).or_insert(check);
+        if check.id > entry.id { *entry = check; }
     }
+    let checks: Vec<_> = latest.values().copied().collect();
+    if checks.is_empty() || checks.len() > 128 || checks.iter().any(|check| check.status != "completed") { return None; }
     let at = checks.iter().filter_map(|check| check.completed_at).max()?;
     let mut parts = Vec::new();
     let mut complete = true;
     let mut failed = false;
+    let mut passed = Vec::new();
+    let mut successful = true;
     for check in checks {
+        if check.conclusion.as_deref() == Some("success") {
+            if let Some(app) = &check.app { passed.push(crate::queue_cause::CheckIdentity { app: app.id, name: check.name.clone() }); }
+        } else if check.conclusion.as_deref() != Some("skipped") { successful = false; }
         if check.conclusion.as_deref() != Some("failure") {
             continue;
         }
         failed = true;
+        let app = check.app.as_ref()?;
         let output = check.output.as_ref()?;
         let text = format!(
             "{}\n{}\n{}",
@@ -127,23 +134,22 @@ pub(super) fn batch(
         complete &= !tests.is_empty();
         parts.extend(tests.into_iter().map(|test| {
             (
-                check.app.as_ref().map(|app| app.id),
+                Some(app.id),
                 check.name.clone(),
                 test.test,
             )
         }));
     }
-    if !failed {
-        return None;
-    } // Success health comes only from an actual merge.
+    if !failed && (!successful || passed.is_empty()) { return None; }
     Some(QueueFact {
         repository: repo.clone(),
         number: pull.number,
         evidence: Evidence::Gate(GateEvidence {
             context,
             at,
-            fingerprint: complete.then(|| crate::queue_cause::fingerprint(&mut parts)),
-            successful: false,
+            fingerprint: (failed && complete).then(|| crate::queue_cause::fingerprint(&mut parts)),
+            successful,
+            passed,
         }),
     })
 }
