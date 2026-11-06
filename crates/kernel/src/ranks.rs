@@ -720,12 +720,9 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
-    ] proof [reveal(port_advance_contracts::exact);
-        reveal(port_review_output::effect_post);
-        reveal(port_review_output::selected_head);
-        reveal(port_advance_contracts::node_after);
-        reveal(port_advance_contracts::outputs);
-        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
+    ] proof [port_advance_step_frames::start_quiet(*node, *next_ticket, context, *out);
+        reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { advance_out = *out }
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -741,6 +738,7 @@ kernel_fn! {
             m.run = Some(m.generation);
             m.pos += 1;
             emit_node(node, context.node, EffectKind::StartRun(role), out);
+            kernel_proof! { port_advance_step_frames::start_emit(n, *next_ticket, context, role, advance_out@, *out); }
             return true;
         }
         false
@@ -913,10 +911,8 @@ kernel_fn! {
             result == advance_enabled(*old(node), _context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
-    ] proof [reveal(port_advance_contracts::exact);
-        reveal(port_advance_contracts::node_after);
-        reveal(port_advance_contracts::outputs);
-        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
+    ] proof [port_advance_step_frames::release_frame(*node, *_next_ticket, _context, *_out);
+        reveal(advance_post); reveal(distance);] {
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
@@ -938,12 +934,9 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
-    ] proof [reveal(port_advance_contracts::exact);
-        reveal(port_review_output::effect_post);
-        reveal(port_review_output::selected_head);
-        reveal(port_advance_contracts::node_after);
-        reveal(port_advance_contracts::outputs);
-        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
+    ] proof [port_advance_step_frames::teardown_quiet(*node, *_next_ticket, context, *out, kind);
+        reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { advance_out = *out }
         let n = *node;
         if n.question.is_some() {
             return false; // waiting for Rob
@@ -965,6 +958,7 @@ kernel_fn! {
             return true;
         }
         emit_node(node, context.node, kind, out);
+        kernel_proof! { port_advance_step_frames::teardown_emit(n, *_next_ticket, context, advance_out@, *out, kind); }
         true
     }
 }

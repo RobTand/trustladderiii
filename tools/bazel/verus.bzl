@@ -925,6 +925,11 @@ def verus_proofs():
             "port_advance_phase": ("kernel::port_advance_phase", 1),
             "port_advance_witness_world": ("kernel::port_advance_witness#phase_world", 1),
             "port_advance_witness_cover": ("kernel::port_advance_witness#phase_cover", 1),
+            "port_advance_step_start_quiet": ("kernel::port_advance_step_frames#start_quiet", 1),
+            "port_advance_step_start_emit": ("kernel::port_advance_step_frames#start_emit", 1),
+            "port_advance_step_teardown_quiet": ("kernel::port_advance_step_frames#teardown_quiet", 1),
+            "port_advance_step_teardown_emit": ("kernel::port_advance_step_frames#teardown_emit", 1),
+            "port_advance_step_release_frame": ("kernel::port_advance_step_frames#release_frame", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
