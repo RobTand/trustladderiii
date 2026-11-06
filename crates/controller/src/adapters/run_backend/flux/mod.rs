@@ -4,6 +4,7 @@ mod evidence;
 mod process;
 mod resources;
 mod validate;
+mod worker_protocol;
 
 use crate::run_backend::{durable::*, *};
 use std::io::{BufRead, BufReader, Read};
@@ -236,6 +237,8 @@ impl RunBackend for Flux {
     }
 
     fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult> { self.run_cleanup(owner) }
+
+    fn worker_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<WorkerPayload> { self.verified_worker_payload(owner, terminal) }
 
     fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
         self.verified_daytime_payload(owner, terminal)

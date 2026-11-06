@@ -252,6 +252,8 @@ pub enum MemoryGuarantee { DeclaredOnly, RequireAdmission }
 pub enum Suite {
     Full { membership_digest: String },
     SelectedCases { membership_digest: String },
+    WorkerTests { input_digest: String },
+    Generator { input_digest: String },
     DaytimeChecks { plan_digest: String, base: String, head: String, reviewed: Option<String> },
 }
 
@@ -397,6 +399,7 @@ pub struct RunnerReport {
     pub runtime_binding: Option<RuntimeBindingInput>,
     pub cleanup: Option<BlobRef>,
     pub stdout: Option<BlobRef>,
+    pub worker_payload: Option<WorkerPayload>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -413,7 +416,7 @@ pub struct InputFile { pub path: PathBuf, pub sha256: String }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportOutcome { Passed, TestsFailed, ChecksCompleted, RefusedBeforeTests, EnvironmentLost }
+pub enum ReportOutcome { Passed, TestsFailed, ChecksCompleted, WorkerPayloadCompleted, RefusedBeforeTests, EnvironmentLost }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -481,6 +484,7 @@ pub trait RunBackend {
     fn retain_runtime(&self, owner: &Owner, ownership: RuntimeOwnership) -> Result<()>;
     fn validate_allocation(&self, owner: &Owner, facts: &AllocationInput) -> Result<CpuGrant>;
     fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult>;
+    fn worker_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<WorkerPayload>;
     fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport>;
 }
 
@@ -730,3 +734,21 @@ pub struct CleanupResult {
     pub evidence: Option<BlobRef>,
     pub reason: String,
 }
+
+/// Transport-only retained worker protocol. Existing worker semantic validators remain authoritative.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkerPayload {
+    Tests { summary: BlobRef, symptom_runs: Vec<BlobRef> },
+    Generator { artifact: BlobRef },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerCollection { pub report: BlobRef, pub payload: WorkerPayload }
+
+/// Existing generator bounds: decoded outputs 32 MiB, encoded artifact 48 MiB.
+pub const GENERATOR_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+pub const GENERATOR_ARTIFACT_BYTES: usize = 48 * 1024 * 1024;
+pub const GENERATOR_STDOUT_BYTES: usize = GENERATOR_ARTIFACT_BYTES + 1024 * 1024;
+pub const WORKER_TEST_STDOUT_BYTES: usize = 1024 * 1024;

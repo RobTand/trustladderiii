@@ -57,6 +57,9 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
         Suite::Full { membership_digest } | Suite::SelectedCases { membership_digest } => {
             if !hex(membership_digest, 64) { return Err(BackendError::invalid("membership digest required")); }
         }
+        Suite::WorkerTests { input_digest } | Suite::Generator { input_digest } => {
+            if !hex(input_digest, 64) { return Err(BackendError::invalid("worker input protocol digest required")); }
+        }
         Suite::DaytimeChecks { plan_digest, base, head, reviewed } => {
             if !hex(plan_digest, 64) || !hex(base, 40) || !hex(head, 40) || reviewed.as_ref().is_some_and(|reviewed| !hex(reviewed, 40)) { return Err(BackendError::invalid("daytime plan/base/head and optional reviewed identity required")); }
         }

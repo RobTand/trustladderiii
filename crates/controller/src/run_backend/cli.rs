@@ -13,6 +13,8 @@ pub enum Command {
     Probe { reservation: Reservation, placement: Placement },
     LaunchContext { owner: String, correlation: String, job: String },
     ValidateRuntimeBinding { owner: String, correlation: String, facts: Box<RuntimeBindingInput> },
+    CollectWorker { owner: String, correlation: String, facts: Box<CollectorInput> },
+    WorkerPayload { owner: String, correlation: String, terminal: Terminal },
     CollectRunner { owner: String, correlation: String, facts: Box<CollectorInput> },
     DaytimePayload { owner: String, correlation: String, terminal: Terminal },
     ValidateAllocation { owner: String, correlation: String, facts: Box<AllocationInput> },
@@ -52,6 +54,8 @@ pub enum CliResult {
     Probe { probe: Probe },
     LaunchContext { context: LaunchContext },
     ValidateRuntimeBinding { qualification: RuntimeQualification },
+    CollectWorker { collection: WorkerCollection },
+    WorkerPayload { payload: WorkerPayload },
     CollectRunner { report: BlobRef, payload: BlobRef },
     ValidateAllocation { grant: CpuGrant },
     RetainRuntime,
@@ -114,6 +118,8 @@ pub fn main() -> i32 {
             Command::Probe { reservation, placement } => CliResult::Probe { probe: backend.probe(&reservation, &placement)? },
             Command::LaunchContext { owner, correlation, job } => CliResult::LaunchContext { context: backend.launch_context(&Owner { owner, correlation }, &job)? },
             Command::ValidateRuntimeBinding { owner, correlation, facts } => CliResult::ValidateRuntimeBinding { qualification: backend.validate_runtime_binding(&Owner { owner, correlation }, &facts)? },
+            Command::CollectWorker { owner, correlation, facts } => CliResult::CollectWorker { collection: backend.collect_worker(&Owner { owner, correlation }, &facts)? },
+            Command::WorkerPayload { owner, correlation, terminal } => CliResult::WorkerPayload { payload: backend.worker_payload(&Owner { owner, correlation }, &terminal)? },
             Command::CollectRunner { owner, correlation, facts } => {
                 let (report, payload) = backend.collect_runner(&Owner { owner, correlation }, &facts)?;
                 CliResult::CollectRunner { report, payload }

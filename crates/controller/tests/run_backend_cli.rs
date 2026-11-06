@@ -187,7 +187,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             request_digest: self.intent.request_digest.clone(), tree: self.request.tree.clone(), runner_digest: self.request.runner.executable_digest.clone(), runtime_digest: self.request.runtime.manifest_digest.clone(),
             suite: self.request.suite.clone(), complete: true, cleanup_complete, tests_started: 1, outcome,
             cases: vec![CaseFact { target: "unit".into(), name: "case".into(), outcome: if outcome == ReportOutcome::TestsFailed { CaseOutcome::Failed } else { CaseOutcome::Passed }, duration_ms: 1, disposition: None }],
-            payload: None, runtime_binding: None, cleanup: Some(BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }), stdout: None,
+            payload: None, runtime_binding: None, cleanup: Some(BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }), stdout: None, worker_payload: None,
         };
         fs::write(out.join("report.json"), serde_json::to_vec(&report).unwrap()).unwrap();
     }

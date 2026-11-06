@@ -158,7 +158,7 @@ impl Flux {
             schema: "tl3.runner_report.v1".into(), run: input.run.clone(), request_digest: record.intent.request_digest.clone(), tree: record.request.tree.clone(),
             runner_digest: record.request.runner.executable_digest.clone(), runtime_digest: record.request.runtime.manifest_digest.clone(), suite: record.request.suite.clone(),
             complete: true, cleanup_complete, tests_started: 0, outcome: ReportOutcome::ChecksCompleted,
-            cases: vec![], payload: Some(payload.clone()), runtime_binding: input.runtime_binding.clone(), cleanup: input.cleanup.clone(), stdout: Some(input.stdout.clone()),
+            cases: vec![], payload: Some(payload.clone()), runtime_binding: input.runtime_binding.clone(), cleanup: input.cleanup.clone(), stdout: Some(input.stdout.clone()), worker_payload: None,
         };
         let report = blob(&out.join("report.json"), &serde_json::to_vec(&report)?)?;
         Ok((report, payload))
@@ -239,11 +239,10 @@ impl Flux {
         Ok(Observation::Terminal { binding: Some(binding), terminal })
     }
 
-    pub(super) fn verified_daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
+    pub(super) fn verified_report(&self, owner: &Owner, terminal: &Terminal) -> Result<RunnerReport> {
         let record = self.journal.load(owner)?;
         let invalid = || BackendError { code: ErrorCode::EvidenceInvalid, message: "terminal has no verified daytime payload for this durable owner".into() };
-        if record.terminal.as_ref() != Some(terminal) || terminal.ending != Ending::Passed
-            || !matches!(record.request.suite, Suite::DaytimeChecks { .. }) { return Err(invalid()); }
+        if record.terminal.as_ref() != Some(terminal) || !matches!(terminal.ending, Ending::Passed | Ending::Failed) { return Err(invalid()); }
         let receipt: Receipt = serde_json::from_slice(&checked_blob(&terminal.receipt, &record.intent.output_dir)?)?;
         if receipt.schema != "tl3.run_receipt.v1" || receipt.issuer != ReceiptIssuer::Tl3
             || receipt.intent != record.intent || receipt.binding != record.binding
@@ -258,10 +257,19 @@ impl Flux {
         let binding = record.binding.as_ref().ok_or_else(invalid)?;
         let reference = receipt.report.as_ref().ok_or_else(invalid)?;
         let report: RunnerReport = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
-        if !self.report_identity(&record, binding, &report)? || report.outcome != ReportOutcome::ChecksCompleted || !report.complete || !report.cleanup_complete {
+        if !self.report_identity(&record, binding, &report)? || !report.complete || !report.cleanup_complete {
             return Err(invalid());
         }
-        let payload = report.payload.as_ref().ok_or_else(invalid)?;
+        Ok(report)
+    }
+
+    pub(super) fn verified_daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
+        let report = self.verified_report(owner, terminal)?;
+        if !matches!(report.suite, Suite::DaytimeChecks { .. }) || report.outcome != ReportOutcome::ChecksCompleted {
+            return Err(BackendError::invalid("terminal is not a daytime check payload"));
+        }
+        let payload = report.payload.as_ref().ok_or_else(|| BackendError::invalid("daytime payload missing"))?;
+        let record = self.journal.load(owner)?;
         Ok(serde_json::from_slice(&checked_blob(payload, &record.intent.output_dir)?)?)
     }
 
@@ -287,6 +295,7 @@ impl Flux {
         if matches!(report.outcome, ReportOutcome::EnvironmentLost) { return Ok(true); }
         if !report.complete { return Ok(false); }
         match &record.request.suite {
+            Suite::WorkerTests { .. } | Suite::Generator { .. } => super::worker_protocol::report_identity(record, report),
             Suite::DaytimeChecks { .. } => {
                 let Some(payload) = &report.payload else { return Ok(false); };
                 let bytes = checked_blob(payload, &record.intent.output_dir)?;
@@ -354,7 +363,7 @@ fn classify(record: &Record, report: Option<&RunnerReport>, cleanup_complete: bo
     let (finished, status) = finish?;
     if !started.is_some_and(|start| start < finished) { return None; }
     match (status, report.outcome) {
-        (WaitStatus::Exited { code: 0, .. }, ReportOutcome::Passed | ReportOutcome::ChecksCompleted) =>
+        (WaitStatus::Exited { code: 0, .. }, ReportOutcome::Passed | ReportOutcome::ChecksCompleted | ReportOutcome::WorkerPayloadCompleted) =>
             Some((Ending::Passed, "complete identity-checked trusted report; daytime judgment remains in its payload")),
         (WaitStatus::Exited { code: 1, .. }, ReportOutcome::TestsFailed) =>
             Some((Ending::Failed, "complete trusted case coverage identifies semantic test failures")),
