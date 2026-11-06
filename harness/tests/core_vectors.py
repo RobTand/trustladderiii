@@ -1,4 +1,4 @@
-"""Generate #749 parity data by calling the current Python harness, never a mirror."""
+"""Generate #749 parity data from the harness and frozen identity-match oracle."""
 import argparse
 import ast
 from contextlib import nullcontext
@@ -18,7 +18,7 @@ if __name__ == '__main__':
 from _pytest.assertion.rewrite import rewrite_asserts
 from tl3_harness import limits, model, node_ids, red_message, report, runner, test_tool
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
-from tl3_harness.selector_identity import selection_matches, selector_identity
+from tl3_harness.selector_identity import selector_identity
 
 ROOT = Path(__file__).resolve().parents[1] / 'test-vectors'
 KINDS = ('node-id', 'selector-identity', 'summary-bound', 'red-match', 'limits', 'judge', 'phase-fold',
@@ -34,6 +34,14 @@ DIVERGENCES = {
         'property': 'red_survives_whenever_any_entry_survives_with_proof_and_totals_kept',
     },
 }
+
+
+def _selection_matches(value, selectors):
+    """Compare a full list or digest to the trusted full selection, never its prefix."""
+    if isinstance(value, list):
+        return value == list(selectors)
+    return (isinstance(value, dict) and type(value.get('count')) is int
+            and value == selector_identity(selectors))
 
 
 def teardown_error(scenario):
@@ -343,7 +351,7 @@ def evaluate(kind, data):
             candidate = selectors[:-1] + ['other.py::test_other']
         elif comparison == 'wrong-digest':
             candidate['sha256'] = '0' * 64
-        return {'identity': identity, 'candidate': candidate, 'matches': selection_matches(candidate, selectors)}
+        return {'identity': identity, 'candidate': candidate, 'matches': _selection_matches(candidate, selectors)}
     if kind == 'summary-bound':
         if data['op'] == 'describe':
             return runner.describe(ValueError(data['message']))

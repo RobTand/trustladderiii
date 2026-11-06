@@ -34,6 +34,11 @@
     "question_id": "current",
     "answer": "continue"
   },
+  "Stop instead of continuing with the first reading": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "stop"
+  },
   "Answer the old question": {
     "kind": "answer",
     "question_id": "current",

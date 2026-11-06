@@ -447,3 +447,46 @@ def test_selection_displacement_refuses_when_known_failed_units_alone_exceed_bud
     commit = head(repo, 0)
     with pytest.raises(HarnessInputError, match='Previously failing.*544.*500'):
         selected(repo, base, commit, limit=500, failures=(MODULE, earlier))
+
+
+@pytest.fixture
+def oversized_import_closure(frozen_repo):
+    repo, runs = frozen_repo
+    # PQ #3315/#3317/#3318/#3319 use selected_tests=300. Their exact closure
+    # counts were not retained; 600 singleton modules exceed the same 8 MiB estimate.
+    names = tuple(f'tests/test_import_{index:03}.py' for index in range(600))
+    for name in names:
+        (repo / name).write_text('from product import value\ndef test_value():\n    assert value() > 0\n')
+    historical = (MODULE, 'tests/test_companion.py')
+    for name in historical:
+        (repo / name).write_text('def test_historical():\n    assert True\n')
+    (repo / 'pyproject.toml').write_text(CONFIG + f'selection-groups=[{json.dumps(historical)}]\n')
+    base = save(repo, 'PQ-sized import closure and historical complete unit')
+    return repo, runs, base, head(repo), historical, names
+
+
+def test_pq_oversized_discovery_admits_bounded_complete_prefix(oversized_import_closure):
+    repo, runs, base, commit, historical, names = oversized_import_closure
+    with pytest.raises(ValueError, match='8388608-byte result limit'):
+        execution.validate_check_plan(PLAN + (Check(execution.SELECTED_CHECK, Kind.REGRESSION, names),))
+    results = selected(repo, base, commit, limit=300, failures=(MODULE,))
+    admitted = historical + names[:298]
+    result = results[-1]
+    assert result.verdict == Verdict.PASS
+    assert tuple(test.test for test in result.tests) == admitted
+    execution.validate_check_plan(PLAN + (Check(execution.SELECTED_CHECK, Kind.REGRESSION, admitted),))
+    receipt = json.loads(execution.result_json(results))[-1]['selection']
+    assert receipt['limit'] == receipt['charged_cases'] == 300
+    assert receipt['head_units'] == [list(historical)] + [[name] for name in names[:298]]
+    assert receipt['skipped_units'] == [[name] for name in names[298:]]
+    assert receipt['skipped_checked'] is False
+    assert receipt['saturation']['unit'] == [names[298]]
+    assert receipt['saturation']['remaining'] == 0
+    assert all(not set(tests).intersection(names[298:]) for _, tests in runs)
+
+
+def test_pq_genuinely_oversized_admission_still_refuses(oversized_import_closure):
+    repo, runs, base, commit, _, _ = oversized_import_closure
+    with pytest.raises(HarnessInputError, match='Selected execution groups exceed report limits:.*8388608-byte result limit'):
+        selected(repo, base, commit, limit=602, failures=(MODULE,))
+    assert not any(tree == 'head' and tests != (OTHER,) for tree, tests in runs)

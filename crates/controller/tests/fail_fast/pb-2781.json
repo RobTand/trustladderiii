@@ -1,0 +1,658 @@
+{
+  "repo": "RobTand/prismabuild",
+  "issue": 2781,
+  "request": "405",
+  "records": [
+    {
+      "trace": {
+        "trace_id": "tr-8864bf0c30f0f6531b694b60202ce2f4",
+        "request_time": "2026-11-05T22:41:22.166Z",
+        "execution_duration": "85.705s",
+        "state": "OK",
+        "tags": {
+          "repo": "RobTand/prismabuild",
+          "issue": "2781",
+          "request": "405",
+          "node": "405",
+          "generation": "0",
+          "role": "ingest",
+          "outcome": "succeeded",
+          "base_sha": "51054967483b1e94c61a63c0a1a92253d332366a"
+        }
+      },
+      "reply": {
+        "kind": "brief",
+        "brief": "[truncated: earlier text omitted]\n3. For execution, build the candidate record from the existing typed verdict: action_key, the legacy status, and `reported_returncode` as `returncode`. For supersession, use the action key, legacy status `superseded` and the existing ending exit value 76. Apply the one approved status mapping and the unchanged public view. Print fixed templates that use only the resulting approved fields.\n4. Omit these from the output: stdout/stderr payloads, claims, control, argv, reasons, withdrawn_by, attempt summaries, host, profile and resources, and superseded lineage. Use no raw headline helper and no raw error helper. `timeout` is not in the approved mapping, so it becomes `unknown`. Do not invent `timeout` to `timed_out`.\n5. Keep unchanged: canonical receipts, private cached replay, private identities, transport facts, replay results, reserved and negative exit behavior, private event order, and every exit value. Leave all direct and shared callers and the default renderer behavior unchanged. Do not parse human strings to choose behavior. Do not capture or rewrite public stdout. Add no new filter and no public-view extension.\n\nFOUR AUTHORED FILES (any extra authored file needs owner resplitting)\n- `tools/fleet/pbrun.py`: imports (lines 1-28), main selection and saved observers (479-514), cleanup (600-606).\n- `tests/test_pbrun_client_events.py`: migrate only two existing public output expectations and add two new nodes.\n- `docs/design.md` lines 21728-21737: record the run-only selection, the omitted fields, and the writer and test inventory.\n- `docs/operating_prismabuild.md` lines 1723-1733: correct only the pool-run worker-message and log-path promise (exit code 1 row: \"`pbrun` prints the worker's message and the log paths\") and the supersession-display promise (the 76 row). Keep every exit value and the pbwait description unchanged. Distinguish pool final rendering from SLURM and from the earlier submission displays.\nThe four authored paths match no protected pattern. Do not hand-edit generated BUILD files. The configured generator (`python3 tools/bazel/build_files.py`) may regenerate `tests/BUILD.bazel`.\n\nTEST WORK in `tests/test_pbrun_client_events.py` (verified present in the base)\n- `test_main_execution_facts_match_the_actual_interpreter_exit` (lines 41-65). The payload assertion at line 65 is `assert '\\nunchanged payload\\n' in output`. Replace it with independent approved status, key and returncode expectations. The `'timeout'` parameter case now expects `unknown`. Keep the withdrawn-prefix assertion on the earlier queued and superseded-withdrawal text. Keep the identity, transport_returncode, execution_timeout and exit assertions.\n- `test_pool_worker_cache_output_uses_the_adopted_fact_and_verified_cas` (lines 134-154). The raw announcement assertion at line 147 is `assert stdout in output`. Migrate it to approved status, key and returncode expectations. Keep the replay and exit assertions.\n- `test_main_cached_identity_replays_only_its_configured_verified_result` stays unchanged. The pool-final hook does not select it.\n- New nodes: `test_main_completed_pool_projection_omits_synthetic_private_values` and `test_main_completed_projection_keeps_private_receipt_and_replay_identity`. Use fake deterministic typed completed observations. Run them through the actual `main` and the real report dispatcher. Cover successful, failed, withdrawn or cancelled, and superseded observations. Assert independent approved values, private events, and immutable receipt bytes and digest. On the base, a synthetic sentinel must leak through the actual old final renderer. Do not plant the sentinel in the earlier submission withdrawal notice. That notice is outside this scope and prints before the callback. All fixtures are synthetic. Do not fabricate RED from a missing import or an unsupported constructor.\n- `test_pbrun_watches_failed`, `test_pbrun_withdraw`, `test_pbrun_exit_vocabulary` and `test_pbrun_bounded_pool_wait` use the unselected default dispatcher or the SLURM helper. Their public assertions must stay unchanged. If the maker finds any other outside test node that is coupled, report it for scope assignment. Do not edit it silently.\n- Existing test helpers: `pbrun_client_support` (`_setup`, `BOOTSTRAP`) and `test_verified_action_result` (`_finish`, `_publish_result`).\n\nPROOF AND EXECUTION RULES\n- Each behavior change needs a meaningful actual-writer base RED and a complete focused head GREEN.\n- Use \"H's exact two proof groups, plus `//tests:test_pbrun_cache_hit` in group 2\" to guard the unchanged SLURM path. Do not merge the two groups into one. I could not see H's group definitions. They come from #2780 and are unverified.\n- Run tests only through admitted PrismaBuild with the published entrypoints. Read the execution policy and the operating guide first. Reserve aggregate demand, bound native threads, keep the assigned affinity, and allow portable work on any eligible worker.\n- Read the actual terminal verdict, logs and CAS receipts, with allowlisted fields only. An acknowledgement is not a pass. Record skips and missing tools. Add no skips, retries or quarantine.\n- Source estimate: 54 of 56 operations. It is not an accepted forecast. A fresh fitting forecast is needed before the maker starts.\n- Capability gap: the run_tests receipt shows only the action key, exit status and digests. It does not show the command, the measured affinity or the resource details. So \"preserve assigned affinity\" and \"reserve aggregate demand\" cannot be shown as observed from receipts. Only native_threads_1 is a supported runner feature.\n\nRESIDUAL WRITES THAT THIS CHANGE MUST NOT CLAIM TO COVER\nThe change must not say that all stderr is projected. `submission.py` still emits the queued, withdrawal and SLURM display text. `action_client.py:679-684` can print archive-reader diagnostics during summary construction, before the renderer runs. Do not change or hide these. List them as follow-ups in the PR and in the design and operating paragraphs. The formal public-evidence Run documentation follows in a separate issue and does not block tests.\n\nDELIVERY\n- Independent Sol review is required.\n- Branch rule: `prismabuild-<issue>-tl3-<node>`. The supplied expansion is `prismabuild-2781-tl3-405`.\n- Open a non-draft PR. Its body has `Refs #2781`, exactly one `Change type: fix` line and the required attribution. The body ends with \"\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\".\n- Each commit message ends with \"Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\".\n- No runtime publication, service, queue, merge or restart is authorized. Before any future publication, PQ Gateway.submit and both SLURM smoke readers need explicit compatibility clearance. Free remote compute exceptions and CI ownership stay with Rob.\n- Carry the exact writer and test inventory and all residual unconverted writes in the PR and in the named design and operating paragraphs.\n\nUNCERTAINTY\n- `pool_renderer`, the approved status mapping and the proof group definitions are not in the base. They come from #2780 and the withdrawal leaf. I could not verify them.\n- I did not read the design.md and operating_prismabuild.md paragraphs in full. The cited line ranges were only partly visible.\n- The second prerequisite (the withdrawal JSON leaf) has no issue number. It is not listed as a structured merge prerequisite.\n- No test has run for this scope analysis.\n\nGenerated outputs: tests/BUILD.bazel. Never hand-edit generated outputs. When generator_available is true, change generator inputs and call run_generator before checks. Otherwise report missing generation capability. Gate still independently verifies the final head. Read only relevant regions.\n\nThese declared files are too large to read whole. Read them by range with read's offset and limit, or find lines with grep first, and change them with edit's unique exact-text replacement: docs/design.md (1520110 bytes); docs/operating_prismabuild.md (450573 bytes).",
+        "goals": [
+          {
+            "description": "In tools/fleet/pbrun.py main(), select a pbrun-owned `pool_renderer` on the report object only when the caller has not set one. Save the field and restore it in `finally`, as `on_event` is handled now. Set no global callback. An explicit embedding callback stays owned by its caller. The default CLI report gets the public formatter. Leave the shared default renderer `action_client.render_pool_outcome` and all direct and shared callers unchanged.",
+            "stage": "maker",
+            "verification": "test"
+          },
+          {
+            "description": "Add a local pool-final formatter in tools/fleet/pbrun.py next to the existing pbrun writers. It handles only `action_wait.Ready` outcomes (verified execution and `PublicationSupersession`). It delegates every non-Ready outcome to the unchanged `action_client.render_pool_outcome`. It installs no notice hook.",
+            "stage": "maker",
+            "verification": "test"
+          },
+          {
+            "description": "Make the formatter build its candidate record from the existing typed verdict. For execution use action_key, the legacy status and `reported_returncode` as `returncode`. For supersession use the action key, legacy status `superseded` and the existing ending exit 76. Apply the one approved status mapping (from #2780) and the unchanged public view. Print fixed templates that use only the resulting approved fields. `timeout` is not in the mapping and must become `unknown`. Do not invent `timeout` to `timed_out`. Omit stdout/stderr payloads, claims, control, argv, reasons, withdrawn_by, attempt summaries, host/profile/resources and superseded lineage. Use no raw headline helper and no raw error helper. Do not parse human strings. Do not capture or rewrite public stdout.",
+            "stage": "maker",
+            "verification": "test"
+          },
+          {
+            "description": "Keep unchanged: private identities, transport facts, replay results, exit decisions (reserved and negative exit behavior), canonical receipt bytes and hashes, private cached replay, and private event order. Add no new filter and no public-view extension. The cached detached path `test_main_cached_identity_replays_only_its_configured_verified_result` and the tests `test_pbrun_watches_failed`, `test_pbrun_withdraw`, `test_pbrun_exit_vocabulary` and `test_pbrun_bounded_pool_wait` keep their public assertions unchanged. Do not change or hide the earlier queued, withdrawal and SLURM displays from submission.py, or the archive-reader diagnostics at action_client.py:679-684.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "In tests/test_pbrun_client_events.py, migrate only two existing public output expectations to independent approved status, key and returncode expectations. These are the payload assertion at line 65 in `test_main_execution_facts_match_the_actual_interpreter_exit` and the raw announcement assertion at line 147 in `test_pool_worker_cache_output_uses_the_adopted_fact_and_verified_cas`. Keep the private identity, transport, replay, exit and receipt assertions and the earlier queued and superseded-withdrawal prefix assertions unchanged. The `timeout` case expects `unknown`. If another outside test node is coupled, report it for scope assignment and do not edit it.",
+            "stage": "maker",
+            "verification": "test"
+          },
+          {
+            "description": "Add the planned nodes `test_main_completed_pool_projection_omits_synthetic_private_values` and `test_main_completed_projection_keeps_private_receipt_and_replay_identity` to tests/test_pbrun_client_events.py. Use fake deterministic typed completed observations that go through the actual main and the real report dispatcher. Cover successful, failed, withdrawn or cancelled, and superseded observations. Assert independent approved values, private events, and immutable receipt bytes and digest. All fixtures are synthetic. On the base, a synthetic sentinel must leak through the actual old final renderer. Do not plant the sentinel in the earlier submission withdrawal notice. Do not create RED from a missing import or an unsupported constructor.",
+            "stage": "maker",
+            "verification": "test",
+            "proof_obligation": {
+              "kind": "assertion",
+              "observer": "new",
+              "subjects": [
+                "tools/fleet/pbrun.py"
+              ],
+              "source": "issue.body",
+              "quote": "Planned nodes in the same file: `test_main_completed_pool_projection_omits_synthetic_private_values` and `test_main_completed_projection_keeps_private_receipt_and_replay_identity`. Use fake deterministic typed completed observations selected through actual main and the real report dispatcher."
+            }
+          },
+          {
+            "description": "Edit docs/design.md (lines 21728-21737) to record the run-only selection, the omitted fields, and the writer and test inventory. Include the residual unconverted writes as follow-ups: submission.py queued, withdrawal and SLURM Display text, and the archive-reader diagnostics at action_client.py:679-684. Do not claim that all stderr is projected.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "Edit docs/operating_prismabuild.md (lines 1723-1733) to correct only the pool-run worker-message and log-path promise and the supersession-display promise. Keep every exit value and the pbwait description unchanged. Say clearly that pool final rendering differs from SLURM and from the earlier submission displays.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "Do not hand-edit generated BUILD files. If generated outputs such as tests/BUILD.bazel change, produce them with the configured generator (`python3 tools/bazel/build_files.py`) through run_generator. Inspect the configured generated output. Change no authored file other than the four named files.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "Independent controller proof through admitted PrismaBuild run_tests, with native threads bounded to 1. Show a meaningful actual-writer base RED and a complete focused head GREEN for each behavior change. Use H's exact two proof groups (from #2780) and add `//tests:test_pbrun_cache_hit` in group 2 to guard the unchanged SLURM path. Read the actual terminal verdict, logs and CAS receipts, with allowlisted fields only. Add no skips, retries or quarantine, and record any skip or missing tool.",
+            "stage": "checking",
+            "verification": "test"
+          },
+          {
+            "description": "Independent Sol review of the diff. Check that: only approved fields are rendered; the omitted fields are really omitted; non-Ready outcomes use the unchanged shared renderer; the field is restored in `finally`; no global callback exists; private identities, receipt bytes and exit values are unchanged; and the docs state the residual unconverted writes truthfully.",
+            "stage": "checking",
+            "verification": "review"
+          },
+          {
+            "description": "Publish on a branch that follows the PB issue-link rule `prismabuild-<issue>-tl3-<node>` (supplied expansion `prismabuild-2781-tl3-405`). Open a non-draft PR whose body has `Refs #2781`, exactly one `Change type: fix` line and the required attribution, and ends with the Claude Code generated line. Each commit ends with the Co-Authored-By trailer \"Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\". Carry the exact writer and test inventory and the residual unconverted writes in the PR. Do not publish a runtime, change services or the queue, merge, or restart.",
+            "stage": "publishing",
+            "verification": "review",
+            "publication": {
+              "branch_prefix": "prismabuild-2781-tl3-",
+              "non_draft": true,
+              "body_lines": [
+                "Refs #2781",
+                "Change type: fix",
+                "\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)"
+              ],
+              "proof": true
+            }
+          }
+        ],
+        "evidence_contract": [
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1",
+              "base_head"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "red_green",
+              "head"
+            ],
+            "protected_files": [],
+            "requirement": "Run development tests only through admitted PrismaBuild. Show a meaningful actual-writer base RED and a complete focused head GREEN for each behavior change, with native threads bounded. Read the actual terminal verdict, logs and CAS receipts.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Each behavior change needs a meaningful actual-writer base RED and complete focused head GREEN"
+            }
+          },
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "head"
+            ],
+            "protected_files": [],
+            "requirement": "Run H's exact two proof groups as two real groups, and add //tests:test_pbrun_cache_hit in group 2 to guard the unchanged SLURM path. The group definitions come from #2780 and are unverified here.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Use H's exact two proof groups, plus `//tests:test_pbrun_cache_hit` in group 2 to guard the unchanged SLURM path."
+            }
+          },
+          {
+            "tool": "run_generator",
+            "executor": "prismabuild_generator",
+            "runner_features": [],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "output_tree",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "configured_generation"
+            ],
+            "protected_files": [],
+            "requirement": "Regenerate tests/BUILD.bazel and other generated files with the configured generator if the change needs it. Do not hand-edit generated outputs.",
+            "provenance": {
+              "kind": "method"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "trace": {
+        "trace_id": "tr-4713916b573e16deb27cd3de233b6fe8",
+        "request_time": "2026-11-05T22:43:15.868Z",
+        "execution_duration": "60.860s",
+        "state": "OK",
+        "tags": {
+          "repo": "RobTand/prismabuild",
+          "issue": "2781",
+          "request": "405",
+          "node": "405",
+          "generation": "1",
+          "role": "audit",
+          "outcome": "succeeded",
+          "base_sha": "51054967483b1e94c61a63c0a1a92253d332366a"
+        }
+      },
+      "reply": {
+        "verdict": "disagree",
+        "objections": [
+          "The publication contract turns the exact branch name into a prefix. The structured field has only `branch_prefix` set to `prismabuild-2781-tl3-`. The issue says TL3 uses `prismabuild-<issue>-tl3-<node>`. The goal text names `prismabuild-2781-tl3-405`. Keep the exact branch and its issue quote in the structured contract.",
+          "The structured publication contract drops original wording. `body_lines` lacks the required attribution. The commit trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` appears only in goal prose. Put the full original wording in the structured contract.",
+          "The only proof_obligation is on the two new test nodes. It has no `red_message`. It has no explicit observer_support partition. The brief needs an assertion RED with an exact message before execution. The issue says a synthetic sentinel must leak through the actual old final renderer on base. State that leak as the RED. A missing import or an unsupported constructor is not accepted.",
+          "The two migrated assertions have no proof obligation. They are the payload assertion at line 65 and the raw announcement assertion at line 147. Both change expected public output. Each needs an actual-writer base RED. The `timeout` to `unknown` case needs its own RED.",
+          "The brief depends on facts outside the base. These are `pool_renderer`, the approved status mapping, the withdrawal leaf's status table and H's two proof groups. I grepped `src/prismabuild`. It has no `pool_renderer`. The brief marks these as unverified. That is correct. The second prerequisite has no issue number. It cannot be a structured merge prerequisite. Only #2780 is recorded, and its quote matches the issue. The maker must not invent the mapping or the groups. The maker must report any gap that remains after #2780 merges.",
+          "The forecast has `fits: false` at 102597 tokens against a limit of 100000. The issue requires a fresh fitting forecast before the maker starts. The brief should state this as a blocker. The maker must read `docs/design.md` and `docs/operating_prismabuild.md` by range only.",
+          "The evidence contract lacks a label for the generator step. It should say that `tests/BUILD.bazel` is regenerated only with the configured generator. This is a source rule, not a method choice. The configured generator is `python3 tools/bazel/build_files.py`."
+        ],
+        "evidence_contract": [
+          {
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "logs",
+              "terminal_verdict"
+            ],
+            "executor": "prismabuild_pytest",
+            "methods": [
+              "red_green",
+              "head"
+            ],
+            "protected_files": [],
+            "provenance": {
+              "kind": "source",
+              "quote": "Each behavior change needs a meaningful actual-writer base RED and complete focused head GREEN",
+              "source": "issue.body"
+            },
+            "requirement": "Run development tests only through admitted PrismaBuild. Show a meaningful actual-writer base RED and a complete focused head GREEN for each behavior change, with native threads bounded. Read the actual terminal verdict, logs and CAS receipts.",
+            "runner_features": [
+              "native_threads_1",
+              "base_head"
+            ],
+            "tool": "run_tests"
+          },
+          {
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "logs",
+              "terminal_verdict"
+            ],
+            "executor": "prismabuild_pytest",
+            "methods": [
+              "head"
+            ],
+            "protected_files": [],
+            "provenance": {
+              "kind": "source",
+              "quote": "Use H's exact two proof groups, plus `//tests:test_pbrun_cache_hit` in group 2 to guard the unchanged SLURM path.",
+              "source": "issue.body"
+            },
+            "requirement": "Run H's exact two proof groups as two real groups, and add //tests:test_pbrun_cache_hit in group 2 to guard the unchanged SLURM path. The group definitions come from #2780 and are unverified here.",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "tool": "run_tests"
+          },
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1",
+              "base_head"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "red_green",
+              "head"
+            ],
+            "protected_files": [],
+            "requirement": "Run development tests only through admitted PrismaBuild. Show a meaningful actual-writer base RED and a complete focused head GREEN for each behavior change. Bound native threads. Read the actual terminal verdict, logs and CAS receipts.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Each behavior change needs a meaningful actual-writer base RED and complete focused head GREEN"
+            }
+          },
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "head"
+            ],
+            "protected_files": [],
+            "requirement": "Run H's exact two proof groups as two real groups. Add //tests:test_pbrun_cache_hit in group 2 to guard the unchanged SLURM path. The group definitions come from #2780 and are unverified.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Use H's exact two proof groups, plus `//tests:test_pbrun_cache_hit` in group 2 to guard the unchanged SLURM path."
+            }
+          },
+          {
+            "tool": "run_generator",
+            "executor": "prismabuild_generator",
+            "runner_features": [],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "input_tree",
+              "output_tree",
+              "artifact_sha256",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "configured_generation"
+            ],
+            "protected_files": [],
+            "requirement": "Regenerate tests/BUILD.bazel and other generated files only with the configured generator. Do not hand-edit generated outputs.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Don't hand-edit generated BUILD files; TL3's configured generator may regenerate tests/BUILD.bazel and other generated_files as part of this change."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "trace": {
+        "trace_id": "tr-7618154f3e1ff3a3400d037e071031c4",
+        "request_time": "2026-11-05T22:44:42.910Z",
+        "execution_duration": "125.957s",
+        "state": "OK",
+        "tags": {
+          "repo": "RobTand/prismabuild",
+          "issue": "2781",
+          "request": "405",
+          "node": "405",
+          "generation": "2",
+          "role": "ingest",
+          "outcome": "succeeded",
+          "base_sha": "51054967483b1e94c61a63c0a1a92253d332366a"
+        }
+      },
+      "reply": {
+        "kind": "brief",
+        "brief": "[truncated: earlier text omitted]\n- `ClientExecution` is built in `_pool_client_verdict` from `summary['status']` and `detail` values. I did not confirm a field called `reported_returncode` in the base. Check this after #2780.\n- `Ready(value, generation)` is in src/prismabuild/action_wait.py:145.\n- tests/test_pbrun_client_events.py runs `pbrun` code through a subprocess BOOTSTRAP from tests/pbrun_client_support.py with `_run(...)`. I did not read that helper. The maker must confirm that the tested path reaches the real `pbrun.main` and the real report dispatcher.\n\nTESTS TO CHANGE (exact nodes from the issue)\n- `test_main_execution_facts_match_the_actual_interpreter_exit` (lines 41-65): migrate only the payload assertion at line 65. On base it reads `assert '\\nunchanged payload\\n' in output`. Replace it with independent approved status, key and returncode expectations. The `timeout` parameter case (`execution-timeout`) must expect `unknown`.\n- `test_pool_worker_cache_output_uses_the_adopted_fact_and_verified_cas` (lines 134-154): migrate only the raw announcement assertion at line 147. On base it reads `assert stdout in output`. Replace it with independent approved status, key and returncode expectations.\n- Keep unchanged in both tests: private identities, transport facts, replay results, reserved and negative exit behavior, receipt checks, and the earlier queued and superseded-withdrawal prefix assertions (those come from separate submission Display writers).\n- Add `test_main_completed_pool_projection_omits_synthetic_private_values` and `test_main_completed_projection_keeps_private_receipt_and_replay_identity` in the same file. They use fake deterministic typed completed observations that go through actual `main` and the real report dispatcher. Cover successful, failed, withdrawn or cancelled, and superseded observations. Assert independent approved values, private events, and immutable receipt bytes and digest. All fixtures are synthetic. Do not plant the synthetic sentinel in the earlier submission withdrawal notice. That notice is outside F and would print the sentinel before the callback.\n- Do not edit: `test_pbrun_watches_failed`, `test_pbrun_withdraw`, `test_pbrun_exit_vocabulary`, `test_pbrun_bounded_pool_wait`, and `test_main_cached_identity_replays_only_its_configured_verified_result`. Their public assertions stay unchanged. If the maker finds another coupled node outside the named files, report it for scope assignment. Do not edit it silently.\n\nRED RULE (from the issue)\nEach behavior change needs a meaningful actual-writer base RED and a complete focused head GREEN. Base must leak a synthetic sentinel through the actual old final renderer. A missing import or an unsupported constructor is not accepted as RED. The failing assertion must carry an explicit message, set before execution. Use the message prefix \"old pool renderer leaked\" and name the leaked item (the sentinel, the raw payload, the raw announcement, or the raw `timeout` status). Separate REDs are needed for: the new omission test, the payload assertion at line 65, the announcement assertion at line 147, and the `timeout` to `unknown` case.\n\nDOCS\n- docs/design.md: the issue cites lines 21728-21737. At base those lines describe an unrelated capture record, not pbrun. The cited range will also shift on the fresh main base. The maker must find the right pbrun paragraph. Record there the run-only selection, the omitted fields, and the writer and test inventory. If no fitting paragraph exists, report that.\n- docs/operating_prismabuild.md: the issue cites lines 1723-1733. At base those lines hold the Exit codes table. Row 1 promises that `pbrun` prints \"the worker's message and the log paths\". Row 76 describes supersession. Correct only the pool-run worker-message and log-path promise and the supersession-display promise. Keep every exit value and every pbwait description unchanged. Say clearly that pool final rendering differs from SLURM and from earlier submission displays.\n- Do not claim that all stderr is projected. Inventory these residual writes as follow-ups (unverified, from the issue): `submission.py` still emits queued, withdrawal and SLURM Display text. `action_client.py:679-684` can print archive-reader diagnostics during summary construction before the renderer. Do not change or hide them in F. Carry the inventory in the design paragraph and in the PR. Formal public-evidence Run documentation may be deferred.\n\nSCOPE\nFour authored files only: tools/fleet/pbrun.py, tests/test_pbrun_client_events.py, docs/design.md, docs/operating_prismabuild.md. None matches a protected path. An extra authored file needs owner resplitting. No public stdout capture or rewrite. No parsing of human strings to choose behavior. No shared default renderer change. No new filter or public-view extension. Preserve q42's private channel and shared-wait-text boundaries.\n\nGENERATION\nDo not hand-edit generated BUILD files. Regenerate tests/BUILD.bazel and the other generated files only with the configured generator `python3 tools/bazel/build_files.py` (generated_files: BUILD.bazel, src/prismabuild/BUILD.bazel, tools/BUILD.bazel, tests/BUILD.bazel). Reserve one generation and four configured generated-output inspections.\n\nPROOF AND EXECUTION (from the issue)\nRun development tests only through admitted PrismaBuild with the published entrypoints. Read the execution policy and operating guide first. Reserve aggregate demand. Bound native threads. Preserve assigned affinity. Allow portable work on any eligible worker. Read the actual terminal verdict, logs and CAS receipts with allowlisted fields only. An acknowledgement is not a pass. Record skips and missing tools. Add no skips, retries or quarantine. Use H's exact two proof groups, plus `//tests:test_pbrun_cache_hit` in group 2 to guard the unchanged SLURM path. These are two real groups. H's group contents are unverified and come from #2780. Source estimate: 54/56 operations. This is not an accepted forecast.\nCapability gap: the run_tests receipt shows only the action key, exit status, and receipt and log digests. It does not show the command, the measured affinity, or resource details. Do not report affinity or reserved demand as observed.\n\nDELIVERY (from the issue)\nRequire independent Sol review. Branch: `prismabuild-2781-tl3-405` (the issue gives the pattern `prismabuild-<issue>-tl3-<node>`; the generated name for this request is `prismabuild-2781-tl3-405`). Open the PR non-draft with `Refs #2781` and exactly one `Change type: fix` line. PR bodies end with \"\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\". Commits end with \"Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\". No runtime publication, services, queue, merge or restart is authorized. Before future publication, PQ Gateway.submit and both SLURM smoke readers need explicit compatibility clearance. Free remote compute exceptions and CI ownership remain Rob's policy.\n\nUNFINISHED OR UNCERTAIN\nNo test ran. I did not read the full tests/test_pbrun_client_events.py, tests/pbrun_client_support.py, endings.py, or the middle of tools/fleet/pbrun.py. Whether `pool_renderer` is a field on `ClientReport` or elsewhere is unknown until #2780 merges. The contents of H's proof groups and of the approved status mapping are unknown.\n\nGenerated outputs: tests/BUILD.bazel. Never hand-edit generated outputs. When generator_available is true, change generator inputs and call run_generator before checks. Otherwise report missing generation capability. Gate still independently verifies the final head. Read only relevant regions.\n\nThese declared files are too large to read whole. Read them by range with read's offset and limit, or find lines with grep first, and change them with edit's unique exact-text replacement: docs/design.md (1520110 bytes); docs/operating_prismabuild.md (450573 bytes).",
+        "goals": [
+          {
+            "description": "Maker: in tools/fleet/pbrun.py, add a local public formatter for completed pool runs. In main, select it as the report's `pool_renderer` only when the caller gave none. Save the field and restore it in `finally`, as `on_event` is handled. Set no global callback. The formatter handles only `action_wait.Ready` (VerifiedExecution and PublicationSupersession). It sends every non-Ready outcome to the unchanged `action_client.render_pool_outcome`. It installs no notice hook. It builds the candidate record from the typed verdict (action_key, legacy status, reported_returncode as returncode; for supersession: key, status superseded, exit 76). It applies the one approved status mapping and the unchanged public view, and prints fixed templates from the approved fields only. It omits stdout and stderr payloads, claims, control, argv, reasons, withdrawn_by, attempt summaries, host, profile, resources and superseded lineage. It uses no raw headline or error helper. `timeout` becomes `unknown`. If the approved mapping or `pool_renderer` is missing after #2780 merges, report the gap and do not invent it.",
+            "stage": "maker",
+            "verification": "test"
+          },
+          {
+            "description": "Maker: leave unchanged the private identities, transport facts, exit decisions and values, canonical receipt bytes and hashes, private cached replay, private event order, the default renderer, and all direct and shared callers. Do not edit src/prismabuild/action_client.py, src/prismabuild/submission.py, or the tests named as unchanged: `test_pbrun_watches_failed`, `test_pbrun_withdraw`, `test_pbrun_exit_vocabulary`, `test_pbrun_bounded_pool_wait`, `test_main_cached_identity_replays_only_its_configured_verified_result`. Do not capture or rewrite public stdout. Do not parse human strings to choose behavior. Add no new filter and no public-view extension. If an outside node needs a change, report it for scope assignment.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "Maker: in tests/test_pbrun_client_events.py, add `test_main_completed_pool_projection_omits_synthetic_private_values` and `test_main_completed_projection_keeps_private_receipt_and_replay_identity`. Use fake deterministic typed completed observations. Run them through actual `main` and the real report dispatcher. Cover successful, failed, withdrawn or cancelled, and superseded observations. Assert independent approved values, private events, and immutable receipt bytes and digest. Use synthetic fixtures only. Do not plant the sentinel in the earlier submission withdrawal notice. On base, the sentinel must leak through the actual old final renderer, and the failing assertion must carry a message that starts with \"old pool renderer leaked\" and names the sentinel. A missing import or an unsupported constructor is not accepted as RED.",
+            "stage": "maker",
+            "verification": "test",
+            "proof_obligation": {
+              "kind": "assertion",
+              "observer": "new",
+              "subjects": [
+                "tools/fleet/pbrun.py::main"
+              ],
+              "source": "issue.body",
+              "quote": "Base must leak a synthetic sentinel through the actual old final renderer."
+            }
+          },
+          {
+            "description": "Maker: in `test_main_execution_facts_match_the_actual_interpreter_exit`, migrate only the payload assertion at line 65 (`assert '\\nunchanged payload\\n' in output`) to independent approved status, key and returncode expectations. Keep every other assertion unchanged. On base, the actual old final renderer must print the payload, and the migrated assertion must fail with a message that starts with \"old pool renderer leaked\". Head must pass for all parameter cases.",
+            "stage": "maker",
+            "verification": "test",
+            "proof_obligation": {
+              "kind": "assertion",
+              "observer": "any",
+              "subjects": [
+                "tools/fleet/pbrun.py::main"
+              ],
+              "source": "issue.body",
+              "quote": "Each behavior change needs a meaningful actual-writer base RED and complete focused head GREEN"
+            }
+          },
+          {
+            "description": "Maker: in `test_pool_worker_cache_output_uses_the_adopted_fact_and_verified_cas`, migrate only the raw announcement assertion at line 147 (`assert stdout in output`) to independent approved status, key and returncode expectations. Keep the replay, receipt, identity and exit assertions unchanged. On base, the actual old final renderer must print the raw announcement, and the migrated assertion must fail with a message that starts with \"old pool renderer leaked\". Head must pass for the unique, duplicate and forged cases.",
+            "stage": "maker",
+            "verification": "test",
+            "proof_obligation": {
+              "kind": "assertion",
+              "observer": "any",
+              "subjects": [
+                "tools/fleet/pbrun.py::main"
+              ],
+              "source": "issue.body",
+              "quote": "Each behavior change needs a meaningful actual-writer base RED and complete focused head GREEN"
+            }
+          },
+          {
+            "description": "Maker: the `timeout` parameter case (`execution-timeout`, status timeout, returncode 1, expected exit 1) must now expect the public status `unknown`, not `timeout` and not `timed_out`. It needs its own base RED from the actual old final renderer, with a message that starts with \"old pool renderer leaked\" and names the raw timeout status. The exit value 1 and `execution_timeout` assertions stay unchanged.",
+            "stage": "maker",
+            "verification": "test",
+            "proof_obligation": {
+              "kind": "assertion",
+              "observer": "any",
+              "subjects": [
+                "tools/fleet/pbrun.py::main"
+              ],
+              "source": "issue.body",
+              "quote": "`timeout` is not in the approved mapping and becomes unknown; do not silently invent timeout->timed_out."
+            }
+          },
+          {
+            "description": "Maker: in docs/design.md, find the pbrun paragraph near the cited lines (21728-21737 at the issue's base; they may have moved). Record the run-only selection, the omitted fields, and the writer and test inventory. Include the residual unconverted writes as follow-ups: submission.py queued, withdrawal and SLURM Display text, and archive-reader diagnostics at action_client.py:679-684 (unverified). Do not claim that all stderr is projected. If no fitting paragraph exists, report it. Read the file by line range only.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "Maker: in docs/operating_prismabuild.md (cited lines 1723-1733, the Exit codes table), correct only the pool-run worker-message and log-path promise and the supersession-display promise. Keep every exit value and every pbwait description unchanged. Say that pool final rendering differs from SLURM and from earlier submission displays. Read the file by line range only.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "Maker: keep the change inside the four authored files. Do not hand-edit generated BUILD files. Regenerate generated outputs, including tests/BUILD.bazel, only with the configured generator `python3 tools/bazel/build_files.py` through run_generator, before the checks. Inspect the four configured generated outputs. An extra authored file needs owner resplitting, so report it. Record skips and missing tools. Add no skips, retries or quarantine.",
+            "stage": "maker",
+            "verification": "review"
+          },
+          {
+            "description": "Checking: independent controller proof through admitted PrismaBuild. Run H's exact two proof groups (contents come from #2780 and are unverified), with `//tests:test_pbrun_cache_hit` added to group 2 to guard the unchanged SLURM path. Show base RED for each new or migrated assertion and complete focused head GREEN. Read the terminal verdict, logs and CAS receipts. Native threads must be bounded. If H's groups or the approved mapping are missing, report that gap and do not substitute other groups.",
+            "stage": "checking",
+            "verification": "test"
+          },
+          {
+            "description": "Checking: independent Sol review of the diff against the brief. Check that private identities, exit values, receipt bytes and event order are unchanged. Check that no omitted field can reach the public output. Check that no stdout capture, string parsing, shared renderer change or new filter exists. Check that the docs claim no more than is true.",
+            "stage": "checking",
+            "verification": "review"
+          },
+          {
+            "description": "Publishing: push branch `prismabuild-2781-tl3-405` and open a non-draft PR in RobTand/prismabuild. The body has `Refs #2781`, exactly one `Change type: fix` line, and ends with \"\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\". Every commit ends with \"Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\". The PR carries the writer and test inventory and the residual unconverted writes. No runtime publication, service, queue, merge or restart.",
+            "stage": "publishing",
+            "verification": "review",
+            "publication": {
+              "branch": "prismabuild-2781-tl3-405",
+              "non_draft": true,
+              "body_lines": [
+                "Refs #2781",
+                "Change type: fix",
+                "\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)",
+                "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+              ],
+              "proof": true
+            }
+          }
+        ],
+        "evidence_contract": [
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "sha",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "red_green"
+            ],
+            "protected_files": [],
+            "requirement": "Run development tests only through admitted PrismaBuild with native threads bounded. Show base RED and head GREEN for the new and migrated assertions. Run H's two proof groups plus //tests:test_pbrun_cache_hit in group 2. Read the terminal verdict, logs and CAS receipts. The receipt does not show the command, affinity or resource details, so those cannot be reported as observed.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Run development tests only through admitted PrismaBuild with the published entrypoints"
+            }
+          },
+          {
+            "tool": "run_generator",
+            "executor": "prismabuild_generator",
+            "runner_features": [],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "input_tree",
+              "output_tree",
+              "artifact_sha256",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "configured_generation"
+            ],
+            "protected_files": [],
+            "requirement": "Regenerate tests/BUILD.bazel and other generated files only with the configured generator `python3 tools/bazel/build_files.py`. Do not hand-edit generated files.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "TL3's configured generator may regenerate tests/BUILD.bazel and other generated_files as part of this change."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "trace": {
+        "trace_id": "tr-a2e346a0a53462f402d840e7064dfade",
+        "request_time": "2026-11-05T22:47:11.595Z",
+        "execution_duration": "48.394s",
+        "state": "OK",
+        "tags": {
+          "repo": "RobTand/prismabuild",
+          "issue": "2781",
+          "request": "405",
+          "node": "405",
+          "generation": "3",
+          "role": "audit",
+          "outcome": "succeeded",
+          "base_sha": "51054967483b1e94c61a63c0a1a92253d332366a"
+        }
+      },
+      "reply": {
+        "verdict": "disagree",
+        "objections": [
+          "The brief states a blocker that the forecast does not support. It says the forecast shows fits=false at 102597 tokens against a limit of 100000, and that the maker must not start. The supplied forecast shows 97954 tokens, fit_tokens 100000 and fits=true. The brief invents a stop condition. Remove it. The brief may still tell the maker to read docs/design.md and docs/operating_prismabuild.md by line range only.",
+          "The publishing goal puts the Co-Authored-By line in the PR body_lines after the Generated line. The issue says PR bodies end with '\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)'. The issue says commits, not PR bodies, end with 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'. As written, the PR body would not end with the required line. Move the Co-Authored-By line to the commit requirement.",
+          "The brief says it did not confirm a field named `reported_returncode` in the base. The field exists. `ClientExecution` has `reported_returncode: int` at src/prismabuild/action_client.py:143. tests/test_pbrun_client_events.py:188 asserts it. State this fact in the brief. Do not leave the maker to doubt it. The brief is correct that `pool_renderer` does not exist in the base. The merge prerequisite #2780 matches the issue quote 'Merge prerequisite: #2780.'"
+        ],
+        "evidence_contract": [
+          {
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "sha",
+              "logs",
+              "terminal_verdict"
+            ],
+            "executor": "prismabuild_pytest",
+            "methods": [
+              "red_green"
+            ],
+            "protected_files": [],
+            "provenance": {
+              "kind": "source",
+              "quote": "Run development tests only through admitted PrismaBuild with the published entrypoints",
+              "source": "issue.body"
+            },
+            "requirement": "Run development tests only through admitted PrismaBuild with native threads bounded. Show base RED and head GREEN for the new and migrated assertions. Run H's two proof groups plus //tests:test_pbrun_cache_hit in group 2. Read the terminal verdict, logs and CAS receipts. The receipt does not show the command, affinity or resource details, so those cannot be reported as observed.",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "tool": "run_tests"
+          },
+          {
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "input_tree",
+              "output_tree",
+              "artifact_sha256",
+              "logs",
+              "terminal_verdict"
+            ],
+            "executor": "prismabuild_generator",
+            "methods": [
+              "configured_generation"
+            ],
+            "protected_files": [],
+            "provenance": {
+              "kind": "source",
+              "quote": "TL3's configured generator may regenerate tests/BUILD.bazel and other generated_files as part of this change.",
+              "source": "issue.body"
+            },
+            "requirement": "Regenerate tests/BUILD.bazel and other generated files only with the configured generator `python3 tools/bazel/build_files.py`. Do not hand-edit generated files.",
+            "runner_features": [],
+            "tool": "run_generator"
+          },
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "sha",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "red_green"
+            ],
+            "protected_files": [],
+            "requirement": "Run development tests only through admitted PrismaBuild with native threads bounded. Show a base RED and a head GREEN for each new and migrated assertion. Read the terminal verdict, logs and CAS receipts. The receipt does not show the command, affinity or resource details, so do not report them as observed.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Run development tests only through admitted PrismaBuild with the published entrypoints"
+            }
+          },
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "sha",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "red_green"
+            ],
+            "protected_files": [],
+            "requirement": "Each behavior change needs an actual-writer base RED through the old final renderer and a complete focused head GREEN. Do not accept a missing import or an unsupported constructor as RED.",
+            "provenance": {
+              "kind": "source",
+              "source": "issue.body",
+              "quote": "Each behavior change needs a meaningful actual-writer base RED and complete focused head GREEN"
+            }
+          },
+          {
+            "tool": "run_tests",
+            "executor": "prismabuild_pytest",
+            "runner_features": [
+              "native_threads_1"
+            ],
+            "artifacts": [
+              "action_key",
+              "cas_receipt",
+              "logs",
+              "terminal_verdict"
+            ],
+            "methods": [
+              "subject_observer"
+            ],
+            "protected_files": [],
+            "requirement": "Use the subject/observer partition. The observers are the new and migrated tests in tests/test_pbrun_client_events.py. The subject is tools/fleet/pbrun.py::main. Set the RED message prefix 'old pool renderer leaked' before execution.",
+            "provenance": {
+              "kind": "method"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

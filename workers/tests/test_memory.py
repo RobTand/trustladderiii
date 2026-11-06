@@ -23,6 +23,11 @@ def test_every_role_reports_durable_activity_and_reply(tmp_path, monkeypatch, na
 
     role = replace(ROLES["audit"], name=name, tools={"read": "Read", "write": "Write"},
                    run=role_run, check_reply=None)
+    if name == "planner":
+        role = replace(role, run=None)
+        monkeypatch.setattr(runtime, "build_agent", lambda model, role, worktree, **kwargs: worktree)
+        monkeypatch.setattr(runtime, "_run_agent", lambda agent, history, emit:
+                            json.dumps(role_run(None, None, agent, emit)))
     monkeypatch.setitem(ROLES, name, role)
     monkeypatch.setattr(runtime, "create_model", lambda request: object())
     summary = tmp_path / "memory.json"

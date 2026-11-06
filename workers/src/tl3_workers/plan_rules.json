@@ -1,0 +1,482 @@
+{
+  "plan.code_evidence": {
+    "class": "other",
+    "footprint": "CODE"
+  },
+  "plan.execution_owned": {
+    "class": "other",
+    "footprint": "CODE"
+  },
+  "leaf.must_split": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "leaf.files_empty": {
+    "class": "other",
+    "footprint": "FILES_FILL"
+  },
+  "leaf.design_open": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "leaf.not_independent": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "proof.file_missing": {
+    "class": "other",
+    "footprint": "PROOF_FILE"
+  },
+  "check.forcing_kind": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.invalid_wrapper": {
+    "class": "other",
+    "footprint": "FORCING_RULE"
+  },
+  "check.tests_empty": {
+    "class": "other",
+    "footprint": "TESTS_FILL"
+  },
+  "check.goals_empty": {
+    "class": "other",
+    "footprint": "GOAL_ADD"
+  },
+  "check.base_file_large": {
+    "class": "size_execution_fit",
+    "footprint": "NONE"
+  },
+  "check.base_missing": {
+    "class": "other",
+    "footprint": "BASE_SELECT"
+  },
+  "check.goal_unknown": {
+    "class": "other",
+    "footprint": "GOAL_DROP"
+  },
+  "goal.coverage": {
+    "class": "other",
+    "footprint": "COVERAGE"
+  },
+  "split.goal_empty": {
+    "class": "other",
+    "footprint": "PIECE_GOALS"
+  },
+  "split.goal_unknown": {
+    "class": "other",
+    "footprint": "PIECE_DROP"
+  },
+  "split.too_few": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "split.goal_missing": {
+    "class": "other",
+    "footprint": "PIECE_COVER"
+  },
+  "path.protected": {
+    "class": "other",
+    "footprint": "PROTECTED"
+  },
+  "leaf.execution_fit": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "path.unusable": {
+    "class": "other",
+    "footprint": "FILE_DROP"
+  },
+  "path.noncanonical": {
+    "class": "other",
+    "footprint": "FILE_PATH"
+  },
+  "path.not_regular": {
+    "class": "other",
+    "footprint": "FILE_DROP"
+  },
+  "path.hard_cap": {
+    "class": "size_execution_fit",
+    "footprint": "NONE"
+  },
+  "path.binary": {
+    "class": "other",
+    "footprint": "FILE_DROP"
+  },
+  "path.encoding": {
+    "class": "other",
+    "footprint": "FILE_DROP"
+  },
+  "leaf.token_fit": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "split.multiple_repos": {
+    "class": "other",
+    "footprint": "SPLIT_REASON"
+  },
+  "split.no_out_of_room": {
+    "class": "other",
+    "footprint": "SPLIT_REASON"
+  },
+  "split.forecast_fits": {
+    "class": "other",
+    "footprint": "SPLIT_REASON"
+  },
+  "split.execution_fits": {
+    "class": "other",
+    "footprint": "SPLIT_REASON"
+  },
+  "split.too_many": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "split.execution_piece": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "split.token_piece": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "split.not_smaller": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "repair.message_limit": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "rehearsal.no_ledger_receipt": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "edit.selector": {
+    "class": "other",
+    "footprint": "EDIT_SELECT"
+  },
+  "edit.file_missing": {
+    "class": "other",
+    "footprint": "EDIT_FILE"
+  },
+  "edit.file_large": {
+    "class": "size_execution_fit",
+    "footprint": "NONE"
+  },
+  "edit.base_missing": {
+    "class": "other",
+    "footprint": "EDIT_DROP"
+  },
+  "edit.frozen": {
+    "class": "other",
+    "footprint": "FROZEN"
+  },
+  "edit.goal_frozen": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "edit.uncovered": {
+    "class": "other",
+    "footprint": "EDIT_COVER"
+  },
+  "forced.base_missing": {
+    "class": "other",
+    "footprint": "FORCED_SELECT"
+  },
+  "check.selector_inexact": {
+    "class": "other",
+    "footprint": "EXACT_SELECT"
+  },
+  "proof.omitted": {
+    "class": "other",
+    "footprint": "PROOF_FILL"
+  },
+  "proof.subject_missing": {
+    "class": "other",
+    "footprint": "SUBJECT_ADD"
+  },
+  "evidence.contract_missing": {
+    "class": "other",
+    "footprint": "EVIDENCE_EMPTY"
+  },
+  "proof.goal_ids": {
+    "class": "other",
+    "footprint": "GOAL_SANITIZE"
+  },
+  "proof.observer_kind": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "proof.red_missing": {
+    "class": "other",
+    "footprint": "RED_FILL"
+  },
+  "proof.subject_identify": {
+    "class": "other",
+    "footprint": "SUBJECT_ADD"
+  },
+  "proof.new_observer": {
+    "class": "other",
+    "footprint": "OBSERVER_SELECT"
+  },
+  "evidence.branch_conflict": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "evidence.removed_method": {
+    "class": "other",
+    "footprint": "METHOD_REPLACE"
+  },
+  "evidence.unsupported": {
+    "class": "other",
+    "footprint": "METHOD_REPLACE"
+  },
+  "memory.unknown": {
+    "class": "other",
+    "footprint": "MEMORY_DROP"
+  },
+  "memory.flag_uncited": {
+    "class": "other",
+    "footprint": "FLAG_DROP"
+  },
+  "memory.claim_absent": {
+    "class": "other",
+    "footprint": "FLAG_CLAIM"
+  },
+  "symptom.invalid": {
+    "class": "other",
+    "footprint": "SYMPTOM_FIELDS"
+  },
+  "forcing.symptom_text": {
+    "class": "other",
+    "footprint": "FORCING_TEXT"
+  },
+  "forcing.empty": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.count": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.environment_name": {
+    "class": "other",
+    "footprint": "FORCING_RESERVED"
+  },
+  "forcing.environment_value": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.patch_target": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.patch_mode": {
+    "class": "other",
+    "footprint": "PATCH_MODE"
+  },
+  "forcing.literal_bytes": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.raise_class": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.delay": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.extra_keys": {
+    "class": "other",
+    "footprint": "FORCING_KEYS"
+  },
+  "forcing.shape": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.patch_target_missing": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "forcing.literal_json": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "proof.units_limit": {
+    "class": "other",
+    "footprint": "PROOF_DEDUP"
+  },
+  "proof.unit_grammar": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "proof.units_repeat": {
+    "class": "other",
+    "footprint": "PROOF_DEDUP"
+  },
+  "proof.red_invalid": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "proof.shape": {
+    "class": "other",
+    "footprint": "PROOF_FILL"
+  },
+  "symptom.kind": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "proof.kind": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "check.shape": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "check.forcing_kind_harness": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "check.duplicate": {
+    "class": "other",
+    "footprint": "NODE_DEDUP"
+  },
+  "check.node_grammar": {
+    "class": "other",
+    "footprint": "EXACT_SELECT"
+  },
+  "size.report": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "size.result": {
+    "class": "size_execution_fit",
+    "footprint": "SPLIT"
+  },
+  "rehearsal.selector_count": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "rehearsal.missing_receipt": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.incomplete_receipt": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.incomplete_results": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.missing_node": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.wrong_outcome": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.exhausted": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.owner": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.hit_missing": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.hit_zero": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "rehearsal.symptom": {
+    "class": "other",
+    "footprint": "RECEIPT_SELECT"
+  },
+  "guard.variant": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.files_added": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.files_changed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.declarations": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.edits_removed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.check_removed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.goal_added": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.check_added": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.forcing_added": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.symptom_added": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.check_changed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.node_removed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.node_added": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.edits_changed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.check_count": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.proof_changed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.subject_added": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.fields_changed": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.node_grammar": {
+    "class": "other",
+    "footprint": "NONE"
+  },
+  "guard.base_definition": {
+    "class": "other",
+    "footprint": "NONE"
+  }
+}

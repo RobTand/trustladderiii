@@ -127,6 +127,8 @@ def scripted_reply(request, mode, marker):
                  "no_design_questions": True, "lands_on_its_own": True}
         if mode == "plan-bad-schema":
             reply["checks"][0]["kind"] = "invalid"
+        elif mode == "plan-size":
+            reply["estimated_tool_turns"] = 1000
         elif mode == "plan-invalid":
             reply["files"] = ["conftest.py"]
         elif mode in {"plan-split", "plan-bad-split"}:
@@ -144,7 +146,7 @@ def scripted_reply(request, mode, marker):
             reply = {"kind": "cant_meet", "report": "Need a decision on the greeting.", "files": []}
     if mode == "early":
         reply = {"kind": "early_end", "outcome": "duplicate", "reason": "Already requested."} if request["role"] == "ingest" else reply
-    if mode in {"disagree", "steering-answers"} and request["role"] == "audit":
+    if mode in {"disagree", "steering-audit-stop"} and request["role"] == "audit":
         reply = {"verdict": "disagree", "objections": ["Preserve punctuation."]}
     if request['role'] in {'ingest', 'audit', 'planner'}:
         reply = {**reply, 'evidence_contract': []}

@@ -48,8 +48,9 @@ def test_planner_memory_citations_are_checked(planner_request, monkeypatch, repl
     from tl3_workers.roles.planner import check_reply
     planner_request["inputs"]["memories"] = MEMORIES
     monkeypatch.chdir(planner_request["worktree"])
-    with pytest.raises(ValueError, match=message):
-        check_reply(planner_request["inputs"], copy.deepcopy(reply))
+    draft = copy.deepcopy(reply)
+    check_reply(planner_request['inputs'], draft)
+    assert message in '\n'.join(draft['violations'])
 
 
 @pytest.mark.parametrize("flags", [[FLAG] * 4, [{key: FLAG[key] for key in FLAG if key != "claim"}]])

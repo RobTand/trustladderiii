@@ -70,6 +70,15 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::IngestDone { size } => {
@@ -92,11 +101,8 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
                 // Ingest revises once with the audit's objections.
                 set_phase(m, Phase::Ingesting);
             } else {
-                let cont = match m.early_end {
-                    Some(e) => Cont::Stop(e.outcome()),
-                    None => Cont::Unplanned,
-                };
-                ask_rob(w, i, QKind::AuditDisagreement, cont, 0, out);
+                // Q27, #832-A: intake cannot split. The one repair is spent.
+                stop_for_review(m, ReviewStop::AuditDisagreement);
             }
         }
         Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),

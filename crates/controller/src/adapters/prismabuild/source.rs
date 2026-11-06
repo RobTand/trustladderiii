@@ -19,8 +19,13 @@ pub struct Source {
     keys: broadcast::Receiver<NodeId>,
     records_lock: Arc<Mutex<()>>,
     active: Option<BTreeMap<ActionKey, Job>>,
-    tool_errors: BTreeSet<ActionKey>,
+    tool_errors: BTreeMap<ActionKey, ToolRetry>,
     waits: BTreeMap<String, WaitSubscription>,
+}
+
+struct ToolRetry {
+    delay: u8,
+    remaining: u8,
 }
 
 pub struct RunningSource {
@@ -68,7 +73,7 @@ impl Source {
             keys,
             records_lock,
             active: None,
-            tool_errors: BTreeSet::new(),
+            tool_errors: BTreeMap::new(),
             waits: BTreeMap::new(),
         }
     }
@@ -125,7 +130,7 @@ impl Source {
                 active.insert(job.action.clone(), job);
             }
         }
-        self.tool_errors.retain(|key| active.contains_key(key));
+        self.tool_errors.retain(|key, _| active.contains_key(key));
         self.active = Some(active);
         self.waits.clear();
         for entry in std::fs::read_dir(&self.settings.records)? {
@@ -168,7 +173,7 @@ impl Source {
             }
         }
         self.tool_errors
-            .retain(|action| active.contains_key(action));
+            .retain(|action, _| active.contains_key(action));
         self.waits.retain(|_, wait| wait.delivery.node() != node);
         self.register_waits(node_root(&self.settings.records, node))?;
         Ok(())
@@ -231,8 +236,13 @@ impl Source {
             };
             match record {
                 Ok(record) if !record.is_live() => {
-                    // Bell transport backoff is not news about a failed result tool.
-                    if self.tool_errors.contains(&key) && !changes.bell_available {
+                    // #859: healthy news may be the only notification after bell recovery.
+                    // Back off only on outage rescans so recovery cannot strand a retry.
+                    if let Some(retry) = self.tool_errors.get_mut(&key)
+                        && retry.remaining > 0
+                        && !changes.bell_available
+                    {
+                        retry.remaining -= 1;
                         continue;
                     }
                     let completion = match results::ending(
@@ -244,10 +254,22 @@ impl Source {
                     .await
                     {
                         Ok(Some(completion)) => completion,
-                        Ok(None) => continue,
+                        Ok(None) => {
+                            self.tool_errors.remove(&key);
+                            continue;
+                        }
                         Err(error) => {
-                            eprintln!("PrismaBuild result {key}: {error}");
-                            self.tool_errors.insert(key.clone());
+                            let retry = self.tool_errors.entry(key.clone()).or_insert(ToolRetry {
+                                delay: 0,
+                                remaining: 0,
+                            });
+                            // No new timer: wait 1, 2, 4, then at most 8 record rescans.
+                            retry.delay = (retry.delay * 2).clamp(1, 8);
+                            retry.remaining = retry.delay - 1;
+                            eprintln!(
+                                "PrismaBuild result {key}: {error}; retry in {} record rescans",
+                                retry.delay
+                            );
                             continue;
                         }
                     };
@@ -262,15 +284,25 @@ impl Source {
                         self.tool_errors.remove(&key);
                         continue;
                     }
-                    for observation in &completion.observations {
-                        sender
-                            .send(Input::Observation {
+                    let inputs = if completion.failure_class.is_some() {
+                        vec![Input::Completion {
+                            key: job.delivery.key.clone(),
+                            completion: Box::new(completion.clone()),
+                        }]
+                    } else {
+                        completion
+                            .observations
+                            .iter()
+                            .map(|observation| Input::Observation {
                                 key: observation_key(&key, observation),
                                 observation: observation.clone(),
                             })
-                            .map_err(|_| {
-                                crate::Error::Invalid("PrismaBuild ingress receiver closed")
-                            })?;
+                            .collect()
+                    };
+                    for input in inputs {
+                        sender.send(input).map_err(|_| {
+                            crate::Error::Invalid("PrismaBuild ingress receiver closed")
+                        })?;
                     }
                     // Retain the completion for controller watches if it crashes before consuming Input.
                     write(&self.done(job), &completion)?;
@@ -282,7 +314,7 @@ impl Source {
                         job.delivery.node() != node || job.delivery.generation >= generation
                     });
                     self.tool_errors
-                        .retain(|key| self.active.as_ref().unwrap().contains_key(key));
+                        .retain(|key, _| self.active.as_ref().unwrap().contains_key(key));
                     count += 1;
                 }
                 Err(error) => eprintln!("PrismaBuild record {key}: {error}"),

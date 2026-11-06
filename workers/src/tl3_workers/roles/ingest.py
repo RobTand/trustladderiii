@@ -3,6 +3,7 @@
 from tl3_workers.roles.base import Role
 from tl3_workers.prerequisites import check_prerequisites
 from tl3_workers.evidence import preflight
+from tl3_workers.ingest_retention import preserve_verbatim
 from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.generated_scope import check_ingest_generation_scope
@@ -23,6 +24,7 @@ def check_memory_ids(inputs, reply):
         check_prerequisites(inputs, reply)
         check_citations(inputs, reply)
         check_ingest_generation_scope(inputs, reply)
+        preserve_verbatim('ingest', inputs, reply)
 
         if "forecast" in inputs:
             from tl3_workers.forecast import Forecaster
