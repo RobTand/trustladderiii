@@ -15,6 +15,22 @@ use tl3_mergify::{
     QUEUE_LABEL, QueueState,
     decide::{enqueue as lifecycle, facts},
 };
+/// Copies the committed regressions to writable test output, so proptest can
+/// append new minimized failures there instead of the read-only runfiles tree.
+/// Each test thread gets its own file, so parallel runners cannot clobber each other.
+pub(crate) fn writable_regressions() -> &'static str {
+    let output = ::std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+        .or_else(|| ::std::env::var_os("TEST_TMPDIR"))
+        .unwrap_or_else(|| ::std::env::temp_dir().into_os_string());
+    let test = ::std::thread::current()
+        .name()
+        .unwrap_or("runner")
+        .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    let name = format!("mergify_io-{test}-regressions.txt");
+    let path = ::std::path::PathBuf::from(output).join(name);
+    ::std::fs::write(&path, include_str!("proptest-regressions.txt")).unwrap();
+    Box::leak(path.to_str().unwrap().to_owned().into_boxed_str())
+}
 mod io;
 use io::{Clock, GitHub, Mergify, Path, Runtime, Snapshot};
 use tl3_github::Comment;
@@ -374,9 +390,8 @@ mod properties {
             cases: CASES,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
             )))),
             ..Config::default()
         });
@@ -423,9 +438,8 @@ mod properties {
             cases: CASES,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
             )))),
             ..Config::default()
         });
@@ -865,9 +879,8 @@ mod a1_schedules {
         let mut runner = TestRunner::new(Config {
             cases: 128,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
             )))),
             ..Config::default()
         });
@@ -1208,9 +1221,8 @@ mod required_c1 {
             cases: 128,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
             )))),
             ..Config::default()
         })
@@ -1590,9 +1602,8 @@ mod required_payload_c1 {
             cases: 128,
             max_shrink_iters: 2048,
             rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/mergify_io/proptest-regressions.txt"
+            failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+                crate::mergify_io::writable_regressions(),
             )))),
             ..Config::default()
         })

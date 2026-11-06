@@ -661,9 +661,8 @@ fn a3_routing_schedules() {
         cases: 256,
         max_shrink_iters: 2048,
         rng_seed: RngSeed::Fixed(0x0075_1760_2026),
-        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/mergify_io/proptest-regressions.txt"
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
+            crate::mergify_io::writable_regressions(),
         )))),
         ..ProptestConfig::default()
     });
