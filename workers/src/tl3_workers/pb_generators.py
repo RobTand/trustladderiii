@@ -270,10 +270,6 @@ def main():
     # An old delayed launcher loses the same atomic claim used by worker flushers.
     if not claim(Path(request["state"]).with_name("executor-process.json")):
         raise SystemExit(75)
-    _controller_generate(request, Worktree)
-
-
-def _controller_generate(request, Worktree):
     with Worktree(request["checkout"], generated_files=request["generated_files"],
                   generator=request["command"]) as worktree:
         worktree.test_checkout = Path(request["checkout"])
