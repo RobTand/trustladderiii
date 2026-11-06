@@ -329,3 +329,12 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_staging_modes",
+    srcs = ["test_staging_modes.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+    ],
+)
