@@ -1160,6 +1160,56 @@ exit "$status"
         }
     }
 
+    /// #817 review (PrismaBuild `_effective_heartbeat`): a contended claim
+    /// renews only its `lease-heartbeats/<key>/` stamp, never the lease. A fresh
+    /// stamp keeps the claim live even when the lease heartbeat is stale; an
+    /// older stamp, like #2819's 23:22:10Z one, adds no life.
+    #[test]
+    fn fresh_heartbeat_stamp_keeps_stale_lease_alive() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.head);
+        let queue = f.root.path().join("queue");
+        let key = "a".repeat(64);
+        fs::rename(
+            queue.join("ready").join(format!("{key}.json")),
+            queue.join("claimed").join(format!("{key}.json")),
+        )
+        .unwrap();
+        fs::write(
+            queue.join("claimed").join(format!("{key}.lease")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": key,
+                "heartbeat_unix": 1_793_924_588.0, "owner": "dl380g10:1:fixture", "host": "dl380g10"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let stamps = queue.join("lease-heartbeats").join(&key);
+        fs::create_dir_all(&stamps).unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        for (stamp, alive) in [(1_793_920_930.0, false), (now, true)] {
+            fs::write(
+                stamps.join(format!("{}.json", "b".repeat(64))),
+                serde_json::to_vec(&serde_json::json!({
+                    "action_key": key, "host": "dl380g10", "pid": 1,
+                    "pid_start_ticks": 1, "heartbeat_unix": stamp
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let record = read_wait(&client, runtime, &key, &f.path).unwrap();
+            assert_eq!(
+                matches!(record, crate::executor::WaitRecord::Alive),
+                alive,
+                "stamp {stamp}: expected alive={alive}"
+            );
+        }
+    }
+
     #[test]
     fn hostile_read_wait() {
         crate::git_tests::hostile(

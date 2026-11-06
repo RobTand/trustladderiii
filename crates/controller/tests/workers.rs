@@ -3052,6 +3052,20 @@ fn stale_lease_wait_ends_bounded(settings: &tl3_config::Store) {
         .to_string(),
     )
     .unwrap();
+    // #2819's only contended-heartbeat stamp (11-05T23:22:10Z) is older than its
+    // lease, so PrismaBuild's effective heartbeat is still the stale lease.
+    let stamps = root
+        .path()
+        .join("queue/lease-heartbeats")
+        .join(waits::key());
+    fs::create_dir_all(&stamps).unwrap();
+    fs::write(
+        stamps.join(format!("{}.json", "c".repeat(64))),
+        json!({"action_key": waits::key(), "host": "dl380g10", "pid": 2297648,
+            "pid_start_ticks": 1, "heartbeat_unix": 1_793_920_930.0})
+        .to_string(),
+    )
+    .unwrap();
     c.intake(labelled()).unwrap();
     while c.drive_once().unwrap() {}
     let (tx, _rx) = mpsc::channel();
