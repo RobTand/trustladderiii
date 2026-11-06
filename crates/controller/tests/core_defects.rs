@@ -533,7 +533,7 @@ fn successful_worker_reply_clears_failure_diagnostic() {
             generation,
             role: "ingest".into(),
             reply: json!({"kind": "early_end", "outcome": "already_done", "reason": "Already fixed"}),
-            model: None,
+            plan_check: None, model: None,
         },
     )
     .unwrap();

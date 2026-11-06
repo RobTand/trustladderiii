@@ -542,6 +542,19 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
   descriptions may be clipped in the bounded repair message; if the ids and
   instructions do not fit, correction is terminal.
 
+  **Approved #832 endings, Rob, 2026-11-05:**
+  [Q27 approval](https://github.com/RobTand/trustladderiii/issues/832) adds
+  question-free endings for completed plan-check objections with code-owned
+  objection classes and repair-attempt records. Remaining non-size or mixed
+  objections stop for TL3 review under both `fail_fast` settings. In part 1,
+  size/execution-fit objections record required decomposition and use the same
+  review stop; no child executes. Both preserve evidence, spend no credit and
+  allocate no question. The mapping stays dormant until worker code emits
+  provenance outside the model reply schema. Ordinary PlanSplit, PlanLeaf and
+  PlanCantMeet, owner decisions, Q27, protected paths, credit and Q50 retain
+  their existing handling. The approved #809 correction runs before this mapping.
+  The broader #832 worker implementation follows in part 2.
+
   The recorded stop steps are `checks_failed`, `changes_requested`,
   `ci_failed`, `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
   `reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.

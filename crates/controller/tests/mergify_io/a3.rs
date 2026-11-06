@@ -503,7 +503,7 @@ fn evidence(report: &Value, name: &str) -> usize {
     }
     visit(&report["result"], name)
 }
-/// docs/state-table.md:681: real synchronized payload, app bot, another bot and stale head.
+/// docs/state-table.md:698: real synchronized payload, app bot, another bot and stale head.
 #[test]
 fn mandatory_a3_push_actor_and_head() {
     for actor in 0..4 {
@@ -882,7 +882,7 @@ fn mandatory_a3_fresh_close_and_unlabel() {
     );
     assert_eq!(count(&r, "github.events"), 0, "{r:#}");
 }
-/// Q52 docs/state-machine.md:731; closed-unmerged queue-check routing and approved-head waking preserve existing behaviour.
+/// Q52 docs/state-machine.md:744; closed-unmerged queue-check routing and approved-head waking preserve existing behaviour.
 #[test]
 fn mandatory_a3_include_closed_and_approved_gate() {
     for merged in [false, true] {
@@ -942,7 +942,7 @@ fn mandatory_a3_include_closed_and_approved_gate() {
     );
     assert_eq!(evidence(&r, "Look"), 0, "{r:#}");
 }
-/// docs/state-table.md:681,683: unknown heads and person mappings stop after merged/queue PRs.
+/// docs/state-table.md:698,700: unknown heads and person mappings stop after merged/queue PRs.
 #[test]
 fn mandatory_a3_catchup_head_and_person_gates() {
     for fresh_kind in 0..4 {
@@ -1048,7 +1048,7 @@ fn mandatory_a3_independent_suites_reads() {
     assert!(r["result"].get("error").is_some(), "{r:#}");
     assert_eq!(count(&r, "github.suites"), 1);
 }
-/// docs/state-table.md:554-555: real Tests/Infra selection, first infrastructure payload and recorded early return.
+/// docs/state-table.md:571-572: real Tests/Infra selection, first infrastructure payload and recorded early return.
 #[test]
 fn mandatory_a3_head_failure_variants() {
     for tests in [false, true] {
@@ -1072,7 +1072,7 @@ fn mandatory_a3_head_failure_variants() {
         assert_eq!(ci["head_check"], true);
     }
 }
-/// Q52 docs/state-table.md:557: missing-incident projections clear only the matching head/node while open.
+/// Q52 docs/state-table.md:574: missing-incident projections clear only the matching head/node while open.
 #[test]
 fn mandatory_a3_missing_projection_gates() {
     for (cleared, stale_missing) in [(false, false), (true, false), (false, true)] {
