@@ -2280,6 +2280,10 @@ mod port_advance_contracts;
 #[path = "../verus/retirement_gate_bridge.rs"]
 mod retirement_gate_bridge;
 
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_outputs.rs"]
+mod port_advance_outputs;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_retry.rs"]
 mod port_review_retry;
@@ -2287,6 +2291,26 @@ mod port_review_retry;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_reply.rs"]
 mod port_review_reply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_node_rules.rs"]
+mod port_advance_node_rules;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_world.rs"]
+mod port_advance_world;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_gate.rs"]
+mod port_advance_gate;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_phase.rs"]
+mod port_advance_phase;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_witness.rs"]
+mod port_advance_witness;
 
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_output.rs"]
@@ -2302,3 +2326,7 @@ mod port_review_admission;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_step_frames.rs"]
+mod port_advance_step_frames;

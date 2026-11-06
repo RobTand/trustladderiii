@@ -158,6 +158,77 @@ pub(super) open spec fn exact(before: Node, after: Node, ticket_before: u64, tic
         && outputs(before, c, out_before, out_after)
 }
 
+/// Q30 / #806: successful slot scans have spare capacity and disjoint holders.
+pub(super) open spec fn slot_safe(w: World, i: int) -> bool {
+    w.nodes@[i].repo.0 < w.gates@.len()
+        && progress_gate_apply::holders(w, w.nodes@[i].repo, w.nodes@.len())
+            < w.gates@[w.nodes@[i].repo.0 as int].w
+        && forall|j: int| 0 <= j < w.nodes@.len() && j != i
+            && w.nodes@[j].holds && w.nodes@[j].repo == w.nodes@[i].repo
+            ==> footprint::disjoint(w, w.nodes@[j].footprint, w.nodes@[i].footprint)
+}
+
+/// Q30 / Q39 / #806: real scheduler decisions respect gate and pool capacities.
+pub(super) open spec fn context_safe(w: World, i: int, c: AdvanceContext) -> bool {
+    (c.pool ==> pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity)
+        && (c.slot && !w.nodes@[i].holds ==> slot_safe(w, i))
+        && (c.admit ==> dependencies::delivered(w.dependencies@, NodeId(i as u64))
+            && w.nodes@[i].repo.0 < w.gates@.len()
+            && slot_waiters(w.nodes@, w.nodes@.len(), w.nodes@[i].repo)
+                < w.gates@[w.nodes@[i].repo.0 as int].w)
+}
+
+/// Q39 / #806: an unobstructed node with a ticket waits for a worker run.
+pub(super) open spec fn pool_waiting(n: Node) -> bool {
+    !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
+        && !n.paused && n.ticket.is_some() && matches!(current_item(n), Some(Item::Start(_)))
+}
+
+/// Q39 / #806: the real pool decision is spare capacity and first priority order.
+pub(super) open spec fn pool_context(w: World, i: int, c: AdvanceContext) -> bool {
+    pool_waiting(w.nodes@[i]) ==> c.pool == (pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity
+        && oldest_waiter(w, i))
+}
+
+/// #806: blocked dispatch only discards an incident waiter's pending ticket.
+pub(super) open spec fn blocked_after(n: Node) -> Node {
+    if n.phase is Closed { n }
+    else if n.waiting_incident { Node { ticket: None, ..n } }
+    else { n }
+}
+
+/// #806: isolate blocked framing from the executable rank obligations.
+pub(super) proof fn blocked_frame(n: Node, ticket: u64, c: AdvanceContext, out: Outbox)
+    requires n.phase is Closed || n.waiting_incident || n.effect.is_some(),
+    ensures exact(n, blocked_after(n), ticket, ticket, c, out, out),
+{
+    reveal(exact); reveal(node_after); reveal(outputs); reveal(effect_kind);
+    if n.phase is Closed {} else if n.waiting_incident {} else {}
+}
+
+/// Q30 / #806: exact Ready slot update, independent of the rest of the dispatcher.
+pub(super) open spec fn slot_after(n: Node, ticket: u64, c: AdvanceContext) -> Node {
+    match n.phase {
+        Phase::Ready(r) => if n.paused { Node { ticket: None, ..n } }
+            else if n.ticket.is_none() { Node { ticket: Some(ticket), ..n } }
+            else if c.slot { retirement::phased(Node { holds: true, ..n }, resumed_phase(r)) }
+            else { n },
+        _ => n,
+    }
+}
+
+/// Q30 / #806: a slot step preserves the entire output buffer.
+pub(super) proof fn slot_frame(n: Node, ticket: u64, c: AdvanceContext, out: Outbox)
+    requires advance_pre(n, ticket, out.len),
+        !(n.phase is Closed), !n.waiting_incident, n.effect.is_none(),
+        current_item(n) == Some(Item::Slot),
+    ensures exact(n, slot_after(n, ticket, c), ticket,
+        (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64, c, out, out),
+{
+    reveal(exact); reveal(node_after); reveal(outputs); reveal(effect_kind);
+    assert(n.phase is Ready);
+}
+
 /// #806 / Q45 / Q54: settle preserves adoption and the recorded review decision.
 pub(super) proof fn node_frame(n: Node, ticket: u64, c: AdvanceContext)
     ensures node_after(n, ticket, c).proposed == n.proposed,
@@ -167,5 +238,61 @@ pub(super) proof fn node_frame(n: Node, ticket: u64, c: AdvanceContext)
         node_after(n, ticket, c).footprint == n.footprint,
 {
     reveal(node_after);
+}
+
+/// #806 / Q18 / Q45: all shared check_nodes assertions follow from the exact step.
+pub(super) proof fn transition_rules(before: Node, after: Node, ticket_before: u64,
+    ticket_after: u64, c: AdvanceContext, out_before: Outbox, out_after: Outbox)
+    requires advance_pre(before, ticket_before, out_before.len),
+        exact(before, after, ticket_before, ticket_after, c, out_before, out_after),
+    ensures after.proposed == before.proposed, before.adopted ==> after.adopted,
+        after.next_seq >= before.next_seq,
+        before.phase is Closed ==> after.phase == before.phase,
+        after.credit.earned as int <= before.credit.earned as int + 1,
+        after.credit.earned > before.credit.earned
+            ==> !before.credit.merge_credited && after.credit.merge_credited,
+{
+    node_frame(before, ticket_before, c);
+    reveal(exact);
+    assert(after.next_seq >= before.next_seq) by { reveal(node_after); }
+    assert(before.phase is Closed ==> after.phase == before.phase) by { reveal(node_after); }
+    assert(after.credit.earned as int <= before.credit.earned as int + 1
+        && (after.credit.earned > before.credit.earned
+            ==> !before.credit.merge_credited && after.credit.merge_credited)) by { reveal(node_after); }
+}
+
+/// #806 / #693: successful admission records planning and releases withheld credit.
+pub(super) proof fn admission_frame(before: Node, after: Node, ticket_before: u64,
+    ticket_after: u64, c: AdvanceContext, out_before: Outbox, out_after: Outbox, moved: bool)
+    requires exact(before, after, ticket_before, ticket_after, c, out_before, out_after),
+        moved == advance_enabled(before, c), moved,
+        before.phase == Phase::Unplanned, before.pos == 0, before.ticket.is_none(),
+    ensures after.planning_started, !after.credit.withheld,
+        after.credit == (Credit { withheld: false, ..before.credit }),
+        after == (Node { credit: Credit { withheld: false, ..before.credit },
+            planning_started: true, phase: Phase::Planning { must_split: false },
+            generation: (before.generation + 1) as u64, pos: 0, ticket: None, ..before }),
+        out_after == out_before, ticket_after == ticket_before,
+{
+    reveal(exact); reveal(node_after); reveal(outputs); reveal(effect_kind);
+}
+
+/// #806 / Q39: a waiting StartRun consumes exactly the scheduler's pool decision.
+pub(super) proof fn pool_frame(before: Node, after: Node, ticket_before: u64,
+    ticket_after: u64, c: AdvanceContext, out_before: Outbox, out_after: Outbox,
+    role: Role, moved: bool)
+    requires exact(before, after, ticket_before, ticket_after, c, out_before, out_after),
+        moved == advance_enabled(before, c),
+        !(before.phase is Closed), !before.waiting_incident, before.effect.is_none(),
+        !before.paused, before.ticket.is_some(), current_item(before) == Some(Item::Start(role)),
+    ensures moved == c.pool, ticket_after == ticket_before,
+        c.pool ==> after == (Node { ticket: None, pool: true, run: Some(before.generation),
+            pos: (before.pos + 1) as u8, next_seq: (before.next_seq + 1) as u64,
+            effect: Some(InFlight { seq: before.next_seq, kind: EffectKind::StartRun(role),
+                cancelling: false }), ..before })
+            && appended(out_before, out_after, effect_output(before, c.node, EffectKind::StartRun(role))),
+        !c.pool ==> after == before && out_after == out_before,
+{
+    reveal(exact); reveal(node_after); reveal(outputs); reveal(effect_kind);
 }
 }
