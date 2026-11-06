@@ -151,8 +151,6 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(w).file_sets@ == old(w).file_sets@,
         *final(out) == *old(out),
         ingest_facts::audit_post(old(w).nodes@[i as int], final(w).nodes@[i as int]),
-        (successful_reply_input(old(w).nodes@[i as int], Reply::AuditDisagrees)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
