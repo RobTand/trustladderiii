@@ -896,7 +896,7 @@ impl World {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
         match existing {
-            Some(index) => self.dependencies[index] = dependency,
+            Some(index) => self.dependencies[index] = Dependency { status: DependencyStatus::Delivered, ..dependency },
             None => self.dependencies.push(dependency),
         }
         if dependency.rejected {

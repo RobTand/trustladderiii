@@ -792,7 +792,7 @@ kernel_fn! {
             return false;
         }
         let m = &mut *node;
-        m.credit.withheld = false;
+        m.credit.withheld = true;
         m.planning_started = true;
         set_phase(m, Phase::Planning { must_split: false });
         true
