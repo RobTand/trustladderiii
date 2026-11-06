@@ -78,6 +78,8 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/plan-check-provenance.json",
         include_str!("../../../workers/src/tl3_workers/schemas/plan-check-provenance.json"),
     ),
+    ("crates/contracts/schema/violation.json", include_str!("../schema/violation.json")),
+    ("crates/contracts/ROLE_API.md", include_str!("../ROLE_API.md")),
 ];
 
 #[test]

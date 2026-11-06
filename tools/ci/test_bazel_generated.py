@@ -30,6 +30,8 @@ class GeneratedInputsTests(unittest.TestCase):
         self.assertTrue(any('requirements.py --check' in command for command in commands))
         self.assertTrue(any('rust_builds.py --check' in command for command in commands))
         self.assertTrue(any('//:gazelle' in command and '-mode=diff' in command for command in commands))
+        self.assertTrue(any('//crates/controller:example_contract-schemas' in command and '--check' in command
+                            for command in commands))
         self.assertTrue(any('//crates/contracts:tl3-contracts-schemas' in command and '--check' in command
                             for command in commands))
 

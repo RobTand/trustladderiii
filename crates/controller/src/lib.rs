@@ -4780,3 +4780,5 @@ mod stored_shape_tests {
 
 #[cfg(test)]
 mod publication_tests;
+
+pub mod contract_schemas;

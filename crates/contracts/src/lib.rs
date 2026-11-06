@@ -84,6 +84,7 @@ pub fn generated() -> Vec<Generated> {
                 .to_value(),
         ),
     });
+    files.extend(rules::generated());
     files
 }
 

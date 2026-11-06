@@ -10,15 +10,16 @@ use serde_json::{Value, json};
 pub trait RoleContract {
     type Input: DeserializeOwned + Serialize + JsonSchema;
     type Reply: DeserializeOwned + Serialize + JsonSchema;
+    type Facts;
     const ROLE: Role;
     fn input_schema() -> Value;
     fn reply_schema() -> Value;
     fn reply_schema_text() -> String;
-    fn rules(&self) -> &[Rule<Self::Input>];
+    fn rules(&self) -> &[Rule<Self::Facts>];
 
     fn validate_input(document: Value) -> Result<Self::Input, serde_json::Error> { serde_json::from_value(document) }
     fn validate_reply(document: Value) -> Result<Self::Reply, serde_json::Error> { serde_json::from_value(document) }
-    fn evaluate(&self, input: &Self::Input, policy: &Policy<'_>) -> Result<Vec<Violation>, String> { rules::evaluate(self.rules(), input, Self::ROLE, policy) }
+    fn evaluate(&self, facts: &Self::Facts, policy: &Policy<'_>) -> Result<Vec<Violation>, String> { rules::evaluate(self.rules(), facts, Self::ROLE, policy) }
     fn render(&self, options: RenderOptions) -> Result<Rendered, String> { render(Self::ROLE, Self::reply_schema(), options) }
 }
 
@@ -27,19 +28,25 @@ pub trait RoleContract {
 pub struct RenderOptions { pub test_cpus: u64, pub generation: bool }
 impl Default for RenderOptions { fn default() -> Self { Self { test_cpus: 1, generation: false } } }
 
+/// Inputs and the candidate reply travel together for role checks. Consumers may
+/// choose their own facts type when a check also needs repository observations.
+#[derive(Clone)]
+pub struct RoleFacts<I, R> { pub input: I, pub reply: R }
+
 pub struct Rendered { pub prompt_suffix: String, pub model_schema: Value, pub guidance: &'static str }
 
 macro_rules! contract {
     ($name:ident, $role:ident, $input:ident, $input_type:ident, $reply:ident, $reply_type:ident) => {
-        pub struct $name { pub rules: Vec<Rule<roles::$input::$input_type>> }
-        impl RoleContract for $name {
+        pub struct $name<F = RoleFacts<roles::$input::$input_type, roles::$reply::$reply_type>> { pub rules: Vec<Rule<F>> }
+        impl<F> RoleContract for $name<F> {
             type Input = roles::$input::$input_type;
             type Reply = roles::$reply::$reply_type;
+            type Facts = F;
             const ROLE: Role = Role::$role;
             fn input_schema() -> Value { roles::$input::schema() }
             fn reply_schema() -> Value { roles::$reply::schema_value() }
             fn reply_schema_text() -> String { roles::$reply::schema_text() }
-            fn rules(&self) -> &[Rule<Self::Input>] { &self.rules }
+            fn rules(&self) -> &[Rule<Self::Facts>] { &self.rules }
         }
     };
 }
@@ -51,15 +58,16 @@ contract!(Reviewer, Reviewer, reviewer_input, ReviewerInput, reviewer_reply, Rev
 contract!(Classifier, Classifier, classifier_input, ClassifierInput, classifier_reply, ClassifierReply);
 contract!(Writer, Writer, writer_input, WriterInput, writer_reply, WriterReply);
 // The postmortem input generator exposes the same root as schema_value below.
-pub struct Postmortem { pub rules: Vec<Rule<roles::postmortem_input::PostmortemInput>> }
-impl RoleContract for Postmortem {
+pub struct Postmortem<F = RoleFacts<roles::postmortem_input::PostmortemInput, roles::postmortem_reply::PostmortemReply>> { pub rules: Vec<Rule<F>> }
+impl<F> RoleContract for Postmortem<F> {
     type Input = roles::postmortem_input::PostmortemInput;
     type Reply = roles::postmortem_reply::PostmortemReply;
+    type Facts = F;
     const ROLE: Role = Role::Postmortem;
     fn input_schema() -> Value { roles::postmortem_input::schema() }
     fn reply_schema() -> Value { roles::postmortem_reply::schema_value() }
     fn reply_schema_text() -> String { roles::postmortem_reply::schema_text() }
-    fn rules(&self) -> &[Rule<Self::Input>] { &self.rules }
+    fn rules(&self) -> &[Rule<Self::Facts>] { &self.rules }
 }
 
 fn render(role: Role, mut schema: Value, options: RenderOptions) -> Result<Rendered, String> {

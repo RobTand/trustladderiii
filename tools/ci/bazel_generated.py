@@ -19,6 +19,7 @@ def commands(bazel='bazel'):
         # JSON Schemas rendered from the shared Rust contract types (#741, #819).
         # Build remotely, without pulling the controller into the generator.
         [bazel, 'run', '--config=remote', '//crates/contracts:tl3-contracts-schemas', '--', '--check'],
+        [bazel, 'run', '--config=remote', '//crates/controller:example_contract-schemas', '--', '--check'],
     ]
 
 

@@ -68,8 +68,10 @@ pub enum PlannerReplyLeafChecksItemKind {
 pub struct PlannerReplyLeafChecksItem {
     pub kind: PlannerReplyLeafChecksItemKind,
     #[schemars(description = "Exact pytest function or method selectors, validated by tl3_harness.Check: tests/test_api.py::test_status or tests/test_api.py::TestAPI::test_status. An unparameterized function selects all its cases. Whole files, directories and globs are forbidden. Regression selectors must name existing base definitions.")]
+    #[schemars(extend("minItems" = 0))]
     pub node_ids: List<BoundedText<1, UNBOUNDED>, 0, UNBOUNDED, true>,
     #[schemars(description = "Zero-based positions in inputs.ingest.goals.")]
+    #[schemars(extend("minItems" = 0))]
     pub goal_ids: List<ReplyNumber<0, 0, true, false, true>, 0, UNBOUNDED, true>,
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Forcing", default)]
@@ -117,7 +119,9 @@ impl JsonSchema for IngestExternalEvidenceContract {
 #[schemars(inline)]
 pub struct PlannerReplyLeaf {
     pub kind: PlannerReplyLeafKind,
+    #[schemars(extend("minItems" = 0))]
     pub files: List<BoundedText<1, UNBOUNDED>, 0, UNBOUNDED, true>,
+    #[schemars(extend("minItems" = 0))]
     pub checks: List<PlannerReplyLeafChecksItem, 0, UNBOUNDED, false>,
     pub no_design_questions: bool,
     pub lands_on_its_own: bool,
@@ -198,7 +202,9 @@ pub enum PlannerReplySplitReason {
 pub struct PlannerReplySplitPiecesItem {
     pub brief: BoundedText<1, UNBOUNDED>,
     #[schemars(description = "Zero-based positions in inputs.ingest.goals.")]
+    #[schemars(extend("minItems" = 0))]
     pub goal_ids: List<ReplyNumber<0, 0, true, false, true>, 0, UNBOUNDED, true>,
+    #[schemars(extend("minItems" = 0))]
     pub files: List<BoundedText<1, UNBOUNDED>, 0, UNBOUNDED, true>,
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ReplyNumber<0, 0, true, false, true>", default)]
@@ -220,6 +226,7 @@ pub struct PlannerReplySplitPiecesItem {
 pub struct PlannerReplySplit {
     pub kind: PlannerReplySplitKind,
     pub reason: PlannerReplySplitReason,
+    #[schemars(extend("minItems" = 0))]
     pub pieces: List<PlannerReplySplitPiecesItem, 0, UNBOUNDED, false>,
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ReplyNumber<0, 0, true, false, true>", default)]
@@ -286,6 +293,7 @@ pub enum PlannerReplyCantMeetKind { #[serde(rename = "cant_meet")] Value }
 pub struct PlannerReplyCantMeet {
     pub kind: PlannerReplyCantMeetKind,
     pub report: BoundedText<1, UNBOUNDED>,
+    #[schemars(extend("minItems" = 0))]
     pub files: List<BoundedText<1, UNBOUNDED>, 0, UNBOUNDED, true>,
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ReplyNumber<0, 0, true, false, true>", default)]
