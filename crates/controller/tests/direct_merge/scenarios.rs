@@ -506,12 +506,12 @@ fn r1_actions_infrastructure_and_pending_are_classified_by_q47() {
         drain(&mut controller);
         assert!(fixture.direct.lock().unwrap().puts.is_empty());
         let snapshot = controller.snapshot().unwrap();
-        let failures: Vec<_> = snapshot.rows.iter().filter(|r|r.table == "queue_facts" && r.value["evidence"]["CiFailed"].is_object()).collect();
+        let failures: Vec<_> = snapshot.rows.iter().filter(|r|r.table == "delivery_outcomes" && r.value["outcome"]["CiFailed"].is_object()).collect();
         if matches!(conclusion, "action_required" | "stale") {
             assert!(failures.is_empty(), "{conclusion} must wait rather than fail");
             assert_eq!(controller.world().unwrap().nodes[0].round, 0);
         } else {
-            assert!(failures.iter().any(|r|r.value["evidence"]["CiFailed"]["infra"] == true), "{conclusion} must retain infrastructure classification");
+            assert!(failures.iter().any(|r|r.value["outcome"]["CiFailed"]["infra"] == true), "{conclusion} must retain infrastructure classification");
         }
     }
 }
@@ -710,7 +710,7 @@ fn r1_actions_runner_annotations_keep_infrastructure_evidence() {
     }
     let (mut controller, _) = fixture.start(&settings);
     drain(&mut controller);
-    assert!(controller.snapshot().unwrap().rows.iter().any(|r|r.table == "queue_facts" && r.value["evidence"]["CiFailed"]["infra"] == true));
+    assert!(controller.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_outcomes" && r.value["outcome"]["CiFailed"]["infra"] == true));
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
 }
 

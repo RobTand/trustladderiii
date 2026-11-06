@@ -2704,6 +2704,7 @@ impl Controller {
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
                 && ((table == "queue_facts" && closed_fact(value)?)
+                    || (table == "delivery_outcomes" && value["node"].as_u64().is_some_and(|node| closed.contains(&NodeId(node))))
                     || (table == "queue_holds" && retired_hold(value)?))
             {
                 continue;
@@ -2734,6 +2735,7 @@ impl Controller {
                         node.merged.is_some() || matches!(node.phase, tl3_kernel::Phase::Closed(_))
                     });
             if discard_rebase_context
+                || (row.table == "delivery_outcomes" && row.value["node"].as_u64().is_some_and(|node| closed.contains(&NodeId(node))))
                 || (row.table == "queue_holds" && retired_hold(&row.value)?)
                 || row.table == "check_reports"
                     && row
