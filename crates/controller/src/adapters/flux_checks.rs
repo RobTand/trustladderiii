@@ -35,6 +35,23 @@ struct Job {
     completion: Option<Completion>,
 }
 impl Job {
+    fn validate(&self, key: &str) -> Result<()> {
+        if key != correlation(&self.delivery) || self.intent.owner != "controller-checks"
+            || self.intent.correlation != key
+            || self.intent.request_digest != durable::digest(&serde_json::to_vec(&self.request)?)
+            || self.intent.output_dir != Path::new("/mnt/shared/flux-out/tl3").join(key)
+            || self.completion.is_some() && self.terminal.is_none()
+        {
+            return Err(Error::Invalid("invalid durable controller check intent"));
+        }
+        if let Some(binding) = &self.binding {
+            binding.id.validate().map_err(adapter_error)?;
+            if binding.intent != self.intent || binding.id.instance != self.intent.instance || binding.id.uri != self.intent.uri {
+                return Err(Error::Invalid("controller check binding does not match retained intent"));
+            }
+        }
+        Ok(())
+    }
     fn owner(&self) -> backend::Owner {
         backend::Owner { owner: self.intent.owner.clone(), correlation: self.intent.correlation.clone() }
     }
@@ -77,7 +94,11 @@ impl Shared {
     fn load(&self, key: &str) -> Result<Option<Job>> {
         let path = self.path(key)?;
         match fs::symlink_metadata(&path) {
-            Ok(_) => Ok(Some(serde_json::from_slice(&durable::read(&path).map_err(adapter_error)?)?)),
+            Ok(_) => {
+                let job: Job = serde_json::from_slice(&durable::read(&path).map_err(adapter_error)?)?;
+                job.validate(key)?;
+                Ok(Some(job))
+            },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
