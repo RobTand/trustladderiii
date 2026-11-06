@@ -265,10 +265,12 @@ def main():
     request = json.loads(Path(sys.argv[-1]).read_text())
     schema = json.loads((Path(__file__).parent / "schemas/generation-request.json").read_text())
     Draft202012Validator(schema).validate(request)
-    import fcntl
-    with Path(request["state"]).with_suffix(".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        _controller_generate(request, Worktree)
+    from tl3_workers.tracing import claim
+    # The controller retires dead process identities before replaying this executor.
+    # An old delayed launcher loses the same atomic claim used by worker flushers.
+    if not claim(Path(request["state"]).with_name("executor-process.json")):
+        raise SystemExit(75)
+    _controller_generate(request, Worktree)
 
 
 def _controller_generate(request, Worktree):

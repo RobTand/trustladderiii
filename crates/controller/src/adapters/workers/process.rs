@@ -76,7 +76,7 @@ fn matches(identity: &Identity) -> Result<bool> {
     Ok(start == identity.start && !matches!(fields.first(), Some(&"Z" | &"X")))
 }
 
-pub(super) fn alive(path: &Path) -> Result<bool> {
+pub(crate) fn alive(path: &Path) -> Result<bool> {
     match read(path)? {
         Some(value) if value["cancelled"] == true => Ok(false),
         Some(value) => matches(&serde_json::from_value(value)?),

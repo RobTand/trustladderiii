@@ -15,7 +15,7 @@ pub(crate) mod json;
 pub(crate) mod ladder;
 #[cfg(test)]
 mod postmortem_failure_tests;
-mod process;
+pub(crate) mod process;
 pub(crate) mod protocol;
 pub(crate) mod reproducing;
 #[cfg(test)]

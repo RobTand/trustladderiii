@@ -185,7 +185,7 @@ impl Runner {
             files: delivery.paths.clone(),
             protected_paths: tl3_config::protected_paths(
                 &self.config.planning.protected_paths,
-                repo,
+                &repo.protected_paths,
             ),
             image: repo
                 .container_image
@@ -202,12 +202,6 @@ impl Runner {
         request.checkout = directory.join("checkout");
         request.state = directory.join("executor.json");
         fs::create_dir_all(directory)?;
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(directory.join("operation.lock"))?;
-        lock.lock()?;
         let completed = directory.join("completed.json");
         if let Some(saved) = crate::adapters::worktrees::read::<Completed>(&completed)? {
             if head.as_str() != saved.input && head.as_str() != saved.report.head {
@@ -249,6 +243,17 @@ impl Runner {
         }
         let request_path = directory.join("request.json");
         crate::adapters::worktrees::write(&request_path, &request)?;
+        // Reuse worker process identities, without OS file locks on the deployment kernel.
+        // A surviving old executor owns only this private snapshot. Wait off the drive loop.
+        let claim = directory.join("executor-process.json");
+        while crate::adapters::workers::process::alive(&claim)? {
+            thread::sleep(std::time::Duration::from_millis(100));
+        }
+        match fs::remove_file(&claim) {
+            Ok(()) => fs::File::open(directory)?.sync_all()?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         let output = Command::new(&self.config.workers.python)
             .args(["-m", "tl3_workers.pb_generators"])
             .arg(&request_path)
