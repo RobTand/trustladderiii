@@ -147,6 +147,18 @@ fn read_wait(
     if !matches!(record.state, ActionState::Queued | ActionState::Claimed) {
         return Ok(WaitRecord::Ended);
     }
+    // Q43 (#817): a claim past PrismaBuild's own lease timeout is lost by its
+    // record, though PrismaBuild may leave it CLAIMED (PB #2819, #2821).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    if record
+        .lease
+        .as_ref()
+        .is_some_and(|lease| lease.expired(now))
+    {
+        return Ok(WaitRecord::Ended);
+    }
     // PB v2 snapshots retain the submitted HEAD even when the original checkout is gone.
     let Some(parent) = record.snapshot_parent.and_then(|s| CommitId::new(s).ok()) else {
         return Ok(WaitRecord::Ended);

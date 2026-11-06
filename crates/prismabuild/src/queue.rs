@@ -120,6 +120,19 @@ pub struct Lease {
     pub progress_observation: Option<ProgressObservation>,
 }
 
+/// PrismaBuild's lease timeout (`pool.LEASE_TIMEOUT_S`, 300 s): a claim whose
+/// heartbeat is older is expired by PrismaBuild's own contract (design.md,
+/// "Lease": the effective heartbeat plus the lease timeout).
+pub const LEASE_TIMEOUT_S: f64 = 300.0;
+
+impl Lease {
+    /// Q43 (#817, found by: live probe, PB #2819 and #2821): an expired lease
+    /// is the claim lost by its own record, even while the record stays CLAIMED.
+    pub fn expired(&self, now_unix: f64) -> bool {
+        now_unix - self.heartbeat_unix > LEASE_TIMEOUT_S
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Attempt {
     pub number: u32,
@@ -467,6 +480,18 @@ mod tests {
         )
         .unwrap();
         (root, client, key)
+    }
+
+    #[test]
+    fn lease_expires_after_prismabuild_lease_timeout() {
+        let lease = Lease {
+            heartbeat_unix: 1_000.0,
+            owner: "host:1:owner".into(),
+            host: "host".into(),
+            progress_observation: None,
+        };
+        assert!(!lease.expired(1_000.0 + LEASE_TIMEOUT_S));
+        assert!(lease.expired(1_000.0 + LEASE_TIMEOUT_S + 0.001));
     }
 
     #[tokio::test]
