@@ -2244,3 +2244,7 @@ mod facts_merge_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_contracts.rs"]
 mod port_advance_contracts;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_slot.rs"]
+mod port_advance_slot;

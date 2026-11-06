@@ -846,6 +846,7 @@ def verus_proofs():
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 3),
             "port_advance_contracts": ("kernel::port_advance_contracts", 5),
+            "port_advance_slot_rank": ("kernel::port_advance_slot", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

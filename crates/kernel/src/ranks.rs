@@ -841,7 +841,7 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out)),
     ] proof [port_advance_contracts::slot_frame(*node, *next_ticket, context, *_out);
-        reveal(advance_post); reveal(distance);] {
+        port_advance_slot::rank(*node, *next_ticket, context, _out.len);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
