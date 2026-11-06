@@ -68,6 +68,19 @@ pub struct Report {
     pub entries: Vec<ReportEntry>,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+pub struct StepResult {
+    pub world: World,
+    pub outputs: Vec<Out>,
+    pub report: Report,
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+pub struct StepRefusal {
+    pub world: World,
+    pub exhaustion: CounterExhaustion,
+}
+
 #[cfg(verus_keep_ghost)]
 verus! {
 #[verifier::opaque]
@@ -103,15 +116,17 @@ pub closed spec fn counter_exhausted(headroom: bool, refused: bool) -> bool {
 }
 }
 
+kernel_fn! {
 impl Report {
-    kernel_fn! {
     pub fn new() -> (result: Self) [
         ensures result.entries@ == Seq::<ReportEntry>::empty(),
     ] {
         Self { entries: Vec::new() }
     }
-    }
+}
+}
 
+impl Report {
     kernel_fn! {
     pub(super) fn record_failed_round(&mut self, node: NodeId, cause: FailedRoundCause)
         -> (result: ()) [
@@ -153,3 +168,84 @@ impl Report {
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/report.rs"]
 pub(super) mod lemmas;
+
+kernel_fn! {
+impl ReplyKind {
+    pub fn of(reply: Reply) -> (result: Self) [
+        ensures result == match reply {
+            Reply::IngestDone { .. } => ReplyKind::IngestDone,
+            Reply::IngestEarlyEnd(_) => ReplyKind::IngestEarlyEnd,
+            Reply::AuditAgrees => ReplyKind::AuditAgrees,
+            Reply::AuditDisagrees => ReplyKind::AuditDisagrees,
+            Reply::PlanLeaf { .. } => ReplyKind::PlanLeaf,
+            Reply::PlanSplit => ReplyKind::PlanSplit,
+            Reply::PlanCantMeet => ReplyKind::PlanCantMeet,
+            Reply::PlanCheckRejected => ReplyKind::PlanCheckRejected,
+            Reply::PlanCheckNeedsSplit => ReplyKind::PlanCheckNeedsSplit,
+            Reply::ProtectedPaths => ReplyKind::ProtectedPaths,
+            Reply::MakerDone { .. } => ReplyKind::MakerDone,
+            Reply::MakerNeedsFiles { .. } => ReplyKind::MakerNeedsFiles,
+            Reply::MakerCantMeet => ReplyKind::MakerCantMeet,
+            Reply::MakerOutOfRoom => ReplyKind::MakerOutOfRoom,
+            Reply::ChecksDone { .. } => ReplyKind::ChecksDone,
+            Reply::Approved { .. } => ReplyKind::Approved,
+            Reply::ChangesRequested => ReplyKind::ChangesRequested,
+            Reply::ReviewerOutOfRoom => ReplyKind::ReviewerOutOfRoom,
+            Reply::RebaseClean { .. } => ReplyKind::RebaseClean,
+            Reply::RebaseNeedsChanges => ReplyKind::RebaseNeedsChanges,
+            Reply::RunFailed => ReplyKind::RunFailed,
+        },
+    ] {
+        match reply {
+            Reply::IngestDone { .. } => ReplyKind::IngestDone,
+            Reply::IngestEarlyEnd(_) => ReplyKind::IngestEarlyEnd,
+            Reply::AuditAgrees => ReplyKind::AuditAgrees,
+            Reply::AuditDisagrees => ReplyKind::AuditDisagrees,
+            Reply::PlanLeaf { .. } => ReplyKind::PlanLeaf,
+            Reply::PlanSplit => ReplyKind::PlanSplit,
+            Reply::PlanCantMeet => ReplyKind::PlanCantMeet,
+            Reply::PlanCheckRejected => ReplyKind::PlanCheckRejected,
+            Reply::PlanCheckNeedsSplit => ReplyKind::PlanCheckNeedsSplit,
+            Reply::ProtectedPaths => ReplyKind::ProtectedPaths,
+            Reply::MakerDone { .. } => ReplyKind::MakerDone,
+            Reply::MakerNeedsFiles { .. } => ReplyKind::MakerNeedsFiles,
+            Reply::MakerCantMeet => ReplyKind::MakerCantMeet,
+            Reply::MakerOutOfRoom => ReplyKind::MakerOutOfRoom,
+            Reply::ChecksDone { .. } => ReplyKind::ChecksDone,
+            Reply::Approved { .. } => ReplyKind::Approved,
+            Reply::ChangesRequested => ReplyKind::ChangesRequested,
+            Reply::ReviewerOutOfRoom => ReplyKind::ReviewerOutOfRoom,
+            Reply::RebaseClean { .. } => ReplyKind::RebaseClean,
+            Reply::RebaseNeedsChanges => ReplyKind::RebaseNeedsChanges,
+            Reply::RunFailed => ReplyKind::RunFailed,
+        }
+    }
+}
+}
+
+kernel_fn! {
+impl StopCause {
+    pub(super) fn from_phase(phase: Phase, review: Option<ReviewStop>,
+        pr_closed: bool, user_stop: bool) -> (result: Self) [
+        ensures result == match phase {
+            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
+            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
+            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
+            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
+            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
+            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
+                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
+        },
+    ] {
+        match phase {
+            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
+            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
+            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
+            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
+            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
+            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
+                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
+        }
+    }
+}
+}

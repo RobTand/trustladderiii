@@ -3,7 +3,7 @@ use super::*;
 
 kernel_fn! {
 /// Failed-run rows / #771: a retry and incident allocate at most two generations.
-pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
@@ -31,6 +31,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
+    report.record_failed_round(NodeId(i as u64), FailedRoundCause::RunFailed);
     kernel_snapshot! { before_failed = w.nodes@[i as int] }
     kernel_snapshot! { before_failed_out = *out }
     let m = &mut w.nodes[i];
@@ -78,7 +79,7 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
 kernel_fn! {
 /// Failed-round rows / #771: the free fix and paid ladder share one-step bounds.
 pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
@@ -87,13 +88,20 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    let cause = match step {
+        ReviewStop::ChecksFailed => FailedRoundCause::ChecksFailed,
+        ReviewStop::ChangesRequested => FailedRoundCause::ChangesRequested,
+        ReviewStop::CiFailed => FailedRoundCause::CiFailed,
+        _ => FailedRoundCause::MakerCantMeet,
+    };
+    report.record_failed_round(NodeId(i as u64), cause);
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
         m.round = 1;
         set_phase(m, Phase::Making);
     } else {
-        next_rung(w, i, step, out);
+        next_rung(w, i, step, out, report);
     }
 }
 }
@@ -103,7 +111,7 @@ kernel_fn! {
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
@@ -112,6 +120,9 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    if step == ReviewStop::MakerCantMeet {
+        report.record_failed_round(NodeId(i as u64), FailedRoundCause::MakerCantMeet);
+    }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {

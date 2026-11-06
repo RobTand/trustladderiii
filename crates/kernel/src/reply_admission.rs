@@ -56,7 +56,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
@@ -127,6 +127,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     }
     if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation))
     {
+        report.record_stale(NodeId(i as u64), ReplyKind::of(reply));
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);
@@ -147,7 +148,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         }
     }
     if !accepts(w, n, &reply) {
-        on_rejected_reply(w, i, generation, reply, out);
+        on_rejected_reply(w, i, generation, reply, out, report);
         return;
     }
     kernel_proof! {
@@ -155,7 +156,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
             assert(w.nodes@[i as int].phase == Phase::Auditing);
         }
     }
-    on_admitted_reply(w, i, generation, reply, out);
+    on_admitted_reply(w, i, generation, reply, out, report);
 }
 }
 
@@ -164,7 +165,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
@@ -261,7 +262,7 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
             }
         }
         _ => {
-            reply_transition(w, i, reply, out);
+            reply_transition(w, i, reply, out, report);
             kernel_proof! {
                 assert(port_t860_contracts::reply_post(before_reply@, *w, i as int, _generation, reply, before_outputs@, *out)) by {
                     if reply == Reply::AuditDisagrees {
@@ -354,7 +355,7 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
 kernel_fn! {
 /// Reply rows / #771: partition the unchanged match for bounded solver queries.
 pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
@@ -395,7 +396,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
         Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
         Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
-        _ => reply_work(w, i, reply, out),
+        _ => reply_work(w, i, reply, out, report),
     }
 }
 }
@@ -405,7 +406,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
@@ -479,7 +480,7 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
             }
         }
     }
-        run_failed(w, i, out);
+        run_failed(w, i, out, report);
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);

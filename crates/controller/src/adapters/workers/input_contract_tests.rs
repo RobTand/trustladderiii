@@ -121,7 +121,7 @@ fn materials(
 fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
     let mut cases = Vec::new();
     for scenario in 0..8 {
-        let (mut world, mut outputs) = tl3_kernel::step(
+        let tl3_kernel::StepResult { world: mut world, outputs: mut outputs, .. } = tl3_kernel::step(
             World::new(&[1], 1),
             Event::NewRequest {
                 repo: RepoId(0),
@@ -238,7 +238,7 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                     changed = true;
                 }
             }
-            (world, outputs) = tl3_kernel::step(world, event);
+            tl3_kernel::StepResult { world, outputs, .. } = tl3_kernel::step(world, event);
         }
     }
     cases

@@ -41,7 +41,7 @@ pub(super) fn verify_maker(mut w: World) -> (after: World) [
     let mut out = Outbox::new();
     kernel_snapshot! { before = w }
     kernel_proof! { world_checked_definition(w); reveal(storage_ordered); }
-    on_reply(&mut w, 0, generation, Reply::MakerDone { head }, &mut out);
+    on_reply(&mut w, 0, generation, Reply::MakerDone { head }, &mut out, &mut Report::new());
     kernel_proof! {
         reveal(progress_gate_contracts::maker_reply);
         assert(w.nodes@ =~= before@.nodes@.update(0, w.nodes@[0]));

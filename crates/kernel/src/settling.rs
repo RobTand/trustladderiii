@@ -6,10 +6,11 @@ kernel_fn! {
 /// passes changed something. Each internal transition moves a node along a
 /// finite chain, so the loop ends. Kani's unwinding check proves it within the
 /// bounds.
-pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
+pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>, report: &mut Report)
     -> (result: u32) [
     requires settle_ready(*old(w)),
-    ensures settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
+    ensures report::forwards(old(report).entries@, final(report).entries@, Seq::empty()),
+        settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
         forall|i: int| 0 <= i < final(w).nodes@.len() ==> !movable(*final(w), i),
         result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
 ] {
@@ -72,7 +73,10 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
             }
             i += 1;
         } }
-        if !changed { return passes; }
+        if !changed {
+            kernel_proof! { report::lemmas::unchanged(report.entries@); }
+            return passes;
+        }
         passes += 1;
     } }
 }

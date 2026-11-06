@@ -1,6 +1,20 @@
 use super::*;
 
 verus! {
+pub proof fn unchanged(entries: Seq<ReportEntry>)
+    ensures forwards(entries, entries, Seq::empty()),
+{
+    reveal(forwards);
+    assert(entries + Seq::empty() =~= entries);
+}
+
+pub proof fn refusal(headroom: bool, refused: bool)
+    requires refused == !headroom,
+    ensures counter_exhausted(headroom, refused),
+{
+    reveal(counter_exhausted);
+}
+
 pub proof fn append_failed_round(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
     node: NodeId, cause: FailedRoundCause)
     requires r1 == r0.push(ReportEntry::FailedRound { node, cause }),

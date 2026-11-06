@@ -5,7 +5,7 @@ kernel_fn! {
 /// Fact rows / #771: compose declaration updates, merge credit and the remaining
 /// fact handlers. No fact assigns a command ID, effect sequence or ticket.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
+pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
@@ -71,7 +71,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             head,
             checks_passed,
         } => pr_merged(w, i, head, checks_passed, out),
-        _ => fact_transition(w, i, fact, out),
+        _ => fact_transition(w, i, fact, out, report),
     }
     kernel_proof! {
         if fact_progress_input(before_fact@, i as int, fact) {
@@ -91,7 +91,7 @@ kernel_fn! {
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
@@ -180,7 +180,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 kernel_proof! { reveal(retry_bounds); }
             }
         }
-        Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
+        Fact::CiFailed { infra } => ci_failed(w, i, infra, out, report),
         Fact::Conflict => {
             let m = &mut w.nodes[i];
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
@@ -341,7 +341,7 @@ kernel_fn! {
 /// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
+pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
@@ -367,7 +367,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     kernel_snapshot! { prepared_ci = *w }
     kernel_snapshot! { prepared_out = *out }
     if !infra {
-        failed_round(w, i, ReviewStop::CiFailed, out);
+        failed_round(w, i, ReviewStop::CiFailed, out, report);
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
         }

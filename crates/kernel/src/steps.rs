@@ -6,14 +6,14 @@ kernel_fn! {
 /// State-table "Counter headroom" / #771: the real step is overflow-safe under
 /// the production checker's invariant, normalized storage, and per-step reserves.
 /// `step_budget` bounds every kernel-owned counter and preserves command order.
-pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
+pub fn step(world: World, event: Event) -> (result: StepResult) [
     requires world_checked(world), world_headroom(world), storage_ordered(world),
-    ensures step_budget(world, result.0),
-        (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
+    ensures step_budget(world, result.world),
+        (progress_input(world, event) ==> progress_measure(result.world) < progress_measure(world)),
 ] {
     kernel_proof! { reveal(storage_ordered); checked_reserves(world); }
-    let (world, out, _) = step_with_passes(world, event);
-    (world, out)
+    let (result, _) = step_with_passes(world, event);
+    result
 }
 }
 
@@ -23,15 +23,16 @@ kernel_fn! {
 /// State-table "Counter headroom" / #771: verify the real event-to-settle
 /// composition under arithmetic and storage consistency, plus headroom. The
 /// progress theorem separately requires command freshness for every node.
-pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
+pub fn step_with_passes(mut world: World, event: Event) -> (result: (StepResult, u32)) [
     requires step_scope(world),
-    ensures step_budget(world, result.0),
-        (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
+    ensures step_budget(world, result.0.world),
+        (progress_input(world, event) ==> progress_measure(result.0.world) < progress_measure(world)),
 ] {
     kernel_snapshot! { before_step = world }
     let mut outbox = Outbox::new();
+    let mut report = Report::new();
     kernel_proof! { reveal(step_scope); reveal(empty_outbox); reveal(progress_input); }
-    apply(&mut world, event, &mut outbox);
+    apply(&mut world, event, &mut outbox, &mut report);
     kernel_proof! {
         reveal(world_headroom);
         open_prefix_compare(before_step@.nodes@, world.nodes@, before_step@.nodes@.len());
@@ -49,7 +50,7 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     kernel_snapshot! { after_apply = world }
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
-    let passes = settle(&mut world, &mut out, None);
+    let passes = settle(&mut world, &mut out, None, &mut report);
     kernel_proof! {
         reveal(step_budget);
         if progress_input(before_step@, event) {
@@ -72,6 +73,26 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
                 && world.nodes@[j].credit.spent <= CREDIT_SPENT_STEP_BUDGET
         by { local_capacities(after_apply@.nodes@[j]); }
     }
-    (world, out, passes)
+    (StepResult { world, outputs: out, report }, passes)
+}
+}
+
+kernel_fn! {
+/// Refuse counter exhaustion before applying an event or settling the world.
+pub fn step_checked(world: World, event: Event) -> (result: Result<StepResult, StepRefusal>) [
+    requires world_checked(world), storage_ordered(world),
+    ensures report::counter_exhausted(world_headroom(world), result.is_err()),
+] {
+    kernel_snapshot! { headroom = world_headroom(world) }
+    match world.counter_exhaustion() {
+        Some(exhaustion) => {
+            kernel_proof! { report::lemmas::refusal(headroom@, true); }
+            Err(StepRefusal { world, exhaustion })
+        }
+        None => {
+            kernel_proof! { report::lemmas::refusal(headroom@, false); }
+            Ok(step(world, event))
+        }
+    }
 }
 }

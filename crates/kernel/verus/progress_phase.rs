@@ -96,7 +96,7 @@ pub(super) fn verify_apply(mut w: World) -> (result: (World, Event, u64, u64)) [
     kernel_proof! { reveal(progress_input); reveal(witness_event); }
     let mut out = Outbox::new();
     kernel_proof! { reveal(empty_outbox); }
-    apply(&mut w, event, &mut out);
+    apply(&mut w, event, &mut out, &mut Report::new());
     let after_measure = w.measure();
     (w, event, before_measure, after_measure)
 }

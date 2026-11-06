@@ -36,8 +36,7 @@ fn planning_world(fail_fast: bool, retries: u8) -> tl3_kernel::World {
                     seq: effect.seq,
                     ack: Ack::Confirmed,
                 },
-            )
-            .0;
+            ).world;
         }
         panic!("fixture did not finish confirming effects");
     }
@@ -49,8 +48,7 @@ fn planning_world(fail_fast: bool, retries: u8) -> tl3_kernel::World {
             repo: RepoId(0),
             priority: Priority::Unranked,
         },
-    )
-    .0;
+    ).world;
     confirm(&mut world);
     for reply in [Reply::IngestDone { size: 1 }, Reply::AuditAgrees] {
         let generation = world.nodes[0].generation;
@@ -61,8 +59,7 @@ fn planning_world(fail_fast: bool, retries: u8) -> tl3_kernel::World {
                 generation,
                 reply,
             },
-        )
-        .0;
+        ).world;
         confirm(&mut world);
     }
     world.nodes[0].plan_retries = retries;
@@ -101,7 +98,7 @@ fn assert_plan_check_stops(class: crate::contracts::plan_check::ObjectionClass) 
                 };
                 let before = planning_world(fail_fast, retries);
                 let generation = before.nodes[0].generation;
-                let (after, out) = step(
+                let tl3_kernel::StepResult { world: after, outputs: out, .. } = step(
                     before.clone(),
                     Event::Reply {
                         node: NodeId(0),
@@ -168,7 +165,7 @@ fn plan_check_keeps_ordinary_split_and_cant_meet_owner_paths() {
     ] {
         let before = planning_world(false, 1);
         let generation = before.nodes[0].generation;
-        let (after, out) = step(
+        let tl3_kernel::StepResult { world: after, outputs: out, .. } = step(
             before,
             Event::Reply {
                 node: NodeId(0),

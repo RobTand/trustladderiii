@@ -5,7 +5,7 @@ kernel_fn! {
 /// #771: compose the actual event handlers' per-apply counter bounds.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
+pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
         forall|j: int| 0 <= j < old(w).nodes@.len()
@@ -80,6 +80,18 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             _ => true,
         }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+    let target = match event {
+        Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. }
+            | Event::Command { node, .. } => Some(node),
+        _ => None,
+    };
+    let before_phase = match target {
+        Some(node) => match w.index(node) {
+            Some(i) => Some(w.nodes[i].phase),
+            None => None,
+        },
+        None => None,
+    };
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
@@ -109,7 +121,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             reply,
         } => {
             if let Some(i) = w.index(node) {
-                on_reply(w, i, generation, reply, out);
+                on_reply(w, i, generation, reply, out, report);
                 kernel_proof! {
                     if progress_input(before_apply@, event) {
                         assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
@@ -133,7 +145,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         }
         Event::Fact { node, fact } => {
             if let Some(i) = w.index(node) {
-                on_fact(w, i, fact, out);
+                on_fact(w, i, fact, out, report);
             }
         }
         Event::Command { node, id, command } => {
@@ -149,6 +161,18 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                         dependencies::indexability_frame(before_apply@, *w);
                     }
                 }
+            }
+        }
+    }
+    if let Some(node) = target {
+        if let Some(before) = before_phase {
+            if let Some(i) = w.index(node) {
+                let after = w.nodes[i].phase;
+                let cause = StopCause::from_phase(after, w.nodes[i].review_stop,
+                    matches!(event, Event::Fact { fact: Fact::PrClosedByPerson, .. }),
+                    matches!(event, Event::Command { command: Command::Stop, .. }
+                        | Event::Command { command: Command::Answer { answer: Answer::Stop, .. }, .. }));
+                report.record_stop(node, before, after, cause);
             }
         }
     }

@@ -45,7 +45,7 @@ kernel_fn! {
 /// Reply rows / #771: one phase change, at most one paid credit and one question.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
@@ -70,7 +70,7 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             m.checked = None;
             set_phase(m, Phase::Checking);
         }
-        Reply::MakerCantMeet => next_rung(w, i, ReviewStop::MakerCantMeet, out),
+        Reply::MakerCantMeet => next_rung(w, i, ReviewStop::MakerCantMeet, out, report),
         Reply::MakerOutOfRoom => out_of_room(w, i, ReviewStop::MakerOutOfRoom, out),
         Reply::ChecksDone {
             pass, in_footprint, ..
@@ -80,7 +80,7 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
                 m.checked = m.head;
                 set_phase(m, Phase::Reviewing);
             } else {
-                failed_round(w, i, ReviewStop::ChecksFailed, out);
+                failed_round(w, i, ReviewStop::ChecksFailed, out, report);
             }
         }
         Reply::Approved { head } => {
@@ -88,7 +88,7 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             m.approved = Some(head);
             set_phase(m, Phase::Publishing);
         }
-        Reply::ChangesRequested => failed_round(w, i, ReviewStop::ChangesRequested, out),
+        Reply::ChangesRequested => failed_round(w, i, ReviewStop::ChangesRequested, out, report),
         Reply::ReviewerOutOfRoom => {
             if w.nodes[i].review_restarted {
                 out_of_room(w, i, ReviewStop::ReviewerOutOfRoom, out);

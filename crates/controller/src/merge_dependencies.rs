@@ -555,7 +555,7 @@ impl Controller {
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(false);
         }
-        let (next, emitted) = tl3_kernel::step(world.clone(), event);
+        let tl3_kernel::StepResult { world: next, outputs: emitted, .. } = tl3_kernel::step(world.clone(), event);
         *world = next;
         outputs.extend(emitted);
         if !commit.result.is_object() {

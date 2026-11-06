@@ -127,8 +127,7 @@ fn fixture() -> (Snapshot, World, Vec<Effect>) {
                 repo: RepoId(0),
                 priority: Priority::P1,
             },
-        )
-        .0;
+        ).world;
     }
     let mut rows = Vec::new();
     let mut effects = Vec::new();

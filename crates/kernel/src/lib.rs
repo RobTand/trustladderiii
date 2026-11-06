@@ -118,9 +118,9 @@ use scheduler::*;
 mod witness;
 use settling::settle;
 mod steps;
-pub use steps::{step, step_with_passes};
+pub use steps::{step, step_checked, step_with_passes};
 pub mod report;
-pub use report::{FailedRoundCause, Report, ReportEntry, ReplyKind, StopCause};
+pub use report::{FailedRoundCause, Report, ReportEntry, ReplyKind, StepRefusal, StepResult, StopCause};
 #[cfg(verus_keep_ghost)]
 mod progress_pool;
 #[cfg(verus_keep_ghost)]
@@ -1739,7 +1739,7 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 /// Settle after the controller reconciles stored gate or agent capacity.
 pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     let mut out = Vec::new();
-    settle(&mut world, &mut out, None);
+    settle(&mut world, &mut out, None, &mut Report::new());
     (world, out)
 }
 
@@ -1748,11 +1748,11 @@ pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
 pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<World>) {
     let mut outbox = Outbox::new();
     let mut trace = Vec::new();
-    apply(&mut world, event, &mut outbox);
+    apply(&mut world, event, &mut outbox, &mut Report::new());
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
     trace.push(snapshot_world(&world));
-    settle(&mut world, &mut out, Some(&mut trace));
+    settle(&mut world, &mut out, Some(&mut trace), &mut Report::new());
     (world, out, trace)
 }
 

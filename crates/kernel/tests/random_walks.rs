@@ -215,7 +215,7 @@ fn random_walks_keep_every_rule() {
             let witnessed = w.witness() == Some(event);
             measure_reference::compare(&w);
             let before = w.measure();
-            let (next, out, passes) = step_with_passes(w.clone(), event);
+            let (StepResult { world: next, outputs: out, .. }, passes) = step_with_passes(w.clone(), event);
             measure_reference::compare(&next);
             let size = next.nodes.len().min(4);
             passes_by_size[size] = passes_by_size[size].max(passes);
@@ -312,13 +312,13 @@ fn the_witness_always_finishes_the_work() {
         let mut w = World::new(&[1, 2], 2);
         for _ in 0..rng.below(300) {
             let e = random_event(&mut w, pool, &mut rng);
-            w = step(w, e).0;
+            w = step(w, e).world;
         }
         for _ in 0..2_000 {
             let Some(e) = w.witness() else { break };
             measure_reference::compare(&w);
             let before = w.measure();
-            w = step(w, e).0;
+            w = step(w, e).world;
             measure_reference::compare(&w);
             assert!(w.measure() < before);
         }
