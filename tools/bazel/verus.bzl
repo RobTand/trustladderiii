@@ -943,6 +943,8 @@ def verus_proofs():
             "review_retry_room_paid": ("kernel::port_review_retry_lemmas#room_paid", 1),
             "review_retry_room_question": ("kernel::port_review_retry_lemmas#room_question", 1),
             "review_retry_room_shape": ("kernel::port_review_retry_lemmas#room_shape", 1),
+            "review_failure_restarted": ("kernel::port_review_failure#restarted", 1),
+            "review_failure_incident": ("kernel::port_review_failure#incident", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

@@ -2283,3 +2283,7 @@ mod port_review_world;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_witness.rs"]
 mod port_review_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_failure.rs"]
+mod port_review_failure;
