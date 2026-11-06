@@ -135,6 +135,7 @@ pub(super) proof fn specific_reply(before: World, after: World, generation: u64,
     reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result); reveal(port_review_reply::transition_post);
     reveal(port_replies_contracts::transition_post); reveal(node_post);
     reveal(transitioned); reveal(plan_retry_node); reveal(retirement::stopped);
+    reveal(port_review_reply::accepted_reply);
 }
 
 /// #806: complete checker, all shared node/output assertions and Q54 for every
