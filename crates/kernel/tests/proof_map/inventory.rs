@@ -436,7 +436,10 @@ fn collect(directory: &Path, prefix: &str, result: &mut Vec<Function>) {
             if matches!(name, "proofs") || (name == "progress" && directory.ends_with("verus")) {
                 continue;
             }
-            let module = if matches!(name, "lib" | "mod" | "headroom" | "progress_specs") {
+            let module = if name == "port_advance_rank" && directory.ends_with("verus") {
+                // The child module retains ranks' closed pending_rank definition.
+                format!("{prefix}::ranks::{name}")
+            } else if matches!(name, "lib" | "mod" | "headroom" | "progress_specs") {
                 prefix.into()
             } else {
                 format!("{prefix}::{name}")

@@ -6,6 +6,10 @@ use super::*;
 use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_rank.rs"]
+mod port_advance_rank;
+
+#[cfg(verus_keep_ghost)]
 verus! {
 pub open spec fn resumed_phase(r: Resume) -> Phase {
     match r {
@@ -939,7 +943,21 @@ kernel_fn! {
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
     ] proof [
         port_advance_step_frames::teardown_quiet(*node, *_next_ticket, context, *out, kind);
-        port_advance_teardown_rank::step(*node, *_next_ticket, context, kind);
+        let n = *node;
+        let ticket = *_next_ticket;
+        let after = if n.question.is_some() { n }
+            else if port_advance_contracts::gone(n, kind) {
+                Node { pool: n.pool && kind != EffectKind::StopRun, pos: (n.pos + 1) as u8, ..n }
+            } else { port_advance_contracts::emitted(n, kind) };
+        assert(n.phase is Stopping);
+        assert(pending_rank(n) == 0 && pending_rank(after) == 0);
+        if n.question.is_some() {
+            port_advance_teardown_rank::question(n, ticket, context, kind);
+        } else if port_advance_contracts::gone(n, kind) {
+            port_advance_teardown_rank::absent(n, ticket, context, kind);
+        } else {
+            port_advance_teardown_rank::emission(n, ticket, context, kind);
+        }
     ] {
         kernel_snapshot! { advance_out = *out }
         let n = *node;
