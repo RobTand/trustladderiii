@@ -334,3 +334,36 @@ def test_backend_cli_refuses_invalid_frames_without_pb_fallback(backend_cli, res
     reply.write_text(response)
     with pytest.raises(RuntimeError):
         runtime.launch_context()
+
+
+def test_own_scope_command_keeps_mapped_grant_and_has_no_in_job_fallback(launcher):
+    from tl3_harness.runtime import podman_command
+
+    executable, calls = launcher
+    command = podman_command(executable.parent / 'checkout', 'sha256:' + '1' * 64,
+                             executable.parent / 'private', 1, executable=executable,
+                             mode='own_scope', cpus='21-23,30,61-63,70', memory=268435456)
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        with Supervised(command, selection, ()) as process:
+            list(process.records())
+    arguments = json.loads(calls.read_text().splitlines()[0])
+    assert arguments[:2] == ['--cgroup-manager=systemd', 'run']
+    assert '--cgroups=enabled' in arguments
+    assert '--init' not in arguments and '--cgroups=disabled' not in arguments
+    assert arguments[arguments.index('--cpuset-cpus') + 1] == '21-23,30,61-63,70'
+    assert arguments[arguments.index('--memory') + 1] == '268435456'
+    assert arguments[arguments.index('--memory-swap') + 1] == '268435456'
+    assert '--pull=never' in arguments and process.cleanup_confirmed
+    assert len([json.loads(line) for line in calls.read_text().splitlines() if 'run' in json.loads(line)]) == 1
+
+
+@pytest.mark.parametrize('options', [
+    {'mode': 'own_scope'}, {'mode': 'own_scope', 'cpus': '1', 'memory': None},
+    {'mode': 'own_scope', 'cpus': None, 'memory': 1024}, {'mode': 'typo'},
+    {'mode': 'in_job', 'cpus': '1', 'memory': 1024},
+])
+def test_container_mode_refuses_missing_or_inapplicable_limits(options, tmp_path):
+    from tl3_harness.runtime import podman_command
+
+    with pytest.raises(ValueError):
+        podman_command(tmp_path, 'sha256:' + '1' * 64, tmp_path, 1, **options)
