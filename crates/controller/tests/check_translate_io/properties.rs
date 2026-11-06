@@ -69,7 +69,17 @@ fn pinned_real_arms_and_helper_closures() {
         ),
     ] {
         assert_eq!(arm(old, variant), base);
-        assert_eq!(arm(new, variant), arm(production, variant));
+        let mut current_arm = arm(production, variant).to_owned();
+        if variant == "Checks" {
+            // #845 changes only scope membership here; real-store tests cover the new scope.
+            let deltas: Value = serde_json::from_str(include_str!("declared-scope-delta.json")).unwrap();
+            for delta in deltas.as_array().unwrap() {
+                let after = delta["after"].as_str().unwrap();
+                assert_eq!(current_arm.matches(after).count(), 1);
+                current_arm = current_arm.replace(after, delta["before"].as_str().unwrap());
+            }
+        }
+        assert_eq!(arm(new, variant), current_arm);
         assert_eq!(
             format!("{:x}", Sha256::digest(base)),
             pins["arms"][name]["reference"]

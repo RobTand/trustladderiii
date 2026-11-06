@@ -36,7 +36,16 @@ fn production_and_reference_sources_are_pinned() {
     let normalized = historical_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n");
     let normalized_arm = arm(&normalized);
     let normalized_end = normalized_arm.find("        };\n        *detail").unwrap();
-    assert_eq!(&normalized_arm[..normalized_end], arm(source));
+    // #845 deliberately adds declared-scope persistence at these two boundaries.
+    // Pin the exact additions; the historical I/O equivalence still covers the rest.
+    let deltas: Value = serde_json::from_str(include_str!("declared-scope-delta.json")).unwrap();
+    let mut historical_source = arm(source).to_owned();
+    for delta in deltas.as_array().unwrap() {
+        let after = delta["after"].as_str().unwrap();
+        assert_eq!(historical_source.matches(after).count(), 1);
+        historical_source = historical_source.replace(after, delta["before"].as_str().unwrap());
+    }
+    assert_eq!(&normalized_arm[..normalized_end], historical_source);
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
         (include_str!("current.rs"), arm(historical_current).split("        };\n        *detail").next().unwrap()),
@@ -59,7 +68,15 @@ fn production_and_reference_sources_are_pinned() {
         )))
         .unwrap();
         assert_eq!(format!("{:x}", Sha256::digest(&frozen)), pin["sha256"]);
-        let production = std::fs::read_to_string(root.join(pin["path"].as_str().unwrap())).unwrap();
+        let mut production = std::fs::read_to_string(root.join(pin["path"].as_str().unwrap())).unwrap();
+        if name == "helpers" {
+            // #845's lock partition is intentional; pin the complete replacement helper.
+            let delta: Value =
+                serde_json::from_str(include_str!("declared-footprint-delta.json")).unwrap();
+            let after = delta["after"].as_str().unwrap();
+            assert_eq!(production.matches(after).count(), 1);
+            production = production.replace(after, delta["before"].as_str().unwrap());
+        }
         let compiled = std::fs::read_to_string(root.join(format!(
             "crates/controller/tests/worker_translate_io/{name}.rs"
         )))

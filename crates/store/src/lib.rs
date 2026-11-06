@@ -302,6 +302,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
         24,
         include_str!("../migrations/0024_worker_model_retention.sql"),
     ),
+    (25, include_str!("../migrations/0025_declared_scopes.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -127,7 +127,7 @@ Every rule above is a safety property, except the progress witness. Liveness und
 | Machine | One per | Purpose |
 |---|---|---|
 | Node | Request root, split node, leaf | The work |
-| Gate | Repo | Slots, file locks and planning admission |
+| Gate | Repo | Slots, authored-file locks and planning admission. Declared outputs of a configured generator remain in scope and fit but are not exclusive, with the generated-only fallback below. Q27, Rob, 2026-11-06: "optimize for parallelism. Don't couple to bazel, please, though, make whatever fix generic." |
 | Agent pool | Fleet | Admission for delivery agent runs. Postmortems have a separate controller lane (Q39 amended, #642). Slice one uses one account, first come, first served. |
 | Effect | Outside action | Delivering one action under its contract |
 
@@ -381,7 +381,7 @@ Settle admits the node to planning when all three hold:
 
 - it isn't paused;
 - every declared prerequisite is delivered, with no rejected cycle;
-- its repo's gate has room, meaning fewer than W leaves are waiting for a slot.
+- its repo's gate has room, meaning fewer than W leaves remain waiting for capacity or authored-file locks after settling. Shared generated outputs of a configured generator do not create file conflicts, except for the generated-only fallback below.
 
 In slice one, ingest and audit run before this wait. While prerequisites block
 admission, the root holds no slot, file lock, agent-pool grant or spendable credit.
@@ -791,7 +791,9 @@ The gate is part of the world, so its changes are atomic with the step that make
 
 **Slice one (Q29 amended, Rob 2026-10-31):** W is configurable from 1 through 3. Rob approved raising W from 1 to 3 slots per repo once built and proven.
 
-A leaf gets its slot and all its files together. **Q48, Rob, 2026-11-01:** an older waiter blocks a younger leaf if it could actually run, or if their footprints overlap. Only truly disjoint leaves pass a blocked waiter. Evaluate tickets oldest first; a waiter could run only when a slot and its files are free and no older ticket blocks it. A leaf waiting for a slot holds neither a slot nor files and keeps its ticket.
+A leaf gets its slot and exclusive file locks together. Q27, Rob, 2026-11-06: "optimize for parallelism. Don't couple to bazel, please, though, make whatever fix generic." Files matching the repository's `generated_files` globs are excluded from exclusive locks only when its `generator` is configured. They remain in the full declared scope for authorization and fit forecasts. Authored files are locked. When every declared file is generated, the full declared list is locked so the leaf retains a nonempty footprint. An empty declaration is still refused. Existing leaves without a persisted declared scope keep their full footprint as scope and locks until they next plan. A generated-only leaf that later grows to include authored files conservatively retains its old locks through the kernel's existing union rule.
+
+A leaf gets its slot and all its exclusive files together. **Q48, Rob, 2026-11-01:** an older waiter blocks a younger leaf if it could actually run, or if their footprints overlap. Only truly disjoint leaves pass a blocked waiter. Evaluate tickets oldest first; a waiter could run only when a slot and its files are free and no older ticket blocks it. A leaf waiting for a slot holds neither a slot nor files and keeps its ticket.
 
 **Slice two:**
 
@@ -802,7 +804,7 @@ A leaf gets its slot and all its files together. **Q48, Rob, 2026-11-01:** an ol
 - A leaf is runnable when it is eligible and all its files are free.
 - Each free slot goes to the runnable leaf with the highest rank, with ties going to the older leaf. The rank is defined under "Status, bottlenecks and ranking". When two leaves want the same file, the one that unblocks more gets it (Q30, Q36, Q38).
 - There is no rule against starvation. Rob chose to always pull the work that blocks the most (Q30).
-- Planning is admitted when fewer than W leaves are waiting for a slot.
+- Planning is admitted when fewer than W leaves remain waiting for capacity or authored-file locks after settling. The generated-only fallback above remains exclusive. The admission scan itself is unchanged.
 
 ## Agent pool
 

@@ -46,7 +46,9 @@ def schema_text(role):
                 "goals": [], "plan": {"files": [], "checks": []}, "context_size": 150_000,
                 "tests": {"image": "sha256:" + "a" * 64, "tools_path": "/fixture/tools"},
             }}
-            with patch.object(runtime, "build_agent", side_effect=capture):
+            # Capture the prompt; fixture input validation is outside this contract.
+            with patch.object(maker, "_check_inputs"), patch.object(
+                    runtime, "build_agent", side_effect=capture):
                 try:
                     maker.run(model, request, worktree, lambda event: None)
                 except CapturedPrompt as captured:

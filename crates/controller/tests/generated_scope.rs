@@ -1,10 +1,14 @@
+#[path = "support/ownership.rs"]
+mod startup_ownership;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
+#[allow(dead_code)]
+mod worktree_fixture;
 
 use serde_json::{Value, json};
 use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository, adapters,
-    executor::{Delivery, Observation},
+    executor::{Delivery, Executor, Observation},
 };
 use tl3_kernel::{NodeId, Phase};
 use tl3_store::{Commit, RowChange, Store};
@@ -121,7 +125,7 @@ impl Fixture {
         node.pool = node.run.is_some();
         node.holds = phase == Phase::Making;
         node.worktree = node.holds;
-        node.paused = false;
+        node.paused = phase == Phase::Unplanned;
         node.waiting_incident = false;
         node.credit.ready = true;
         node.credit.start = 4;
@@ -200,8 +204,7 @@ impl Fixture {
             .pending_effects
             .iter()
             .filter_map(|e| serde_json::from_value::<Delivery>(e.payload.clone()).ok())
-            .filter(|d| d.node() == NodeId(index as u64))
-            .last()
+            .rfind(|d| d.node() == NodeId(index as u64))
             .expect("kernel delivery")
     }
 }
@@ -249,7 +252,10 @@ fn generated_overlap_does_not_close_planning_admission() {
         );
     }
     f.arm(4, Phase::Unplanned);
-    f.plan(4, &["ignored.rs".into()]);
+    f.observe(Observation::Steering {
+        node: NodeId(4),
+        command: tl3_kernel::Command::Resume,
+    });
     assert!(
         matches!(
             f.c().world().unwrap().nodes[4].phase,
@@ -266,7 +272,9 @@ fn generic_generator_preserves_scope_delivery_and_restart() {
         &["src/input.rs"],
         &["gen/manifest.json", "gen/nested/other.json"],
     );
+    let generation = f.c().world().unwrap().nodes[0].generation;
     f.plan(0, &declared);
+    let key = format!("observation-{}", f.sequence);
     assert_eq!(
         f.scope(0),
         Some(json!(declared)),
@@ -277,6 +285,21 @@ fn generic_generator_preserves_scope_delivery_and_restart() {
     assert_eq!(delivery.paths, declared);
     let before = f.c().world().unwrap();
     f.restart();
+    assert_eq!(f.c().world().unwrap(), before);
+    assert_eq!(f.scope(0), Some(json!(declared)));
+    let revision = f.c().snapshot().unwrap().revision;
+    f.c()
+        .observe(
+            &key,
+            Observation::Plan {
+                node: NodeId(0),
+                generation,
+                paths: declared.clone(),
+                fits: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(f.c().snapshot().unwrap().revision, revision);
     assert_eq!(f.c().world().unwrap(), before);
     assert_eq!(f.scope(0), Some(json!(declared)));
 }
@@ -378,4 +401,235 @@ fn checks_authorize_only_declared_generated_outputs() {
         let world = f.c().world().unwrap();
         assert_eq!(matches!(world.nodes[0].phase, Phase::Reviewing), authorized);
     }
+}
+
+/// #845: an existing schema upgrades without inventing declared scopes for old leaves.
+#[test]
+fn declared_scope_migration_upgrades_without_legacy_backfill() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    let before = f.c().world().unwrap();
+    let mut client = postgres::Config::new()
+        .host(&f.settings.host)
+        .port(f.settings.port)
+        .user(&f.settings.user)
+        .dbname(&f.settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    client.batch_execute("ALTER TABLE tl3_world DROP CONSTRAINT IF EXISTS tl3_declared_scope_files; DELETE FROM tl3_schema_migrations WHERE version > 24").unwrap();
+    drop(f.controller.take());
+    let mut owner = tl3_store::Ownership::claim(Store::connect(&f.settings).unwrap()).unwrap();
+    owner.migrate().unwrap();
+    owner.release().unwrap();
+    let mut upgraded = Store::open(&f.settings).unwrap();
+    assert!(
+        client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM tl3_schema_migrations WHERE version=25)",
+                &[]
+            )
+            .unwrap()
+            .get::<_, bool>(0),
+        "declared scope migration 25 must run"
+    );
+    assert!(
+        !upgraded
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "declared_scopes")
+    );
+    f.restart();
+    assert_eq!(f.c().world().unwrap(), before);
+    let snapshot = upgraded.load().unwrap();
+    let mut invalid = Commit::new("invalid-declared-scope", json!(null), &snapshot);
+    invalid.rows.push(RowChange::Put {
+        table: "declared_scopes".into(),
+        id: "0".into(),
+        value: json!([42]),
+    });
+    invalid.rows.push(RowChange::Put {
+        table: "scope-rollback".into(),
+        id: "0".into(),
+        value: json!(true),
+    });
+    assert!(upgraded.commit(&invalid).is_err());
+    assert_eq!(upgraded.load().unwrap(), snapshot);
+}
+
+/// #845: legacy leaves keep full locks through growth until a fresh plan.
+#[test]
+fn legacy_scope_and_locks_stay_identical_until_replan() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], false);
+    f.plan(0, &files(&["src/input.rs"], &["gen/manifest.json"]));
+    let mut store = Store::open(&f.settings).unwrap();
+    let mut commit = Commit::new("legacy-scope", json!(null), &store.load().unwrap());
+    commit.rows.push(RowChange::Delete {
+        table: "declared_scopes".into(),
+        id: "0".into(),
+    });
+    store.commit(&commit).unwrap();
+    f.config.github.repos[0].generator = Some("python3 tools/gen_manifest.py".into());
+    f.restart();
+    f.arm(0, Phase::Making);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation,role:"maker".into(),model:None,plan_check:None,reply:json!({"kind":"needs_files","files":[{"path":"gen/extra.json","why":"output"}],"fits":true})});
+    assert!(f.scope(0).is_none());
+    let mut locks = f.locks(0);
+    locks.sort();
+    assert_eq!(
+        locks,
+        ["gen/extra.json", "gen/manifest.json", "src/input.rs"]
+    );
+    f.arm(0, Phase::Planning { must_split: false });
+    f.plan(0, &files(&["src/replanned.rs"], &["gen/new.json"]));
+    assert_eq!(
+        f.scope(0),
+        Some(json!(["src/replanned.rs", "gen/new.json"]))
+    );
+    assert_eq!(f.locks(0), ["src/replanned.rs"]);
+}
+
+/// #845/deferred-post-freeze: the unchanged kernel conservatively unions old fallback locks.
+#[test]
+fn generated_only_leaf_retains_old_locks_after_authored_growth() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    f.plan(0, &["gen/manifest.json".into()]);
+    f.arm(0, Phase::Making);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation,role:"maker".into(),model:None,plan_check:None,reply:json!({"kind":"needs_files","files":[{"path":"src/extra.rs","why":"input"}],"fits":true})});
+    let mut locks = f.locks(0);
+    locks.sort();
+    assert_eq!(locks, ["gen/manifest.json", "src/extra.rs"]);
+}
+
+/// #845: schema-validated worker planning uses the same declared scope boundary.
+#[test]
+fn planner_worker_reply_persists_full_scope() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation,role:"planner".into(),model:None,plan_check:None,reply:json!({"kind":"leaf","files":["src/input.rs","gen/manifest.json"],"checks":[{"kind":"regression","node_ids":["tests/test_input.py::test_input"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"src/input.rs":0,"gen/manifest.json":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}})});
+    assert_eq!(
+        f.scope(0),
+        Some(json!(["src/input.rs", "gen/manifest.json"]))
+    );
+    assert_eq!(f.locks(0), ["src/input.rs"]);
+}
+
+proptest::proptest! {
+    /// #845: pin the shared matcher and the index-to-path adapter with duplicates and order.
+    #[test]
+    fn generic_matcher_preserves_partition_occurrences(
+        inputs in proptest::collection::vec((0u8..4, "[a-z]{1,12}", proptest::bool::ANY), 0..80),
+        configured in proptest::bool::ANY,
+    ) {
+        let declared: Vec<String> = inputs.iter().map(|(kind, name, nested)| match kind {
+            0 => format!("gen/{}{name}.json", if *nested { "nested/" } else { "" }),
+            1 => format!("src/{name}.json"),
+            2 => format!("gen/{name}.txt"),
+            _ => "gen/repeated.json".to_owned(),
+        }).collect();
+        let expected: Vec<_> = inputs.iter().map(|(kind, _, _)| configured && (*kind == 0 || *kind == 3)).collect();
+        let partition = tl3_config::partition_files(&declared, &["gen/**/*.json".into()], configured);
+        let authored: Vec<_> = declared.iter().zip(&expected).filter(|(_, generated)| !**generated).map(|(path, _)| path.clone()).collect();
+        let generated: Vec<_> = declared.iter().zip(&expected).filter(|(_, generated)| **generated).map(|(path, _)| path.clone()).collect();
+        let locks = if authored.is_empty() { declared.clone() } else { authored.clone() };
+        proptest::prop_assert_eq!(partition.authored, authored);
+        proptest::prop_assert_eq!(partition.generated, generated);
+        proptest::prop_assert_eq!(partition.locks, locks);
+    }
+}
+
+/// #845: a rejected empty plan must not persist an authorization scope.
+#[test]
+fn empty_plan_does_not_persist_scope() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    f.plan(0, &[]);
+    assert!(f.scope(0).is_none());
+}
+
+/// #845: an unaffordable extension awaiting a new plan is not authorized growth.
+#[test]
+fn unaffordable_growth_keeps_the_previous_scope() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    let declared = files(&["src/input.rs"], &["gen/manifest.json"]);
+    f.plan(0, &declared);
+    f.arm(0, Phase::Making);
+    let mut node = f.c().world().unwrap().nodes[0];
+    node.credit.spent = node.credit.start;
+    let mut store = Store::open(&f.settings).unwrap();
+    let mut commit = Commit::new("exhausted-credit", json!(null), &store.load().unwrap());
+    commit.rows.push(RowChange::Put {
+        table: "nodes".into(),
+        id: "0".into(),
+        value: json!(node),
+    });
+    store.commit(&commit).unwrap();
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation:node.generation,role:"maker".into(),model:None,plan_check:None,reply:json!({"kind":"needs_files","files":[{"path":"src/extra.rs","why":"input"}],"fits":true})});
+    assert_eq!(f.scope(0), Some(json!(declared)));
+    assert_eq!(f.locks(0), ["src/input.rs"]);
+}
+
+/// #845: trim uses controller scope, retains declared outputs, and still removes protected paths.
+#[test]
+fn generated_scope_trim_retains_only_declared_unprotected_paths() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    f.plan(
+        0,
+        &files(&["shared.txt", "pyproject.toml"], &["gen/manifest.json"]),
+    );
+    let paths = f.delivery(0).paths;
+    let root = tempfile::tempdir().unwrap();
+    let worktree = worktree_fixture::Fixture::create(root.path());
+    let epoch = f.c().snapshot().unwrap().epoch.get();
+    let mut adapter = worktree.adapter_at(epoch);
+    let mut delivery = worktree.delivery(tl3_kernel::EffectKind::PrepareWorktree, 0);
+    delivery.epoch = epoch;
+    delivery.paths = paths;
+    adapter.execute(&delivery).unwrap();
+    let checkout = adapter.checkout(&delivery);
+    std::fs::create_dir_all(checkout.join("gen")).unwrap();
+    for path in ["gen/manifest.json", "gen/undeclared.json", "pyproject.toml"] {
+        std::fs::write(checkout.join(path), "generated or unrelated\n").unwrap();
+    }
+    worktree_fixture::commit(&checkout, "shared.txt", "authored\n");
+    let trim = f
+        .c()
+        .trim_scope(
+            &adapter,
+            &delivery,
+            &tl3_config::Planning::default().protected_paths,
+        )
+        .unwrap();
+    assert_eq!(
+        trim.removed_paths,
+        ["gen/undeclared.json", "pyproject.toml"].map(std::path::PathBuf::from)
+    );
+    assert!(checkout.join("gen/manifest.json").exists());
+    assert!(checkout.join("shared.txt").exists());
+    assert!(!checkout.join("gen/undeclared.json").exists());
+    assert!(!checkout.join("pyproject.toml").exists());
+}
+
+/// #845: a real replan resets persisted scope and replay accepts only the replacement plan.
+#[test]
+fn replan_resets_scope_before_restart_and_new_plan() {
+    let mut f = Fixture::new(1, &["gen/**/*.json"], true);
+    f.plan(0, &files(&["src/old.rs"], &["gen/old.json"]));
+    f.arm(0, Phase::Making);
+    let generation = f.c().world().unwrap().nodes[0].generation;
+    f.observe(Observation::WorkerReply {node:NodeId(0),generation,role:"maker".into(),model:None,plan_check:None,reply:json!({"kind":"needs_files","files":[{"path":"src/extra.rs","why":"input"}],"fits":false})});
+    assert!(matches!(
+        f.c().world().unwrap().nodes[0].phase,
+        Phase::Planning { .. }
+    ));
+    assert!(f.scope(0).is_none());
+    f.restart();
+    assert!(f.scope(0).is_none());
+    let declared = files(&["src/new.rs"], &["gen/new.json"]);
+    f.arm(0, Phase::Planning { must_split: false });
+    f.plan(0, &declared);
+    assert_eq!(f.scope(0), Some(json!(declared)));
+    assert_eq!(f.locks(0), ["src/new.rs"]);
 }
