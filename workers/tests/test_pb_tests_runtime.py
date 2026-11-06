@@ -27,7 +27,7 @@ def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch,
     forcing = reachable() if reached else deepcopy(FORCING)
     draft = plan(forcing)
     if not reached:
-        # A failed experiment must bypass even format repair and #577 correction.
+        # The malformed final reply consumes the shared repair allowance.
         draft['edits_tests'].append('tests/test_adoption.py::test_uncovered')
     final = json.dumps(draft) if reached else 'malformed final reply after failed work'
     model = FakeMessagesListChatModel(responses=[
@@ -43,7 +43,7 @@ def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch,
     events = []
     runtime.run(request, events.append)
     reply = events[-1]['reply']
-    assert model.i == 2, 'failed work must never enter another model correction turn'
+    assert sum(event.get('unit') == 'model_turn' for event in events) == (2 if reached else 3)
     assert len(calls) == 2
     if reached:
         assert reply['kind'] == 'leaf' and reply['violations'] == []
@@ -51,8 +51,13 @@ def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch,
         assert reply['forcing_rehearsals'][0]['forcing'] == forcing
         assert reply['forcing_rehearsals'][0]['base_sha'] == ledger.base_sha
     else:
-        assert reply['kind'] == 'cant_meet' and 'zero-hit' in reply['report']
-        assert reply['violations'] and 'zero-hit' in reply['violations'][0]
+        assert events[-1]['plan_check']['repair'] == {
+            'status': 'unavailable', 'reason': 'format_allowance_consumed'}
+        assert {item['class'] for item in events[-1]['plan_check']['objections']} == {'other'}
+        assert any(item['rule'] == 'rehearsal.missing_receipt'
+                   for item in events[-1]['plan_check']['objections'])
+        assert reply['violations']
+        assert 'zero-hit' in reply['forcing_rehearsals'][0]['message']
         assert reply['forcing_rehearsals'][0]['forced']['tests'][0]['outcome'] == 'passed'
 
 
@@ -88,10 +93,11 @@ def test_rehearsal_failure_diagnostic_reaches_cant_meet(rehearsal, monkeypatch, 
     events = []
     runtime.run(request, events.append)
     reply = events[-1]['reply']
-    assert reply['kind'] == 'cant_meet'
-    assert model.i == 2, 'failed work must never enter another model correction turn'
-    assert status in reply['report']
-    assert message in reply['report']
+    assert sum(event.get('unit') == 'model_turn' for event in events) == 3
+    assert events[-1]['plan_check']['repair'] == {
+        'status': 'unavailable', 'reason': 'format_allowance_consumed'}
+    assert {item['class'] for item in events[-1]['plan_check']['objections']} == {'other'}
+    assert any(status in text and message in text for text in reply['violations'])
     assert reply['violations']
 
 
