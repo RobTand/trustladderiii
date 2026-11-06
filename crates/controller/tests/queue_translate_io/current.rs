@@ -1,4 +1,4 @@
-use super::*;
+use super::{Controller, Snapshot, World, Commit, Result, Error, NodeId, Event, Fact, check_run, put, commit_sha, looks, decode_stored, json, Value};
 mod adapters {
     pub use super::super::adapters::prismabuild;
     pub mod mergify {
@@ -15,7 +15,7 @@ mod boundary {
     pub struct QueueFact { pub repository: Repository, pub number: u64, pub evidence: Evidence }
     include!("queue-fact-current.rs");
 }
-use boundary::QueueFact;
+use boundary::{QueueFact, Evidence};
 enum Observation { Queue(QueueFact) }
 
 struct Shell<'a>(&'a mut Controller);
