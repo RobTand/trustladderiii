@@ -5,8 +5,10 @@ use super::port_advance_contracts::*;
 verus! {
 /// #806: Footprint::Arbitrary generates exactly the four-file inline domain.
 pub(super) open spec fn inline_nodes(w: World) -> bool {
-    forall|i: int| 0 <= i < w.nodes@.len() ==> exists|bits: u64| bits < 16
-        && w.nodes@[i].footprint == footprint::inline_footprint(bits)
+    forall|i: int| 0 <= i < w.nodes@.len() ==> {
+        let n = #[trigger] w.nodes@[i];
+        exists|bits: u64| bits < 16 && n.footprint == footprint::inline_footprint(bits)
+    }
 }
 
 /// Q30 / #806: reverse the real inline lock check to the checker's pair order.
