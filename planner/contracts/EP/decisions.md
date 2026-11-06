@@ -25,3 +25,11 @@ found by: live probe
   ingest/audit current prompt baselines and four Rust role recordings. The six
   other roles compare unchanged. BUILD generation and lint/requirements passed;
   no BUILD edits. Frozen reference sources remain byte-identical.
+
+- The first candidate's full worker sweep at 5ae8564e found the composition
+  test expected ValueError instead of jsonschema.ValidationError. This is a test
+  expectation fix; the route and schema repair output assertions stay unchanged.
+  Successful remote XML was also unavailable under remote_download_minimal; the
+  qualification driver now requests only test.xml/test.log downloads explicitly.
+  The earlier development run had this same sixth failure, which the initial
+  summary missed. Its full saved log remains the evidence.

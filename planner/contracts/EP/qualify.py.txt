@@ -84,7 +84,8 @@ def verify():
     for target in targets:
         print('EP QUALIFY START', target, flush=True)
         result = subprocess.run(['bazel', 'test', '--config=remote', '--jobs=16',
-                                 target, '--keep_going', '--nocache_test_results'])
+                                 target, '--keep_going', '--nocache_test_results',
+                                 '--remote_download_regex=(^|/)(test[.]xml|test[.]log)$'])
         roots = [Path('bazel-testlogs/workers/tests')] if mode == 'workers' else [
             Path('bazel-testlogs') / target[2:].replace(':', '/')]
         counts = []

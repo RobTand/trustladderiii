@@ -948,7 +948,7 @@ def test_exec_prose_guard_composes_with_independent_schema_repair():
     before = dict(copy.deepcopy(BRIEF), evidence_contract=[route_requirement(EXEC_PROSE[0]['route'])],
                   unexpected='remove me')
     inputs = {'tool_capabilities': []}
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(ValidationError) as caught:
         runtime._checked(ROLES['ingest'], inputs, copy.deepcopy(before))
     rows = caught.value.rule_violations
     assert any(row.rule.id == 'evidence.route_context' for row in rows)
