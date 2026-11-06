@@ -175,3 +175,482 @@ mod tests {
         assert!(accepts_fence(EpochOrder::Current));
     }
 }
+
+/// Snapshot facts sampled by the interpreter. No payload or durable row is owned here.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Clone, Copy, Debug)]
+pub struct DeliveryView<'a> {
+    pub key: &'a [u8],
+    pub epoch: u64,
+    pub revision: u64,
+    pub state: State,
+    pub fence: Fence,
+    pub waits: Waits,
+    pub approval: ApprovalGate,
+    pub kind: DeliveryKind,
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fence { Live, Retiring }
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Clone, Copy, Debug)]
+pub struct Waits { pub outage: bool, pub quota: bool, pub held: bool }
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalGate { Ordinary, Fresh, Authorized, Prior { predecessor: bool } }
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeliveryKind { KernelEffect, Auxiliary }
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Evidence { Found(Ack), Absent, Pending, Error }
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome { Acknowledged(Ack), Ambiguous, Unanswered }
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    History, SentExecute, SentFound(Ack), SentAmbiguous,
+    ObserveExecute, ObserveReconcile, Execute, Reconcile,
+}
+
+/// Volatile, single-use permission. Only this module constructs it. Restart loses it.
+/// The key is borrowed from the opaque delivery, never reconstructed from a payload.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Debug)]
+pub struct Continuation<'a> {
+    key: &'a [u8], epoch: u64, revision: u64, stage: Stage,
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Debug)]
+pub enum Input<'a> {
+    Start,
+    History { pending: Continuation<'a>, evidence: Evidence },
+    /// Supply only after committing Sent and deleting the grant atomically, then reloading.
+    SentCommitted(Continuation<'a>),
+    Observed { pending: Continuation<'a>, revision_changed: bool },
+    Executed { pending: Continuation<'a>, outcome: Outcome },
+    Reconciled { pending: Continuation<'a>, evidence: Evidence },
+    /// `approval_successor` describes an actual approval effect emitted by the kernel.
+    Consume { key: &'a [u8], ack: Ack, kernel_ack: Ack, approval_successor: bool },
+    ClearApproval { key: &'a [u8], matching_open_incident: bool },
+    CheckedApprovalNews { key: &'a [u8] },
+    RepairDone { copies: Option<u64>, dispatches: u64 },
+}
+
+/// Completion edges are bridge U→I→S, completion.from→to, then optional I→Cancelled.
+/// All edges and bookkeeping belong to one transaction at the original key.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Debug)]
+pub struct CommitPlan {
+    pub completion: CompletionPlan,
+    pub kernel_ack: Ack,
+    pub retire_retry: bool,
+    pub remove_watch: bool,
+    pub authorize_successor: bool,
+    pub retire_approval: bool,
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Debug)]
+pub enum Action<'a> {
+    Wait,
+    Return,
+    ReadHistory(Continuation<'a>),
+    CommitSent { spend_grant: bool, then: Continuation<'a> },
+    Observe(Continuation<'a>),
+    Execute(Continuation<'a>),
+    Reconcile(Continuation<'a>),
+    Transition(State),
+    EnqueueCompletion(Ack),
+    /// The adapter owns cancellation admission, including the Mergify gate.
+    CancelAbsent,
+    RecordAmbiguity { stop: bool },
+    /// Refusal, holds, quota classification and result metadata stay adapter I/O.
+    RecordUnanswered,
+    Commit(CommitPlan),
+    /// Atomically restore Intended, authorization and lineage at this key.
+    AuthorizeRetry,
+    ScheduleRepair,
+    FinishRepair { clear_unresolved: bool },
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Disposition { Continue, ContinueProgress, ReturnProgress, AmbiguityProgress }
+
+impl Action<'_> {
+    /// AmbiguityProgress uses the actual ambiguity transaction's changed result.
+    pub fn disposition(&self) -> Disposition {
+        match self {
+            Action::Wait => Disposition::Continue,
+            Action::Transition(State::Intended) | Action::RecordUnanswered => Disposition::ContinueProgress,
+            Action::RecordAmbiguity { stop: false } => Disposition::AmbiguityProgress,
+            _ => Disposition::ReturnProgress,
+        }
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out.key@ == view.key@, out.epoch == view.epoch,
+    out.revision == view.revision, out.stage == stage,
+))]
+fn continuation(view: DeliveryView<'_>, stage: Stage) -> Continuation<'_> {
+    Continuation { key: view.key, epoch: view.epoch, revision: view.revision, stage }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out == (view.key@ == pending.key@ && view.epoch == pending.epoch
+        && view.revision == pending.revision),
+))]
+fn bound(view: DeliveryView<'_>, pending: &Continuation<'_>) -> bool {
+    key_matches(view.key, pending.key) && view.epoch == pending.epoch && view.revision == pending.revision
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    match out {
+        Action::CommitSent { spend_grant, then } => spend_grant == (view.approval != ApprovalGate::Ordinary)
+            && then.key@ == view.key@ && then.epoch == view.epoch
+            && then.revision == view.revision && then.stage == stage,
+        _ => false,
+    },
+))]
+fn commit_sent(view: DeliveryView<'_>, stage: Stage) -> Action<'_> {
+    Action::CommitSent { spend_grant: view.approval != ApprovalGate::Ordinary, then: continuation(view, stage) }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    match view.approval {
+        ApprovalGate::Prior { .. } => match out { Action::ReadHistory(p) =>
+            p.key@ == view.key@ && p.epoch == view.epoch && p.revision == view.revision && p.stage == Stage::History, _ => false },
+        _ => match out { Action::CommitSent { spend_grant, then } =>
+            spend_grant == (view.approval != ApprovalGate::Ordinary) && then.key@ == view.key@
+            && then.epoch == view.epoch && then.revision == view.revision && then.stage == Stage::SentExecute, _ => false },
+    },
+))]
+fn intended(view: DeliveryView<'_>) -> Action<'_> {
+    match view.approval {
+        ApprovalGate::Prior { .. } => Action::ReadHistory(continuation(view, Stage::History)),
+        _ => commit_sent(view, Stage::SentExecute),
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    match out {
+        Action::Observe(p) => view.fence == Fence::Live && p.stage == Stage::ObserveReconcile
+            && p.key@ == view.key@ && p.epoch == view.epoch && p.revision == view.revision,
+        Action::Reconcile(p) => view.fence == Fence::Retiring && !view.waits.quota
+            && p.stage == Stage::Reconcile && p.key@ == view.key@ && p.epoch == view.epoch && p.revision == view.revision,
+        Action::Wait => view.fence == Fence::Retiring && view.waits.quota,
+        _ => false,
+    },
+))]
+fn begin_reconciliation(view: DeliveryView<'_>) -> Action<'_> {
+    if view.fence == Fence::Live { Action::Observe(continuation(view, Stage::ObserveReconcile)) }
+    else if view.waits.quota { Action::Wait }
+    else { Action::Reconcile(continuation(view, Stage::Reconcile)) }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    start_contract(view, out),
+))]
+fn start(view: DeliveryView<'_>) -> Action<'_> {
+    if view.fence == Fence::Retiring {
+        match view.state {
+            State::Intended => return Action::CancelAbsent,
+            State::Sent | State::Uncertain => return Action::Transition(State::Cancelling),
+            _ => {},
+        }
+    }
+    if view.waits.outage && view.fence == Fence::Live { return Action::Wait; }
+    match view.state {
+        State::Intended => intended(view),
+        State::Sent => Action::Transition(State::Uncertain),
+        State::Uncertain | State::Cancelling => begin_reconciliation(view),
+        State::Confirmed | State::Failed | State::Cancelled => Action::Wait,
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    history_contract(view, pending, evidence, out),
+))]
+fn history<'a>(view: DeliveryView<'a>, pending: Continuation<'a>, evidence: Evidence) -> Action<'a> {
+    if !bound(view, &pending) || pending.stage != Stage::History || view.state != State::Intended
+        || view.fence != Fence::Live || view.waits.outage { return Action::Wait; }
+    match view.approval {
+        ApprovalGate::Prior { predecessor } => {
+            let stage = if predecessor { Stage::SentAmbiguous } else {
+                match evidence {
+                    Evidence::Absent => Stage::SentExecute,
+                    Evidence::Found(ack) => Stage::SentFound(ack),
+                    Evidence::Pending | Evidence::Error => Stage::SentAmbiguous,
+                }
+            };
+            commit_sent(view, stage)
+        }
+        _ => Action::Wait,
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    sent_contract(view, pending, out),
+))]
+fn sent_committed<'a>(view: DeliveryView<'a>, pending: Continuation<'a>) -> Action<'a> {
+    // The Sent transaction changes revision; the following reload establishes
+    // the revision against which observation and issue are bound.
+    if !key_matches(view.key, pending.key) || view.epoch != pending.epoch
+        || view.revision < pending.revision || view.state != State::Sent { return Action::Wait; }
+    match pending.stage {
+        Stage::SentExecute => Action::Observe(continuation(view, Stage::ObserveExecute)),
+        Stage::SentFound(ack) => Action::EnqueueCompletion(ack),
+        Stage::SentAmbiguous => Action::RecordAmbiguity { stop: true },
+        _ => Action::Wait,
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    observed_contract(view, pending, revision_changed, out),
+))]
+fn observed<'a>(view: DeliveryView<'a>, pending: Continuation<'a>, revision_changed: bool) -> Action<'a> {
+    if !bound(view, &pending) { return Action::Wait; }
+    if !matches!(pending.stage, Stage::ObserveExecute | Stage::ObserveReconcile) { return Action::Wait; }
+    if revision_changed { return Action::Return; }
+    match pending.stage {
+        Stage::ObserveExecute if view.state == State::Sent => Action::Execute(continuation(view, Stage::Execute)),
+        Stage::ObserveReconcile if matches!(view.state, State::Uncertain | State::Cancelling) => {
+            if view.waits.quota { Action::Wait } else { Action::Reconcile(continuation(view, Stage::Reconcile)) }
+        }
+        _ => Action::Wait,
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    executed_contract(view, pending, outcome, out),
+))]
+fn executed<'a>(view: DeliveryView<'a>, pending: Continuation<'a>, outcome: Outcome) -> Action<'a> {
+    if !bound(view, &pending) || pending.stage != Stage::Execute || view.state != State::Sent { return Action::Wait; }
+    match outcome {
+        Outcome::Acknowledged(ack) => Action::EnqueueCompletion(ack),
+        Outcome::Ambiguous => Action::RecordAmbiguity { stop: true },
+        Outcome::Unanswered => Action::RecordUnanswered,
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    reconciled_contract(view, pending, evidence, out),
+))]
+fn reconciled<'a>(view: DeliveryView<'a>, pending: Continuation<'a>, evidence: Evidence) -> Action<'a> {
+    if !bound(view, &pending) || pending.stage != Stage::Reconcile
+        || !matches!(view.state, State::Uncertain | State::Cancelling) { return Action::Wait; }
+    match evidence {
+        Evidence::Found(ack) => Action::EnqueueCompletion(ack),
+        Evidence::Absent => {
+            if view.state == State::Cancelling { Action::CancelAbsent }
+            else if !view.waits.held { Action::Transition(State::Intended) }
+            else { Action::Wait }
+        }
+        Evidence::Pending => {
+            if view.approval != ApprovalGate::Ordinary && view.fence == Fence::Live && !view.waits.held {
+                Action::RecordAmbiguity { stop: false }
+            } else { Action::Wait }
+        }
+        Evidence::Error => Action::Wait,
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    consume_contract(view, key, ack, kernel_ack, approval_successor, out),
+))]
+fn consume<'a>(view: DeliveryView<'a>, key: &[u8], ack: Ack, kernel_ack: Ack, approval_successor: bool) -> Action<'a> {
+    if !key_matches(view.key, key) || !matches!(view.state, State::Sent | State::Uncertain | State::Cancelling) { return Action::Wait; }
+    let plan = completion(view.state, ack);
+    let retire_retry = view.kind == DeliveryKind::KernelEffect && ack == Ack::Retryable && plan.to == State::Intended;
+    Action::Commit(CommitPlan {
+        completion: plan, kernel_ack, retire_retry, remove_watch: retire_retry,
+        authorize_successor: retire_retry && view.approval != ApprovalGate::Ordinary && approval_successor,
+        retire_approval: view.approval != ApprovalGate::Ordinary && (retire_retry || matches!(plan.to, State::Confirmed | State::Failed | State::Cancelled)),
+    })
+}
+
+/// Pure protocol step. I/O results must come from the operation named by the
+/// consumed continuation. No token is serializable or Clone. Enqueue does not
+/// change effect state; Consume alone plans the completion transaction.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    action_contract(view, input, out),
+))]
+pub fn action<'a>(view: DeliveryView<'a>, input: Input<'a>) -> Action<'a> {
+    match input {
+        Input::Start => start(view),
+        Input::History { pending, evidence } => history(view, pending, evidence),
+        Input::SentCommitted(pending) => sent_committed(view, pending),
+        Input::Observed { pending, revision_changed } => observed(view, pending, revision_changed),
+        Input::Executed { pending, outcome } => executed(view, pending, outcome),
+        Input::Reconciled { pending, evidence } => reconciled(view, pending, evidence),
+        Input::Consume { key, ack, kernel_ack, approval_successor } => consume(view, key, ack, kernel_ack, approval_successor),
+        Input::ClearApproval { key, matching_open_incident } => {
+            if key_matches(view.key, key) && matching_open_incident && view.approval != ApprovalGate::Ordinary
+                && can_authorize_approval_retry(view.state) { Action::AuthorizeRetry } else { Action::Wait }
+        }
+        Input::CheckedApprovalNews { key } => {
+            if key_matches(view.key, key) && view.approval != ApprovalGate::Ordinary { Action::ScheduleRepair } else { Action::Wait }
+        }
+        Input::RepairDone { copies, dispatches } => {
+            if view.approval == ApprovalGate::Ordinary { return Action::Wait; }
+            let clear_unresolved = match copies { Some(copies) => accounts_for_dispatches(copies, dispatches), None => false };
+            Action::FinishRepair { clear_unresolved }
+        }
+    }
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+pub open spec fn permission_at(p: Continuation, v: DeliveryView) -> bool {
+    p.key@ == v.key@ && p.epoch == v.epoch && p.revision == v.revision
+}
+
+open spec fn sent_action(v: DeliveryView, stage: Stage, out: Action) -> bool {
+    match out {
+        Action::CommitSent { spend_grant, then } => spend_grant == (v.approval != ApprovalGate::Ordinary)
+            && permission_at(then, v) && then.stage == stage,
+        _ => false,
+    }
+}
+
+pub open spec fn start_contract(v: DeliveryView, out: Action) -> bool {
+    if v.fence == Fence::Retiring && v.state == State::Intended { matches!(out, Action::CancelAbsent) }
+    else if v.fence == Fence::Retiring && matches!(v.state, State::Sent | State::Uncertain) {
+        matches!(out, Action::Transition(State::Cancelling))
+    } else if v.waits.outage && v.fence == Fence::Live { matches!(out, Action::Wait) }
+    else { match v.state {
+        State::Intended => match v.approval {
+            ApprovalGate::Prior { .. } => match out { Action::ReadHistory(p) => permission_at(p, v) && p.stage == Stage::History, _ => false },
+            _ => sent_action(v, Stage::SentExecute, out),
+        },
+        State::Sent => matches!(out, Action::Transition(State::Uncertain)),
+        State::Uncertain | State::Cancelling => match out {
+            Action::Observe(p) => v.fence == Fence::Live && permission_at(p, v) && p.stage == Stage::ObserveReconcile,
+            Action::Reconcile(p) => v.fence == Fence::Retiring && !v.waits.quota && permission_at(p, v) && p.stage == Stage::Reconcile,
+            Action::Wait => v.fence == Fence::Retiring && v.waits.quota,
+            _ => false,
+        },
+        _ => matches!(out, Action::Wait),
+    }}
+}
+
+pub open spec fn history_contract(v: DeliveryView, p: Continuation, e: Evidence, out: Action) -> bool {
+    if permission_at(p, v) && p.stage == Stage::History && v.state == State::Intended
+        && v.fence == Fence::Live && !v.waits.outage {
+        match v.approval {
+            ApprovalGate::Prior { predecessor } => sent_action(v,
+                if predecessor { Stage::SentAmbiguous } else { match e {
+                    Evidence::Absent => Stage::SentExecute,
+                    Evidence::Found(ack) => Stage::SentFound(ack),
+                    _ => Stage::SentAmbiguous,
+                }}, out),
+            _ => matches!(out, Action::Wait),
+        }
+    } else { matches!(out, Action::Wait) }
+}
+
+pub open spec fn sent_contract(v: DeliveryView, p: Continuation, out: Action) -> bool {
+    if v.key@ == p.key@ && v.epoch == p.epoch && v.revision >= p.revision && v.state == State::Sent {
+        match p.stage {
+            Stage::SentExecute => match out { Action::Observe(next) => permission_at(next, v) && next.stage == Stage::ObserveExecute, _ => false },
+            Stage::SentFound(ack) => matches!(out, Action::EnqueueCompletion(a) if a == ack),
+            Stage::SentAmbiguous => matches!(out, Action::RecordAmbiguity { stop: true }),
+            _ => matches!(out, Action::Wait),
+        }
+    } else { matches!(out, Action::Wait) }
+}
+
+pub open spec fn observed_contract(v: DeliveryView, p: Continuation, changed: bool, out: Action) -> bool {
+    if !permission_at(p, v) || !matches!(p.stage, Stage::ObserveExecute | Stage::ObserveReconcile) { matches!(out, Action::Wait) }
+    else if changed { matches!(out, Action::Return) }
+    else { match p.stage {
+        Stage::ObserveExecute => if v.state == State::Sent {
+            match out { Action::Execute(next) => permission_at(next, v) && next.stage == Stage::Execute, _ => false }
+        } else { matches!(out, Action::Wait) },
+        _ => if matches!(v.state, State::Uncertain | State::Cancelling) && !v.waits.quota {
+            match out { Action::Reconcile(next) => permission_at(next, v) && next.stage == Stage::Reconcile, _ => false }
+        } else { matches!(out, Action::Wait) },
+    }}
+}
+
+pub open spec fn executed_contract(v: DeliveryView, p: Continuation, outcome: Outcome, out: Action) -> bool {
+    if permission_at(p, v) && p.stage == Stage::Execute && v.state == State::Sent {
+        match outcome {
+            Outcome::Acknowledged(ack) => matches!(out, Action::EnqueueCompletion(a) if a == ack),
+            Outcome::Ambiguous => matches!(out, Action::RecordAmbiguity { stop: true }),
+            Outcome::Unanswered => matches!(out, Action::RecordUnanswered),
+        }
+    } else { matches!(out, Action::Wait) }
+}
+
+pub open spec fn reconciled_contract(v: DeliveryView, p: Continuation, e: Evidence, out: Action) -> bool {
+    if permission_at(p, v) && p.stage == Stage::Reconcile && matches!(v.state, State::Uncertain | State::Cancelling) {
+        match e {
+            Evidence::Found(ack) => matches!(out, Action::EnqueueCompletion(a) if a == ack),
+            Evidence::Absent => if v.state == State::Cancelling { matches!(out, Action::CancelAbsent) }
+                else if !v.waits.held { matches!(out, Action::Transition(State::Intended)) }
+                else { matches!(out, Action::Wait) },
+            Evidence::Pending => if v.approval != ApprovalGate::Ordinary && v.fence == Fence::Live && !v.waits.held {
+                matches!(out, Action::RecordAmbiguity { stop: false })
+            } else { matches!(out, Action::Wait) },
+            Evidence::Error => matches!(out, Action::Wait),
+        }
+    } else { matches!(out, Action::Wait) }
+}
+
+pub open spec fn consume_contract(v: DeliveryView, key: &[u8], ack: Ack, kernel_ack: Ack, successor: bool, out: Action) -> bool {
+    if v.key@ == key@ && matches!(v.state, State::Sent | State::Uncertain | State::Cancelling) {
+        match out { Action::Commit(p) =>
+            p.completion.bridge == (v.state == State::Uncertain && ack != Ack::Confirmed)
+            && p.completion.from == (if p.completion.bridge { State::Sent } else { v.state })
+            && p.completion.to == (if v.state == State::Cancelling || ack == Ack::Confirmed { State::Confirmed }
+                else if ack == Ack::Retryable { State::Intended } else { State::Failed })
+            && p.kernel_ack == kernel_ack
+            && p.retire_retry == (v.kind == DeliveryKind::KernelEffect && ack == Ack::Retryable && v.state != State::Cancelling)
+            && p.remove_watch == p.retire_retry
+            && p.authorize_successor == (p.retire_retry && v.approval != ApprovalGate::Ordinary && successor)
+            && p.retire_approval == (v.approval != ApprovalGate::Ordinary && (p.retire_retry || matches!(p.completion.to, State::Confirmed | State::Failed | State::Cancelled))),
+            _ => false,
+        }
+    } else { matches!(out, Action::Wait) }
+}
+
+pub open spec fn action_contract(v: DeliveryView, input: Input, out: Action) -> bool {
+    match input {
+        Input::Start => start_contract(v, out),
+        Input::History { pending, evidence } => history_contract(v, pending, evidence, out),
+        Input::SentCommitted(pending) => sent_contract(v, pending, out),
+        Input::Observed { pending, revision_changed } => observed_contract(v, pending, revision_changed, out),
+        Input::Executed { pending, outcome } => executed_contract(v, pending, outcome, out),
+        Input::Reconciled { pending, evidence } => reconciled_contract(v, pending, evidence, out),
+        Input::Consume { key, ack, kernel_ack, approval_successor } => consume_contract(v, key, ack, kernel_ack, approval_successor, out),
+        Input::ClearApproval { key, matching_open_incident } =>
+            if v.key@ == key@ && matching_open_incident && v.approval != ApprovalGate::Ordinary && matches!(v.state, State::Sent | State::Uncertain) {
+                matches!(out, Action::AuthorizeRetry)
+            } else { matches!(out, Action::Wait) },
+        Input::CheckedApprovalNews { key } => if v.key@ == key@ && v.approval != ApprovalGate::Ordinary {
+            matches!(out, Action::ScheduleRepair)
+        } else { matches!(out, Action::Wait) },
+        Input::RepairDone { copies, dispatches } => if v.approval == ApprovalGate::Ordinary { matches!(out, Action::Wait) }
+            else { matches!(out, Action::FinishRepair { clear_unresolved } if clear_unresolved == match copies { Some(c) => c >= dispatches, None => false }) },
+    }
+}
+}
