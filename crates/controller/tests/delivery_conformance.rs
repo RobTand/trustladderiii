@@ -874,7 +874,7 @@ fn closed_node_restart_schedules_late_resource_recovery() {
             "stop-before-late-landing",
             tl3_controller::executor::Observation::Steering {
                 node: tl3_kernel::NodeId(0),
-                command: tl3_controller::executor::Control::Stop,
+                command: tl3_kernel::Command::Stop,
             },
         )
         .unwrap();
