@@ -1,6 +1,7 @@
 """Controlled store executables exercise streaming transfer without a daemon."""
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -159,3 +160,35 @@ def test_map_preflight_never_transfers_a_missing_image(store, profile_map):
     calls = [json.loads(line) for line in (root / 'calls').read_text().splitlines()]
     assert len(calls) == 1
     assert calls[0][:2] == ['image', 'exists']
+
+
+def test_prepared_profile_contains_actual_map_store_and_both_executable_artifacts(store, profile_map, monkeypatch):
+    import hashlib
+    from tl3_harness import runtime_image
+
+    root, executable = store
+    path, entry, digest = profile_map
+    (root / 'present').write_text('yes')
+    actual = {'Id': entry['config_digest'], 'Os': 'linux', 'Architecture': 'amd64', 'RepoDigests': [entry['registry_ref']]}
+    monkeypatch.setattr(runtime_image, 'preflight_profile', lambda *args, **kwargs:
+                        {'profile': entry, 'map': {'path': str(path), 'sha256': digest, 'bytes': path.stat().st_size}, 'store': actual})
+    config = runtime_image.prepare_runtime_profile(
+        root / 'prepared', host_interpreter=sys.executable, container_interpreter='/explicit/container/python',
+        podman=executable, systemctl='/explicit/systemctl', mode='own_scope', memory_limit_bytes=268435456,
+        image_map=path, profile='sandbox', host='dl380g10', platform='linux/amd64',
+        environment={'HOME': str(root), 'XDG_RUNTIME_DIR': str(root)})
+    prepared = json.loads(config.read_text())
+    assert prepared['image_observations']['profile'] == entry
+    assert prepared['image_observations']['map']['sha256'] == digest
+    assert prepared['image_observations']['store'] == actual
+    assert prepared['container_mode'] == 'own_scope' and prepared['memory_limit_bytes'] == 268435456
+    assert prepared['podman'] == executable and prepared['host_interpreter'] == sys.executable
+    assert prepared['container_interpreter'] == '/explicit/container/python'
+    assert prepared['scratch_root'] == '/var/tmp/flux-vanilla'
+    for role in ('collector', 'cleanup', 'manifest'):
+        artifact = prepared['artifacts'][role]
+        data = Path(artifact['path']).read_bytes()
+        assert artifact['sha256'] == hashlib.sha256(data).hexdigest() and artifact['bytes'] == len(data)
+    assert Path(prepared['artifacts']['cleanup']['path']).name == 'host-cleanup'
+    assert config.stat().st_mode & 0o222 == 0
+    assert prepared['mode_observations'] is None
