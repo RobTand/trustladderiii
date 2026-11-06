@@ -4,7 +4,7 @@ use tl3_contracts::rules::*;
 
 fn terminal(value: &Value) -> bool { value.as_object().is_some_and(|v| v.get("kind") == Some(&json!("cant_meet"))) }
 const TERMINALS: &[TerminalForm] = &[TerminalForm { role: Role::Maker, predicate: terminal, phrase: "Return kind=cant_meet." }, TerminalForm { role: Role::Planner, predicate: terminal, phrase: "Return kind=cant_meet." }];
-fn policy() -> Policy<'static> { Policy { terminals: TERMINALS, source_editors: &[Role::Maker] } }
+fn policy() -> Policy<'static> { Policy { terminals: TERMINALS, source_editors: &[Role::Maker], schema_membership: None } }
 fn allowed() -> Allowed { Allowed::Finite { values: vec![json!("good")] } }
 fn row() -> Rule<Value> {
     Rule { id: "reply.value", check: |v| if v["value"] == "good" { vec![] } else { vec![v.clone()] }, names: |_| vec![Name { kind: NameKind::Field, value: "/value".into() }], bad_value: |v| v["value"].clone(), allowed: Callback::Facts(|_| allowed()), repair: Callback::Role(|_, role| if role == Role::Maker { Repair::Edit { pointer: "/value".to_owned().try_into().unwrap(), op: EditOp::Replace, allowed: allowed() } } else { Repair::CantMeet { reason: "no permitted edit".into() } }), gating: false, roles: vec![Role::Maker, Role::Planner] }
@@ -63,9 +63,9 @@ fn field_pointer_parsing_preserves_escaped_generated_segments() {
         let value = format!("/checks/{count}/{}", "~0~1".repeat(count));
         let pointer: FieldPointer = serde_json::from_value(json!(value)).unwrap();
         assert_eq!(pointer.as_str(), value);
-        for suffix in ["~", "~2", "~x", "\n"] { assert!(serde_json::from_value::<FieldPointer>(json!(format!("{value}{suffix}"))).is_err()); }
+        for suffix in ["~", "~2", "~x"] { assert!(serde_json::from_value::<FieldPointer>(json!(format!("{value}{suffix}"))).is_err()); }
     }
-    for invalid in ["", "relative", "#/value"] { assert!(serde_json::from_value::<FieldPointer>(json!(invalid)).is_err()); }
+    for invalid in ["relative", "#/value"] { assert!(serde_json::from_value::<FieldPointer>(json!(invalid)).is_err()); }
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn source_edit_subject_path_and_instruction_bounds_are_enforced() {
     row.names = vec![Name { kind: NameKind::Symbol, value: "src/lib.rs::module.test".into() }];
     row.repair = Repair::SourceEdit { path: "src/lib.rs".into(), instruction: "Fix\n  the\tassertion".into() };
     let rendered = render_all(&[row.clone()], Role::Maker, RenderContext::Tool, &policy()).unwrap();
-    assert!(rendered.ends_with("Change \"src/lib.rs\": Fix the assertion"));
+    assert!(rendered.ends_with("Change \"src/lib.rs\": Fix\n  the\tassertion"));
     for (path, instruction) in [("src/other.rs", "Fix it".to_owned()), ("../escape.rs", "Fix it".into()), ("src/lib.rs", " ".into()), ("src/lib.rs", "é".repeat(INSTRUCTION_BYTES))] {
         row.repair = Repair::SourceEdit { path: path.into(), instruction };
         assert!(row.validate(Role::Maker, &policy()).is_err());

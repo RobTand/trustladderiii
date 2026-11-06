@@ -28,11 +28,11 @@ pub enum RenderContext { #[default] Reply, Tool }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
-pub struct FieldPointer(#[schemars(regex(pattern = r"^/(?:[^~]|~[01])*$"))] String);
+pub struct FieldPointer(#[schemars(regex(pattern = r"^(?:/(?:[^~]|~[01])*)?$"))] String);
 impl TryFrom<String> for FieldPointer {
     type Error = String;
     fn try_from(value: String) -> Result<Self, String> {
-        if !value.starts_with('/') || value.chars().any(char::is_control) { return Err("field pointer must be absolute".into()); }
+        if !value.is_empty() && !value.starts_with('/') { return Err("field pointer must be absolute".into()); }
         let mut bytes = value.bytes();
         while let Some(byte) = bytes.next() {
             if byte == b'~' && !matches!(bytes.next(), Some(b'0' | b'1')) { return Err("invalid JSON pointer escape".into()); }
@@ -57,7 +57,7 @@ pub enum Allowed { Finite { values: Vec<Value> }, Schema { keyword: SchemaKeywor
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum SchemaKeyword { Const, Enum, Type, Pattern, Minimum, Maximum, MinLength, MaxLength, MinItems, MaxItems, Required, AdditionalProperties }
+pub enum SchemaKeyword { Schema, Const, Enum, Type, Pattern, Minimum, Maximum, MinLength, MaxLength, MinItems, MaxItems, Required, AdditionalProperties }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -135,7 +135,10 @@ impl From<ViolationWire> for Violation {
 
 /// Adapter policy is not part of the serialized row or the schema.
 pub struct TerminalForm { pub role: Role, pub predicate: fn(&Value) -> bool, pub phrase: &'static str }
-pub struct Policy<'a> { pub terminals: &'a [TerminalForm], pub source_editors: &'a [Role] }
+/// A consuming JSON Schema validator handles constraints beyond enum/const/type.
+/// The callback receives resolved wire data, the candidate, and no executable row.
+pub type SchemaMembership = fn(SchemaKeyword, &Value, &Value) -> Result<bool, String>;
+pub struct Policy<'a> { pub terminals: &'a [TerminalForm], pub source_editors: &'a [Role], pub schema_membership: Option<SchemaMembership> }
 
 pub enum Callback<F, T> { Static(T), Facts(fn(&F) -> T), Role(fn(&F, Role) -> T) }
 pub enum Witness { Shared(Value), ByRole(BTreeMap<Role, Value>) }
@@ -232,7 +235,7 @@ impl Allowed {
             _ => vec![],
         }
     }
-    fn accepts(&self, value: &Value) -> Result<bool, String> {
+    fn accepts(&self, value: &Value, policy: &Policy<'_>) -> Result<bool, String> {
         Ok(match self {
             Self::Finite { values } => values.contains(value),
             Self::Schema { keyword: SchemaKeyword::Const, value: expected } => value == expected,
@@ -240,13 +243,13 @@ impl Allowed {
             Self::Schema { keyword: SchemaKeyword::Type, value: Value::String(kind) } => match kind.as_str() {
                 "null" => value.is_null(), "boolean" => value.is_boolean(), "string" => value.is_string(), "object" => value.is_object(), "array" => value.is_array(), "number" => value.is_number(), "integer" => value.as_number().is_some_and(|n| n.is_i64() || n.is_u64() || n.as_f64().is_some_and(|n| n.fract() == 0.0)), _ => return Err("unknown JSON type".into()),
             },
-            _ => return Err("schema membership requires the consuming schema validator".into()),
+            Self::Schema { keyword, value: constraint } => return policy.schema_membership.ok_or("schema membership requires the consuming schema validator")?(*keyword, constraint, value),
         })
     }
     fn render(&self) -> String {
         match self {
-            Self::Finite { values } => format!("enum {}", serde_json::to_string(values).unwrap()),
-            Self::Schema { keyword, value } => format!("{} {}", serde_json::to_value(keyword).unwrap().as_str().unwrap(), value),
+            Self::Finite { values } => format!("enum {}", display_json(&Value::Array(values.clone()))),
+            Self::Schema { keyword, value } => format!("{} {}", serde_json::to_value(keyword).unwrap().as_str().unwrap(), display_json(value)),
         }
     }
     fn wording(&self) -> &'static str {
@@ -308,10 +311,12 @@ impl Violation {
 /// The caller parses context before aggregation, including empty arrays. Never clips rows.
 pub fn render_all(violations: &[Violation], role: Role, context: RenderContext, policy: &Policy<'_>) -> Result<String, String> {
     let mut lines = vec![];
-    for violation in violations {
+    for original in violations {
+        let mut violation = original.clone();
+        violation.bound_evidence();
         violation.validate(role, policy)?;
         let mut text = format!("{}: {}.", violation.rule_id, violation.names.iter().map(Name::render).collect::<Vec<_>>().join(", "));
-        let bad = violation.bad_value.to_string();
+        let bad = display_json(&violation.bad_value);
         if bad.chars().count() <= 256 { text.push_str(&format!(" Bad value: {bad}.")); }
         text.push_str(&format!(" Allowed: {}.", violation.allowed.render()));
         match &violation.repair {
@@ -327,7 +332,7 @@ pub fn render_all(violations: &[Violation], role: Role, context: RenderContext, 
                 if context == RenderContext::Reply { text.push_str(&format!(" {}", policy.terminal(role)?.phrase)); }
                 text.push_str(&format!(" Reason: {reason}"));
             }
-            Repair::SourceEdit { path, instruction } => text.push_str(&format!(" Change {}: {}", serde_json::to_string(path).unwrap(), instruction.split_whitespace().collect::<Vec<_>>().join(" "))),
+            Repair::SourceEdit { path, instruction } => text.push_str(&format!(" Change {}: {}", serde_json::to_string(path).unwrap(), instruction)),
         }
         for evidence in &violation.evidence {
             match evidence {
@@ -354,6 +359,7 @@ fn parts(pointer: &FieldPointer) -> Vec<String> { pointer.0.split('/').skip(1).m
 fn apply(document: &Value, pointer: &FieldPointer, op: EditOp, value: &Value) -> Result<Value, String> {
     let mut result = document.clone();
     let mut parts = parts(pointer);
+    if parts.is_empty() { return if op == EditOp::Replace { Ok(value.clone()) } else { Err("only replace is supported at the reply root".into()) }; }
     let key = parts.pop().ok_or("edit needs a field")?;
     let mut parent = &mut result;
     for part in parts {
@@ -386,7 +392,7 @@ pub fn permits(violations: &[Violation], before: &Value, after: &Value, role: Ro
     for row in violations {
         if let Repair::Edit { pointer, op, allowed } = &row.repair {
             let value = if *op == EditOp::Remove { &Value::Null } else { match after.pointer(pointer.as_str()) { Some(value) => value, None => return Ok(false) } };
-            if *op != EditOp::Remove && !allowed.accepts(value)? { return Ok(false); }
+            if *op != EditOp::Remove && !allowed.accepts(value, policy)? { return Ok(false); }
             expected = match apply(&expected, pointer, *op, value) { Ok(value) => value, Err(_) => return Ok(false) };
         }
     }
@@ -401,4 +407,13 @@ pub fn evaluate<F>(rules: &[Rule<F>], facts: &F, role: Role, policy: &Policy<'_>
         if stop { break; }
     }
     Ok(found)
+}
+
+// Match the existing refusal renderer's JSON separators and Unicode spelling.
+fn display_json(value: &Value) -> String {
+    match value {
+        Value::Array(items) => format!("[{}]", items.iter().map(display_json).collect::<Vec<_>>().join(", ")),
+        Value::Object(fields) => format!("{{{}}}", fields.iter().map(|(key, value)| format!("{}: {}", serde_json::to_string(key).unwrap(), display_json(value))).collect::<Vec<_>>().join(", ")),
+        _ => value.to_string(),
+    }
 }

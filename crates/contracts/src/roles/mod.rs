@@ -68,5 +68,6 @@ fn inline_declaration_schema<T: schemars::JsonSchema>() -> schemars::Schema {
         }
     }
     strip(&mut value);
+    if let Some(subjects) = value.pointer_mut("/properties/subjects") { subjects["minItems"] = 0.into(); }
     value.try_into().expect("a generated schema is an object")
 }
