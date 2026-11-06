@@ -127,6 +127,8 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_rebase_clean", "review_world_verify_apply"),
     ("apply_rebase_needs_changes", "review_world_verify_apply"),
     ("apply_run_failed", "review_world_verify_apply"),
+    ("apply_checks_done", "review_world_verify_apply"),
+    ("apply_rebase_progress_gate", "review_rebase_gate"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.
