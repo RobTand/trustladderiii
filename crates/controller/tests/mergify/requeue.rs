@@ -334,17 +334,15 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.checks = fixture("interrupted", "checks");
         state.queue_check_mut()["completed_at"] = json!("2026-10-31T22:40:00Z");
         drop(state);
-        drain(&mut controller);
+        drain_to_failed_round(&mut controller);
     }
-    assert!(
-        controller
-            .snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|row| row.table == "incidents"),
-        "missing acceptance or a second dequeue must raise the usual incident"
-    );
+    if mode == "no-acceptance" {
+        assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "incidents"),
+            "missing queue acceptance retains the existing incident path");
+    } else {
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Making,
+            "the second parsed failure follows the existing failed round");
+    }
     assert_eq!(
         api.state.lock().unwrap().requeues,
         1,
