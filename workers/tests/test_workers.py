@@ -972,3 +972,57 @@ def test_exec_prose_audit_union_does_not_restore_route_requirements():
     runtime._checked(ROLES['audit'], inputs, reply)
     assert reply['evidence_contract'] == [verification]
     assert inputs == before_inputs
+
+
+@pytest.mark.parametrize('case', EXEC_PROSE, ids=lambda case: case['id'])
+@pytest.mark.parametrize('role', ['ingest', 'audit'])
+def test_exec_prose_verbatim_original_paragraphs(case, role):
+    from tl3_workers.evidence import contract_violations
+    from tl3_workers.rules import apply_edit, permits
+
+    original = case['original_paragraph']
+    before = dict(copy.deepcopy(BRIEF if role == 'ingest' else AGREE),
+                  evidence_contract=[route_requirement(original)])
+    inputs = {'issue': {'body': original}, 'tool_capabilities': []}
+    rows = contract_violations(inputs, before, role=role)
+    assert bool(rows) is case['original_is_route_only']
+    if not rows:
+        assert before['evidence_contract'][0]['requirement'] == original
+        return
+    after = copy.deepcopy(before)
+    for row in rows:
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
+    assert not after['evidence_contract']
+    if role == 'ingest':
+        assert original in after['brief']
+    assert permits(rows, before, after, role=role)
+
+
+def test_exec_prose_preserves_original_context_when_requirement_is_shortened():
+    from tl3_workers.evidence import contract_violations
+    from tl3_workers.rules import apply_edit
+
+    original = EXEC_PROSE[0]['original_paragraph']
+    shortened = original.split('. ', 1)[0] + '.'
+    before = dict(copy.deepcopy(BRIEF), evidence_contract=[route_requirement(shortened)])
+    rows = contract_violations({'issue': {'body': original}, 'tool_capabilities': []}, before)
+    assert rows
+    after = copy.deepcopy(before)
+    for row in rows:
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
+    assert original in after['brief']
+    assert not after['evidence_contract']
+
+
+def test_exec_prose_audit_route_removal_keeps_protected_paths():
+    from tl3_workers.evidence import contract_violations
+    from tl3_workers.rules import apply_edit
+
+    before = {'verdict': 'disagree', 'objections': [EXEC_PROSE[2]['route']],
+              'protected_paths': ['protected.py'], 'evidence_contract': []}
+    after = copy.deepcopy(before)
+    for row in contract_violations({'tool_capabilities': []}, before, role='audit'):
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
+    assert after == {'verdict': 'agree', 'objections': [], 'protected_paths': ['protected.py'],
+                     'evidence_contract': []}
+    validate('audit-reply', after)
