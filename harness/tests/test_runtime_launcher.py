@@ -369,3 +369,42 @@ def test_container_mode_refuses_missing_or_inapplicable_limits(options, tmp_path
 
     with pytest.raises(ValueError):
         podman_command(tmp_path, 'sha256:' + '1' * 64, tmp_path, 1, **options)
+
+
+def test_host_collector_forwards_raw_stdout_to_exact_rust_operation(tmp_path, monkeypatch):
+    import hashlib
+    from tl3_harness import runtime
+
+    output = tmp_path / 'out'
+    output.mkdir()
+    run = {'backend': 'flux', 'uri': 'local:///native', 'instance': 'run/generation', 'job': 'fJob'}
+    context = {'output_dir': str(output), 'run': run, 'owner': 'owner', 'correlation': 'correlation'}
+    monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    requests = []
+
+    def backend(request):
+        requests.append(request)
+        return {'op': 'collect_runner', 'report': {'path': 'rust-owned-report'}, 'payload': {'path': 'rust-owned-payload'}}
+
+    monkeypatch.setattr(runtime, 'backend_request', backend)
+    raw = b'TL3_CHECKS {"unchanged":"payload"}\nraw tail\n'
+    code, result = runtime.collect_host_payload(
+        [sys.executable, '-I', '-c', 'import sys;sys.stdout.buffer.write(' + repr(raw) + ');sys.stderr.write("diagnostic")'],
+        timeout=10)
+    assert code == 0 and result['report']['path'] == 'rust-owned-report'
+    assert (output / 'host.stdout').read_bytes() == raw
+    assert (output / 'host.stderr').read_text() == 'diagnostic'
+    assert requests == [{'op': 'collect_runner', 'owner': 'owner', 'correlation': 'correlation',
+                         'facts': {'run': run, 'stdout': {'path': str(output / 'host.stdout'),
+                                   'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)},
+                                   'runtime_binding': None, 'cleanup': None}}]
+
+
+def test_host_collector_never_overwrites_prior_output(tmp_path, monkeypatch):
+    from tl3_harness import runtime
+
+    (tmp_path / 'host.stdout').write_text('retained')
+    monkeypatch.setattr(runtime, 'launch_context', lambda: {'output_dir': str(tmp_path)})
+    with pytest.raises(FileExistsError):
+        runtime.collect_host_payload([sys.executable, '-c', 'raise SystemExit(99)'], timeout=10)
+    assert (tmp_path / 'host.stdout').read_text() == 'retained'
