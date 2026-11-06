@@ -896,7 +896,9 @@ fn fake_and_production_merge_outcomes_have_identical_receipts() {
         if fake {
             let snapshot = controller.snapshot().unwrap();
             let row = snapshot.rows.iter().find(|row| row.table == "watches").unwrap();
-            let delivery: Delivery = serde_json::from_value(row.value.clone()).unwrap();
+            let mut delivery: Delivery = serde_json::from_value(row.value.clone()).unwrap();
+            delivery.pull_request = Some(100);
+            delivery.head_sha = Some(api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into());
             let mut adapter = adapters::mergify::Fake::new(root.path());
             for key in ["first", "repeat"] {
                 let completion = adapter.execute(&delivery).unwrap();
