@@ -1026,3 +1026,24 @@ def test_exec_prose_audit_route_removal_keeps_protected_paths():
     assert after == {'verdict': 'agree', 'objections': [], 'protected_paths': ['protected.py'],
                      'evidence_contract': []}
     validate('audit-reply', after)
+
+
+@pytest.mark.parametrize('case,pointer', [('forecast', '/forecast'), ('files', '/files')])
+def test_ingest_owned_refusal_uses_its_row_guard(case, pointer):
+    from tl3_workers.roles.ingest import check_memory_ids
+    from tl3_workers.rules import apply_edit, permits
+
+    inputs = {'forecast': {}} if case == 'files' else {}
+    before = copy.deepcopy(BRIEF)
+    if case == 'forecast':
+        before['forecast'] = {}
+    with pytest.raises(ValueError) as raised:
+        check_memory_ids(inputs, before)
+    item, = raised.value.rule_violations
+    assert raised.value.rule_role == 'ingest'
+    assert item.repair.pointer.value == pointer
+    text = item.render(role='ingest')
+    assert json.dumps(pointer) in text and item.allowed.render() in text
+    after = apply_edit(before, item.repair, [])
+    assert permits(item, before, after, role='ingest')
+    assert not permits(item, before, {**after, 'brief': 'Unrelated rewrite.'}, role='ingest')

@@ -896,3 +896,18 @@ def test_source_edit_never_enters_a_tool_free_reply_repair():
         repaired(object(), [], lambda: asks.append(True) or '{}', check)
     assert caught.value is error
     assert asks == [True]
+
+
+@pytest.mark.parametrize('original', [{}, {'item': 'bad', 'extra': True}])
+def test_schema_violation_constructors_keep_the_consuming_role(original):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import permits, render_all
+
+    proposal = {'type': 'object', 'properties': {'item': {'const': 'good'}},
+                'required': ['item'], 'additionalProperties': False}
+    violations = schema_violations(Draft202012Validator(proposal).iter_errors(original), role='postmortem')
+    assert violations and all(item.role == 'postmortem' for item in violations)
+    assert '/item' in render_all(violations, role='postmortem')
+    assert permits(violations, original, {'item': 'good'}, role='postmortem')
+    assert not permits(violations, original, {'item': 'good', 'unrelated': True}, role='postmortem')

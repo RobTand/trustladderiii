@@ -172,3 +172,73 @@ def test_review662_reproduction_contract_carries_assertion_reason(review_fix):
         'subjects': [], 'observer_support': [], 'red_message': 'empty greeting'}
     validate('maker-reply', {**reply, 'head': 'c' * 40})
     maker._check_reply(inputs, reply)
+
+
+@pytest.mark.parametrize('case,pointer,kind', [
+    ('goals', '/self_check', 'Edit'),
+    ('maker_status', '/self_check/0', 'Edit'),
+    ('finding_coverage', '/reproductions', 'Edit'),
+    ('proof', '/reproductions/0/proof', 'CantMeet'),
+    ('selector', '/reproductions/0', 'CantMeet'),
+    ('requested_path', '/files/0/path', 'CantMeet'),
+])
+def test_maker_refusals_render_and_guard_the_same_repair(review_fix, case, pointer, kind):
+    from copy import deepcopy
+    from tl3_workers.rules import CantMeet, Edit, apply_edit, permits
+
+    inputs, original = review_fix
+    before = deepcopy(original)
+    if case == 'goals':
+        before['self_check'] = []
+    elif case == 'maker_status':
+        before['self_check'][0] = {'goal_id': before['self_check'][0]['goal_id'],
+                                   'status': 'pending', 'why': 'Deferred.'}
+    elif case == 'finding_coverage':
+        before['reproductions'] = []
+    elif case == 'proof':
+        before['reproductions'][0].pop('proof', None)
+    elif case == 'selector':
+        before['reproductions'][0]['tests'] = ['test_greeting.py']
+    else:
+        before = {'kind': 'needs_files', 'files': [{'path': '.', 'why': 'Needed.'}]}
+    with pytest.raises(ValueError) as raised:
+        maker._check_reply(inputs, before)
+    violations = raised.value.rule_violations
+    assert raised.value.rule_role == 'maker'
+    violation = next(item for item in violations
+                     if pointer in {name.value for name in item.rule.names(item.facts)})
+    assert type(violation.repair).__name__ == kind
+    rendered = violation.render(role='maker')
+    assert json.dumps(pointer) in rendered
+    assert violation.allowed.render() in rendered
+    if isinstance(violation.repair, CantMeet):
+        after = {'kind': 'cant_meet', 'report': 'Cannot supply the missing source facts.'}
+        assert violation.allowed.value == []
+        assert not permits(violations, before, original, role='maker')
+    else:
+        value = original['self_check'] if case == 'goals' else (
+            original['self_check'][0] if case == 'maker_status' else original['reproductions'])
+        assert isinstance(violation.repair, Edit)
+        after = apply_edit(before, violation.repair, value)
+        assert violation.allowed.accepts(value)
+    assert permits(violations, before, after, role='maker')
+    maker._check_reply(inputs, after)
+    assert not permits(violations, before, {**after, 'kind': 'blocked'}, role='maker')
+    if kind == 'Edit':
+        assert not permits(violations, before, {**after, 'unrelated': True}, role='maker')
+
+
+def test_maker_collects_status_and_findings_in_original_failure_order(review_fix):
+    from copy import deepcopy
+    from tl3_workers.rules import permits
+
+    inputs, good = review_fix
+    before = deepcopy(good)
+    before['self_check'][0] = {'goal_id': before['self_check'][0]['goal_id'],
+                               'status': 'pending', 'why': 'Deferred.'}
+    before['reproductions'] = []
+    with pytest.raises(ValueError) as raised:
+        maker._check_reply(inputs, before)
+    assert [item.rule.id for item in raised.value.rule_violations] == [
+        'maker.maker_status', 'maker.reproductions']
+    assert permits(raised.value.rule_violations, before, good, role='maker')
