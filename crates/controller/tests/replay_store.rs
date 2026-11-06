@@ -300,26 +300,55 @@ fn scope_trims_export_exact_records_summary_and_read_only() {
     let settings = db.create("scope_trims_fixture");
     let mut store = Store::open(&settings).unwrap();
     let secret = "planted-secret-DO-NOT-PRINT-896";
-    let mut seed = Commit::new("fixture:trims", json!({"credential":secret}), &store.load().unwrap());
+    let mut seed = Commit::new(
+        "fixture:trims",
+        json!({"credential":secret}),
+        &store.load().unwrap(),
+    );
     for (node, value) in [
         ("0", json!({"head":"old","removed_paths":[]})),
-        ("1", json!({"head":"aaa","removed_paths":["tests/cache%20file","a%FF"]})),
-        ("2", json!({"head":"bbb","removed_paths":["generated/output"]})),
+        (
+            "1",
+            json!({"head":"aaa","removed_paths":["tests/cache%20file","a%FF"]}),
+        ),
+        (
+            "2",
+            json!({"head":"bbb","removed_paths":["generated/output"]}),
+        ),
         ("3", json!({"head":"ccc","removed_paths":[]})),
-        ("4", json!({"head":secret,"removed_paths":[secret],"credential":secret})),
+        (
+            "4",
+            json!({"head":secret,"removed_paths":[secret],"credential":secret}),
+        ),
         ("5", json!({"head":secret})),
         ("6", json!({"head":"bad","removed_paths":secret})),
     ] {
-        seed.rows.push(RowChange::Put { table:"scope_trims".into(), id:node.into(), value });
+        seed.rows.push(RowChange::Put {
+            table: "scope_trims".into(),
+            id: node.into(),
+            value,
+        });
     }
     for (node, owner) in [("0", "owner"), ("1", "owner"), ("2", "other")] {
-        seed.rows.push(RowChange::Put { table:"nodes".into(), id:node.into(), value:json!({"repo":0,"secret":secret}) });
+        seed.rows.push(RowChange::Put {
+            table: "nodes".into(),
+            id: node.into(),
+            value: json!({"repo":0,"secret":secret}),
+        });
         seed.rows.push(RowChange::Put { table:"requests".into(), id:node.into(), value:json!({"issue":42,"repo":{"owner":owner,"name":"sandbox","installation":1,"credential":secret},"title":secret}) });
     }
-    seed.rows.push(RowChange::Put { table:"unrelated".into(), id:"secret".into(), value:json!(secret) });
+    seed.rows.push(RowChange::Put {
+        table: "unrelated".into(),
+        id: "secret".into(),
+        value: json!(secret),
+    });
     store.commit(&seed).unwrap();
     let mut update = Commit::new("fixture:latest-trim", json!({}), &store.load().unwrap());
-    update.rows.push(RowChange::Put { table:"scope_trims".into(), id:"0".into(), value:json!({"head":"ddd","removed_paths":[]}) });
+    update.rows.push(RowChange::Put {
+        table: "scope_trims".into(),
+        id: "0".into(),
+        value: json!({"head":"ddd","removed_paths":[]}),
+    });
     store.commit(&update).unwrap();
     let later = Commit::new("fixture:later", json!({}), &store.load().unwrap());
     store.commit(&later).unwrap();
@@ -353,30 +382,70 @@ fn scope_trims_export_exact_records_summary_and_read_only() {
     let root = tempfile::tempdir().unwrap();
     let source = include_str!("../../config/example.toml")
         .replace("port = 5432", &format!("port = {}", settings.port))
-        .replace("database = \"tl3\"", &format!("database = {:?}", settings.database))
+        .replace(
+            "database = \"tl3\"",
+            &format!("database = {:?}", settings.database),
+        )
         .replace("user = \"tl3\"", "user = \"postgres\"")
-        .replace("# password_file = \"/run/tl3/postgres-password\"", &format!("password_file = {:?}", settings.password_file.as_ref().unwrap()));
+        .replace(
+            "# password_file = \"/run/tl3/postgres-password\"",
+            &format!(
+                "password_file = {:?}",
+                settings.password_file.as_ref().unwrap()
+            ),
+        );
     let config = root.path().join("stats.toml");
     std::fs::write(&config, source).unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_tl3"))
-        .args(["store-stats", "--scope-trims", "--config"]).arg(&config).output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        .args(["store-stats", "--scope-trims", "--config"])
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
     assert!(!String::from_utf8_lossy(&output.stderr).contains(secret));
-    assert_eq!(serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(), expected);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        expected
+    );
     let stats = tl3_controller::store_stats::load(&mut reader).unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_tl3"))
-        .args(["store-stats", "--config"]).arg(&config).output().unwrap();
+        .args(["store-stats", "--config"])
+        .arg(&config)
+        .output()
+        .unwrap();
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(),
-        "metric\ttable\tcount\tmin_revision\tmax_revision\nworld_rows\tnodes\t3\t-\t-\nworld_rows\trequests\t3\t-\t-\nworld_rows\tscope_trims\t7\t-\t-\nworld_rows\tunrelated\t1\t-\t-\nevents\t-\t3\t1\t3\nworld_version\t-\t-\t1\t-\nreplay_from\t-\t-\t-\t-\n");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "metric\ttable\tcount\tmin_revision\tmax_revision\nworld_rows\tnodes\t3\t-\t-\nworld_rows\trequests\t3\t-\t-\nworld_rows\tscope_trims\t7\t-\t-\nworld_rows\tunrelated\t1\t-\t-\nevents\t-\t3\t1\t3\nworld_version\t-\t-\t1\t-\nreplay_from\t-\t-\t-\t-\n"
+    );
     assert!(!serde_json::to_string(&stats).unwrap().contains(secret));
     let after = store.load().unwrap();
     assert_eq!(before.revision, after.revision);
     assert_eq!(before.rows, after.rows);
     let mut tx = reader.transaction().unwrap();
-    assert_eq!(tl3_controller::store_stats::read_scope_trims(&mut tx).unwrap(), expected);
-    assert_eq!(tx.query_one("SHOW transaction_isolation", &[]).unwrap().get::<_, String>(0), "repeatable read");
-    assert_eq!(tx.query_one("SHOW transaction_read_only", &[]).unwrap().get::<_, String>(0), "on");
-    assert_eq!(tx.execute("DELETE FROM tl3_world", &[]).unwrap_err().code(), Some(&postgres::error::SqlState::READ_ONLY_SQL_TRANSACTION));
+    assert_eq!(
+        tl3_controller::store_stats::read_scope_trims(&mut tx).unwrap(),
+        expected
+    );
+    assert_eq!(
+        tx.query_one("SHOW transaction_isolation", &[])
+            .unwrap()
+            .get::<_, String>(0),
+        "repeatable read"
+    );
+    assert_eq!(
+        tx.query_one("SHOW transaction_read_only", &[])
+            .unwrap()
+            .get::<_, String>(0),
+        "on"
+    );
+    assert_eq!(
+        tx.execute("DELETE FROM tl3_world", &[]).unwrap_err().code(),
+        Some(&postgres::error::SqlState::READ_ONLY_SQL_TRANSACTION)
+    );
 }

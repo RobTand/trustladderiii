@@ -1723,6 +1723,23 @@ validation boundary stubbed. They never depend on the real `tl3` binary.
 
 `tl3 store-stats --config FILE [--json]` prints table counts and event/world revisions, including the earliest decodable replay baseline. Both it and `tl3 replay-check --config FILE [--from EVENT]` use the runtime store credentials in a SQL-enforced READ ONLY, REPEATABLE READ transaction, without ownership or advisory locks.
 
+`tl3 store-stats --scope-trims --config FILE` explicitly exports scope trims in
+one JSON document with `rows` and `summary`. Each row contains the delivery node
+id, the owning GitHub issue number as `request`, `owner/name` as `repo`, `head`,
+`removed_paths` unchanged, and `written_at` with the latest write's `revision`
+and UTC `committed_at` timestamp. Ownership comes only from the `requests` row
+with the same node id. Missing or malformed owning fields become null.
+
+A trim must contain exactly `head` as a string and `removed_paths` as a string
+array. Otherwise its record contains only `node` and `invalid: true`, without
+any stored value. The summary counts `total_rows` and `non_empty_rows` overall,
+in `by_repo`, and in `by_request`. Request groups include the repo, since issue
+numbers are unique only within a repo. Invalid trims count toward their owning
+group's total, but not toward non-empty counts. Null groups collect unresolved
+ownership. Rows and groups have deterministic ordering. `--json` may accompany
+`--scope-trims` and produces the same document. Without `--scope-trims`, the
+counts-only text and JSON formats remain unchanged.
+
 This branch does not record baselines or change the apply path. Existing legacy history without recorded snapshots fails explicitly; replay cannot verify it retroactively. For instrumented history, start with `--from` the first instrumented event inclusive and retain the matching binary. The baseline statistic means decodable stored data, not a verification pass.
 
 The state-table row **Counter headroom** requires refusal to preserve the complete
