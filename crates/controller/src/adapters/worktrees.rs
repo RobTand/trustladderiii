@@ -608,10 +608,18 @@ impl Served {
                                 .journal
                                 .join("generation")
                                 .join(hex(record.delivery.key.as_bytes()));
-                            if let Some(report) =
+                            if let Some(mut report) =
                                 runner.run(&self.git, &directory, &record.delivery, &head)?
                             {
                                 if !report.completed {
+                                    if let Some(mut run) = record.delivery.checks.clone() {
+                                        run.base_sha = base.clone();
+                                        reproducing::unavailable(
+                                            &mut run,
+                                            "generation failed after updating the base; rerun generation before checks",
+                                        );
+                                        report.check_run = Some(run);
+                                    }
                                     observations.push(Observation::RebaseGenerationFailed {
                                         node: record.delivery.node(),
                                         generation: record.delivery.generation,
@@ -854,6 +862,12 @@ impl Real {
 }
 
 impl Executor for Real {
+    fn generator_configured(&self, repository: &Repository) -> bool {
+        self.generation
+            .as_ref()
+            .is_some_and(|runner| runner.configured_repository(repository))
+    }
+
     fn check_generation(
         &mut self,
         delivery: &Delivery,
@@ -869,6 +883,10 @@ impl Executor for Real {
             .mutex
             .lock()
             .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        if delivery.epoch < repo.fence()? {
+            return Err(Error::Invalid("stale generation controller epoch"));
+        }
+        write(&repo.journal.join("epoch.json"), &delivery.epoch)?;
         let head = CommitId::new(
             delivery
                 .head_sha
@@ -909,7 +927,11 @@ impl Executor for Real {
             .branch_state(&branch)?
             .ok_or(Error::Invalid("repair branch absent"))?
             .0;
+        let mut check_run = None;
         for observation in completion.observations {
+            if let Observation::CheckPlan { run, .. } = &observation {
+                check_run = Some(run.clone());
+            }
             if let Observation::RebaseGenerationFailed { report, .. } = observation {
                 return Ok(Some(report));
             }
@@ -922,6 +944,7 @@ impl Executor for Real {
                     .into(),
             head: head.as_str().into(),
             evidence: None,
+            check_run,
         }))
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {

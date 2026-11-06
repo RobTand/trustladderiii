@@ -1,1 +1,69 @@
-{}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "checkout": {
+      "type": "string"
+    },
+    "command": {
+      "type": "string"
+    },
+    "cpus": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "files": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "generated_files": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "image": {
+      "type": "string"
+    },
+    "mem_gb": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "protected_paths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "state": {
+      "type": "string"
+    },
+    "timeout_s": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tools_path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "checkout",
+    "state",
+    "command",
+    "generated_files",
+    "files",
+    "protected_paths",
+    "image",
+    "tools_path",
+    "cpus",
+    "mem_gb",
+    "timeout_s"
+  ],
+  "title": "GenerationRequest",
+  "type": "object"
+}

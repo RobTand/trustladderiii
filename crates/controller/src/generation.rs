@@ -12,6 +12,8 @@ pub struct Report {
     pub message: String,
     pub head: String,
     pub evidence: Option<GenerationReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_run: Option<crate::adapters::prismabuild::CheckRun>,
 }
 impl Report {
     pub fn fresh(&self) -> bool {
@@ -42,6 +44,14 @@ impl Runner {
             repo.owner.eq_ignore_ascii_case(&delivery.repository.owner)
                 && repo.name.eq_ignore_ascii_case(&delivery.repository.name)
                 && repo.installation_id == delivery.repository.installation
+        })
+    }
+    pub fn configured_repository(&self, identity: &crate::Repository) -> bool {
+        self.config.github.repos.iter().any(|repo| {
+            repo.generator.is_some()
+                && repo.owner.eq_ignore_ascii_case(&identity.owner)
+                && repo.name.eq_ignore_ascii_case(&identity.name)
+                && repo.installation_id == identity.installation
         })
     }
     pub fn configured(&self, delivery: &Delivery) -> bool {
@@ -144,6 +154,7 @@ impl Runner {
             ),
             head: head.as_str().into(),
             evidence: receipt,
+            check_run: None,
         };
         if let Some(receipt) = &report.evidence {
             let generated = snapshot.commit_generation_input(head)?;
@@ -288,6 +299,13 @@ impl crate::Controller {
             id,
         });
         if let Some(report) = result {
+            if let (Some(run), Some(head)) = (&report.check_run, &delivery.head_sha) {
+                commit.rows.push(crate::put(
+                    "check_plans",
+                    format!("{}:{head}", delivery.node().0),
+                    serde_json::json!(run),
+                ));
+            }
             commit.rows.push(crate::put(
                 "generation_repair_evidence",
                 delivery.key.clone(),

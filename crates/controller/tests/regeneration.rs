@@ -54,6 +54,7 @@ struct Generated {
     adapter: Real,
     prepare: Delivery,
     checkout: PathBuf,
+    config: tl3_config::Config,
 }
 impl Generated {
     fn new() -> Self {
@@ -102,6 +103,7 @@ impl Generated {
             adapter,
             prepare,
             checkout,
+            config,
         }
     }
     fn rebase(&self, seq: u64) -> Delivery {
@@ -225,4 +227,219 @@ fn queue_failure_updates_and_regenerates_before_maker_repair() {
             .changed
             .is_empty()
     );
+}
+
+use serde_json::json;
+use tl3_controller::{
+    Bootstrap, Controller, LabelledIssue, adapters,
+    executor::{Completion, Reconciliation, Upstream},
+};
+use tl3_kernel::{HeadId, NodeId, Phase};
+use tl3_store::{Commit, RowChange, Store};
+
+struct Controlled {
+    c: Controller,
+    settings: tl3_config::Store,
+    _db: support::Database,
+    g: Generated,
+    sequence: u64,
+}
+impl Controlled {
+    fn new(mut g: Generated) -> Self {
+        let mut db = support::Database::start();
+        let settings = db.create("regeneration");
+        let mut registry = adapters::simulation(g._root.path()).unwrap();
+        let adapter = std::mem::replace(
+            &mut g.adapter,
+            Real::new(g._root.path().join("unused"), 1).unwrap(),
+        );
+        registry.register(Upstream::Worktrees, adapter);
+        let mut c = Controller::open(
+            Store::open(&settings).unwrap(),
+            registry,
+            Bootstrap {
+                repos: vec![worktree_fixture::identity()],
+                rob: 42,
+                slots: 3,
+                pool: 16,
+                fail_fast: false,
+                operations: None,
+            },
+        )
+        .unwrap();
+        c.set_repository_generation(&g.config.github.repos);
+        let identity = worktree_fixture::identity();
+        c.intake(LabelledIssue {
+            delivery: "generator-intake".into(),
+            owner: identity.owner,
+            repo: identity.name,
+            installation: identity.installation,
+            number: 42,
+            title: "Generic generation".into(),
+            actor: 42,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+        let mut f = Self {
+            c,
+            settings,
+            _db: db,
+            g,
+            sequence: 0,
+        };
+        f.arm(Phase::Planning { must_split: false }, None);
+        let generation = f.c.world().unwrap().nodes[0].generation;
+        f.observe(Observation::Plan {
+            node: NodeId(0),
+            generation,
+            files: f.g.prepare.paths.clone(),
+            fits: true,
+        });
+        f
+    }
+    fn arm(&mut self, phase: Phase, sha: Option<&str>) {
+        let mut n = self.c.world().unwrap().nodes[0];
+        let mut store = Store::open(&self.settings).unwrap();
+        n.phase = phase;
+        n.pos = if matches!(phase, Phase::Checking | Phase::Planning { .. }) {
+            1
+        } else {
+            0
+        };
+        n.head = sha.map(|sha| HeadId(store.intern_commit("0", sha).unwrap().get() as u64));
+        n.checked = None;
+        n.approved = None;
+        n.effect = None;
+        n.ticket = None;
+        n.job = (phase == Phase::Checking).then_some(n.generation);
+        n.run = matches!(phase, Phase::Planning { .. }).then_some(n.generation);
+        n.pool = n.run.is_some();
+        n.holds = !matches!(phase, Phase::Planning { .. });
+        n.worktree = n.holds;
+        n.paused = false;
+        n.waiting_incident = false;
+        n.credit.ready = true;
+        n.credit.start = 8;
+        let snapshot = store.load().unwrap();
+        self.sequence += 1;
+        let mut commit = Commit::new(format!("arm-{}", self.sequence), json!(null), &snapshot);
+        commit.rows.push(RowChange::Put {
+            table: "nodes".into(),
+            id: "0".into(),
+            value: json!(n),
+        });
+        // The full declared scope is the authorization input, independently of locks.
+        commit.rows.push(RowChange::Put {
+            table: "declared_scopes".into(),
+            id: "0".into(),
+            value: json!(self.g.prepare.paths),
+        });
+        store.commit(&commit).unwrap();
+    }
+    fn observe(&mut self, observation: Observation) {
+        self.sequence += 1;
+        self.c
+            .observe(&format!("case-{}", self.sequence), observation)
+            .unwrap();
+        for _ in 0..60 {
+            if !self
+                .c
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "inbox")
+            {
+                return;
+            }
+            assert!(self.c.drive_once().unwrap());
+        }
+        panic!("observation not consumed");
+    }
+    fn check(&mut self, sha: &str) {
+        let generation = self.c.world().unwrap().nodes[0].generation;
+        self.observe(Observation::Checks {
+            node: NodeId(0),
+            generation,
+            sha: sha.into(),
+            changed_paths: vec!["src/a.txt".into(), "gen/manifest.json".into()],
+            failed_tests: vec![],
+            report: true,
+            pass: true,
+            results: vec![],
+            base_sha: git(&self.g.f.source, &["rev-parse", "HEAD"]),
+            action_key: "real-independent-check".into(),
+        });
+    }
+}
+
+#[test]
+fn controller_checking_routes_stale_outputs_to_leaf_repair() {
+    let g = Generated::new();
+    let sha = commit(&g.checkout, "src/a.txt", "1\n");
+    let mut f = Controlled::new(g);
+    f.arm(Phase::Checking, Some(&sha));
+    f.check(&sha);
+    let n = f.c.world().unwrap().nodes[0];
+    assert_ne!(
+        n.checked, n.head,
+        "stale generated output must not gain a checked marker"
+    );
+    assert_ne!(n.phase, Phase::Reviewing);
+    let snapshot = f.c.snapshot().unwrap();
+    let feedback = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "maker_findings")
+        .unwrap()
+        .value
+        .to_string();
+    assert!(
+        feedback.contains("gen/manifest.json") && feedback.contains("run_generator"),
+        "{feedback}"
+    );
+    assert!(
+        !snapshot
+            .pending_effects
+            .iter()
+            .any(|effect| effect.payload["output"]["Effect"]["kind"] == "Push")
+    );
+}
+
+#[test]
+fn controller_generator_failure_is_a_leaf_rebase_failure() {
+    let mut g = Generated::new();
+    commit(
+        &g.checkout,
+        "tools/gen_manifest.py",
+        "raise SystemExit(7)\n",
+    );
+    g.upstream();
+    let delivery = g.rebase(2);
+    let old_head = delivery.head_sha.clone().unwrap();
+    let completion = g.adapter.execute(&delivery).unwrap();
+    let failed = completion
+        .observations
+        .into_iter()
+        .find_map(|observation| match observation {
+            Observation::RebaseGenerationFailed { report, .. } => Some(report),
+            _ => None,
+        })
+        .expect("generation failure must be a leaf observation");
+    let mut f = Controlled::new(g);
+    f.arm(Phase::Rebasing, Some(&old_head));
+    let generation = f.c.world().unwrap().nodes[0].generation;
+    f.observe(Observation::RebaseGenerationFailed {
+        node: NodeId(0),
+        generation,
+        report: failed,
+    });
+    assert!(matches!(
+        f.c.world().unwrap().nodes[0].phase,
+        Phase::Making | Phase::Ready(tl3_kernel::Resume::Making)
+    ));
+    assert!(f.c.snapshot().unwrap().rows.iter().any(
+        |row| row.table == "maker_findings" && row.value.to_string().contains("run_generator")
+    ));
 }

@@ -1335,6 +1335,8 @@ impl Controller {
                         return Ok(true);
                     }
                     self.prepare_queue_generation_repair(&delivery)?;
+                    let current = self.store.load()?;
+                    let delivery = hydrate(effect, &current)?;
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
                     if let Err(error) = &result
@@ -4025,6 +4027,13 @@ impl Controller {
                 {
                     return Ok(None);
                 }
+                if let Some(run) = &report.check_run
+                    && let Some(head) = commit_sha(snapshot, current.head)
+                {
+                    commit
+                        .rows
+                        .push(put("check_plans", format!("{}:{head}", node.0), json!(run)));
+                }
                 failed_tests.push(findings::FailedTest {
                     test: "configured generator".into(),
                     message: report.message.clone(),
@@ -4213,7 +4222,8 @@ impl Controller {
                         _ => None,
                     }).unwrap_or_else(|| "The maker could not meet the goals.".into()))),
                 tail::Finding::Ci => {
-                    if let Some(node) = node {
+                    if let Some(node) = node
+                        && self.adapters.get(executor::Upstream::Worktrees)?.generator_configured(&request(snapshot, node)?.repo) {
                         commit.rows.push(put("generation_repairs", node.0.to_string(), json!({"queue_ci_failed":true})));
                     }
                     Some((findings::Kind::FailedCheck, findings::ci_report(&ci_checks, &failed_tests)))

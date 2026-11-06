@@ -261,7 +261,10 @@ def make_generator_tool(worktree, *, restore_only=False):
 def main():
     """Controller edge: invoke the same run_generator executor without a model."""
     from tl3_workers.tools import Worktree
+    from jsonschema import Draft202012Validator
     request = json.loads(Path(sys.argv[-1]).read_text())
+    schema = json.loads((Path(__file__).parent / "schemas/generation-request.json").read_text())
+    Draft202012Validator(schema).validate(request)
     with Worktree(request["checkout"], generated_files=request["generated_files"],
                   generator=request["command"]) as worktree:
         worktree.test_checkout = Path(request["checkout"])

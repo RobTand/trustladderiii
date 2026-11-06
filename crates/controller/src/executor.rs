@@ -372,6 +372,10 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn generator_configured(&self, _repository: &crate::Repository) -> bool {
+        false
+    }
+
     fn check_generation(
         &mut self,
         _delivery: &Delivery,
