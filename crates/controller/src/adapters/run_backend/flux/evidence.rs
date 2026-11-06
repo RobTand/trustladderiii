@@ -283,7 +283,13 @@ pub(super) fn sanitized_json_using(
         }
         Ok(())
     }
-    visit(value, depth, text, &mut std::collections::HashMap::new(), &mut BTreeSet::new())
+    visit(
+        value,
+        depth,
+        text,
+        &mut std::collections::HashMap::new(),
+        &mut BTreeSet::new(),
+    )
 }
 
 fn daytime_payload(bytes: &[u8]) -> Result<crate::contracts::report::CheckReport> {
