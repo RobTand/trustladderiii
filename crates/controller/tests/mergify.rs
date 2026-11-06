@@ -2978,7 +2978,7 @@ fn main() {
     }
     // Maximum group/case times from red 375b069c and load trials
     // 57b14abe, 20611f93 and 3359391c, rounded up to seconds.
-    // The final nine entries are individually sharded waiting-requeue cases.
+    // The final eleven entries are waiting-requeue and ordering cases.
     let seconds = [
         1, 14, 2, 3, 14, 2, 44, 22, 14, 15, 3, 29, 2, 26, 9, 45, 43, 25, 9, 27, 8, 4, 3, 7, 3, 17,
         5, 6, 10, 5, 10, 15, 5, 8, 2, 2, 18, 3, 2, 4, 24, 7, 44, 31, 8, 24, 3, 2, 26, 6, 8, 9, 13,
@@ -2986,13 +2986,16 @@ fn main() {
         3, 3, 4, 3, 3, 2, 10, 10, 2, 2, 3, 3, 16, 3, 3, 42, 3, 11, 3, 4, 53, 6, 41, 6, 4, 5, 26, 5,
         5, 28, 3, 8, 2, 6, 5, 9, 15, 47, 6, 5, 14, 4, 11, 4, 7, 6, 7, 28, 7, 35, 15, 21, 3, 18, 7,
         3, 55, 5, 23, 5, 7, 7, 2, 4, 46, 8, 85, 4, 15, 83, 21, 7, 5, 5, 4, 3, 8, 68, 1, 14, 5, 23,
-        10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20, 10, 10,
-        10, 10, 10, 10, 10,
+        10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20,
     ];
-    let groups: Vec<_> = seconds
+    let tail = seconds.len() - 11;
+    let groups: Vec<_> = seconds[..tail]
         .iter()
+        .copied()
+        .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
+        .chain(seconds[tail..].iter().copied())
         .enumerate()
-        .map(|(index, seconds)| (index, 1, *seconds))
+        .map(|(index, seconds)| (index, 1, seconds))
         .collect();
     let mut shard = support::scenario_shard::Shard::from_groups(&groups);
     let mut scenario_count = 0;
