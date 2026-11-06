@@ -354,6 +354,58 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
     kernel_snapshot! { before_files = *w }
     kernel_snapshot! { files_outputs = *out }
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
+        extend_paid(w, i, files);
+        kernel_proof! {
+            port_replies_maker::files_paid(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
+    } else if fits && !files.is_empty() && w.fail_fast {
+        // Q54 stops retries, not credit decisions: Rob funds the extension.
+        extend_ask(w, i, files, out);
+        kernel_proof! {
+            port_replies_maker::files_ask(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
+    } else {
+        out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
+        kernel_proof! {
+            footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint);
+            progress_gate_contracts::table_order_frame(before_files@, *w);
+            port_replies_maker::files_room(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
+    }
+    }
+}
+
+
+kernel_fn! {
+/// File extension rows / #806: reply_files' funded branch, moved verbatim under the
+/// standing rule so its proof is its own query.
+fn extend_paid(w: &mut World, i: usize, files: Footprint) -> (result: ()) [
+    requires i < old(w).nodes@.len(),
+        old(w).nodes@[i as int].generation < u64::MAX,
+        old(w).nodes@[i as int].credit.spent < u64::MAX,
+        footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
+        footprint::valid_footprint(*old(w), files), footprint::ordered_table(*old(w)),
+    ensures port_replies_maker::union_post(old(w).file_sets@, final(w).file_sets@,
+            old(w).nodes@[i as int].footprint, files, final(w).nodes@[i as int].footprint),
+        final(w).nodes@[i as int] == retirement::phased(Node {
+            footprint: final(w).nodes@[i as int].footprint, holds: false,
+            ..port_review_retry::paid(old(w).nodes@[i as int]) }, Phase::Ready(Resume::Making)),
+        footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
+        footprint::ordered_table(*final(w)),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).next_question == old(w).next_question,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).file_sets@.len() >= old(w).file_sets@.len(),
+        forall|j: int| 0 <= j < old(w).file_sets@.len()
+            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).dependencies@ == old(w).dependencies@,
+] {
+    kernel_snapshot! { before_files = *w }
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
         kernel_proof! {
@@ -368,10 +420,41 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         kernel_proof! {
             footprint::valid_under_table_growth(after_union@, *w, footprint);
             progress_gate_contracts::table_order_frame(after_union@, *w);
-            port_replies_maker::files_paid(before_files@, *w, i as int, files, fits, files_outputs@, *out);
         }
-    } else if fits && !files.is_empty() && w.fail_fast {
-        // Q54 stops retries, not credit decisions: Rob funds the extension.
+}
+}
+
+kernel_fn! {
+/// File extension rows / Q54 / #806: reply_files' fail-fast credit question branch,
+/// moved verbatim under the standing rule so its proof is its own query.
+fn extend_ask(w: &mut World, i: usize, files: Footprint, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(w).next_question < u64::MAX,
+        old(w).nodes@[i as int].generation < u64::MAX, old(out).len < OUTBOX,
+        footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
+        footprint::valid_footprint(*old(w), files), footprint::ordered_table(*old(w)),
+    ensures port_replies_maker::union_post(old(w).file_sets@, final(w).file_sets@,
+            old(w).nodes@[i as int].footprint, files, final(w).nodes@[i as int].footprint),
+        final(w).nodes@[i as int] == port_review_retry::asked(Node {
+            footprint: final(w).nodes@[i as int].footprint, ..old(w).nodes@[i as int] },
+            old(w).next_question, QKind::OutOfCredit, Cont::Ready(Resume::Making)),
+        footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
+        footprint::ordered_table(*final(w)),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).next_question as int == old(w).next_question as int + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).file_sets@.len() >= old(w).file_sets@.len(),
+        forall|j: int| 0 <= j < old(w).file_sets@.len()
+            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len == old(out).len + 1,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] {
+    kernel_snapshot! { before_files = *w }
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
         kernel_proof! {
@@ -390,18 +473,13 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         kernel_proof! {
             footprint::valid_under_table_growth(after_union@, *w, footprint);
             progress_gate_contracts::table_order_frame(after_union@, *w);
-            port_replies_maker::files_ask(before_files@, *w, i as int, files, fits, files_outputs@, *out);
         }
-    } else {
-        out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
-        kernel_proof! {
-            footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint);
-            progress_gate_contracts::table_order_frame(before_files@, *w);
-            port_replies_maker::files_room(before_files@, *w, i as int, files, fits, files_outputs@, *out);
-        }
-    }
-    }
 }
+}
+
+#[cfg(test)]
+#[path = "files_equivalence/mod.rs"]
+mod reply_files_equivalence;
 
 kernel_fn! {
 /// Reply rows / #771: partition the unchanged match for bounded solver queries.
