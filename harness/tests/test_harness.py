@@ -313,3 +313,23 @@ def test_added_names_include_new_module_constants(tmp_path):
     # Attribute and subscript stores bind no module name; nested statements are not module-level bindings.
     assert not names & {"attribute", "key", "CONDITIONAL", "OLD", "BARE"}
 
+
+
+def test_runner_siblings_load_without_the_tl3_harness_package(tmp_path):
+    """#858: the container runs `python3 -I -B /harness/runner.py`, which loads
+    its siblings by path. tl3_harness is not importable there, so a sibling that
+    imports the package crashes the runner and every test reports no-report."""
+    import re
+    harness = Path(container_command.__code__.co_filename).parent
+    siblings = re.findall(r'with_name\("(\w+\.py)"\)', (harness / "runner.py").read_text())
+    assert {"node_ids.py", "forcing_ownership.py", "limits.py", "red_message.py"} <= set(siblings)
+    mounted = tmp_path / "harness"
+    shutil.copytree(harness, mounted, ignore=shutil.ignore_patterns("__pycache__"))
+    for sibling in siblings:
+        code = ("import importlib.util\n"
+                f"spec = importlib.util.spec_from_file_location('tl3_probe', {str(mounted / sibling)!r})\n"
+                "module = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(module)\n")
+        result = subprocess.run([sys.executable, "-I", "-B", "-c", code], cwd=tmp_path,
+                                capture_output=True, text=True)
+        assert result.returncode == 0, (sibling, result.stderr[-2000:])
