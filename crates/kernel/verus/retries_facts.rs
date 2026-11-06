@@ -11,6 +11,8 @@ pub(super) open spec fn abandoned(n: Node) -> Node {
 }
 
 /// Q50: hide the complete failed-run update while proving each branch.
+/// Must equal `port_t860_contracts::failed_node` for `run_failures <= 1`.
+/// `failed_result` proves the connection through `failed_post`.
 #[verifier::opaque]
 pub(super) open spec fn failed_run(n: Node) -> Node {
     let m = Node { pos: if n.phase == Phase::Making { 1u8 } else { 0u8 },

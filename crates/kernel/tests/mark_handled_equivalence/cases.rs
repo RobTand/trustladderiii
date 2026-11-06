@@ -1,4 +1,4 @@
-//! #806 cleanup row: compare the approved extraction with its original body.
+//! Compare teardown handling with its pre-extraction body.
 use super::*;
 use proptest::prelude::*;
 
@@ -191,7 +191,7 @@ fn compare(node: Node) {
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 512, failure_persistence: None, ..ProptestConfig::default() })]
-    /// #806 cleanup row: arbitrary nodes and all u8 agenda positions are admitted.
+    /// Arbitrary nodes and all u8 agenda positions are admitted.
     #[test]
     fn arbitrary_nodes_match_the_pre_extraction_body(node in arbitrary_node()) {
         compare(node);
@@ -205,7 +205,7 @@ proptest! {
     }
 }
 
-/// #806: deterministic branch coverage also makes a dropped/doubled write red.
+/// Compare every agenda branch to catch missing or duplicated resource writes.
 #[test]
 fn every_current_item_branch_is_compared() {
     let mut node = Node::new(RepoId(0));

@@ -1,4 +1,4 @@
-//! #806: verbatim pre-extraction MarkHandled body from 6fc3d38b.
+//! Verbatim pre-extraction body for marking a teardown item handled.
 use super::*;
 
 pub(super) fn mark_handled(m: &mut Node) {

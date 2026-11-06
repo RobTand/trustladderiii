@@ -58,7 +58,7 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
 }
 
 kernel_fn! {
-/// Cleanup question row / #806: the resource writes used by MarkHandled.
+/// Resource writes used when marking a teardown item handled.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
     ensures final(m).phase == old(m).phase,

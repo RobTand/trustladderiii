@@ -46,7 +46,6 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         let needs_rob = m.run_incidents >= 2;
         kernel_proof! {
             assert(retirement::incident(*m, needs_rob) == retries_facts::failed_run(before_failed@)) by {
-                reveal(retries_facts::abandoned);
                 retries_facts::incident(before_failed@, *m, needs_rob);
             }
         }
@@ -55,7 +54,6 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
     kernel_proof! {
         if before_failed@.run_failures == 0 {
             assert(w.nodes@[i as int] == retries_facts::failed_run(before_failed@)) by {
-                reveal(retries_facts::abandoned);
                 retries_facts::restarted(before_failed@, w.nodes@[i as int]);
             }
         }
