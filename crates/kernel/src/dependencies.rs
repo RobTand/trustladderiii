@@ -894,7 +894,7 @@ impl World {
                             && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
                     ..old(self).nodes@[0]
                 }),
-    ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
+    ] proof [reveal(dependency_frame); hide(prerequisites_delivered); hide(delivered);] {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
         match existing {
@@ -937,7 +937,19 @@ impl World {
                 assert(self.nodes@[0].waiting_prerequisite == if dependency.status == DependencyStatus::Delivered { None } else { Some(2761u64) });
             }
         }
+        kernel_snapshot! { before_withhold = *self }
         self.withhold_dependency_credit(i);
+        kernel_proof! {
+            if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
+                && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
+                && !dependency.rejected {
+                assert(prerequisites_delivered(before_withhold@, NodeId(0))
+                    == (dependency.status == DependencyStatus::Delivered)) by {
+                    reveal(prerequisites_delivered);
+                    reveal(delivered);
+                }
+            }
+        }
     }
     }
 
