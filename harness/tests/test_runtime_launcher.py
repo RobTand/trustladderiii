@@ -100,7 +100,7 @@ def test_flux_command_at_launcher_boundary(launcher):
     arguments = json.loads(calls.read_text().splitlines()[0])
     for flag in ('--cgroups=disabled', '--network=none', '--read-only', '--init', '--userns=keep-id',
                  '--pull=never', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private',
-                 '--read-only-tmpfs=false', '--pid=private'):
+                 '--read-only-tmpfs=false', '--pid=private', '--http-proxy=false'):
         assert flag in arguments
     mounts = [arguments[i + 1] for i, flag in enumerate(arguments) if flag == '--mount']
     assert len(mounts) == 3
