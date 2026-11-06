@@ -454,6 +454,8 @@ pub enum ReviewStop {
     ReviewerOutOfRoom,
     PlanCantMeet,
     PublicationBody,
+    /// Auditing / #832-A: the one ingest repair did not resolve the audit.
+    AuditDisagreement,
 }
 
 /// Where a node goes when Rob says carry on.
