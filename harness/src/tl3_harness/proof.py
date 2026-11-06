@@ -12,7 +12,7 @@ import tomllib
 
 from .model import Kind, ProofRefusal
 from .rules import at
-from .trees import bound_names, is_test, tree_sha256
+from .trees import bound_names, generated_header, is_test, tree_sha256
 from .proof_rules import (
     LOADER_STDLIB, NAMESPACE_API_NAMES, NAMESPACE_API_ATTRIBUTES, NAMESPACE_API_MODULES,
     PURE_SUPPORT_BUILTINS, REFLECTIVE_SUPPORT_ATTRIBUTES, SOURCE_DEFINITION_COUNT,
@@ -455,12 +455,21 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config, *, 
     except SyntaxError as error:
         module = error.filename or next((unit.split('::')[0] for unit in check.tests), '')
         refusal = ProofRefusal('proof.source.unparsable', module=module, bad_value=error.msg, line=error.lineno)
-        raise refusal.for_check(check, role, check_index, footprint=footprint, protected=protected, generated=generated) from None
     except ProofRefusal as error:
-        refusal = error.for_check(check, role, check_index, footprint=footprint, protected=protected, generated=generated)
-        if role == 'planner':
-            refusal = planner_selections(refusal, base, head, check, config)
-        raise refusal from None
+        refusal = error
+    # Advice observes the same generated headers as the maker's file boundary.
+    generated = list(generated)
+    for violation in refusal.violations:
+        for name in (violation.facts.get('module'), violation.facts.get('path')):
+            if name not in footprint or not (head / name).is_file():
+                continue
+            with (head / name).open('rb') as source:
+                if generated_header(source.read(4096)):
+                    generated.append(name)
+    refusal = refusal.for_check(check, role, check_index, footprint=footprint, protected=protected, generated=generated)
+    if role == 'planner':
+        refusal = planner_selections(refusal, base, head, check, config)
+    raise refusal from None
 
 
 def planner_selections(refusal, base, head, check, config):

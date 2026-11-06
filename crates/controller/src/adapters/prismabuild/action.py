@@ -14,10 +14,10 @@ def decode(request):
     """TL3's own check input. A malformed one is TL3's error (Q51)."""
     try:
         plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]),
-                           None if check.get("forcing") is None else Forcing.parse(check["forcing"]),
+                           None if check.get("forcing") is None else Forcing.parse(check["forcing"], check_index=index, role="maker"),
                            None if check.get("proof") is None else Proof.parse(check["proof"]),
                            check.get("declared_symptom"))
-                     for check in request["plan"])
+                     for index, check in enumerate(request["plan"]))
         protected = request.get("protected_paths", [])
         if not isinstance(protected, list) or not all(isinstance(path, str) and path for path in protected):
             raise ValueError("protected_paths must list path patterns")
