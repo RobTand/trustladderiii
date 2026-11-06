@@ -1001,3 +1001,34 @@ def test_change_refusal_bounds_the_visible_footprint(tree):
     assert len(text) < 2200
     assert "more" in text
     assert "nearest declared path" in text and "tests/test_0000.py" in text
+
+
+@pytest.mark.parametrize("operation", ["list", "glob", "grep"])
+def test_enumeration_skips_a_file_deleted_before_stat(tree, monkeypatch, operation):
+    """#895: read-only tools tolerate a concurrent declared deletion."""
+    root, _ = tree
+    original = os.stat
+
+    def remove(path, *args, **kwargs):
+        if path == "code.py" and kwargs.get("dir_fd") is not None:
+            (root / "src/code.py").unlink(missing_ok=True)
+        return original(path, *args, **kwargs)
+
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        monkeypatch.setattr(os, "stat", remove)
+        result = invoke(tools_for(worktree, {operation})[operation], "src")
+        assert result.status == "success", result.text
+
+
+def test_grep_skips_a_file_deleted_after_enumeration(tree, monkeypatch):
+    root, _ = tree
+    original = os.open
+
+    def remove(path, flags, *args, **kwargs):
+        if path == "code.py" and kwargs.get("dir_fd") is not None:
+            (root / "src/code.py").unlink(missing_ok=True)
+        return original(path, flags, *args, **kwargs)
+
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        monkeypatch.setattr(os, "open", remove)
+        assert worktree.grep("hello")["matches"] == []

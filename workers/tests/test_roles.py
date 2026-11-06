@@ -112,7 +112,8 @@ def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monke
     results = [message for message in observed[-1] if message.type == "tool"]
     assert len(results) == len(names)
     # A role's run attaches the checkout diff reads; a bare fixture role has none.
-    assert all(message.status == "success" for message in results if message.name != "diff")
+    assert all(message.status == "success" for message in results if message.name != "diff"), [
+        (message.name, message.text) for message in results if message.status != "success"]
     assert all(message.text == "diff is not available in this run." for message in results if message.name == "diff")
     assert events == [
         {"event": "progress", "unit": "model_turn"},
