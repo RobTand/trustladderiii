@@ -9,15 +9,24 @@ kernel_fn! {
 pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>, report: &mut Report)
     -> (result: u32) [
     requires settle_ready(*old(w)),
-    ensures report::forwards(old(report).entries@, final(report).entries@, Seq::empty()),
+    ensures report::settled_forwards(phase_view(old(w).nodes@), phase_view(final(w).nodes@), old(report).entries@, final(report).entries@),
         settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
         forall|i: int| 0 <= i < final(w).nodes@.len() ==> !movable(*final(w), i),
         result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
 ] {
     kernel_snapshot! { baseline = *w }
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_proof! {
+        assert forall|j: int| 0 <= j < w.nodes@.len() implies
+            report::terminal_phase_frame(w.nodes@[j].phase, w.nodes@[j].phase) by {
+            report::lemmas::phase_refl(w.nodes@[j].phase);
+        }
+    }
     let mut passes: u32 = 0;
     kernel_loop! { [
-        invariant baseline@ == *old(w), settle_ready(*w), settle_chain(baseline@, *w),
+        invariant report.entries@ == before_report@,
+            forall|j: int| 0 <= j < w.nodes@.len() ==> report::terminal_phase_frame(baseline@.nodes@[j].phase, w.nodes@[j].phase),
+            baseline@ == *old(w), settle_ready(*w), settle_chain(baseline@, *w),
             passes as int + potential_prefix(w.nodes@, w.nodes@.len(), |n: Node| internal_height(n))
                 <= potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)),
             potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int,
@@ -27,7 +36,9 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
         let mut changed = false;
         let mut i = 0;
         kernel_while! { (i < w.nodes.len()) [
-            invariant i <= w.nodes.len(), baseline@ == *old(w),
+            invariant report.entries@ == before_report@,
+                forall|j: int| 0 <= j < w.nodes@.len() ==> report::terminal_phase_frame(baseline@.nodes@[j].phase, w.nodes@[j].phase),
+                i <= w.nodes.len(), baseline@ == *old(w),
                 settle_ready(*w), settle_chain(baseline@, *w),
                 passes as int + pass_height@ <= potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)),
                 potential_prefix(baseline@.nodes@, baseline@.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int,
@@ -42,7 +53,18 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
                 potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
             }
             kernel_snapshot! { before_node = *w }
-            let moved = advance(w, i, &mut outbox);
+            let moved = advance(w, i, &mut outbox, report);
+            kernel_proof! {
+                report::lemmas::read_quiet(before_node@.nodes@[i as int].phase,
+                    w.nodes@[i as int].phase, before_report@, report.entries@);
+                assert forall|j: int| 0 <= j < w.nodes@.len() implies
+                    report::terminal_phase_frame(baseline@.nodes@[j].phase, w.nodes@[j].phase) by {
+                    if j == i {
+                        report::lemmas::phase_trans(baseline@.nodes@[j].phase,
+                            before_node@.nodes@[j].phase, w.nodes@[j].phase);
+                    }
+                }
+            }
             kernel_proof! {
                 reveal(advance_post);
                 if !changed && !moved {
@@ -74,7 +96,7 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
             i += 1;
         } }
         if !changed {
-            kernel_proof! { report::lemmas::unchanged(report.entries@); }
+            kernel_proof! { report::lemmas::settle_result(phase_view(baseline@.nodes@), phase_view(w.nodes@), before_report@, report.entries@); }
             return passes;
         }
         passes += 1;

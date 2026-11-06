@@ -201,4 +201,43 @@ pub(in super::super) proof fn reply_result(r0: Seq<ReportEntry>, r1: Seq<ReportE
         =~= r0.push(ReportEntry::FailedRound { node, cause: FailedRoundCause::RunFailed }));
 }
 
+pub(in super::super) proof fn quiet(before: Phase, after: Phase, entries: Seq<ReportEntry>)
+    requires match before {
+        Phase::Stopping(o) => after == Phase::Stopping(o) || after == Phase::Closed(o),
+        Phase::Closed(o) => after == Phase::Closed(o),
+        _ => !(after is Stopping || after is Closed),
+    },
+    ensures no_new_stop(before, after, entries, entries),
+{
+    reveal(no_new_stop);
+    reveal(terminal_phase_frame);
+    unchanged(entries);
+}
+
+pub(in super::super) proof fn read_quiet(before: Phase, after: Phase,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>)
+    requires no_new_stop(before, after, r0, r1),
+    ensures r1 == r0, terminal_phase_frame(before, after),
+{
+    reveal(no_new_stop);
+    read_forwards(r0, r1, Seq::empty());
+    assert(r0 + Seq::empty() =~= r0);
+}
+
+pub(in super::super) proof fn phase_refl(phase: Phase)
+    ensures terminal_phase_frame(phase, phase),
+{ reveal(terminal_phase_frame); }
+
+pub(in super::super) proof fn phase_trans(before: Phase, middle: Phase, after: Phase)
+    requires terminal_phase_frame(before, middle), terminal_phase_frame(middle, after),
+    ensures terminal_phase_frame(before, after),
+{ reveal(terminal_phase_frame); }
+
+pub(in super::super) proof fn settle_result(before: Seq<Phase>, after: Seq<Phase>,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>)
+    requires before.len() == after.len(), r1 == r0,
+        forall|i: int| 0 <= i < before.len() ==> terminal_phase_frame(before[i], after[i]),
+    ensures settled_forwards(before, after, r0, r1),
+{ reveal(settled_forwards); unchanged(r0); }
+
 }

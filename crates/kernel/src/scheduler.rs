@@ -4,11 +4,13 @@ use super::*;
 kernel_fn! {
 /// #771: source-connected scheduler wrapper. Context queries are read at the
 /// original branches; the verified local transition writes only this node.
-pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: bool) [
+pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: bool) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         scheduling_safe(*old(w)),
         advance_pre(old(w).nodes@[i as int], old(w).next_ticket, old(out).len),
-    ensures (!result ==> final(out).len == old(out).len),
+    ensures report::no_new_stop(old(w).nodes@[i as int].phase, final(w).nodes@[i as int].phase,
+            old(report).entries@, final(report).entries@),
+        (!result ==> final(out).len == old(out).len),
         advance_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
             old(w).next_ticket, final(w).next_ticket, result),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
@@ -71,7 +73,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
     kernel_proof! {
         assert(movable(*w, i as int) ==> advance_enabled(w.nodes@[i as int], context));
     }
-    let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
+    let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out, report);
     kernel_proof! {
         reveal(advance_post);
         advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,

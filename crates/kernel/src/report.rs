@@ -197,6 +197,30 @@ pub(super) closed spec fn reply_entries(node: NodeId, phase: Phase, current: Opt
     else { round_entries(node, work_failure(reply)) }
 }
 
+#[verifier::opaque]
+pub(super) closed spec fn terminal_phase_frame(before: Phase, after: Phase) -> bool {
+    match before {
+        Phase::Stopping(o) => after == Phase::Stopping(o) || after == Phase::Closed(o),
+        Phase::Closed(o) => after == Phase::Closed(o),
+        _ => !(after is Stopping || after is Closed),
+    }
+}
+
+/// Stop-cause agreement for internal moves: settling never introduces a stop,
+/// and completion of teardown preserves its existing outcome without a new entry.
+#[verifier::opaque]
+pub(super) closed spec fn no_new_stop(before: Phase, after: Phase,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>) -> bool {
+    terminal_phase_frame(before, after) && forwards(r0, r1, Seq::empty())
+}
+
+#[verifier::opaque]
+pub(super) closed spec fn settled_forwards(before: Seq<Phase>, after: Seq<Phase>,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>) -> bool {
+    before.len() == after.len() && forwards(r0, r1, Seq::empty())
+        && forall|i: int| 0 <= i < before.len() ==> terminal_phase_frame(before[i], after[i])
+}
+
 }
 
 kernel_fn! {

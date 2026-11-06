@@ -1994,6 +1994,10 @@ proof fn movable_frame(before: World, after: World, i: int)
 }
 
 /// #771: conserved allocations and frames across the real settle loop.
+pub open spec fn phase_view(nodes: Seq<Node>) -> Seq<Phase> {
+    Seq::new(nodes.len(), |i: int| nodes[i].phase)
+}
+
 spec fn settle_chain(before: World, after: World) -> bool {
     after.nodes@.len() == before.nodes@.len()
         && after.next_question == before.next_question && after.gates@ == before.gates@
