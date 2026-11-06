@@ -32,12 +32,6 @@ fn state(state: EffectState) -> CoreState {
         EffectState::Cancelled => CoreState::Cancelled,
     }
 }
-fn stored(state: CoreState) -> EffectState {
-    states()
-        .into_iter()
-        .find(|s| self::state(*s) == state)
-        .unwrap()
-}
 fn ack(ack: u8) -> (Ack, CoreAck) {
     match ack % 4 {
         0 => (Ack::Confirmed, CoreAck::Confirmed),
@@ -58,7 +52,7 @@ fn effect(key: &str, state: EffectState) -> Effect {
     }
 }
 fn extracted_plan(key: &str, effect: &Effect, ack: CoreAck) -> Vec<EffectTransition> {
-    let plan = tl3_delivery::completion(state(effect.state), ack);
+    let plan = tl3_delivery::completion(executor::delivery_state(effect.state), ack);
     let mut transitions = Vec::new();
     if plan.bridge {
         transitions.push(EffectTransition {
@@ -74,8 +68,8 @@ fn extracted_plan(key: &str, effect: &Effect, ack: CoreAck) -> Vec<EffectTransit
     }
     transitions.push(EffectTransition {
         key: key.into(),
-        from: stored(plan.from),
-        to: stored(plan.to),
+        from: executor::stored_state(plan.from),
+        to: executor::stored_state(plan.to),
     });
     transitions
 }
@@ -93,12 +87,18 @@ fn bytes(transitions: &[EffectTransition]) -> Vec<u8> {
 #[test]
 fn transition_table_conforms_to_store() {
     for from in states() {
+        assert_eq!(executor::delivery_state(from), state(from));
+        assert_eq!(executor::stored_state(executor::delivery_state(from)), from);
         for to in states() {
             assert_eq!(
                 tl3_delivery::allows(state(from), state(to)),
                 from.allows(to)
             );
         }
+    }
+    for value in 0..4 {
+        let (stored, core) = ack(value);
+        assert_eq!(executor::delivery_ack(stored), core);
     }
 }
 
