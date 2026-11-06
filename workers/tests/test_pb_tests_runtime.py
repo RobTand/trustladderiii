@@ -16,6 +16,29 @@ from worker_process import reachable
 from worker_process import rehearsal  # noqa: F401
 
 
+def test_flux_worker_settings_do_not_require_pb_tools_or_environment(monkeypatch):
+    from tl3_workers.pb_tests import TestSettings
+    for name in ('PB_ACTION_KEY', 'PB_QUEUE_ROOT', 'PB_CONTAINER_IMAGE'):
+        monkeypatch.delenv(name, raising=False)
+    settings = TestSettings(image='sha256:' + '1' * 64,
+                            execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
+    assert settings.backend == 'flux'
+    assert settings.tools_path is None
+
+
+def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal):
+    from tl3_workers.forcing_rehearsal import ForcingRehearsals
+    ledger, root, inputs, _ = rehearsal
+    inputs['tests'] = {'image': 'sha256:' + '1' * 64,
+                      'execution': {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}}
+    restored = ForcingRehearsals(ledger.worktree, inputs, checkout=root)
+    assert restored.worktree.test_settings.backend == 'flux'
+    restored.active = {}
+    restored.worktree.pb_identity = 'identity'
+    restored.submitted('worker:' + 'a' * 64, True, 'tree')
+    assert restored.active['inflight']['backend'] == 'flux'
+
+
 @pytest.mark.parametrize('reached', [False, True])
 def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch, reached):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel

@@ -3,6 +3,13 @@ use crate as controller_under_test;
 use crate::git_tests::{Repo, documents, git, support::Database};
 use tl3_kernel::{Command as KernelCommand, Fact, NodeId, Notice, Phase, Priority, RepoId, World};
 
+#[test]
+fn flux_worker_test_input_needs_no_pb_tools() {
+    let value = json!({"image": "sha256:".to_owned() + &"1".repeat(64),
+        "execution": {"backend": "flux", "profile": "/fixture/attempt/execution.json"}});
+    typed_round_trip::<tl3_contracts::roles::maker_input::Tests>(&value);
+}
+
 fn typed_round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(value: &serde_json::Value) {
     let parsed: T = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), *value);

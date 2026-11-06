@@ -664,6 +664,16 @@ fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
     .then_some(wait)
 }
 
+#[test]
+fn flux_external_wait_uses_worker_reference_not_native_job_id() {
+    let event = serde_json::json!({"wait": {"upstream": "flux", "key": format!("worker:{}", "a".repeat(64))}});
+    assert!(external_wait(&event).is_some());
+    for key in ["fABC", "worker:invalid", "a".repeat(64).as_str()] {
+        let event = serde_json::json!({"wait": {"upstream": "flux", "key": key}});
+        assert!(external_wait(&event).is_none());
+    }
+}
+
 pub(super) fn parse_reply(
     bytes: &[u8],
     delivery: &Delivery,
