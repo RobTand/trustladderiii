@@ -374,10 +374,11 @@ fn narrowed_materials(settings: &tl3_config::Store, wrapped: bool) {
 /// Set on child processes of a run that already prepared the worker runtime.
 const PREPARED: &str = "TL3_TEST_WORKERS_PREPARED";
 
-const PLANNING_MODES: [&str; 6] = [
+const PLANNING_MODES: [&str; 7] = [
     "normal",
     "plan-split",
     "plan-invalid",
+    "plan-size",
     "plan-cant-meet",
     "plan-bad-split",
     "plan-bad-schema",
@@ -554,6 +555,7 @@ fn main() {
         println!("test real_worker_contract_ingest_audit ... ok");
         planning::planning(&database.create("contract_planner"), "normal");
         planning::planning(&database.create("contract_planner_reject"), "plan-invalid");
+        planning::planning(&database.create("contract_planner_size"), "plan-size");
         println!("test real_worker_contract_planner ... ok");
         maker::reproducing_rebase_contract(&database.create("contract_maker_reviewer"));
         println!("test real_worker_contract_maker_reviewer ... ok");
