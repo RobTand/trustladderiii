@@ -23,8 +23,9 @@ class SourceReads:
         self.violation = None
         self.active = False
         sys.addaudithook(self.audit)
-        # Descriptor reads have no CPython audit event. Check them as well so a
-        # descriptor opened in setup cannot hide a read during the test call.
+        # Raw descriptor reads have no CPython audit event. Check os.read-family
+        # calls even for descriptors opened in setup. Buffered file objects
+        # opened in setup remain outside this call-phase guard.
         for name in ('read', 'pread', 'readv', 'preadv'):
             original = getattr(os, name, None)
             if original is not None:
@@ -105,8 +106,10 @@ class SourceReads:
                     if path in self.subjects and path != self.observer:
                         return
                     reader = Path(path).relative_to(self.root).as_posix()
-                    subject = Path(target).relative_to(self.root).as_posix()
-                    self.violation = (f"subject_source_read: {subject}, reader {reader}:{frame.f_lineno}; "
+                    subject = Path(target)
+                    if subject.is_relative_to(self.root):
+                        subject = subject.relative_to(self.root)
+                    self.violation = (f"subject_source_read: {subject.as_posix()}, reader {reader}:{frame.f_lineno}; "
                                       "assert on behaviour; don't read subject source")
                     return
             frame = frame.f_back

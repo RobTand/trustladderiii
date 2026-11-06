@@ -1042,8 +1042,9 @@ file:line, and says "assert on behaviour; don't read subject source".
 The runner records the violation and raises at call exit, so catching a read
 exception cannot hide it. Normal imports, subject self-source reads, pytest
 diagnostics, other pytest phases, and tests outside the proof selection remain
-allowed. The runner checks mmap and descriptor reads, including descriptors
-opened during setup. Each test starts with fresh guard state, including under
+allowed. The runner checks mmap and raw `os.read`-family reads, including raw
+descriptors opened during setup. Reads through file objects opened during setup
+are outside this call-phase guard. Each test starts with fresh guard state, including under
 xdist and declared-symptom reporting. A guard error cannot supply a declared
 symptom. This standard-library-only Python check belongs to the approved pytest
 runner adapter. It runs in the test process; code-object inspection and
