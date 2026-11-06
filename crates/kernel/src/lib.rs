@@ -1727,9 +1727,9 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
             "progress_from_rebasing",
             "apply_rebase_progress_gate",
         ],
-        Phase::AwaitingRob => &["advance_awaiting_rob", "progress_from_awaiting_rob"],
+        Phase::AwaitingRob => &["progress_from_awaiting_rob"],
         Phase::Stopping(_) => &["advance_stopping", "progress_from_stopping"],
-        Phase::Closed(_) => &["advance_closed", "progress_from_closed"],
+        Phase::Closed(_) => &["progress_from_closed"],
     }
 }
 // proof map end
