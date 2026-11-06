@@ -24,6 +24,7 @@ pub(super) const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) struct ReportContext<'a> {
     pub delivery: &'a crate::executor::Delivery,
     pub run: &'a super::CheckRun,
+    pub changed_paths: &'a [String],
     pub selected_tests: Option<u32>,
     pub always_tests: &'a [String],
 }
@@ -35,6 +36,7 @@ trait ReportJob {
 impl ReportJob for Job {
     fn report_context(&self) -> ReportContext<'_> {
         ReportContext { delivery: &self.delivery, run: &self.run,
+            changed_paths: &self.changed_paths,
             selected_tests: self.selected_tests, always_tests: &self.always_tests }
     }
 }
@@ -42,6 +44,7 @@ impl ReportJob for Job {
 impl ReportJob for ReportContext<'_> {
     fn report_context(&self) -> ReportContext<'_> {
         ReportContext { delivery: self.delivery, run: self.run,
+            changed_paths: self.changed_paths,
             selected_tests: self.selected_tests, always_tests: self.always_tests }
     }
 }

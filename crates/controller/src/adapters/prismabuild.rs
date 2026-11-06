@@ -53,13 +53,12 @@ impl Executor for Fake {
     }
 }
 
-mod checks;
+pub(crate) mod checks;
 mod decide;
 pub(crate) mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};
-pub(crate) use checks::{Harness as CheckHarness, descended_base as descended_check_base, stage as stage_check_input};
 #[cfg(test)]
 pub(crate) use results::contract_vectors;
 pub(crate) use results::{HARNESS, selected_failures};

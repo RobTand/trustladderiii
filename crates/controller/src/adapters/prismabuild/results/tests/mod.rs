@@ -58,6 +58,7 @@ fn backend_neutral_payload_keeps_identity_and_semantic_guards() {
     let context = ReportContext {
         delivery: &job.delivery,
         run: &job.run,
+        changed_paths: &job.changed_paths,
         selected_tests: None,
         always_tests: &[],
     };
