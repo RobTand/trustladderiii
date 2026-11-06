@@ -1,0 +1,2 @@
+        if tl3_delivery::can_authorize_approval_retry(crate::executor::delivery_state(effect.state))
+        {

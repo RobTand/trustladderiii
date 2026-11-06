@@ -1,0 +1,50 @@
+//! State-table Once. Conditional on the external original-key deduplication law.
+#[path = "../src/upstream.rs"] mod upstream;
+use upstream::*;
+#[path = "../src/step.rs"] mod delivery;
+use delivery::{State,Ack,completion};
+use vstd::prelude::*;
+verus! {
+/// State-table Once: induction step for arbitrary schedules and restarts.
+/// u64 accounting bound only; no bound on schedule length. External key
+/// deduplication is explicit in land, not inferred from a local receipt.
+fn once_application_is_idempotent(before: Upstream, laws: OnceLaws)
+    requires laws.atomic_original_key_dedup, laws.stable_operation_identity, before.copies <= 1, before.incorrect == 0,
+        before.outstanding > 0, before.outstanding < u64::MAX,
+{
+    let delayed = lose_response(before);
+    let restarted = restart(delayed);
+    let retried = issue(restarted);
+    let first = land(retried, Class::Once, true,laws);
+    let second = land(first, Class::Once, true,laws);
+    assert(first.copies == 1);
+    assert(second.copies == 1);
+    assert(second.outstanding == before.outstanding - 1);
+}
+/// State-table Once / F3: timed-out epoch A lands after restart and retry B.
+fn once_late_landing_witness() {
+    let laws=OnceLaws {atomic_original_key_dedup:true,stable_operation_identity:true};
+    let dedup_law=once_key_deduplication(laws);
+    assert(dedup_law);
+    let empty = Upstream {copies:0,incorrect:0,outstanding:0,repair_debt:0,found:false};
+    let old = issue(empty);
+    let timed_out = lose_response(old);
+    let new = issue(restart(timed_out));
+    let new_landed = land(new,Class::Once,true,laws);
+    let zombie = land(new_landed,Class::Once,true,laws);
+    assert(zombie.copies == 1);
+    assert(zombie.outstanding == 0);
+}
+/// State-table Once: an upstream Found enters the REAL completion plan.
+/// In the per-key model, confirmation implies at least one upstream copy.
+fn receipt_uses_real_completion(before: Upstream) -> (out: State)
+    requires before.incorrect <= before.copies,
+    ensures (out == State::Confirmed) == (before.copies > 0),
+{
+    let observed=read(before,Class::Once);
+    if observed.found {completion(State::Uncertain,Ack::Confirmed).to}
+    else {State::Uncertain}
+}
+
+}
+fn main() {}
