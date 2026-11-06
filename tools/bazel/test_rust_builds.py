@@ -118,6 +118,16 @@ class RustDependencyTests(unittest.TestCase):
                 pending.extend(rule.get(attribute, []))
         return found
 
+    def test_dispatch_seeds_have_a_separate_runner_with_one_seed_per_shard(self):
+        library = self.rules[":lib_test_tl3_controller"]
+        conformance = self.rules[":lib_test_dispatch_conformance"]
+        prefix = "adapters::workers::dispatch_conformance_tests::reference_model_seed_"
+        self.assertEqual(library["args"][0], conformance["args"][0])
+        self.assertEqual(conformance["shard_count"], 4)
+        self.assertIn("--gate-libtest-exclude-prefix=" + prefix, library["args"])
+        self.assertIn("--gate-libtest-include-prefix=" + prefix, conformance["args"])
+
+
     def test_fake_only_controller_test_does_not_depend_on_harness_or_worker_runtime(self):
         deps = self.dependencies("test_test_core_defects")
         self.assertFalse(sorted(label for label in deps if label.startswith("//harness")), deps)
