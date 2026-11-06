@@ -641,6 +641,9 @@ impl Flux {
         if !self.environment.contains_key("PATH") {
             return Err(invalid("flux.environment", "set PATH explicitly; the controller does not merge ambient environment variables"));
         }
+        if !self.environment.contains_key("HOME") || !self.environment.contains_key("XDG_RUNTIME_DIR") {
+            return Err(invalid("flux.environment", "set both provisioned HOME and XDG_RUNTIME_DIR explicitly for the authoritative user-systemd generation guard"));
+        }
         for (name, value) in &self.environment {
             let fixed = match name.as_str() {
                 "HOME" => Some("/home/rob"),
