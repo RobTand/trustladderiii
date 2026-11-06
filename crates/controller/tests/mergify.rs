@@ -226,6 +226,15 @@ impl State {
                 check["completed_at"] = json!("2026-10-31T22:00:00Z");
             }
         }
+        if self.ci_fixture.is_none() && self.entry_fixture.is_none() && self.cause_fixture.is_none() {
+            for check in checks.as_array_mut().unwrap() {
+                if check["name"] == tl3_mergify::QUEUE_CHECK && check["status"] == "completed"
+                    && check["output"]["title"].as_str().is_some_and(|title| title.starts_with("Dequeued")) {
+                    let summary = check["output"]["summary"].as_str().unwrap_or("");
+                    check["output"]["summary"] = json!(format!("{summary}\nLifecycle fixture evidence: draft #424242"));
+                }
+            }
+        }
         let mut rule = self.queue_rule.clone();
         rule["head_sha"] = self.pull["head"]["sha"].clone();
         checks.as_array_mut().unwrap().push(rule);
@@ -328,6 +337,25 @@ impl Respond for Api {
             && let Some(response) = fixture.respond(path)
         {
             return response;
+        }
+        if method == "GET" && state.ci_fixture.is_none() && state.entry_fixture.is_none() && state.cause_fixture.is_none() {
+            if path == "/repos/owner/sandbox/pulls/424242" {
+                let mut draft = state.pull.clone();
+                draft["number"] = json!(424242);
+                draft["user"]["login"] = json!("mergify[bot]");
+                draft["head"]["ref"] = json!("mergify/merge-queue/main/pr-100");
+                draft["head"]["sha"] = json!("7777777777777777777777777777777777777777");
+                return ResponseTemplate::new(200).set_body_json(draft);
+            }
+            if path == "/repos/owner/sandbox/commits/7777777777777777777777777777777777777777/check-runs" {
+                let queue: tl3_github::CheckRun = serde_json::from_value(state.queue_check()).unwrap();
+                let test = if !queue.output.as_ref().and_then(|output| output.title.as_deref()).is_some_and(|title| title.contains("checks failed")) {"tests/queue_lifecycle.py::outside"} else {"tests/queue_lifecycle.py::changed"};
+                return ResponseTemplate::new(200).set_body_json(json!({"check_runs":[{"id":424242,"name":"Lifecycle regression","head_sha":"7777777777777777777777777777777777777777","status":"completed","conclusion":"failure","app":{"id":9,"slug":"fixture-tests"},"output":{"summary":format!("FAILED: {test}")}}]}));
+            }
+            if path == "/repos/owner/sandbox/pulls/100/files" {
+                let queue: tl3_github::CheckRun = serde_json::from_value(state.queue_check()).unwrap();
+                return ResponseTemplate::new(200).set_body_json(if !queue.output.as_ref().and_then(|output| output.title.as_deref()).is_some_and(|title| title.contains("checks failed")) {json!([])} else {json!([{ "filename":"tests/queue_lifecycle.py" }])});
+            }
         }
         if let Some(response) =
             support::github::respond(request, path, "/repos/owner/sandbox", &mut *state)
@@ -517,7 +545,16 @@ fn drain(controller: &mut Controller) {
     panic!("controller did not settle");
 }
 fn queued(settings: &tl3_config::Store, api: &Server, root: &Path, confirmed: bool) -> Controller {
-    queued_with(settings, api, root, confirmed, &[])
+    let mut controller = queued_with(settings, api, root, confirmed, &[]);
+    // Legacy queue-lifecycle fixtures now carry explicit complete Q58 evidence.
+    // Opaque real snapshots use queued_for_clock and keep their own transport.
+    let snapshot = controller.snapshot().unwrap();
+    let head = api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().to_owned();
+    let mut commit = tl3_store::Commit::new("legacy-q58-plan", json!({}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put { table:"check_plans".into(),id:format!("0:{head}"),value:json!({"repository":"/fixture","base_sha":"566bee93ba4b52681864132960cfd63e36bcc9cd","plan":[]}) });
+    Store::open(settings).unwrap().commit(&commit).unwrap();
+    controller
+
 }
 fn queued_with(
     settings: &tl3_config::Store,

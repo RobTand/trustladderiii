@@ -277,7 +277,7 @@ pub(super) async fn read_queue(
         });
         details.complete = false;
     }
-    details.context = context;
+    details.context = context.map(Box::new);
     details.changed_paths = github
         .pull_request_paths(repo, state.pull_request.number)
         .await

@@ -182,6 +182,7 @@ impl Controller {
                 && row.value["number"] == fact.number
                 && row.value["evidence"]["CiFailed"]["head"] == *head
                 && row.value["evidence"]["CiFailed"]["infra"] == true
+                && row.value["evidence"]["CiFailed"]["details"]["decision"] == "outside_change"
         });
         let completed = completed_at
             .as_ref()
@@ -193,7 +194,7 @@ impl Controller {
                     .as_ref()
                     .is_some_and(|witness| completed.is_some_and(|at| at > witness.at))
             });
-        let context = details.context.clone().unwrap_or(QueueContext {
+        let context = details.context.clone().map(|context| *context).unwrap_or(QueueContext {
             base: String::new(),
             branch: String::new(),
             batch: None,
@@ -241,7 +242,7 @@ impl Controller {
                 completed_at.as_deref().unwrap_or("unknown")
             )
         });
-        details.cause = Some(match kind {
+        details.cause = Some(Box::new(match kind {
             Attribution::Change => CauseEvidence::Change { fingerprint: fp },
             Attribution::Environment => CauseEvidence::Environment {
                 fingerprint: fp,
@@ -249,7 +250,7 @@ impl Controller {
                 witness: matched.expect("matched evidence").id.clone(),
             },
             Attribution::Unattributed => CauseEvidence::Unattributed,
-        });
+        }));
         // Preserve Q58's complete, parsed outside-change decision and its one
         // retry. A prior opaque retest, however, can never enter Q58 again.
         if retried {

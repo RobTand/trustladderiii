@@ -33,9 +33,9 @@ pub struct CiFailure {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct QueueCiEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cause: Option<crate::queue_cause::CauseEvidence>,
+    pub cause: Option<Box<crate::queue_cause::CauseEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<crate::queue_cause::QueueContext>,
+    pub context: Option<Box<crate::queue_cause::QueueContext>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
