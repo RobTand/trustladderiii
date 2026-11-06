@@ -11,8 +11,8 @@ SCHEMAS = files("tl3_workers").joinpath("schemas")
 
 
 def test_schema_inventory():
-    # #832 adds a separate worker event contract, outside every model prompt.
-    expected = set(BASE["schemas"]) | {"plan-check-provenance.json"}
+    # #832 and #845 add executor contracts outside model prompts.
+    expected = set(BASE["schemas"]) | {"plan-check-provenance.json", "generation-request.json"}
     assert {path.name for path in SCHEMAS.iterdir() if path.name.endswith(".json")} == expected
 
 

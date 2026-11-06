@@ -519,6 +519,7 @@ input_inventory! {
     Made => refusal_case_made,
     Reviewed => refusal_case_reviewed,
     RebaseConflict => refusal_case_rebase_conflict,
+    RebaseGenerationFailed => refusal_case_rebase_generation_failed,
     Rebased => refusal_case_rebased,
     Merged => refusal_case_merged,
     PullRequest => refusal_case_pull_request,
@@ -556,6 +557,7 @@ impl InputCase {
             Observation::Made { .. } => Self::Made,
             Observation::Reviewed { .. } => Self::Reviewed,
             Observation::RebaseConflict { .. } => Self::RebaseConflict,
+            Observation::RebaseGenerationFailed { .. } => Self::RebaseGenerationFailed,
             Observation::Rebased { .. } => Self::Rebased,
             Observation::Merged { .. } => Self::Merged,
             Observation::PullRequest { .. } => Self::PullRequest,
@@ -727,6 +729,18 @@ fn observation_inventory(
             generation,
             sha: sha.clone(),
         },
+        Observation::RebaseGenerationFailed {
+            node,
+            generation,
+            report: Box::new(crate::generation::Report {
+                completed: false,
+                changed: vec![],
+                message: "Configured generator failed; repair and call run_generator.".into(),
+                head: sha.clone(),
+                evidence: None,
+                check_run: None,
+            }),
+        },
         Observation::Merged {
             node,
             sha,
@@ -748,6 +762,7 @@ fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
             | InputCase::CiFailed
             | InputCase::Merged
             | InputCase::RebaseConflict
+            | InputCase::RebaseGenerationFailed
             | InputCase::Rebased
     );
     let head = c.head(NodeId(0), &repo.head).unwrap();
@@ -859,6 +874,7 @@ fn assert_handler_reached(case: InputCase, before: &Snapshot, after: &Snapshot) 
         InputCase::WorktreePrepared | InputCase::CheckPlan => "check_plans",
         InputCase::Checks => "check_evidence",
         InputCase::RebaseConflict | InputCase::Rebased => "rebase_conflicts",
+        InputCase::RebaseGenerationFailed => "generation_evidence",
         InputCase::PullRequest => "pull_requests",
         InputCase::PrivateIntake | InputCase::PrivateReplacement => "requests",
         InputCase::PrivateIssueChange => crate::ISSUE_EDITS,
@@ -1184,6 +1200,7 @@ fn check_input_case(db: &mut Database, case: InputCase, payload: u16, run: usize
             | InputCase::Made
             | InputCase::Reviewed
             | InputCase::RebaseConflict
+            | InputCase::RebaseGenerationFailed
             | InputCase::Rebased
             | InputCase::Merged
             | InputCase::PullRequest => unreachable!("observation fixture missing: {case:?}"),
