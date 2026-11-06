@@ -132,6 +132,7 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_regeneration",
     "test_test_harness_summary",
     "test_test_redaction_adapter",
     "test_test_redaction_generated",
@@ -194,6 +195,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/regeneration.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/input_resources.rs": ["tests/support/**"],
     "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs"],
     # CC-P: exact source replay and persistent differential schedules.

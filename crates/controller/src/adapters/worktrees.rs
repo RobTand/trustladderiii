@@ -113,6 +113,8 @@ fn adapter(error: impl Into<Error>) -> Error {
 }
 
 impl Real {
+    pub fn with_generation(self, _config: &tl3_config::Config) -> Result<Self> { Ok(self) }
+
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
         self.branches = crate::branches::Branches::new(repos)?;
         self.protected_paths = crate::scope::ProtectedPaths::new(repos);

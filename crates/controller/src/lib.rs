@@ -25,6 +25,7 @@ mod decisions;
 mod dispatch_liveness;
 pub mod evidence;
 pub mod executor;
+pub mod generation;
 mod github_messages;
 mod goals;
 mod http;
