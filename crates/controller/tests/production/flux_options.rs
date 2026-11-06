@@ -2,7 +2,7 @@ use super::*;
 use tl3_controller::{Ownership, run_backend::Options};
 use tl3_store::Store;
 
-fn flux(root: &Path) -> tl3_config::Flux {
+pub(super) fn flux(root: &Path) -> tl3_config::Flux {
     tl3_config::Flux {
         instance_generation: "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into(),
         executable: "/opt/flux/bin/flux".into(),

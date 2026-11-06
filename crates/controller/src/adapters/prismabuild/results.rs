@@ -442,6 +442,10 @@ fn completion_for(
     Ok(Completion::confirmed(observations))
 }
 
+pub(crate) fn transport_completion(context: &ReportContext<'_>, action_key: &str) -> Result<Completion> {
+    completion_for(context, action_key, false, false, vec![], vec![])
+}
+
 /// FX: consume only FX1's verified daytime payload, then apply the existing served-tree judge.
 pub(crate) fn daytime_completion(
     backend: &dyn crate::run_backend::RunBackend,

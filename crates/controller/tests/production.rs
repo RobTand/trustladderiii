@@ -261,3 +261,6 @@ fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
     drop(owner);
     database.stop();
 }
+
+#[path = "production/flux_checks.rs"]
+mod flux_checks;
