@@ -20,6 +20,8 @@ import sys
 args = sys.argv[1:]
 with pathlib.Path({str(calls)!r}).open('a') as log:
     log.write(json.dumps(args) + '\\n')
+if args[:1] == ['--cgroup-manager=systemd']:
+    args = args[1:]
 if args[0] == 'run':
     pathlib.Path({str(tmp_path / 'run-pid')!r}).write_text(str(os.getpid()))
     evidence = pathlib.Path({str(tmp_path / 'stderr')!r})
@@ -89,7 +91,7 @@ def test_flux_command_at_launcher_boundary(launcher):
     runtime, calls = launcher
     scratch = runtime.parent / 'private'
     scratch.mkdir(mode=0o700)
-    command = podman_command(runtime.parent / 'checkout', 'sha256:' + '1' * 64, scratch, 1)
+    command = podman_command(runtime.parent / 'checkout', 'sha256:' + '1' * 64, scratch, 1, mode='in_job')
     with calls.with_suffix('.stdin').open('w+b') as selection:
         selection.write(b'[{"test": "private-selector"}]')
         selection.seek(0)

@@ -115,10 +115,11 @@ class Supervised:
         self.stderr_diagnostic = ''
         self.stderr_withheld = False
         command = list(command)
-        if len(command) > 1 and Path(command[0]).name in ('docker', 'podman') and command[1] == 'run':
+        run_index = 2 if command[1:2] == ['--cgroup-manager=systemd'] else 1
+        if len(command) > run_index and Path(command[0]).name in ('docker', 'podman') and command[run_index] == 'run':
             self.runtime = command[0]
             self.container = 'tl3-test-' + uuid.uuid4().hex
-            command[2:2] = ['--name', self.container]
+            command[run_index + 1:run_index + 1] = ['--name', self.container]
             if Path(self.runtime).name == 'podman':
                 runtime.container_pending(self.container)
         self.command, self.selection = command, selection

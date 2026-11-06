@@ -22,10 +22,22 @@ def launch_context():
     })['context']
 
 
-def podman_command(tree, image, scratch, threads, *, executable='podman', harness=None, interpreter='python3'):
+def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=None,
+                   executable='podman', harness=None, interpreter='python3'):
     harness = Path(harness) if harness is not None else Path(__file__).resolve().parent
+    if mode == 'in_job':
+        if cpus is not None or memory is not None:
+            raise ValueError('in_job cannot set independent CPU or memory limits')
+        prefix = [str(executable), 'run', '--cgroups=disabled', '--init']
+    elif mode == 'own_scope':
+        if not cpus or type(memory) is not int or memory <= 0:
+            raise ValueError('own_scope requires Rust-mapped CPUs and a positive memory limit')
+        prefix = [str(executable), '--cgroup-manager=systemd', 'run', '--cgroups=enabled',
+                  '--cpuset-cpus', cpus, '--memory', str(memory), '--memory-swap', str(memory)]
+    else:
+        raise ValueError('explicit container mode required')
     return [
-        str(executable), 'run', '--cgroups=disabled', '--network=none', '--read-only', '--read-only-tmpfs=false', '--init',
+        *prefix, '--network=none', '--read-only', '--read-only-tmpfs=false',
         '--userns=keep-id', '--interactive', '--rm', '--pull=never', '--cap-drop=ALL',
         '--security-opt=no-new-privileges', '--pids-limit=128', '--ipc=private', '--pid=private', '--workdir=/checkout',
         '--mount', f'type=bind,src={tree},dst=/checkout,readonly',
@@ -214,7 +226,10 @@ def command(tree, scratch):
     check_rootless_directory(os.environ)
     context = launch_context()
     configured = context['runtime']
+    if configured['mode'] == 'own_scope':
+        raise RuntimeError('OwnScope requires Rust-mapped launch CPUs and durable cleanup registration')
     return podman_command(tree, configured['image'], scratch, context['native_threads'],
+                          mode=configured['mode'],
                           executable=configured['executable'], harness=configured['trusted_root'],
                           interpreter=configured['interpreter'])
 
