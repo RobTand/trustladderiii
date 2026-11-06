@@ -840,8 +840,34 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out)),
-    ] proof [port_advance_contracts::slot_frame(*node, *next_ticket, context, *_out);
-        port_advance_slot::rank(*node, *next_ticket, context, _out.len);] {
+    ] proof [
+        port_advance_contracts::slot_frame(*node, *next_ticket, context, *_out);
+        let n = *node;
+        let ticket = *next_ticket;
+        let c = context;
+        let after = port_advance_contracts::slot_after(n, ticket, c);
+        let ticket_after = (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64;
+        assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c))) by {
+            reveal(advance_post); reveal(distance);
+            assert(n.phase is Ready);
+            let r = match n.phase { Phase::Ready(r) => r, _ => Resume::Making };
+            if n.paused {
+                assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c)));
+            } else if n.ticket.is_none() {
+                assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c)));
+            } else if c.slot {
+                match r {
+                    Resume::Making => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Checking => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Reviewing => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Publishing => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                    Resume::Rebasing => { assert(advance_post(n, after, ticket, ticket_after, true)); },
+                }
+            } else {
+                assert(advance_post(n, after, ticket, ticket_after, false));
+            }
+        }
+    ] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
