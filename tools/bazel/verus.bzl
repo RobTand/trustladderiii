@@ -701,6 +701,17 @@ def verus_proofs():
             "kernel::port_advance_witness::original_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_advance_tail_witness::selected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_advance_tail_witness::moves": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::teardown_equivalence::outcome": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::resume": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::effect_kind": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::phase": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::question": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::node": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::output": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::outbox": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::compare": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::branch_extraction_matches_original": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::reference::advance_teardown": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),

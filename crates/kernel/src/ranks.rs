@@ -1026,3 +1026,7 @@ kernel_fn! {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "teardown_equivalence/mod.rs"]
+mod equivalence;
