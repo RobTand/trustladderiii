@@ -965,6 +965,7 @@ fn two_authored_leaves_hold_slots_rebase_regenerate_and_merge_fresh_trees() {
         first_main,
         "stale queue tree must never reach main"
     );
+    f.dispatched.lock().unwrap().clear();
     f.observe(Observation::CiFailed {
         node: NodeId(1),
         infra: false,
