@@ -678,11 +678,17 @@ fn legacy_only_rows_yield_the_same_maker_input_as_the_canonical_document() {
 fn malformed_feedback_on_closed_nodes_does_not_poison_later_steps() {
     for canonical in [false, true] {
         let mut f = Fixture::new();
-        f.seed(Phase::Making, 2);
-        f.documents(&[
-            (if canonical { "feedback" } else { "maker_findings" }, json!({"maker":"malformed", "conflict":{"head":"old"}})),
-            ("rebase_conflicts", json!({"head":"old"})),
-        ]);
+        f.seed(Phase::Rebasing, 1);
+        f.observe(Observation::RebaseConflict {
+            node: NodeId(0), generation: 10, head: f.repo.head.clone(),
+            target: f.repo.base.clone(), files: vec!["README.md".into()],
+        });
+        let snapshot = f.controller.snapshot().unwrap();
+        let mut commit = Commit::new("malformed-feedback", json!(null), &snapshot);
+        commit.rows.push(tl3_store::RowChange::Delete { table:"feedback".into(), id:"0".into() });
+        commit.rows.push(crate::put(if canonical { "feedback" } else { "maker_findings" }, "0".into(), json!({"maker":"malformed", "conflict":{"head":"old"}})));
+        commit.rows.push(crate::put("rebase_conflicts", "0".into(), json!({"head":"old"})));
+        f.controller.store.commit(&commit).unwrap();
         f.observe(Observation::Steering { node:NodeId(0), command:tl3_kernel::Command::Stop });
         assert!(f.controller.world().unwrap().nodes[0].phase.is_closed());
         assert!(!f.controller.snapshot().unwrap().rows.iter().any(|row| row.table == "rebase_conflicts"));
