@@ -842,7 +842,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     );
     registry.register(Upstream::PrismaBuild, pb(root.path()));
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
     );
     progress("open controller and store");

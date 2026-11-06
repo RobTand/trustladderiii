@@ -157,6 +157,12 @@ impl Delivery {
 /// when absent; `observation_shapes` enforces this.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    Outcome {
+        node: NodeId,
+        outcome: crate::outcome::Outcome,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt: Option<String>,
+    },
     Prerequisite(crate::merge_dependencies::ExternalFact),
     /// One bounded prerequisite read queued by controller open (#839).
     PrerequisiteRead {
@@ -585,17 +591,22 @@ pub trait Executor {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Upstream {
     GitHub,
-    Mergify,
+    #[serde(rename = "Mergify", alias = "Delivery")]
+    Delivery,
     PrismaBuild,
     Workers,
     Worktrees,
 }
 
 impl Upstream {
+    /// Source compatibility for retained pre-rename reference suites; removed in S7a (#915).
+    #[allow(non_upper_case_globals)]
+    pub const Mergify: Self = Self::Delivery;
+
     pub const fn kind(self) -> &'static str {
         match self {
             Self::GitHub => "GitHub",
-            Self::Mergify => "Mergify",
+            Self::Delivery => "Mergify",
             Self::PrismaBuild => "PrismaBuild",
             Self::Workers => "Workers",
             Self::Worktrees => "Worktrees",
@@ -616,7 +627,7 @@ pub fn upstream(output: Output) -> Upstream {
             SubmitChecks | WithdrawJob => Upstream::PrismaBuild,
             StartRebase | PrepareWorktree | Push | RemoveWorktree => Upstream::Worktrees,
             PostApproval | OpenPr | ClosePr => Upstream::GitHub,
-            Enqueue => Upstream::Mergify,
+            Enqueue => Upstream::Delivery,
         },
     }
 }
