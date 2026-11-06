@@ -76,11 +76,8 @@ pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> 
 /// Q54: the evidence behind a stop for TL3 review, from the step that
 /// stopped. The summary has no decision for Rob, so none is kept.
 pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> {
-    if step == ReviewStop::AuditDisagreement {
-        return audit_stop(sources);
-    }
     let found = match step {
-        ReviewStop::AuditDisagreement => unreachable!("handled above"),
+        ReviewStop::AuditDisagreement => return audit_stop(sources),
         ReviewStop::PlanCantMeet => plan_check_stop(&(sources.fresh)("plans")?),
         ReviewStop::MakerOutOfRoom | ReviewStop::MakerNeedsFiles => {
             let reply = (sources.fresh)("maker_replies")?;

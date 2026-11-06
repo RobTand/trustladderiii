@@ -32,7 +32,12 @@ fn second_audit_disagreement_never_asks_or_spends() {
             generation: run.node().generation,
             reply: Reply::AuditDisagrees,
         });
-        assert_eq!(run.phase(), Phase::Stopping(Outcome::Stopped));
+        // `step` settles an intake stop immediately when no teardown remains.
+        // The source-connected on_reply proof checks the exact Stopping phase.
+        assert!(matches!(
+            run.phase(),
+            Phase::Stopping(Outcome::Stopped) | Phase::Closed(Outcome::Stopped)
+        ));
         assert_eq!(run.node().question, None);
         assert_eq!(run.w.next_question, before.next_question);
         assert_eq!(run.node().credit, before.nodes[0].credit);

@@ -464,9 +464,14 @@ fn audit_disagreement_stops_with_both_readings_and_named_objections() {
             if index == 3 {
                 c.drive_once().unwrap();
                 let after = c.world().unwrap();
-                assert_eq!(
-                    after.nodes[0].phase,
-                    Phase::Stopping(Outcome::Stopped),
+                // Intake has no worktree or PR to tear down. Kernel settle
+                // may finish Stopping in this same step; the proof checks
+                // the exact pre-settle Stopping(Stopped) transition.
+                assert!(
+                    matches!(
+                        after.nodes[0].phase,
+                        Phase::Stopping(Outcome::Stopped) | Phase::Closed(Outcome::Stopped)
+                    ),
                     "fail_fast={fail_fast}"
                 );
                 assert_eq!(after.nodes[0].question, None);
