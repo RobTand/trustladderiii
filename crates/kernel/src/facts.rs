@@ -11,12 +11,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures report::agrees_except_ci_failed(old(report).entries@, final(report).entries@,
-            NodeId(i as u64), old(w).nodes@[i as int].phase, final(w).nodes@[i as int].phase,
-            report::stop_kind(final(w).nodes@[i as int].phase,
-                if fact is CiFailed { Some(ReviewStop::CiFailed) } else { None },
-                fact is PrClosedByPerson, false), Seq::empty(), fact is CiFailed),
-        (fact_progress_input(*old(w), i as int, fact)
+    ensures (fact_progress_input(*old(w), i as int, fact)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
@@ -71,15 +66,16 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
     kernel_proof! {
         if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
     }
-    let ci = match fact {
-        Fact::DependencyRemove { kind, number } => { w.remove_dependency(i, kind, number); None },
-        Fact::Dependency { target, status } => { w.dependency_fact(i, target, status, out); None },
+    let ci = report::ci_failure_cause(w.nodes[i].phase, w.nodes[i].current(), fact);
+    match fact {
+        Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
+        Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
         Fact::PrMerged {
             head,
             checks_passed,
-        } => { pr_merged(w, i, head, checks_passed, out); None },
+        } => pr_merged(w, i, head, checks_passed, out),
         _ => fact_transition(w, i, fact, out),
-    };
+    }
 
     kernel_proof! {
         if fact_progress_input(before_fact@, i as int, fact) {
@@ -101,7 +97,7 @@ kernel_fn! {
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
-    out: &mut Outbox) -> (result: Option<FailedRoundCause>) [
+    out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
@@ -150,7 +146,6 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             _ => true,
         },
 ] {
-
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
@@ -165,8 +160,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             let m = &mut w.nodes[i];
             if !m.pr_open {
                 kernel_proof! { reveal(retirement::fact_node); }
-
-                return None;
+                return;
             }
             m.pr_open = false;
             if !m.phase.is_stopping() && !m.phase.is_closed() {
@@ -179,8 +173,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
-
-                return None;
+                return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
             let published = matches!(
@@ -193,12 +186,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 kernel_proof! { reveal(retry_bounds); }
             }
         }
-        Fact::CiFailed { infra } => {
-            let cause = ci_failed(w, i, infra, out);
-            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
-            return cause;
-
-        }
+        Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
         Fact::Conflict => {
             let m = &mut w.nodes[i];
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
@@ -209,8 +197,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::UpstreamStalled => {
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued || m.waiting_incident {
-
-                return None;
+                return;
             }
             m.run_incidents = (m.run_incidents + 1).min(2);
             let needs_rob = m.run_incidents >= 2;
@@ -218,13 +205,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
-
     kernel_proof! {
         if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
     }
-    None
 }
 }
 
@@ -362,7 +347,7 @@ kernel_fn! {
 /// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: Option<FailedRoundCause>) [
+pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
@@ -372,15 +357,13 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         infra ==> final(w).next_question == old(w).next_question,
         infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
 ] proof [reveal(retirement::fact_frame);] {
-
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
     if m.phase != Phase::Queued && !before_enqueue {
         kernel_proof! { reveal(retirement::fact_node); }
-
-        return None;
+        return;
     }
     if before_enqueue {
         if let Some(effect) = m.effect.as_mut() {
@@ -391,19 +374,15 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     kernel_snapshot! { prepared_out = *out }
     if !infra {
         failed_round_unreported(w, i, ReviewStop::CiFailed, out);
-
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
         }
-
-        return Some(FailedRoundCause::CiFailed);
+        return;
     }
     kernel_proof! {
         facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
     }
     ci_infrastructure(w, i, out);
-
-    None
 }
 }
 

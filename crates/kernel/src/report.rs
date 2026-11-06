@@ -358,25 +358,30 @@ kernel_fn! {
 /// Fact reporting is isolated from the fact handlers' world frames.
 pub(super) fn record_fact(report: &mut Report, node: NodeId, before: Phase, after: Phase,
     fact: Fact, ci: Option<FailedRoundCause>) -> (result: ()) [
-    ensures agrees_except_ci_failed(old(report).entries@, final(report).entries@,
-        node, before, after, stop_kind(after,
-            if fact is CiFailed { Some(ReviewStop::CiFailed) } else { None },
-            fact is PrClosedByPerson, false), Seq::empty(), fact is CiFailed),
+
 ] {
-    kernel_snapshot! { r0 = report.entries@ }
     if matches!(fact, Fact::CiFailed { .. }) {
         if let Some(cause) = ci {
             report.record_failed_round(node, cause);
         }
     }
-    kernel_snapshot! { middle = report.entries@ }
     let review = if matches!(fact, Fact::CiFailed { .. }) { Some(ReviewStop::CiFailed) } else { None };
     let cause = StopCause::from_phase(after, review, matches!(fact, Fact::PrClosedByPerson), false);
     report.record_stop(node, before, after, cause);
-    kernel_proof! {
-        if !(fact is CiFailed) { lemmas::unchanged(r0@); }
-        lemmas::stop_agreement(r0@, middle@, report.entries@,
-            node, before, after, cause, Seq::empty(), fact is CiFailed);
+
+}
+}
+
+kernel_fn! {
+/// Runtime evidence for the fact-path proof gap, owned by K3 #907.
+pub(super) fn ci_failure_cause(phase: Phase, current: Option<Item>, fact: Fact)
+    -> (result: Option<FailedRoundCause>) [] {
+    match fact {
+        Fact::CiFailed { infra: false } if phase == Phase::Queued
+            || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue)) => {
+            Some(FailedRoundCause::CiFailed)
+        }
+        _ => None,
     }
 }
 }

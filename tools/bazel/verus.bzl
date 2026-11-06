@@ -966,6 +966,7 @@ def verus_proofs():
             "facts_incident_cleared": ("kernel::facts#incident_cleared", 1),
             "facts_pr_dequeued": ("kernel::facts#pr_dequeued", 1),
             "facts_failed_round_unreported": ("kernel::facts#failed_round_unreported", 1),
+            "report_ci_failure_cause": ("kernel::report#ci_failure_cause", 1),
             "report_record_fact": ("kernel::report#record_fact", 1),
             "facts_ci_failed": ("kernel::facts#ci_failed", 1),
             "facts_infrastructure_retry": ("kernel::facts#infrastructure_retry", 1),

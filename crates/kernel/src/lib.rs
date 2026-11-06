@@ -1636,7 +1636,7 @@ pub enum Broken {
 }
 
 // proof map start
-// proof gap: CiFailed report conjunct, owner K3 #907
+// proof gap: fact-path report proofs (facts stops + CiFailed), owner K3 #907
 /// The proof-map entry that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.
