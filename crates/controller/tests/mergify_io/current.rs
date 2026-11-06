@@ -1,3 +1,5 @@
+/// The queue read a Pending completion decided on (4g / #864).
+type ObservedQueue = Option<(tl3_mergify::Observation, Vec<Observation>)>;
 use tl3_mergify::decide::route;
 use tl3_mergify::decide::{heal as heal_core, plan as execute_core};
 use super::*;
@@ -56,6 +58,7 @@ impl Adapter {
             state.pull_request.draft,
             state.pull_request.body.as_deref().unwrap_or_default(),
         )?;
+        self.reconcile_queue_destination(delivery, &state, snapshot)?;
         let proof =
             crate::evidence::publication(delivery, delivery.request_text.as_deref().unwrap_or(""))?;
         let proof = if proof.is_empty() {
@@ -223,7 +226,7 @@ impl Adapter {
         &self,
         delivery: &Delivery,
         snapshot: Option<&Snapshot>,
-    ) -> Result<Reconciliation> {
+    ) -> Result<(Reconciliation, ObservedQueue)> {
         let mut baseline = self.baseline(delivery)?;
         let mut core = lifecycle::EnqueueState {
             intent: baseline.as_ref().map(|attempt| lifecycle::Intent {
@@ -255,7 +258,7 @@ impl Adapter {
                     }
                     lifecycle::Effect::Read(need) => requested = Some(need),
                     lifecycle::Effect::Complete(result) => {
-                        return Ok(
+                        return Ok((
                             match completion_core::resolve(result.into(), observed.is_some()) {
                                 completion_core::Resolution::Found {
                                     ack,
@@ -294,10 +297,16 @@ impl Adapter {
                                     }
                                     Reconciliation::Found(Box::new(completion))
                                 }
-                                completion_core::Resolution::Pending => Reconciliation::Pending,
+                                completion_core::Resolution::Pending => {
+                                    return Ok((
+                                        Reconciliation::Pending,
+                                        observed.map(|state| (state, observations)),
+                                    ));
+                                }
                                 completion_core::Resolution::Absent => Reconciliation::Absent,
                             },
-                        );
+                            None,
+                        ));
                     }
                     _ => return Err(Error::Invalid("unexpected enqueue reconciliation effect")),
                 }
@@ -469,7 +478,7 @@ impl Adapter {
             execute_core::Start::Proceed => {}
         }
         let snapshot = self.snapshot()?;
-        let (state, _) = self.read(delivery, snapshot.as_ref())?;
+        let (state, facts) = self.read(delivery, snapshot.as_ref())?;
         let (number, head) = enqueue(delivery)?;
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
@@ -564,9 +573,9 @@ impl Adapter {
                     }
                 }
                 lifecycle::Effect::Read(lifecycle::Need::Command) => {
-                    if let Some(completion) =
-                        execute_core::found(execution_receipt(self.queue_command(delivery, None)?))
-                    {
+                    if let Some(completion) = execute_core::found(execution_receipt(
+                        self.queue_command(delivery, None, Some((&state, facts.as_slice())))?,
+                    )) {
                         return Ok(*completion);
                     }
                 }
@@ -588,7 +597,7 @@ impl Adapter {
                 }
                 lifecycle::Effect::Complete(lifecycle::Complete::Retryable) => {
                     return match execute_core::found(execution_receipt(
-                        self.completion(delivery, self.snapshot()?.as_ref())?,
+                        self.completion(delivery, self.snapshot()?.as_ref())?.0,
                     )) {
                         Some(completion) => Ok(*completion),
                         None => Err(Error::Invalid("PR changed during enqueue")),
@@ -624,9 +633,15 @@ impl Adapter {
     fn read_enqueue(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // Reads retain the original effect's epoch, including after a controller upgrade.
         let snapshot = self.snapshot()?;
-        let mut result = self.completion(delivery, snapshot.as_ref())?;
+        let (mut result, observed) = self.completion(delivery, snapshot.as_ref())?;
         if matches!(result, Reconciliation::Pending) {
-            result = self.recover_waiting(delivery, snapshot.as_ref())?;
+            result = self.recover_waiting(
+                delivery,
+                snapshot.as_ref(),
+                observed
+                    .as_ref()
+                    .map(|(state, facts)| (state, facts.as_slice())),
+            )?;
         }
         if let Reconciliation::Found(completion) = &result
             && completion.ack == Ack::Confirmed

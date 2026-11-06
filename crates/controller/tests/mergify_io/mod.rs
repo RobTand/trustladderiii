@@ -81,6 +81,8 @@ pub mod executor {
     use ::tl3_store;
     pub use tl3_controller::executor::{Delivery, Output};
     #[derive(Clone, Debug, Serialize, Deserialize)]
+    // The harness records real QueueFact values with the production call shape.
+    #[allow(clippy::large_enum_variant)]
     pub enum Observation {
         Queue(QueueFact),
         Kernel(tl3_kernel::Event),
@@ -194,6 +196,15 @@ fn checks_settled(state: &tl3_mergify::Observation) -> bool {
 }
 mod tl3_store {
     pub(super) use super::io::Store;
+    pub(super) use ::tl3_store::RowChange;
+    pub(super) struct Commit {
+        pub rows: Vec<RowChange>,
+    }
+    impl Commit {
+        pub fn new(_: String, _: super::Value, _: &super::Snapshot) -> Self {
+            Self { rows: vec![] }
+        }
+    }
 }
 
 struct BodyPolicy {
@@ -314,8 +325,10 @@ macro_rules! adapter {
         }
     };
 }
+// 4g: the current side passes the observed queue read as a trailing argument;
+// the frozen references keep their original arity.
 macro_rules! run_entry {
-    ($a:ident, $entry:ident, $d:ident, $waiting:expr) => {
+    ($a:ident, $entry:ident, $d:ident, $waiting:expr $(, $observed:expr)?) => {
         match $entry {
             io::Entry::Webhook | io::Entry::CatchUp | io::Entry::QueueFacts => $a.routing($entry),
             io::Entry::Read => {
@@ -324,14 +337,14 @@ macro_rules! run_entry {
                     Err(e) => json!({"error":e.to_string()}),
                 }
             },
-            io::Entry::Completion => io::reconciliation($a.completion($d, None)),
+            io::Entry::Completion => io::reconciliation(io::EntryReconciliation::reconciliation($a.completion($d, None))),
             io::Entry::Execute => io::completed($a.execute($d)),
             io::Entry::Reconcile => io::reconciliation($a.reconcile($d)),
             io::Entry::Waiting => io::reconciliation((|| {
                 let snapshot = $a.snapshot()?;
-                $a.recover_waiting($d, snapshot.as_ref())
+                $a.recover_waiting($d, snapshot.as_ref() $(, $observed)?)
             })()),
-            io::Entry::Command => io::reconciliation($a.queue_command($d, $waiting)),
+            io::Entry::Command => io::reconciliation($a.queue_command($d, $waiting $(, $observed)?)),
             io::Entry::Rerun => match (|| -> Result<()> {
                 let (state, _) = $a.read($d, None)?;
                 $a.rerun_head_checks($d, &state)
@@ -364,6 +377,9 @@ mod current {
     mod queue_entry {
         include!("queue-entry-current.rs");
     }
+    mod queue_cause {
+        include!("queue-cause-current.rs");
+    }
     adapter!();
     include!("current.rs");
     include!("router_current_executor.rs");
@@ -379,7 +395,7 @@ mod current {
     }
     pub(super) fn run(entry: io::Entry, d: &Delivery) -> Value {
         let mut a = Adapter::new();
-        run_entry!(a, entry, d, None)
+        run_entry!(a, entry, d, None, None)
     }
     pub(super) fn router_run(entry: io::Entry, d: &Delivery, wrapped: bool) -> Value {
         let bare = Adapter::new();
@@ -700,9 +716,16 @@ mod properties {
                     "recovery",
                     "has_recovery",
                     "save_recovery",
+                    "reconcile_queue_destination",
+                    "queue_retry_binding",
+                    "publish_queue_retry",
                     "recovery_eligible",
                     "command_budget",
                     "reconcile_command",
+                    "answered",
+                    "dequeued",
+                    "ended",
+                    "command_ending",
                     "recover_waiting",
                     "queue_command",
                     "recovery_decide",
@@ -719,7 +742,9 @@ mod properties {
                     ""
                 };
                 assert_eq!(
-                    function(actual, name, after),
+                    function(actual, name, after)
+                        .replace("crate::queue_cause::", "queue_retry::")
+                        .replace("crate::put(", "queue_retry::put("),
                     function(copy, name, ""),
                     "production copy drifted: {name}"
                 );
@@ -732,6 +757,10 @@ mod properties {
     }
     #[test]
     fn expanded_helpers_are_verbatim() {
+        assert_eq!(
+            include_str!("../../src/adapters/mergify/queue_cause.rs"),
+            include_str!("queue-cause-current.rs")
+        );
         assert_eq!(
             include_str!("../../src/adapters/mergify/queue_entry.rs"),
             include_str!("queue-entry-current.rs")
@@ -990,6 +1019,13 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::Gate(gate) => format!(
+                "gate:{}:{}:{}",
+                gate.context.base,
+                gate.context.batch.as_deref().unwrap_or("main"),
+                gate.at
+            ),
+
             Evidence::ChecksUnavailable { permissions } => {
                 let mut gaps = permissions.clone();
                 gaps.sort();
@@ -2071,7 +2107,7 @@ struct A2Config {
     saved_heal: Option<(bool, bool)>,
 }
 macro_rules! a2_entry {
-    ($waiting:expr) => {
+    ($waiting:expr $(, $observed:expr)?) => {
         pub(super) fn a2_run(entry: io::Entry, d: &Delivery, config: A2Config, heal: bool) -> Value {
             if let Some((same_head, reran)) = config.saved_heal { io::a2_seed_heal(same_head, reran); }
             let mut a = Adapter::new();
@@ -2082,13 +2118,13 @@ macro_rules! a2_entry {
             if heal {
                 let mut pull = io::c1_pull();
                 if config.foreign { pull.head.branch = "foreign".into(); }
-                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false };
+                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false, revision: ::tl3_store::Revision::ZERO };
                 match a.heal_body(d, &pull, Some(&snapshot)) {
                     Ok(edited) => json!({"edited":edited}),
                     Err(error) => json!({"error":error.to_string()}),
                 }
             } else {
-                run_entry!(a, entry, d, $waiting)
+                run_entry!(a, entry, d, $waiting $(, $observed)?)
             }
         }
     }
@@ -2124,6 +2160,9 @@ mod a2_current {
     mod queue_entry {
         include!("queue-entry-current.rs");
     }
+    mod queue_cause {
+        include!("queue-cause-current.rs");
+    }
     adapter!();
     include!("current.rs");
     mod ci_evidence {
@@ -2136,7 +2175,7 @@ mod a2_current {
     mod head_checks {
         include!("current-head.rs");
     }
-    a2_entry!(None);
+    a2_entry!(None, None);
     pub(super) fn a2_reruns(
         runs: &[tl3_github::WorkflowRun],
         head: &str,

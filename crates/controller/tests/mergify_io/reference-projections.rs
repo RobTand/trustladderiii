@@ -1,4 +1,8 @@
 use super::*;
+mod frozen_evidence {
+    include!("reference-evidence.rs");
+}
+use frozen_evidence::Evidence;
 use tl3_mergify::decide::recovery::eligibility;
 include!("reference-projection-support.rs");
 struct Adapter;

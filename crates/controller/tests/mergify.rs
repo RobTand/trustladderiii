@@ -10,6 +10,8 @@ mod check_reads;
 mod ci_evidence;
 #[path = "mergify/classic_protection.rs"]
 mod classic_protection;
+#[path = "mergify/dequeue.rs"]
+mod dequeue;
 #[path = "mergify/dequeue_followups.rs"]
 mod dequeue_followups;
 #[path = "mergify/head_checks.rs"]
@@ -22,6 +24,8 @@ mod merge_closure;
 mod missing_checks;
 #[path = "mergify/ordering.rs"]
 mod ordering;
+#[path = "mergify/queue_cause.rs"]
+mod queue_cause;
 #[path = "mergify/queue_entry.rs"]
 mod queue_entry;
 #[path = "mergify/requeue.rs"]
@@ -149,6 +153,8 @@ struct State {
     failed_job_reruns: Vec<u64>,
     ci_fixture: Option<ci_evidence::Fixture>,
     entry_fixture: Option<queue_entry::Fixture>,
+    cause_fixture: Option<queue_cause::Fixture>,
+    dequeue_fixture: Option<dequeue::Fixture>,
 }
 impl State {
     fn new() -> Self {
@@ -209,6 +215,8 @@ impl State {
             failed_job_reruns: vec![],
             ci_fixture: None,
             entry_fixture: None,
+            cause_fixture: None,
+            dequeue_fixture: None,
         }
     }
     fn checks(&self) -> Value {
@@ -220,6 +228,25 @@ impl State {
                 && check.get("completed_at").is_none()
             {
                 check["completed_at"] = json!("2026-10-31T22:00:00Z");
+            }
+        }
+        if self.ci_fixture.is_none()
+            && self.entry_fixture.is_none()
+            && self.cause_fixture.is_none()
+            && self.dequeue_fixture.is_none()
+        {
+            for check in checks.as_array_mut().unwrap() {
+                if check["name"] == tl3_mergify::QUEUE_CHECK
+                    && check["status"] == "completed"
+                    && check["output"]["title"]
+                        .as_str()
+                        .is_some_and(|title| title.starts_with("Dequeued"))
+                {
+                    let summary = check["output"]["summary"].as_str().unwrap_or("");
+                    check["output"]["summary"] = json!(format!(
+                        "{summary}\nLifecycle fixture evidence: draft #424242"
+                    ));
+                }
             }
         }
         let mut rule = self.queue_rule.clone();
@@ -320,6 +347,64 @@ impl Respond for Api {
         {
             return response;
         }
+        if let Some(fixture) = &state.cause_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
+        }
+        if let Some(fixture) = &state.dequeue_fixture
+            && let Some(response) = fixture.respond(path)
+        {
+            return response;
+        }
+        if method == "GET"
+            && state.ci_fixture.is_none()
+            && state.entry_fixture.is_none()
+            && state.cause_fixture.is_none()
+            && state.dequeue_fixture.is_none()
+        {
+            if path == "/repos/owner/sandbox/pulls/424242" {
+                let mut draft = state.pull.clone();
+                draft["number"] = json!(424242);
+                draft["user"]["login"] = json!("mergify[bot]");
+                draft["head"]["ref"] = json!("mergify/merge-queue/main/pr-100");
+                draft["head"]["sha"] = json!("7777777777777777777777777777777777777777");
+                return ResponseTemplate::new(200).set_body_json(draft);
+            }
+            if path
+                == "/repos/owner/sandbox/commits/7777777777777777777777777777777777777777/check-runs"
+            {
+                let queue: tl3_github::CheckRun =
+                    serde_json::from_value(state.queue_check()).unwrap();
+                let test = if !queue
+                    .output
+                    .as_ref()
+                    .and_then(|output| output.title.as_deref())
+                    .is_some_and(|title| title.contains("checks failed"))
+                {
+                    "tests/queue_lifecycle.py::outside"
+                } else {
+                    "tests/queue_lifecycle.py::changed"
+                };
+                return ResponseTemplate::new(200).set_body_json(json!({"check_runs":[{"id":424242,"name":"Lifecycle regression","head_sha":"7777777777777777777777777777777777777777","status":"completed","conclusion":"failure","app":{"id":9,"slug":"fixture-tests"},"output":{"summary":format!("FAILED: {test}")}}]}));
+            }
+            if path == "/repos/owner/sandbox/pulls/100/files" {
+                let queue: tl3_github::CheckRun =
+                    serde_json::from_value(state.queue_check()).unwrap();
+                return ResponseTemplate::new(200).set_body_json(
+                    if !queue
+                        .output
+                        .as_ref()
+                        .and_then(|output| output.title.as_deref())
+                        .is_some_and(|title| title.contains("checks failed"))
+                    {
+                        json!([])
+                    } else {
+                        json!([{ "filename":"tests/queue_lifecycle.py" }])
+                    },
+                );
+            }
+        }
         if let Some(response) =
             support::github::respond(request, path, "/repos/owner/sandbox", &mut *state)
         {
@@ -334,11 +419,11 @@ impl Respond for Api {
             return ResponseTemplate::new(*status);
         }
         match (method, path) {
-            ("GET", "/repos/owner/sandbox/branches/main") => ResponseTemplate::new(200).set_body_json(
+            ("GET", "/repos/owner/sandbox/branches/main" | "/repos/owner/sandbox/branches/release") => ResponseTemplate::new(200).set_body_json(
                 if state.classic { json!({"protection":{"required_status_checks":{
                     "contexts":if state.restricted.as_ref().is_some_and(|(read, _)| read == "status") {json!(["Sandbox tests", "legacy-only"])} else {json!(["Sandbox tests"])}, "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
                 else { json!({"protected":false}) }),
-            ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
+            ("GET", "/repos/owner/sandbox/rules/branches/main" | "/repos/owner/sandbox/rules/branches/release") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":state.required_app}]}}]) } else { json!([]) }),
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => {
@@ -496,6 +581,23 @@ impl Server {
         Adapter::new(self.clients(), epoch, root).unwrap()
     }
 }
+// Observe the failed round before simulated maker work can publish a new head.
+fn drain_to_failed_round(controller: &mut Controller) {
+    ingress::drain(controller).unwrap();
+    for _ in 0..300 {
+        if matches!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Making | Phase::Stopping(_) | Phase::Closed(_)
+        ) {
+            return;
+        }
+        assert!(
+            controller.drive_once().unwrap(),
+            "failure must reach its existing failed round"
+        );
+    }
+    panic!("failed round did not settle");
+}
 fn drain(controller: &mut Controller) {
     scenario_progress("mergify: drain ingress");
     ingress::drain(controller).unwrap();
@@ -508,7 +610,18 @@ fn drain(controller: &mut Controller) {
     panic!("controller did not settle");
 }
 fn queued(settings: &tl3_config::Store, api: &Server, root: &Path, confirmed: bool) -> Controller {
-    queued_with(settings, api, root, confirmed, &[])
+    let mut controller = queued_with(settings, api, root, confirmed, &[]);
+    // Legacy queue-lifecycle fixtures now carry explicit complete Q58 evidence.
+    // Opaque real snapshots use queued_for_clock and keep their own transport.
+    let snapshot = controller.snapshot().unwrap();
+    let head = api.state.lock().unwrap().pull["head"]["sha"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut commit = tl3_store::Commit::new("legacy-q58-plan", json!({}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put { table:"check_plans".into(),id:format!("0:{head}"),value:json!({"repository":"/fixture","base_sha":"566bee93ba4b52681864132960cfd63e36bcc9cd","plan":[]}) });
+    Store::open(settings).unwrap().commit(&commit).unwrap();
+    controller
 }
 fn queued_with(
     settings: &tl3_config::Store,
@@ -776,7 +889,11 @@ fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
             state.pull["mergeable"] = json!(true);
             state.pull["mergeable_state"] = json!("clean");
         }
-        drain(&mut controller);
+        if episode == 1 {
+            drain(&mut controller);
+        } else {
+            drain_to_failed_round(&mut controller);
+        }
         if episode == 1 {
             assert_eq!(
                 api.state.lock().unwrap().posts,
@@ -812,14 +929,10 @@ fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
         2,
         "a second dequeue must not retry again"
     );
-    assert!(
-        controller
-            .snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|row| row.table == "incidents"),
-        "a second dequeue on a reused check ID must raise the usual incident"
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Making,
+        "repeated parsed evidence follows the existing failed round"
     );
     println!("test reused_check_dequeues_twice_generic_{generic} ... ok");
 }
@@ -1208,15 +1321,11 @@ fn generic_dequeue(settings: &tl3_config::Store, dirty: bool, lazy: bool) {
             state.checks = fixture("dequeued", "checks");
             state.queue_check_mut()["id"] = json!(123697861572_u64);
         }
-        drain(&mut controller);
-        assert!(
-            controller
-                .snapshot()
-                .unwrap()
-                .rows
-                .iter()
-                .any(|row| row.table == "incidents"),
-            "a repeated generic dequeue must raise the usual incident"
+        drain_to_failed_round(&mut controller);
+        assert_eq!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Making,
+            "a repeated parsed queue failure follows the existing failed round"
         );
     }
     println!("test generic_dequeue_dirty_{dirty}_lazy_{lazy} ... ok");
@@ -2770,6 +2879,45 @@ fn main() {
             ci_evidence::scenario(&database.create(&format!("ci_evidence_{mode}")), mode);
         }
         database.stop();
+        println!(
+            "{} Mergify scenarios passed; no skips; no live upstream calls",
+            ci_evidence::MODES.len()
+        );
+        return;
+    }
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--queue-cause-r1-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        queue_cause::review(&database.create("queue_cause_r1"), &mode);
+        database.stop();
+        println!("1 Mergify scenarios passed; no skips; no live upstream calls");
+        return;
+    }
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--dequeue-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        if let Some((_, reason)) = dequeue::PENDING.iter().find(|(name, _)| *name == mode) {
+            println!("running pending dequeue_{mode} ({reason})");
+        }
+        dequeue::scenario(&database.create("dequeue"), &mode);
+        database.stop();
+        println!("1 Mergify scenarios passed; no skips; no live upstream calls");
+        return;
+    }
+    if std::env::args().nth(1).as_deref() == Some("--queue-cause") {
+        let mut database = support::Database::start();
+        for mode in queue_cause::MODES {
+            queue_cause::scenario(&database.create(&format!("queue_cause_{mode}")), mode);
+        }
+        database.stop();
+        println!(
+            "{} Mergify scenarios passed; no skips; no live upstream calls",
+            queue_cause::MODES.len()
+        );
         return;
     }
     if let Some(mode) = std::env::args()
@@ -2997,6 +3145,9 @@ fn main() {
         .iter()
         .copied()
         .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
+        .chain(std::iter::repeat_n(10, queue_cause::MODES.len()))
+        .chain(std::iter::repeat_n(10, queue_cause::REVIEW_MODES.len()))
+        .chain(std::iter::repeat_n(10, dequeue::MODES.len()))
         .chain(seconds[tail..].iter().copied())
         .enumerate()
         .map(|(index, seconds)| (index, 1, seconds))
@@ -3351,6 +3502,27 @@ fn main() {
             &database.create(&format!("queue_entry_{mode}")),
             mode
         ));
+    }
+    for mode in queue_cause::MODES {
+        scenario!(queue_cause::scenario(
+            &database.create(&format!("queue_cause_{mode}")),
+            mode
+        ));
+    }
+    for mode in queue_cause::REVIEW_MODES {
+        scenario!(queue_cause::review(
+            &database.create(&format!("queue_cause_r1_{mode}")),
+            mode
+        ));
+    }
+    for mode in dequeue::MODES {
+        scenario!(dequeue::scenario(
+            &database.create(&format!("dequeue_{mode}")),
+            mode
+        ));
+    }
+    for (mode, reason) in dequeue::PENDING {
+        println!("test dequeue_{mode} ... ignored, {reason}");
     }
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));

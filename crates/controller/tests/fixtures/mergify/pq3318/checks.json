@@ -1,0 +1,275 @@
+[
+ {
+  "app": {
+   "id": 10562,
+   "slug": "mergify"
+  },
+  "completed_at": "2026-11-06T14:42:51Z",
+  "conclusion": "success",
+  "details_url": "https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/activity-log?pull_request=3343",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/runs/127954911998",
+  "id": 127954911998,
+  "name": "Summary",
+  "output": {
+   "summary": "### Rule: queue pull requests labelled \\\"queue\\\" (queue)\n- [ ] `label = queue`\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft`\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n- [X] any of: [\ud83d\udd00 queue conditions]\n  - [X] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [X] `-draft`\n    - [X] `base = main`\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub branch protection]\n    - [X] any of:\n      - [X] all of:\n        - [X] `check-success = @tl3-robtand/TL3 approval`\n        - [X] `check-success = linked issue`\n        - [X] `label = tl3-queue`\n      - [ ] all of:\n        - [ ] `check-success = pr-gate`\n        - [ ] `label = queue`\n        - [X] `check-success = linked issue`\n  - [ ] all of: [\ud83d\udccc queue conditions of queue rule `release`]\n    - [ ] `check-success = pr-gate`\n    - [ ] `label = queue`\n    - [ ] `label = release`\n    - [X] `-draft`\n    - [X] `base = main`\n    - [X] `check-success = linked issue`\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub branch protection]\n\n### \u2705 Rule: Queue TL3\\-approved PRs (queue)\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft`\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] `check-success = @tl3-robtand/TL3 approval`\n- [X] `label = tl3-queue`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n- [X] any of: [\ud83d\udd00 queue conditions]\n  - [X] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [X] `-draft`\n    - [X] `base = main`\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub branch protection]\n    - [X] any of:\n      - [X] all of:\n        - [X] `check-success = @tl3-robtand/TL3 approval`\n        - [X] `check-success = linked issue`\n        - [X] `label = tl3-queue`\n      - [ ] all of:\n        - [ ] `check-success = pr-gate`\n        - [ ] `label = queue`\n        - [X] `check-success = linked issue`\n\n<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+   "text": null,
+   "title": "1 rule matches and 1 potential rule"
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:48Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 10562,
+   "slug": "mergify"
+  },
+  "completed_at": "2026-11-06T15:14:22Z",
+  "conclusion": "failure",
+  "details_url": "https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/queues/status?branch=main&pull=3343",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/runs/127954907964",
+  "id": 127954907964,
+  "name": "Rule: Queue TL3-approved PRs (queue)",
+  "output": {
+   "summary": "The merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\n\nThese checks never reported on this pull request:\n- `gate`.\n\n**To get back in the queue**\n\n- Make the check names in your merge conditions match what your CI publishes: a check that never reports can never satisfy its merge condition.\n- Then comment `@mergifyio queue` to queue the pull request again.\n\nYou can take a look at `Mergify Merge Queue` check runs for more details about the failure.\n",
+   "text": null,
+   "title": "The pull request has been removed from the queue `default`"
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T15:14:22Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 10562,
+   "slug": "mergify"
+  },
+  "completed_at": "2026-11-06T14:42:49Z",
+  "conclusion": "neutral",
+  "details_url": "https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/activity-log?pull_request=3343",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/runs/127954894037",
+  "id": 127954894037,
+  "name": "Mergify Merge Protections",
+  "output": {
+   "summary": "This pull request does not match any conditions of the merge protections.",
+   "text": null,
+   "title": "No merge protections matched"
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:48Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 10562,
+   "slug": "mergify"
+  },
+  "completed_at": "2026-11-06T15:13:35Z",
+  "conclusion": "neutral",
+  "details_url": "https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/activity-log?pull_request=3343",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/runs/127954668398",
+  "id": 127954668398,
+  "name": "Mergify Merge Queue",
+  "output": {
+   "summary": "### \u274c Left the queue \u00b7 checks timed out\n\n31 min in the queue, 30 min of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 6 Nov, 14:42 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \u274c **Checks timed out** \u00b7 draft #3344\n- \ud83d\udeab **Left the queue** 15:13 \u00b7 `b3d3d0b`\n\n**Reason**\n\nThe merge conditions cannot be satisfied: the checks did not pass within the checks timeout of 30 minutes\n\nThese checks never reported on this pull request:\n- `gate`\n\n**To get back in the queue**\n\n- Make the check names in your merge conditions match what your CI publishes: a check that never reports can never satisfy its merge condition.\n- Then comment `@mergifyio queue` to queue the pull request again.\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = gate`\n\n<details>\n<summary>1 merge condition met</summary>\n\n- [x] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) \u00b7 required by GitHub branch protection\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/prismaquant/queues/status?branch=main&pull=3343) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+   "text": null,
+   "title": "Dequeued \u2014 checks timeout"
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:50Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": "2026-11-06T14:42:16Z",
+  "conclusion": "skipped",
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954616280",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954616280",
+  "id": 127954616280,
+  "name": "hosted-arm64",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:16Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": "2026-11-06T14:42:16Z",
+  "conclusion": "skipped",
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954615876",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954615876",
+  "id": 127954615876,
+  "name": "hosted-amd64",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:16Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": "2026-11-06T14:42:16Z",
+  "conclusion": "skipped",
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954615379",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954615379",
+  "id": 127954615379,
+  "name": "Post-merge Bazel record (amd64 and arm64)",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:16Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": "2026-11-06T14:42:29Z",
+  "conclusion": "success",
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280838/job/127954614946",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280838/job/127954614946",
+  "id": 127954614946,
+  "name": "publish linked-issue policy",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:19Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": "2026-11-06T14:43:31Z",
+  "conclusion": "success",
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954612858",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954612858",
+  "id": 127954612858,
+  "name": "import surface",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:19Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": null,
+  "conclusion": null,
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280883/job/127954612510",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280883/job/127954612510",
+  "id": 127954612510,
+  "name": "Remote Bazel selection and shards",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:19Z",
+  "status": "in_progress"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": "2026-11-06T14:42:31Z",
+  "conclusion": "success",
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954612410",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280981/job/127954612410",
+  "id": 127954612410,
+  "name": "boundary allowlists only shrink",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:19Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 15368,
+   "slug": "github-actions"
+  },
+  "completed_at": "2026-11-06T14:46:03Z",
+  "conclusion": "success",
+  "details_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280883/job/127954612087",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/actions/runs/42236280883/job/127954612087",
+  "id": 127954612087,
+  "name": "Graph impact",
+  "output": {
+   "summary": null,
+   "text": null,
+   "title": null
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:18Z",
+  "status": "completed"
+ },
+ {
+  "app": {
+   "id": 5542171,
+   "slug": "tl3-robtand"
+  },
+  "completed_at": "2026-11-06T14:42:07Z",
+  "conclusion": "success",
+  "details_url": "https://github.com/RobTand/trustladderiii",
+  "head_sha": "b3d3d0b7486a4835a7b81c39001a0ed0a59d7463",
+  "html_url": "https://github.com/RobTand/prismaquant/runs/127954534507",
+  "id": 127954534507,
+  "name": "TL3 approval",
+  "output": {
+   "summary": "This head passed TL3's required checks and independent review.",
+   "text": "",
+   "title": "TL3 approval"
+  },
+  "pull_requests": [],
+  "started_at": "2026-11-06T14:42:07Z",
+  "status": "completed"
+ }
+]
