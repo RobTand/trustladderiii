@@ -2120,10 +2120,13 @@ impl GitHubTranslator for Translator {
 mod kind_tests {
     #[test]
     fn incomplete_queue_membership_is_not_environment_evidence() {
-        let mut pull: tl3_github::PullRequest = serde_json::from_str(include_str!(
-            "../../tests/fixtures/mergify/pq3221/draft.json"
-        ))
-        .unwrap();
+        let mut pull: tl3_github::PullRequest = serde_json::from_value(json!({
+            "number":3331,"user":{"id":1,"login":"mergify[bot]"},"state":"open",
+            "head":{"ref":"mergify/merge-queue/main/pr-3330","sha":"2222222222222222222222222222222222222222"},
+            "base":{"ref":"main","sha":"1111111111111111111111111111111111111111"},
+            "updated_at":"2026-11-06T01:00:00Z",
+            "body":"```yaml\n---\nchecking_base_sha: 1111111111111111111111111111111111111111\npull_requests:\n  - number: 3330\n```"
+        })).unwrap();
         assert!(super::queue_cause::batch_context(&pull).is_some());
         let body = pull.body.as_ref().unwrap();
         pull.body = Some(body.replace(
