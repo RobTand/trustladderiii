@@ -6,15 +6,21 @@ use std::io::{BufRead, BufReader, Read, Write};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    PrepareRuntimeBundle { input: Box<PrepareBundleInput> },
+    PrepareRuntime { bundle: PathBuf, reservation: Reservation, arguments: Vec<String> },
     PrepareIntent { owner: String, correlation: String, request: Box<Request> },
     Submit { request: Box<Request>, intent: SubmissionIntent },
     Attach { owner: String, correlation: String },
     Cancel { owner: String, correlation: String },
+    Liveness { owner: String, correlation: String },
     Probe { reservation: Reservation, placement: Placement },
     LaunchContext { owner: String, correlation: String, job: String },
     ValidateRuntimeBinding { owner: String, correlation: String, facts: Box<RuntimeBindingInput> },
+    CollectWorker { owner: String, correlation: String, facts: Box<CollectorInput> },
+    WorkerPayload { owner: String, correlation: String, terminal: Terminal },
     CollectRunner { owner: String, correlation: String, facts: Box<CollectorInput> },
     DaytimePayload { owner: String, correlation: String, terminal: Terminal },
+    ValidateAllocation { owner: String, correlation: String, facts: Box<AllocationInput> },
     RetainRuntime { owner: String, correlation: String, ownership: Box<RuntimeOwnership> },
     RetainCleanup { owner: String, correlation: String, evidence: BlobRef },
     CleanupRuntime { owner: String, correlation: String },
@@ -37,21 +43,27 @@ pub enum FrameSchema {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrameBody {
-    Event { event: Event },
+    Event { event: Box<Event> },
     Result { result: Box<CliResult> },
     Error { code: ErrorCode, message: String },
 }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CliResult {
+    PrepareRuntimeBundle { bundle: BlobRef },
+    PrepareRuntime { prepared: Box<PreparedRuntime> },
     PrepareIntent { intent: SubmissionIntent },
     Submit { submission: Submission },
     Attach { observation: Observation },
     Cancel { acknowledgement: CancelAck },
+    Liveness { liveness: Liveness },
     Probe { probe: Probe },
-    LaunchContext { context: LaunchContext },
+    LaunchContext { context: Box<LaunchContext> },
     ValidateRuntimeBinding { qualification: RuntimeQualification },
+    CollectWorker { collection: WorkerCollection },
+    WorkerPayload { payload: WorkerPayload },
     CollectRunner { report: BlobRef, payload: BlobRef },
+    ValidateAllocation { grant: CpuGrant },
     RetainRuntime,
     RetainCleanup { cleanup: CleanupResult },
     CleanupRuntime { cleanup: CleanupResult },
@@ -93,6 +105,8 @@ pub fn main() -> i32 {
         let options: Options = serde_json::from_slice(&durable::read(PathBuf::from(&args[1]).as_path())?)?;
         let backend = Flux::new(options)?;
         let result = match command {
+            Command::PrepareRuntimeBundle { input } => CliResult::PrepareRuntimeBundle { bundle: prepared::prepare_bundle(&input)? },
+            Command::PrepareRuntime { bundle, reservation, arguments } => CliResult::PrepareRuntime { prepared: Box::new(prepared::prepare_runtime(&bundle, &reservation, arguments)?) },
             Command::PrepareIntent { owner, correlation, request } => CliResult::PrepareIntent { intent: backend.prepare_intent(&request, &Owner { owner, correlation })? },
             Command::Submit { request, intent } => CliResult::Submit { submission: backend.submit(*request, intent)? },
             Command::Attach { owner, correlation } => {
@@ -106,17 +120,21 @@ pub fn main() -> i32 {
                         control.stop();
                     }
                 });
-                CliResult::Attach { observation: backend.attach(&Owner { owner, correlation }, &stop, &mut |event| writer.frame(FrameBody::Event { event: event.clone() }))? }
+                CliResult::Attach { observation: backend.attach(&Owner { owner, correlation }, &stop, &mut |event| writer.frame(FrameBody::Event { event: Box::new(event.clone()) }))? }
             }
             Command::Cancel { owner, correlation } => CliResult::Cancel { acknowledgement: backend.cancel(&Owner { owner, correlation })? },
+            Command::Liveness { owner, correlation } => CliResult::Liveness { liveness: backend.liveness(&Owner { owner, correlation })? },
             Command::Probe { reservation, placement } => CliResult::Probe { probe: backend.probe(&reservation, &placement)? },
-            Command::LaunchContext { owner, correlation, job } => CliResult::LaunchContext { context: backend.launch_context(&Owner { owner, correlation }, &job)? },
+            Command::LaunchContext { owner, correlation, job } => CliResult::LaunchContext { context: Box::new(backend.launch_context(&Owner { owner, correlation }, &job)?) },
             Command::ValidateRuntimeBinding { owner, correlation, facts } => CliResult::ValidateRuntimeBinding { qualification: backend.validate_runtime_binding(&Owner { owner, correlation }, &facts)? },
+            Command::CollectWorker { owner, correlation, facts } => CliResult::CollectWorker { collection: backend.collect_worker(&Owner { owner, correlation }, &facts)? },
+            Command::WorkerPayload { owner, correlation, terminal } => CliResult::WorkerPayload { payload: backend.worker_payload(&Owner { owner, correlation }, &terminal)? },
             Command::CollectRunner { owner, correlation, facts } => {
                 let (report, payload) = backend.collect_runner(&Owner { owner, correlation }, &facts)?;
                 CliResult::CollectRunner { report, payload }
             }
             Command::DaytimePayload { owner, correlation, terminal } => CliResult::DaytimePayload { report: backend.daytime_payload(&Owner { owner, correlation }, &terminal)? },
+            Command::ValidateAllocation { owner, correlation, facts } => CliResult::ValidateAllocation { grant: backend.validate_allocation(&Owner { owner, correlation }, &facts)? },
             Command::RetainRuntime { owner, correlation, ownership } => { backend.retain_runtime(&Owner { owner, correlation }, *ownership)?; CliResult::RetainRuntime }
             Command::RetainCleanup { owner, correlation, evidence } => CliResult::RetainCleanup { cleanup: backend.retain_cleanup(&Owner { owner, correlation }, &evidence)? },
             Command::CleanupRuntime { owner, correlation } => CliResult::CleanupRuntime { cleanup: backend.cleanup_runtime(&Owner { owner, correlation })? },

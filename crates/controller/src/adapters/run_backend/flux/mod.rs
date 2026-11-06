@@ -2,8 +2,10 @@
 mod cleanup;
 mod evidence;
 mod process;
+mod progress;
 mod resources;
 mod validate;
+mod worker_protocol;
 
 use crate::run_backend::{durable::*, *};
 use std::io::{BufRead, BufReader, Read};
@@ -68,8 +70,7 @@ impl Flux {
             if let Some(existing) = current.binding {
                 if existing != binding { return Err(BackendError::unknown("conflicting durable binding")); }
             } else {
-                if current.runtime_ownership.as_ref().is_some_and(|owned| owned.run != binding.id) { return Err(BackendError::unknown("recovered binding conflicts with runtime ownership")); }
-                if current.runtime_ownership.as_ref().is_some_and(|owned| owned.run != binding.id) { return Err(BackendError::unknown("binding conflicts with retained runtime ownership")); }
+                if current.runtime_ownerships.iter().any(|owned| owned.run != binding.id) { return Err(BackendError::unknown("binding conflicts with retained runtime ownership")); }
                 current.binding = Some(binding.clone());
                 save(dir, &current)?;
             }
@@ -93,7 +94,7 @@ impl Flux {
                 request: blob(&record.intent.output_dir.join("request.json"), &serde_json::to_vec(&record.request)?)?,
                 intent: record.intent.clone(), binding: record.binding.clone(),
                 tree: record.request.tree.clone(), runner: record.request.runner.clone(), runtime: record.request.runtime.clone(),
-                reservation: record.request.reservation.clone(), ending, reason: safe(reason)?, native_events: record.events.clone(), evidence, report, runtime_ownership: record.runtime_ownership.clone(), cleanup: record.cleanup_evidence.clone(),
+                reservation: record.request.reservation.clone(), ending, reason: safe(reason)?, native_events: record.events.clone(), evidence, report, runtime_ownerships: record.runtime_ownerships.clone(), cleanup: record.cleanup_evidence.clone(),
             };
             let out = &record.intent.output_dir;
             let receipt = blob(&out.join("receipt.json"), &serde_json::to_vec(&receipt)?)?;
@@ -116,7 +117,7 @@ impl RunBackend for Flux {
                 }
                 return Ok((record, false));
             }
-            let record = Record { request, intent, dispatched: false, binding: None, cancel_requested: false, events: vec![], terminal: None, runtime_ownership: None, cleanup_evidence: None, jobspec: None };
+            let record = Record { request, intent, dispatched: false, binding: None, cancel_requested: false, events: vec![], terminal: None, runtime_ownerships: vec![], cleanup_evidence: Default::default(), jobspec: None, allocation_grant: None };
             save(dir, &record)?;
             Ok((record, true))
         })?;
@@ -140,6 +141,7 @@ impl RunBackend for Flux {
         if !prepared.success { return Ok(Submission::Unknown { reason: "native immutable jobspec preparation failed; nothing submitted; intent retained".into() }); }
         let spec: process::Jobspec = serde_json::from_slice(&prepared.stdout)?;
         let spec = blob(&record.intent.output_dir.join("original-jobspec.json"), &serde_json::to_vec(&spec)?)?;
+        validate::trusted_artifacts(&record.request)?;
         self.journal.runtime_gate(|debts| {
         if debts.join(&record.request.runtime.manifest_digest).exists() && std::fs::read_dir(debts.join(&record.request.runtime.manifest_digest))?.next().is_some() { return Err(BackendError::unknown("unresolved runtime cleanup debt; dispatch held")); }
         self.journal.transaction(&owner, |dir, current| {
@@ -164,7 +166,7 @@ impl RunBackend for Flux {
                 if current.binding.as_ref().is_some_and(|existing| existing != &binding) {
                     return Err(BackendError::unknown("submit ID conflicts with concurrently recovered binding"));
                 }
-                if current.runtime_ownership.as_ref().is_some_and(|owned| owned.run != binding.id) { return Err(BackendError::unknown("binding conflicts with retained runtime ownership")); }
+                if current.runtime_ownerships.iter().any(|owned| owned.run != binding.id) { return Err(BackendError::unknown("binding conflicts with retained runtime ownership")); }
                 current.binding = Some(binding.clone());
                 save(dir, &current)
             })?;
@@ -202,6 +204,8 @@ impl RunBackend for Flux {
         Ok(CancelAck { binding, acknowledged, terminal: None })
     }
 
+    fn liveness(&self, owner: &Owner) -> Result<Liveness> { self.observe_liveness(owner) }
+
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe> { self.probe_resources(reservation, placement) }
 
     fn retain_runtime(&self, owner: &Owner, owned: RuntimeOwnership) -> Result<()> {
@@ -209,16 +213,37 @@ impl RunBackend for Flux {
             let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
             self.instance(&current)?;
             cleanup::ownership(&current, &owned)?;
-            if current.cancel_requested || current.terminal.is_some() { return Err(BackendError::unknown("execution held after cancel/terminal")); }
-            if current.runtime_ownership.as_ref().is_some_and(|existing| existing != &owned) {
-                return Err(BackendError::invalid("runtime ownership is immutable"));
+            if let Some(existing) = current.runtime_ownerships.iter().find(|existing| existing.execution == owned.execution) {
+                return if existing == &owned { Ok(()) } else { Err(BackendError::invalid("execution ownership is immutable")) };
             }
-            current.runtime_ownership = Some(owned);
+            if current.cancel_requested || current.terminal.is_some() { return Err(BackendError::unknown("execution held after cancel/terminal")); }
+            if current.runtime_ownerships.len() >= 1024 || owned.container.as_ref().is_some_and(|container| current.runtime_ownerships.iter().any(|existing| existing.container.as_ref().is_some_and(|existing| existing.id == container.id))) {
+                return Err(BackendError::invalid("duplicate container ownership or registration limit exceeded"));
+            }
+            current.runtime_ownerships.push(owned);
             save(dir, &current)
         })
     }
 
+    fn validate_allocation(&self, owner: &Owner, facts: &AllocationInput) -> Result<CpuGrant> {
+        let record = self.journal.load(owner)?;
+        self.instance(&record)?;
+        let grant = evidence::allocation_grant(&record, facts)?;
+        self.journal.transaction(owner, |dir, current| {
+            let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+            if current.cancel_requested || current.terminal.is_some() || current.binding.as_ref().is_some_and(|binding| binding.id != grant.run)
+                || current.allocation_grant.as_ref().is_some_and(|previous| previous != &grant) {
+                return Err(BackendError::unknown("allocation changed or execution held"));
+            }
+            current.allocation_grant = Some(grant.clone());
+            save(dir, &current)
+        })?;
+        Ok(grant)
+    }
+
     fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult> { self.run_cleanup(owner) }
+
+    fn worker_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<WorkerPayload> { self.verified_worker_payload(owner, terminal) }
 
     fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
         self.verified_daytime_payload(owner, terminal)
@@ -227,6 +252,7 @@ impl RunBackend for Flux {
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext> {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
+        validate::trusted_artifacts(&record.request)?;
         if !f58(job) || record.binding.as_ref().is_some_and(|binding| binding.id.job != job) || !record.dispatched {
             return Err(BackendError::invalid("native job does not match retained dispatch"));
         }
@@ -237,8 +263,11 @@ impl RunBackend for Flux {
             scratch: OwnedScratch { approved_root: record.request.scratch_root.clone(), leaf: record.request.scratch_root.join(job) },
             output_dir: record.intent.output_dir.clone(),
             progress: ProgressPolicy { journal: record.intent.output_dir.join("progress.json"), no_progress_seconds: record.request.no_progress_seconds },
-            native_threads: record.request.reservation.native_threads, runtime: record.request.runtime.runtime,
-            placement: LaunchPlacement::Unqualified { reason: "collect retained native R, topology and host/container facts; validate_runtime_binding before accepting evidence".into() },
+            native_threads: record.request.reservation.native_threads, runtime: record.request.runtime.runtime.clone(), runtime_identity: record.request.runtime,
+            placement: match record.allocation_grant {
+                Some(grant) if grant.run.job == job => LaunchPlacement::Observed { allocation: grant.allocation, topology: grant.topology, host: grant.host, rank: grant.rank, os_pus: grant.os_pus },
+                _ => LaunchPlacement::Unqualified { reason: "collect retained native R/topology/host facts and call validate_allocation before launch".into() },
+            },
         })
     }
 }
@@ -284,7 +313,7 @@ impl Flux {
                         return Ok(None);
                     }
                     if position != current.events.len() || position >= 16_384 { return Err(BackendError::unknown("invalid replay sequence or event limit")); }
-                    let event = Event { sequence: position as u64, digest: event_digest, fact: fact.clone() };
+                    let event = Event { sequence: position as u64, digest: event_digest.clone(), fact: fact.clone(), progress: NativeProgress { owner: owner.clone(), run: binding.id.clone(), cursor: EventCursor { sequence: position as u64, digest: event_digest }, phase: progress::historical_phase(&fact), authority: ProgressAuthority::Historical } };
                     current.events.push(event.clone());
                     save(dir, &current)?;
                     Ok(Some(event))

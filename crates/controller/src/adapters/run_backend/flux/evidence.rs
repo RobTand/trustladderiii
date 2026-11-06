@@ -5,15 +5,15 @@ fn unqualified(reason: &str) -> RuntimeQualification {
     RuntimeQualification { qualified: false, reason: reason.into(), evidence: vec![] }
 }
 
-pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> Result<RuntimeQualification> {
-    let Some(binding) = &record.binding else { return Ok(unqualified("backend ID not yet durably bound")); };
-    if facts.run != binding.id || facts.request_digest != record.intent.request_digest {
-        return Ok(unqualified("runtime facts do not match retained backend identity"));
+pub(super) fn allocation_grant(record: &Record, facts: &AllocationInput) -> Result<CpuGrant> {
+    facts.run.validate()?;
+    if facts.run.instance != record.intent.instance || facts.run.uri != record.intent.uri || facts.request_digest != record.intent.request_digest
+        || record.binding.as_ref().is_some_and(|binding| binding.id != facts.run) || !record.dispatched {
+        return Err(BackendError::invalid("allocation differs from retained dispatch"));
     }
-    let checked = (|| -> Result<()> {
         let r: resources::ResourceSet = serde_json::from_slice(&checked_blob(&facts.allocation, &record.intent.output_dir)?)?;
         let topology: TopologyMapping = serde_json::from_slice(&checked_blob(&facts.topology, &record.intent.output_dir)?)?;
-        if r.version != 1 || topology.run != binding.id || topology.request_digest != record.intent.request_digest
+        if r.version != 1 || topology.run != facts.run || topology.request_digest != record.intent.request_digest
             || topology.ranks.len() > 4096 || facts.host.host.len() > 256 || !token(&facts.host.host) {
             return Err(BackendError::invalid("runtime allocation/topology identity mismatch"));
         }
@@ -41,6 +41,18 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
             return Err(BackendError::invalid("host CPU affinity does not match mapped native grant"));
         }
         if facts.host.host != "dl380g10" || facts.host.rank != 0 { return Err(BackendError::invalid("runtime host differs from first-cut placement")); }
+    Ok(CpuGrant { run: facts.run.clone(), request_digest: facts.request_digest.clone(), host: facts.host.host.clone(), rank: facts.host.rank,
+        os_pus: pus.into_iter().collect(), allocation: facts.allocation.clone(), topology: facts.topology.clone() })
+}
+
+pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> Result<RuntimeQualification> {
+    let Some(binding) = &record.binding else { return Ok(unqualified("backend ID not yet durably bound")); };
+    if facts.run != binding.id || facts.request_digest != record.intent.request_digest {
+        return Ok(unqualified("runtime facts do not match retained backend identity"));
+    }
+    let checked = (|| -> Result<()> {
+        let grant = allocation_grant(record, &AllocationInput { run: facts.run.clone(), request_digest: facts.request_digest.clone(), allocation: facts.allocation.clone(), topology: facts.topology.clone(), host: facts.host.clone() })?;
+        let pus: BTreeSet<_> = grant.os_pus.into_iter().collect();
         let cgroup = cgroup_path(&facts.host.cgroup)?;
         if let ExecutionRuntime::RootlessPodman { mode, memory_limit_bytes, .. } = record.request.runtime.runtime {
             let container = facts.container.as_ref().ok_or_else(|| BackendError::invalid("inside-container affinity/cgroup evidence missing"))?;
@@ -56,10 +68,9 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
                 }
                 ContainerMode::OwnScope => {
                     let scope = facts.container_scope.as_ref().ok_or_else(|| BackendError::invalid("own_scope unit/cpuset/memory evidence missing"))?;
-                    let prefix = format!("tl3-{}-{}", record.intent.correlation, binding.id.job);
-                    let owned = record.runtime_ownership.as_ref().and_then(|ownership| ownership.container.as_ref()).ok_or_else(|| BackendError::invalid("container ownership not retained"))?;
+                    let owned = record.runtime_ownerships.iter().find(|ownership| ownership.execution == facts.execution).and_then(|ownership| ownership.container.as_ref()).ok_or_else(|| BackendError::invalid("container ownership not retained"))?;
                     let retained_scope = owned.scope.as_ref().ok_or_else(|| BackendError::invalid("scope ownership not retained"))?;
-                    if scope.container_id != owned.id || retained_scope.unit != scope.unit || retained_scope.invocation_id != scope.invocation_id || retained_scope.cgroup != child || !scope.unit.starts_with(&prefix) || !scope.unit.ends_with(".scope") || !token(&scope.unit)
+                    if scope.container_id != owned.id || retained_scope.unit != scope.unit || retained_scope.invocation_id != scope.invocation_id || retained_scope.cgroup != child || !scope.unit.ends_with(".scope") || !token(&scope.unit)
                         || !hex(&scope.invocation_id, 32) || cgroup_path(&scope.cgroup)? != child || child == cgroup
                         || resources::idset(&scope.cpuset_effective)? != pus
                         || scope.memory_max != memory_limit_bytes.map(|bytes| bytes.get()) || scope.memory_swap_max != Some(0) {
@@ -106,7 +117,7 @@ fn sanitized_json(value: &mut serde_json::Value, depth: usize) -> Result<()> {
     Ok(())
 }
 
-fn retain_json(out: &Path, name: &str, bytes: &[u8]) -> Result<BlobRef> {
+pub(super) fn retain_json(out: &Path, name: &str, bytes: &[u8]) -> Result<BlobRef> {
     let mut value: serde_json::Value = serde_json::from_slice(bytes)?;
     sanitized_json(&mut value, 0)?;
     blob(&out.join(name), &serde_json::to_vec(&value)?)
@@ -117,7 +128,9 @@ impl Flux {
     pub fn collect_runner(&self, owner: &Owner, input: &CollectorInput) -> Result<(BlobRef, BlobRef)> {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
+        validate::trusted_artifacts(&record.request)?;
         input.run.validate()?;
+        if record.terminal.is_some() { return Err(BackendError::invalid("collector cannot replace committed terminal evidence")); }
         if input.run.instance != record.intent.instance || input.run.uri != record.intent.uri
             || record.binding.as_ref().is_some_and(|binding| binding.id != input.run) {
             return Err(BackendError::invalid("collector run differs from retained dispatch"));
@@ -141,12 +154,13 @@ impl Flux {
         let log = safe(&String::from_utf8_lossy(&raw[..raw.len().min(65_536)]))?;
         let retained = blob(&out.join("retained-stdout.txt"), log.as_bytes())?;
         blob(&out.join("stdout-digests.json"), &serde_json::to_vec(&serde_json::json!({"raw":input.stdout,"retained":retained,"truncated":raw.len()>65_536}))?)?;
-        let cleanup_complete = input.cleanup.as_ref().is_some_and(|reference| self.retain_cleanup(owner, reference).is_ok_and(|result| result.stopped));
+        if let Some(reference) = &input.cleanup { self.retain_cleanup(owner, reference)?; }
+        let cleanup_complete = super::cleanup::all_stopped(&self.journal.load(owner)?);
         let report = RunnerReport {
             schema: "tl3.runner_report.v1".into(), run: input.run.clone(), request_digest: record.intent.request_digest.clone(), tree: record.request.tree.clone(),
             runner_digest: record.request.runner.executable_digest.clone(), runtime_digest: record.request.runtime.manifest_digest.clone(), suite: record.request.suite.clone(),
             complete: true, cleanup_complete, tests_started: 0, outcome: ReportOutcome::ChecksCompleted,
-            cases: vec![], payload: Some(payload.clone()), runtime_binding: input.runtime_binding.clone(), cleanup: input.cleanup.clone(), stdout: Some(input.stdout.clone()),
+            cases: vec![], payload: Some(payload.clone()), runtime_binding: input.runtime_binding.clone(), runtime_bindings: input.runtime_bindings.clone(), cleanup: input.cleanup.clone(), stdout: Some(input.stdout.clone()), worker_payload: None,
         };
         let report = blob(&out.join("report.json"), &serde_json::to_vec(&report)?)?;
         Ok((report, payload))
@@ -159,7 +173,7 @@ impl Flux {
             let out = &record.intent.output_dir;
             let mut evidence = vec![];
             if let Some(spec) = &record.jobspec { checked_blob(spec, out)?; evidence.push(spec.clone()); }
-            if let Some(cleanup) = &record.cleanup_evidence { checked_blob(cleanup, out)?; evidence.push(cleanup.clone()); }
+            for cleanup in record.cleanup_evidence.values() { checked_blob(cleanup, out)?; evidence.push(cleanup.clone()); }
             evidence.push(blob(&out.join("events.json"), &serde_json::to_vec(&record.events)?)?);
             let history = self.capture(&["job", "eventlog", "--format=json", &binding.id.job])?;
             if !history.success { return Err(BackendError::unknown("retained native eventlog unavailable")); }
@@ -213,30 +227,29 @@ impl Flux {
             return Ok(Observation::Unknown { binding: Some(binding), reason: "terminal observation has incomplete, conflicting or unavailable evidence".into() });
         };
         let record = self.journal.load(owner)?;
-        let cleanup_complete = record.cleanup_evidence.as_ref().is_some_and(|reference| cleanup_stopped(&record, &binding.id, reference).unwrap_or(false))
-            || report.as_ref().is_some_and(|report| report.cleanup_complete);
+        let cleanup_complete = super::cleanup::all_stopped(&record);
         let Some((ending, reason)) = classify(&record, report.as_ref(), cleanup_complete) else {
             self.mark_cleanup_debt(&record)?;
             return Ok(Observation::Unknown { binding: Some(binding), reason: "native completion lacks semantic report or authoritative cleanup/loss evidence".into() });
         };
         let report_ref = if report.is_some() {
-            Some(blob(&record.intent.output_dir.join("retained-report.json"), &serde_json::to_vec(&report)?)?)
+            let path = record.intent.output_dir.join("retained-report.json");
+            Some(blob(&path, &read(&path)?)?)
         } else { None };
         let terminal = self.terminal(owner, ending, reason, evidence, report_ref)?;
         Ok(Observation::Terminal { binding: Some(binding), terminal })
     }
 
-    pub(super) fn verified_daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
+    pub(super) fn verified_report(&self, owner: &Owner, terminal: &Terminal) -> Result<RunnerReport> {
         let record = self.journal.load(owner)?;
         let invalid = || BackendError { code: ErrorCode::EvidenceInvalid, message: "terminal has no verified daytime payload for this durable owner".into() };
-        if record.terminal.as_ref() != Some(terminal) || terminal.ending != Ending::Passed
-            || !matches!(record.request.suite, Suite::DaytimeChecks { .. }) { return Err(invalid()); }
+        if record.terminal.as_ref() != Some(terminal) || !matches!(terminal.ending, Ending::Passed | Ending::Failed) { return Err(invalid()); }
         let receipt: Receipt = serde_json::from_slice(&checked_blob(&terminal.receipt, &record.intent.output_dir)?)?;
         if receipt.schema != "tl3.run_receipt.v1" || receipt.issuer != ReceiptIssuer::Tl3
             || receipt.intent != record.intent || receipt.binding != record.binding
             || receipt.tree != record.request.tree || receipt.runner != record.request.runner
             || receipt.runtime != record.request.runtime || receipt.reservation != record.request.reservation
-            || receipt.runtime_ownership != record.runtime_ownership || receipt.cleanup != record.cleanup_evidence
+            || receipt.runtime_ownerships != record.runtime_ownerships || receipt.cleanup != record.cleanup_evidence
             || receipt.ending != terminal.ending || receipt.reason != terminal.reason || receipt.native_events != record.events {
             return Err(invalid());
         }
@@ -245,14 +258,24 @@ impl Flux {
         let binding = record.binding.as_ref().ok_or_else(invalid)?;
         let reference = receipt.report.as_ref().ok_or_else(invalid)?;
         let report: RunnerReport = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
-        if !self.report_identity(&record, binding, &report)? || report.outcome != ReportOutcome::ChecksCompleted || !report.complete || !report.cleanup_complete {
+        if !self.report_identity(&record, binding, &report)? || !report.complete || !report.cleanup_complete {
             return Err(invalid());
         }
-        let payload = report.payload.as_ref().ok_or_else(invalid)?;
+        Ok(report)
+    }
+
+    pub(super) fn verified_daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
+        let report = self.verified_report(owner, terminal)?;
+        if !matches!(report.suite, Suite::DaytimeChecks { .. }) || report.outcome != ReportOutcome::ChecksCompleted {
+            return Err(BackendError::invalid("terminal is not a daytime check payload"));
+        }
+        let payload = report.payload.as_ref().ok_or_else(|| BackendError::invalid("daytime payload missing"))?;
+        let record = self.journal.load(owner)?;
         Ok(serde_json::from_slice(&checked_blob(payload, &record.intent.output_dir)?)?)
     }
 
     fn report_identity(&self, record: &Record, binding: &RunBinding, report: &RunnerReport) -> Result<bool> {
+        validate::trusted_artifacts(&record.request)?;
         if report.schema != "tl3.runner_report.v1" || report.run != binding.id || report.request_digest != record.intent.request_digest
             || report.tree != record.request.tree || report.runner_digest != record.request.runner.executable_digest
             || report.runtime_digest != record.request.runtime.manifest_digest || report.suite != record.request.suite
@@ -262,18 +285,22 @@ impl Flux {
         if report.cleanup_complete {
             let Some(cleanup) = &report.cleanup else { return Ok(false); };
             if !cleanup_stopped(record, &binding.id, cleanup)? { return Ok(false); }
+            if !super::cleanup::all_stopped(record) { return Ok(false); }
         }
         if matches!(report.outcome, ReportOutcome::RefusedBeforeTests) {
             return Ok(report.tests_started == 0 && report.cases.is_empty());
         }
-        let facts = report.runtime_binding.as_ref();
-        if matches!(record.request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. })
-            && !facts.is_some_and(|facts| runtime_binding(record, facts).is_ok_and(|result| result.qualified)) {
-            return Ok(false);
+        if matches!(record.request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) {
+            let facts: Vec<_> = report.runtime_binding.iter().chain(report.runtime_bindings.iter()).collect();
+            let containers: Vec<_> = record.runtime_ownerships.iter().filter(|owned| owned.container.is_some()).collect();
+            let mut observed = BTreeSet::new();
+            if containers.is_empty() || facts.iter().any(|facts| !observed.insert(&facts.execution) || !runtime_binding(record, facts).is_ok_and(|result| result.qualified))
+                || containers.iter().any(|owned| !observed.contains(&owned.execution)) { return Ok(false); }
         }
         if matches!(report.outcome, ReportOutcome::EnvironmentLost) { return Ok(true); }
         if !report.complete { return Ok(false); }
         match &record.request.suite {
+            Suite::WorkerTests { .. } | Suite::Generator { .. } => super::worker_protocol::report_identity(record, report),
             Suite::DaytimeChecks { .. } => {
                 let Some(payload) = &report.payload else { return Ok(false); };
                 let bytes = checked_blob(payload, &record.intent.output_dir)?;
@@ -341,7 +368,7 @@ fn classify(record: &Record, report: Option<&RunnerReport>, cleanup_complete: bo
     let (finished, status) = finish?;
     if !started.is_some_and(|start| start < finished) { return None; }
     match (status, report.outcome) {
-        (WaitStatus::Exited { code: 0, .. }, ReportOutcome::Passed | ReportOutcome::ChecksCompleted) =>
+        (WaitStatus::Exited { code: 0, .. }, ReportOutcome::Passed | ReportOutcome::ChecksCompleted | ReportOutcome::WorkerPayloadCompleted) =>
             Some((Ending::Passed, "complete identity-checked trusted report; daytime judgment remains in its payload")),
         (WaitStatus::Exited { code: 1, .. }, ReportOutcome::TestsFailed) =>
             Some((Ending::Failed, "complete trusted case coverage identifies semantic test failures")),

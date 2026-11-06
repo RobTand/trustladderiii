@@ -9,8 +9,12 @@ pub(super) fn options(options: &Options) -> Result<()> {
         || options.arguments.len() > 32 || !options.environment.contains_key("PATH") {
         return Err(BackendError::invalid("explicit executable, PATH, generation and journal root required"));
     }
+    if options.instance_generation.contains('/') && (options.environment.get("HOME").map(String::as_str) != Some("/home/rob")
+        || options.environment.get("XDG_RUNTIME_DIR").map(String::as_str) != Some("/run/user/1000")) {
+        return Err(BackendError::invalid("live generation guard requires exact authorized HOME/XDG user-bus environment"));
+    }
     for (name, value) in &options.environment {
-        if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH" | "FLUX_URI" | "FLUX_VANILLA_RUN" | "LANG" | "HOME" | "XDG_RUNTIME_DIR" | "DBUS_SESSION_BUS_ADDRESS")
+        if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH" | "FLUX_URI" | "FLUX_VANILLA_RUN" | "LANG" | "HOME" | "XDG_RUNTIME_DIR")
             || value.len() > 4096 || value.chars().any(char::is_control) || safe(value)? != *value {
             return Err(BackendError::invalid("unsupported or sensitive access environment; values withheld"));
         }
@@ -53,6 +57,9 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
         Suite::Full { membership_digest } | Suite::SelectedCases { membership_digest } => {
             if !hex(membership_digest, 64) { return Err(BackendError::invalid("membership digest required")); }
         }
+        Suite::WorkerTests { input_digest } | Suite::Generator { input_digest } => {
+            if !hex(input_digest, 64) { return Err(BackendError::invalid("worker input protocol digest required")); }
+        }
         Suite::DaytimeChecks { plan_digest, base, head, reviewed } => {
             if !hex(plan_digest, 64) || !hex(base, 40) || !hex(head, 40) || reviewed.as_ref().is_some_and(|reviewed| !hex(reviewed, 40)) { return Err(BackendError::invalid("daytime plan/base/head and optional reviewed identity required")); }
         }
@@ -72,12 +79,11 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
     if request.runner.arguments.iter().any(|s| s.len() > 16_384 || s.chars().any(char::is_control) || safe(s).map_or(true, |v| v != *s)) {
         return Err(BackendError::invalid("invalid trusted-runner arguments"));
     }
-    if let Some(cleanup) = &request.runtime.cleanup {
-        if !absolute(&cleanup.executable) || !cleanup.executable.starts_with("/mnt/shared")
+    if let Some(cleanup) = &request.runtime.cleanup
+        && (!absolute(&cleanup.executable) || !cleanup.executable.starts_with("/mnt/shared")
             || !hex(&cleanup.executable_digest, 64) || cleanup.arguments.len() > 128
-            || cleanup.arguments.iter().any(|argument| argument.len() > 4096 || safe(argument).map_or(true, |value| value != *argument)) {
+            || cleanup.arguments.iter().any(|argument| argument.len() > 4096 || safe(argument).map_or(true, |value| value != *argument))) {
             return Err(BackendError::invalid("independent cleanup must be an immutable trusted shared executable"));
-        }
     }
     match &request.runtime.runtime {
         ExecutionRuntime::Native { interpreter } => {
@@ -95,8 +101,9 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
             if !token(&host.host) || host.reason.is_empty() || host.reason.len() > 4096 || safe(&host.reason)? != host.reason {
                 return Err(BackendError::invalid("invalid image/runtime host dependency"));
             }
-            if (*mode == ContainerMode::OwnScope) != memory_limit_bytes.is_some() {
-                return Err(BackendError::invalid("own_scope requires explicit per-container memory cap; in_job does not infer enforcement"));
+            if (*mode == ContainerMode::OwnScope) != memory_limit_bytes.is_some()
+                || memory_limit_bytes.is_some_and(|limit| limit != request.reservation.memory_bytes) {
+                return Err(BackendError::invalid("own_scope container cap must equal declared reservation memory; in_job does not infer enforcement"));
             }
         }
     }
@@ -111,6 +118,7 @@ pub(super) fn placement(placement: &Placement) -> Result<()> {
 }
 
 pub(super) fn preflight(request: &Request) -> Result<()> {
+    trusted_artifacts(request)?;
     placement(&request.runtime.placement())?;
     if request.reservation.memory_guarantee == MemoryGuarantee::RequireAdmission {
         return Err(BackendError::invalid("native request-derived memory admission is unqualified"));
@@ -128,10 +136,9 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
         || (matches!(request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) && !preflight.image_present) {
         return Err(BackendError::invalid("runtime/image identity or architecture is missing or unqualified"));
     }
-    if let Some(cleanup) = &request.runtime.cleanup {
-        if digest(&read(&cleanup.executable)?) != cleanup.executable_digest || !std::fs::metadata(&cleanup.executable)?.permissions().readonly() {
+    if let Some(cleanup) = &request.runtime.cleanup
+        && (digest(&read(&cleanup.executable)?) != cleanup.executable_digest || !std::fs::metadata(&cleanup.executable)?.permissions().readonly()) {
             return Err(BackendError::invalid("trusted cleanup executable changed or is mutable"));
-        }
     }
     if let ExecutionRuntime::RootlessPodman { mode, .. } = &request.runtime.runtime {
         if preflight.mode != Some(*mode) || match mode {
@@ -193,5 +200,18 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
     let tracked: BTreeSet<PathBuf> = tracked.split(|b| *b == 0).filter(|s| !s.is_empty())
         .map(|s| std::str::from_utf8(s).map(PathBuf::from).map_err(|_| BackendError::invalid("non-UTF8 tracked path"))).collect::<Result<_>>()?;
     if tracked != paths { return Err(BackendError::invalid("input manifest does not cover the exact tracked tree")); }
+    Ok(())
+}
+
+pub(super) fn trusted_artifacts(request: &Request) -> Result<()> {
+    if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime {
+        let (manifest, reference) = crate::run_backend::prepared::read_bundle(&request.runner.manifest)?;
+        let root = request.runner.manifest.parent().ok_or_else(|| BackendError::invalid("bundle parent missing"))?;
+        let cleanup = request.runtime.cleanup.as_ref().ok_or_else(|| BackendError::invalid("trusted cleanup missing"))?;
+        if request.runner.manifest != request.runtime.manifest || reference.sha256 != request.runner.manifest_digest || reference.sha256 != request.runtime.manifest_digest
+            || root.join(manifest.collector) != request.runner.executable || root.join(manifest.cleanup) != cleanup.executable || root.join(manifest.trusted_root) != *trusted_root {
+            return Err(BackendError::invalid("runtime/collector/cleanup imports differ from sealed bundle"));
+        }
+    }
     Ok(())
 }

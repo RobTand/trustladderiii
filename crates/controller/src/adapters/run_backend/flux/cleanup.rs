@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 pub(super) fn ownership(record: &Record, owned: &RuntimeOwnership) -> Result<()> {
     owned.run.validate()?;
+    if !token(&owned.execution) { return Err(BackendError::invalid("invalid runtime execution token")); }
     if owned.run.instance != record.intent.instance || owned.run.uri != record.intent.uri
         || record.binding.as_ref().is_some_and(|binding| binding.id != owned.run)
         || owned.owner.owner != record.intent.owner || owned.owner.correlation != record.intent.correlation
@@ -12,10 +13,10 @@ pub(super) fn ownership(record: &Record, owned: &RuntimeOwnership) -> Result<()>
         return Err(BackendError::invalid("runtime ownership differs from retained dispatch"));
     }
     match (&record.request.runtime.runtime, &owned.container) {
-        (ExecutionRuntime::Native { .. }, None) => {}
+        (ExecutionRuntime::Native { .. } | ExecutionRuntime::RootlessPodman { .. }, None) => {}
         (ExecutionRuntime::RootlessPodman { mode, .. }, Some(container)) => {
             let labels: BTreeMap<_, _> = [
-                ("tl3.backend", "flux"), ("tl3.uri", record.intent.uri.as_str()),
+                ("tl3.backend", "flux"), ("flux.jobid", owned.run.job.as_str()), ("tl3.execution", owned.execution.as_str()), ("tl3.uri", record.intent.uri.as_str()),
                 ("tl3.instance", record.intent.instance.as_str()), ("tl3.job", owned.run.job.as_str()),
                 ("tl3.owner", record.intent.owner.as_str()), ("tl3.correlation", record.intent.correlation.as_str()),
                 ("tl3.request_digest", record.intent.request_digest.as_str()),
@@ -26,8 +27,7 @@ pub(super) fn ownership(record: &Record, owned: &RuntimeOwnership) -> Result<()>
             match (mode, &container.scope) {
                 (ContainerMode::InJob, None) => {}
                 (ContainerMode::OwnScope, Some(scope)) => {
-                    let prefix = format!("tl3-{}-{}-", record.intent.correlation, owned.run.job);
-                    if !scope.unit.starts_with(&prefix) || !scope.unit.ends_with(".scope") || !token(&scope.unit)
+                    if !scope.unit.ends_with(".scope") || !token(&scope.unit)
                         || !hex(&scope.invocation_id, 32) || !absolute(Path::new(&scope.cgroup))
                         || !scope.cgroup.starts_with("/user.slice/user-1000.slice/user@1000.service/")
                         || !scope.cgroup.ends_with(&format!("/{}", scope.unit)) {
@@ -44,7 +44,7 @@ pub(super) fn ownership(record: &Record, owned: &RuntimeOwnership) -> Result<()>
 
 pub(super) fn stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> Result<bool> {
     let evidence: CleanupEvidence = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
-    let Some(owned) = &record.runtime_ownership else { return Ok(false); };
+    let Some(owned) = record.runtime_ownerships.iter().find(|owned| owned.execution == evidence.ownership.execution) else { return Ok(false); };
     ownership(record, owned)?;
     if evidence.schema != "tl3.cleanup_evidence.v1" || evidence.ownership != *owned || owned.run != *run
         || evidence.process_group_probe_errno != Some(3) { return Ok(false); }
@@ -83,69 +83,92 @@ pub(super) fn stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> 
     }
 }
 
+pub(super) fn all_stopped(record: &Record) -> bool {
+    !record.runtime_ownerships.is_empty() && record.runtime_ownerships.iter().all(|owned| record.cleanup_evidence.get(&owned.execution)
+        .is_some_and(|reference| stopped(record, &owned.run, reference).unwrap_or(false)))
+}
+
+fn result(record: &Record, accepted_execution: Option<String>, reason: &str) -> CleanupResult {
+    let pending_executions = record.runtime_ownerships.iter().filter(|owned| !record.cleanup_evidence.get(&owned.execution)
+        .is_some_and(|reference| stopped(record, &owned.run, reference).unwrap_or(false))).map(|owned| owned.execution.clone()).collect();
+    CleanupResult { stopped: all_stopped(record), evidence: record.cleanup_evidence.values().cloned().collect(), pending_executions, accepted_execution, reason: reason.into() }
+}
+
 impl Flux {
     pub(super) fn mark_cleanup_debt(&self, record: &Record) -> Result<()> {
         self.journal.runtime_gate(|debts| {
             let runtime = debts.join(&record.request.runtime.manifest_digest);
             std::fs::create_dir_all(&runtime)?;
-            atomic(&runtime.join(&record.intent.correlation), &serde_json::to_vec(&record.intent)?)
+            let executions: Vec<_> = if record.runtime_ownerships.is_empty() { vec!["unregistered"] } else { record.runtime_ownerships.iter().map(|owned| owned.execution.as_str()).collect() };
+            for execution in executions {
+                atomic(&runtime.join(format!("{}.{}", record.intent.correlation, execution)), &serde_json::to_vec(&record.intent)?)?;
+            }
+            Ok(())
         })
     }
 
     pub fn retain_cleanup(&self, owner: &Owner, reference: &BlobRef) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
+        if record.terminal.is_some() { return Ok(result(&record, None, "committed terminal cleanup is immutable")); }
         self.mark_cleanup_debt(&record)?;
-        let Some(owned) = &record.runtime_ownership else {
-            return Ok(CleanupResult { stopped: false, evidence: None, reason: "runtime ownership was not durably retained before execution".into() });
-        };
-        if !stopped(&record, &owned.run, reference).unwrap_or(false) {
-            return Ok(CleanupResult { stopped: false, evidence: None, reason: "owned process/container/scope stop evidence incomplete or mismatched; dispatch held".into() });
+        let evidence: CleanupEvidence = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
+        if !stopped(&record, &evidence.ownership.run, reference).unwrap_or(false) {
+            return Ok(result(&record, None, "execution stop evidence incomplete or mismatched; dispatch held"));
         }
+        let execution = evidence.ownership.execution.clone();
         self.journal.runtime_gate(|debts| {
-            self.journal.transaction(owner, |dir, current| {
+            let current = self.journal.transaction(owner, |dir, current| {
                 let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
-                if current.runtime_ownership != record.runtime_ownership || current.binding != record.binding {
-                    return Err(BackendError::unknown("runtime identity changed during cleanup"));
+                if current.runtime_ownerships.iter().find(|owned| owned.execution == execution) != Some(&evidence.ownership) {
+                    return Err(BackendError::unknown("execution identity changed during cleanup"));
                 }
-                current.cleanup_evidence = Some(reference.clone());
-                save(dir, &current)
+                if current.terminal.is_none() {
+                    current.cleanup_evidence.insert(execution.clone(), reference.clone());
+                    save(dir, &current)?;
+                }
+                Ok(current)
             })?;
-            let path = debts.join(&record.request.runtime.manifest_digest).join(&record.intent.correlation);
-            // A different owner may also have unresolved cleanup. Never erase their debt.
-            if path.exists() && serde_json::from_slice::<SubmissionIntent>(&read(&path)?)? == record.intent {
-                std::fs::remove_file(&path)?;
-                std::fs::File::open(path.parent().ok_or_else(|| BackendError::invalid("cleanup debt parent missing"))?)?.sync_all()?;
+            let runtime = debts.join(&record.request.runtime.manifest_digest);
+            for owned in &current.runtime_ownerships {
+                if !current.cleanup_evidence.get(&owned.execution).is_some_and(|reference| stopped(&current, &owned.run, reference).unwrap_or(false)) { continue; }
+                let path = runtime.join(format!("{}.{}", record.intent.correlation, owned.execution));
+                if path.exists() && serde_json::from_slice::<SubmissionIntent>(&read(&path)?)? == current.intent { std::fs::remove_file(path)?; }
             }
-            Ok(())
-        })?;
-        Ok(CleanupResult { stopped: true, evidence: Some(reference.clone()), reason: "retained exact ownership and authoritative stopped observations agree".into() })
+            if runtime.exists() { std::fs::File::open(runtime)?.sync_all()?; }
+            Ok(result(&current, Some(execution), "exact execution stopped; terminal still requires every registered execution"))
+        })
     }
 
     pub(super) fn run_cleanup(&self, owner: &Owner) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
+        if all_stopped(&record) { return Ok(result(&record, None, "all retained execution cleanup already verified")); }
         self.mark_cleanup_debt(&record)?;
-        let Some(ownership) = record.runtime_ownership.clone() else {
-            return Ok(CleanupResult { stopped: false, evidence: None, reason: "no retained runtime ownership; cleanup remains unknown".into() });
-        };
         let Some(program) = &record.request.runtime.cleanup else {
-            return Ok(CleanupResult { stopped: false, evidence: None, reason: "independent trusted runtime cleanup entry unavailable; dispatch held".into() });
+            return Ok(result(&record, None, "independent trusted runtime cleanup entry unavailable; dispatch held"));
         };
-        // Cleanup deliberately uses retained identity even after broker generation loss.
-        // The helper must cross-check exact labels and scope generation before removal.
+        validate::trusted_artifacts(&record.request)?;
         if digest(&read(&program.executable)?) != program.executable_digest {
             return Err(BackendError::unknown("trusted cleanup executable changed; cleanup debt retained"));
         }
-        let input = serde_json::to_vec(&CleanupInput { schema: "tl3.cleanup_input.v1".into(), ownership })?;
-        let mut command = std::process::Command::new(&program.executable);
-        command.args(&program.arguments).env_clear().envs(&record.request.environment);
-        let reply = self.capture_command(command, Some(input))?;
-        blob(&record.intent.output_dir.join("cleanup.stderr"), safe(&String::from_utf8_lossy(&reply.stderr))?.as_bytes())?;
-        if !reply.success {
-            return Ok(CleanupResult { stopped: false, evidence: None, reason: "independent runtime cleanup failed; debt retained".into() });
+        for ownership in &record.runtime_ownerships {
+            if record.cleanup_evidence.get(&ownership.execution).is_some_and(|reference| stopped(&record, &ownership.run, reference).unwrap_or(false)) { continue; }
+            let cleaned = (|| -> Result<()> {
+                let input = serde_json::to_vec(&CleanupInput { schema: "tl3.cleanup_input.v1".into(), ownership: ownership.clone() })?;
+                // Deliberately uses retained labels/generation after broker or launcher loss.
+                let mut command = std::process::Command::new(&program.executable);
+                command.args(&program.arguments).env_clear().envs(&record.request.environment);
+                let reply = self.capture_command(command, Some(input))?;
+                blob(&record.intent.output_dir.join(format!("cleanup-{}.stderr", ownership.execution)), safe(&String::from_utf8_lossy(&reply.stderr))?.as_bytes())?;
+                if !reply.success { return Err(BackendError::unknown("independent execution cleanup failed")); }
+                let evidence: CleanupEvidence = serde_json::from_slice(&reply.stdout)?;
+                if evidence.ownership != *ownership { return Err(BackendError::invalid("cleanup helper returned another execution")); }
+                let reference = blob(&record.intent.output_dir.join(format!("cleanup-{}.json", digest(&reply.stdout))), &reply.stdout)?;
+                self.retain_cleanup(owner, &reference)?;
+                Ok(())
+            })();
+            // Keep attempting other exact owned executions; debt is the durable failure result.
+            if cleaned.is_err() { continue; }
         }
-        let stdout = reply.stdout;
-        let _: CleanupEvidence = serde_json::from_slice(&stdout)?;
-        let reference = blob(&record.intent.output_dir.join("cleanup.json"), &stdout)?;
-        self.retain_cleanup(owner, &reference)
+        Ok(result(&self.journal.load(owner)?, None, "independent cleanup attempted every retained execution; unresolved debt remains held"))
     }
 }

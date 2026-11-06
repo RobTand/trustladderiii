@@ -16,11 +16,13 @@ pub struct Record {
     pub events: Vec<Event>,
     pub terminal: Option<Terminal>,
     #[serde(default)]
-    pub runtime_ownership: Option<RuntimeOwnership>,
+    pub runtime_ownerships: Vec<RuntimeOwnership>,
     #[serde(default)]
-    pub cleanup_evidence: Option<BlobRef>,
+    pub cleanup_evidence: std::collections::BTreeMap<String, BlobRef>,
     #[serde(default)]
     pub jobspec: Option<BlobRef>,
+    #[serde(default)]
+    pub allocation_grant: Option<CpuGrant>,
 }
 
 #[derive(Clone)]
@@ -73,7 +75,10 @@ impl Journal {
     }
 }
 
-pub fn read(path: &Path) -> Result<Vec<u8>> {
+pub fn read(path: &Path) -> Result<Vec<u8>> { read_limit(path, MAX_BYTES) }
+
+/// Protocol-owned bound, used for worker artifacts larger than the control envelope.
+pub fn read_limit(path: &Path, limit: usize) -> Result<Vec<u8>> {
     if fs::symlink_metadata(path)?.file_type().is_symlink() {
         return Err(BackendError::invalid("evidence cannot be a symlink"));
     }
@@ -82,8 +87,8 @@ pub fn read(path: &Path) -> Result<Vec<u8>> {
         return Err(BackendError::invalid("evidence must be a regular file"));
     }
     let mut bytes = Vec::new();
-    file.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_BYTES { return Err(BackendError::invalid("evidence exceeds byte bound")); }
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit { return Err(BackendError::invalid("evidence exceeds byte bound")); }
     Ok(bytes)
 }
 
@@ -114,12 +119,14 @@ pub fn blob(path: &Path, bytes: &[u8]) -> Result<BlobRef> {
     Ok(BlobRef { sha256: digest(bytes), bytes: bytes.len() as u64, path: path.to_owned() })
 }
 
-pub fn checked_blob(reference: &BlobRef, root: &Path) -> Result<Vec<u8>> {
+pub fn checked_blob(reference: &BlobRef, root: &Path) -> Result<Vec<u8>> { checked_blob_limit(reference, root, MAX_BYTES) }
+
+pub fn checked_blob_limit(reference: &BlobRef, root: &Path, limit: usize) -> Result<Vec<u8>> {
     let canonical = fs::canonicalize(&reference.path)?;
     if !canonical.starts_with(fs::canonicalize(root)?) || !hex(&reference.sha256, 64) {
         return Err(BackendError::invalid("output outside owned directory"));
     }
-    let bytes = read(&canonical)?;
+    let bytes = read_limit(&canonical, limit)?;
     if bytes.len() as u64 != reference.bytes || digest(&bytes) != reference.sha256 {
         return Err(BackendError::invalid("output digest mismatch"));
     }

@@ -164,7 +164,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
         frames.last().unwrap()["result"]["submission"].clone()
     }
     fn ownership(&self) -> RuntimeOwnership {
-        RuntimeOwnership { run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() },
+        RuntimeOwnership { execution: "fixture-execution".into(), run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() },
             owner: Owner { owner: self.intent.owner.clone(), correlation: self.intent.correlation.clone() }, request_digest: self.intent.request_digest.clone(),
             host: "dl380g10".into(), rank: 0, launcher: ProcessIdentity { pid: 1234, start_ticks: 5678 }, process_group: 1234, container: None }
     }
@@ -187,7 +187,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             request_digest: self.intent.request_digest.clone(), tree: self.request.tree.clone(), runner_digest: self.request.runner.executable_digest.clone(), runtime_digest: self.request.runtime.manifest_digest.clone(),
             suite: self.request.suite.clone(), complete: true, cleanup_complete, tests_started: 1, outcome,
             cases: vec![CaseFact { target: "unit".into(), name: "case".into(), outcome: if outcome == ReportOutcome::TestsFailed { CaseOutcome::Failed } else { CaseOutcome::Passed }, duration_ms: 1, disposition: None }],
-            payload: None, runtime_binding: None, cleanup: Some(BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }), stdout: None,
+            payload: None, runtime_binding: None, runtime_bindings: vec![], cleanup: Some(BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }), stdout: None, worker_payload: None,
         };
         fs::write(out.join("report.json"), serde_json::to_vec(&report).unwrap()).unwrap();
     }
@@ -333,6 +333,7 @@ fn probe_reports_busy_incompatible_unknown_and_never_ram_admission() {
 fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
     use std::time::{Duration, Instant};
     let f = Fixture::new(); f.submit();
+    f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":f.ownership()}));
     fs::write(f.root.path().join("mode"), "quiet").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend")).args(["--config", f.config.to_str().unwrap()])
         .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
@@ -369,6 +370,7 @@ fn generation_slash_is_not_a_path_and_binding_guard_rejects_handoff() {
 fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
     use std::time::{Duration, Instant};
     let f = Fixture::new(); f.submit();
+    f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":f.ownership()}));
     fs::write(f.root.path().join("mode"), "quiet").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend")).args(["--config", f.config.to_str().unwrap()])
         .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
@@ -410,4 +412,216 @@ fn optional_reviewed_sha_remains_distinct_in_wire_and_request_digest() {
     assert_ne!(digest(&serde_json::to_vec(&absent).unwrap()), digest(&serde_json::to_vec(&present).unwrap()));
     let restored: Suite = serde_json::from_value(absent_json).unwrap();
     assert_eq!(restored, absent);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn all_attach_native_phases_stop_and_reap_without_native_cancel() {
+    use std::time::{Duration, Instant};
+    for mode in ["quiet-jobs", "quiet-info", "quiet-collect"] {
+        let f = Fixture::new();
+        if mode == "quiet-jobs" { fs::write(f.root.path().join("mode"), "unknown").unwrap(); }
+        f.submit();
+        f.events(&completed(0));
+        fs::write(f.root.path().join("mode"), mode).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend")).args(["--config", f.config.to_str().unwrap()])
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, "{}", json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !f.root.path().join("watching").exists() {
+            assert!(Instant::now() < deadline, "phase {mode} was not reached");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let start = Instant::now();
+        writeln!(stdin, "{{\"op\":\"stop_watch\"}}").unwrap();
+        drop(stdin);
+        let output = child.wait_with_output().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(2), "phase {mode} did not stop promptly");
+        assert!(!output.stdout.is_empty());
+        assert!(!f.calls().lines().any(|call| call.starts_with("cancel ")));
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn collector_exact_frame_and_typed_terminal_payload_verify_all_links() {
+    let mut f = Fixture::new();
+    f.request.suite = Suite::DaytimeChecks { plan_digest: "a".repeat(64), base: "b".repeat(40), head: "c".repeat(40), reviewed: None };
+    let prepared = f.call(json!({"op":"prepare_intent","owner":f.intent.owner,"correlation":f.intent.correlation,"request":f.request}));
+    f.intent = serde_json::from_value(prepared.last().unwrap()["result"]["intent"].clone()).unwrap();
+    f.submit(); f.report(ReportOutcome::ChecksCompleted, true);
+    let report = json!({"schema":"tl3.checks.v2","effect_key":"fixture","base":"b".repeat(40),"head":"c".repeat(40),"reviewed":null,"results":[]});
+    let out = &f.intent.output_dir;
+    let bytes = format!("trusted host prefix\nTL3_CHECKS {report}\n").into_bytes();
+    let stdout = api::durable::blob(&out.join("raw-checks-stdout"), &bytes).unwrap();
+    let cleanup = api::durable::blob(&out.join("cleanup.txt"), &fs::read(out.join("cleanup.txt")).unwrap()).unwrap();
+    let frames = f.call(json!({"op":"collect_runner","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{
+        "run":f.ownership().run,"stdout":stdout,"runtime_binding":null,"cleanup":cleanup}}));
+    assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    let retained: BlobRef = serde_json::from_value(frames.last().unwrap()["result"]["payload"].clone()).unwrap();
+    assert_eq!(fs::read(&retained.path).unwrap(), report.to_string().as_bytes());
+    f.events(&completed(0));
+    let terminal = f.attach().last().unwrap()["result"]["observation"]["terminal"].clone();
+    assert_eq!(terminal["ending"], "passed", "{terminal}");
+    let payload = f.call(json!({"op":"daytime_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
+    assert_eq!(payload.last().unwrap()["result"]["report"], report, "{payload:?}");
+    fs::write(retained.path, b"{}").unwrap();
+    let corrupt = f.call(json!({"op":"daytime_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
+    assert_eq!(corrupt.last().unwrap()["kind"], "error");
+    for raw in ["no frame\n".to_owned(), "TL3_CHECKS {}\n".to_owned(), format!("TL3_CHECKS {report}\nTL3_CHECKS {report}\n")] {
+        let stdout = api::durable::blob(&out.join("invalid-stdout"), raw.as_bytes()).unwrap();
+        let invalid = f.call(json!({"op":"collect_runner","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{
+            "run":f.ownership().run,"stdout":stdout,"runtime_binding":null,"cleanup":null}}));
+        assert_eq!(invalid.last().unwrap()["kind"], "error", "{invalid:?}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn exact_original_spec_rejects_resource_placement_and_duration_changes() {
+    for field in ["resources", "placement", "duration"] {
+        let f = Fixture::new();
+        fs::write(f.root.path().join("mode"), "unknown").unwrap(); f.submit();
+        let path = f.root.path().join("jobspec.json");
+        let mut spec: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        match field {
+            "resources" => spec["resources"][0]["count"] = json!(100),
+            "placement" => spec["attributes"]["system"]["constraints"] = json!("host:sparky"),
+            _ => spec["attributes"]["system"]["duration"] = json!("999s"),
+        }
+        fs::write(path, spec.to_string()).unwrap();
+        assert_eq!(f.attach().last().unwrap()["result"]["observation"]["kind"], "unknown");
+    }
+}
+
+impl Fixture {
+    fn podman(&mut self, mode: ContainerMode, prerequisites: bool) {
+        let p = self.root.path();
+        let image = ImageIdentity { inventory: api::durable::blob(&p.join("image-map.json"), &serde_json::to_vec(&json!({"profiles":[{
+            "profile":"fixture","registry_ref":format!("fixture.invalid/test@sha256:{}", "a".repeat(64)),"manifest_digest":format!("sha256:{}", "a".repeat(64)),
+            "config_digest":format!("sha256:{}", "b".repeat(64)),"platform":"linux/amd64"}]})).unwrap()).unwrap(),
+            profile: "fixture".into(), reference: format!("fixture.invalid/test@sha256:{}", "a".repeat(64)), index_digest: None,
+            manifest_digest: format!("sha256:{}", "a".repeat(64)), config_digest: format!("sha256:{}", "b".repeat(64)), platform: "linux/amd64".into() };
+        let trusted = p.join("tl3_harness"); fs::create_dir(&trusted).unwrap(); immutable(&trusted.join("runner.py"), b"# trusted fixture\n", false);
+        let cleanup = p.join("cleanup-helper"); immutable(&cleanup, b"#!/bin/sh\ncat\n", true);
+        self.request.runtime.runtime = ExecutionRuntime::RootlessPodman { mode, executable: "/usr/bin/podman".into(), image: image.reference.clone(), trusted_root: trusted,
+            interpreter: "/usr/bin/python3".into(), memory_limit_bytes: (mode == ContainerMode::OwnScope).then(|| 1_073_741_824.try_into().unwrap()) };
+        self.request.runtime.expected_image = Some(image.reference.clone());
+        self.request.runtime.image = Some(image.clone());
+        self.request.runtime.cleanup = Some(CleanupProgram { executable: cleanup, executable_digest: digest(b"#!/bin/sh\ncat\n"), arguments: vec![] });
+        let bytes = serde_json::to_vec(&RuntimePreflight { schema: "tl3.runtime_preflight.v1".into(), architecture: "x86_64".into(), image_identity: Some(image.reference.clone()),
+            image_present: true, identity_verified: true, image: Some(image), mode: Some(mode), no_cgroups_supported: prerequisites, init_available: prerequisites, user_scope_supported: prerequisites }).unwrap();
+        immutable(&p.join("podman-preflight.json"), &bytes, false);
+        self.request.runtime.preflight = BlobRef { path: p.join("podman-preflight.json"), sha256: digest(&bytes), bytes: bytes.len() as u64 };
+        self.request.environment.insert("HOME".into(), "/home/rob".into());
+        self.request.environment.insert("XDG_RUNTIME_DIR".into(), "/run/user/1000".into());
+        self.intent.request_digest = digest(&serde_json::to_vec(&self.request).unwrap());
+    }
+
+    fn container_ownership(&self) -> RuntimeOwnership {
+        let mut owned = self.ownership();
+        let mode = match self.request.runtime.runtime { ExecutionRuntime::RootlessPodman { mode, .. } => mode, _ => unreachable!() };
+        let unit = format!("tl3-{}-fABC-owned.scope", self.intent.correlation);
+        let scope = ScopeIdentity { cgroup: format!("/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}"), unit, invocation_id: "c".repeat(32) };
+        let labels = [("tl3.backend", "flux"), ("flux.jobid", "fABC"), ("tl3.execution", owned.execution.as_str()), ("tl3.uri", self.intent.uri.as_str()), ("tl3.instance", self.intent.instance.as_str()),
+            ("tl3.job", "fABC"), ("tl3.owner", self.intent.owner.as_str()), ("tl3.correlation", self.intent.correlation.as_str()), ("tl3.request_digest", self.intent.request_digest.as_str())]
+            .into_iter().map(|(key, value)| (key.to_owned(), value.to_owned())).collect();
+        owned.container = Some(ContainerOwnership { mode, id: "d".repeat(64), labels, scope: (mode == ContainerMode::OwnScope).then_some(scope) });
+        owned
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn selected_mode_refuses_missing_prerequisites_without_fallback() {
+    for mode in [ContainerMode::InJob, ContainerMode::OwnScope] {
+        let mut f = Fixture::new(); f.podman(mode, false);
+        assert_eq!(f.submit()["terminal"]["ending"], "refused");
+        assert!(!f.calls().contains("job submit "));
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn own_scope_cleanup_requires_exact_generation_absence_and_unpopulated_scope() {
+    let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true); f.submit();
+    let owned = f.container_ownership();
+    let frames = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
+    assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    let container = owned.container.as_ref().unwrap();
+    let scope = container.scope.as_ref().unwrap();
+    let mut facts = CleanupEvidence { schema: "tl3.cleanup_evidence.v1".into(), ownership: owned.clone(), launcher: ProcessStop::Absent,
+        process_group_probe_errno: Some(3), container: Some(ContainerStop { id: container.id.clone(), remove_exit: 0, exists_exit: 1, sweep_ids: vec![container.id.clone()],
+            scope: Some(ScopeStop { identity: scope.clone(), observed_invocation_id: Some(scope.invocation_id.clone()), cgroup_events: Some("populated 1\nfrozen 0\n".into()), cgroup_procs: String::new(), active_state: "inactive".into() }) }) };
+    for case in ["populated", "wrong-generation", "podman-error", "stopped"] {
+        let stop = facts.container.as_mut().unwrap();
+        stop.exists_exit = if case == "podman-error" { 125 } else { 1 };
+        let scope_stop = stop.scope.as_mut().unwrap();
+        scope_stop.cgroup_events = Some(if case == "populated" { "populated 1\n" } else { "populated 0\n" }.into());
+        scope_stop.observed_invocation_id = Some(if case == "wrong-generation" { "e".repeat(32) } else { scope.invocation_id.clone() });
+        let reference = api::durable::blob(&f.intent.output_dir.join("typed-cleanup.json"), &serde_json::to_vec(&facts).unwrap()).unwrap();
+        let frames = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
+        assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], case == "stopped", "{case}: {frames:?}");
+    }
+    let mut changed = owned; changed.container.as_mut().unwrap().id = "f".repeat(64);
+    let conflict = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":changed}));
+    assert_eq!(conflict.last().unwrap()["kind"], "error");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn own_scope_runtime_mapping_compares_golden_dl380_sets_and_effective_cap() {
+    let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true);
+    f.request.reservation.cpus = 4.try_into().unwrap(); f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap()); f.submit();
+    let owned = f.container_ownership();
+    f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
+    let allocation = api::durable::blob(&f.intent.output_dir.join("R.json"), &serde_json::to_vec(&json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"21-23,30"}}],"nodelist":["dl380g10"]}})).unwrap()).unwrap();
+    let topology = api::durable::blob(&f.intent.output_dir.join("topology.json"), &serde_json::to_vec(&TopologyMapping { run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), ranks: vec![RankMapping { rank: 0, host: "dl380g10".into(), cores: [21,22,23,30].into_iter().map(|i| CoreMapping { flux_core: i, os_pus: format!("{i},{}", i+40) }).collect() }] }).unwrap()).unwrap();
+    let scope = owned.container.as_ref().unwrap().scope.as_ref().unwrap();
+    let mut facts = RuntimeBindingInput { execution: owned.execution.clone(), run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), allocation, topology,
+        host: ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: "0::/user.slice/native-broker".into() },
+        container: Some(ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: format!("0::{}", scope.cgroup) }),
+        container_scope: Some(ContainerScopeFacts { unit: scope.unit.clone(), invocation_id: scope.invocation_id.clone(), cgroup: format!("0::{}", scope.cgroup), cpuset_effective: "21-23,30,61-63,70".into(), memory_max: Some(1_073_741_824), memory_swap_max: Some(0), container_id: owned.container.as_ref().unwrap().id.clone() }) };
+    let allocation = AllocationInput { run: facts.run.clone(), request_digest: facts.request_digest.clone(), allocation: facts.allocation.clone(), topology: facts.topology.clone(), host: facts.host.clone() };
+    let granted = f.call(json!({"op":"validate_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":allocation}));
+    assert_eq!(granted.last().unwrap()["result"]["grant"]["os_pus"], json!([21,22,23,30,61,62,63,70]), "{granted:?}");
+    let context = f.call(json!({"op":"launch_context","owner":f.intent.owner,"correlation":f.intent.correlation,"job":"fABC"}));
+    assert_eq!(context.last().unwrap()["result"]["context"]["runtime_identity"]["image"]["profile"], "fixture");
+    assert_eq!(context.last().unwrap()["result"]["context"]["placement"]["os_pus"], json!([21,22,23,30,61,62,63,70]));
+    let frames = f.call(json!({"op":"validate_runtime_binding","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":facts}));
+    assert_eq!(frames.last().unwrap()["result"]["qualification"]["qualified"], true, "{frames:?}");
+    facts.container_scope.as_mut().unwrap().memory_max = None;
+    let frames = f.call(json!({"op":"validate_runtime_binding","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":facts}));
+    assert_eq!(frames.last().unwrap()["result"]["qualification"]["qualified"], false);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_loss() {
+    let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true);
+    let executable = f.root.path().join("independent-cleanup");
+    let program = b"#!/bin/sh\ncat \"$1\"\n";
+    immutable(&executable, program, true);
+    f.request.runtime.cleanup = Some(CleanupProgram { executable, executable_digest: digest(program), arguments: vec![f.intent.output_dir.join("trusted-stop-facts.json").to_string_lossy().into_owned()] });
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap()); f.submit();
+    let owned = f.container_ownership();
+    let retained = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
+    assert_eq!(retained.last().unwrap()["kind"], "result");
+    let container = owned.container.as_ref().unwrap(); let scope = container.scope.as_ref().unwrap();
+    let facts = CleanupEvidence { schema: "tl3.cleanup_evidence.v1".into(), ownership: owned.clone(), launcher: ProcessStop::Absent,
+        process_group_probe_errno: Some(3), container: Some(ContainerStop { id: container.id.clone(), remove_exit: 0, exists_exit: 1, sweep_ids: vec![container.id.clone()],
+            scope: Some(ScopeStop { identity: scope.clone(), observed_invocation_id: None, cgroup_events: None, cgroup_procs: String::new(), active_state: "not-found".into() }) }) };
+    fs::write(f.intent.output_dir.join("trusted-stop-facts.json"), serde_json::to_vec(&facts).unwrap()).unwrap();
+    let cancel = f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(cancel.last().unwrap()["result"]["acknowledgement"]["acknowledged"], true, "{cancel:?}");
+    assert!(!f.intent.output_dir.join("report.json").exists());
+    f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
+    let frames = f.attach();
+    assert_eq!(frames.last().unwrap()["result"]["observation"]["terminal"]["ending"], "cancelled", "{frames:?}");
+    // The cleanup entry uses retained generation/labels even after the broker pin changes.
+    let mut options = f.options.clone(); options.instance_generation = "replacement-generation".into();
+    fs::write(&f.config, serde_json::to_vec(&options).unwrap()).unwrap();
+    let cleanup = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(cleanup.last().unwrap()["result"]["cleanup"]["stopped"], true, "{cleanup:?}");
 }
