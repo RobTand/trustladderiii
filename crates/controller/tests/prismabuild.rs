@@ -739,6 +739,11 @@ fn container_stderr_is_operator_evidence() {
             assert!(diagnostics.is_empty(), "successful reports keep no stderr");
         } else {
             assert_eq!(
+                result.failure_class.as_deref(),
+                Some("harness"),
+                "#849: a successful PB NoReport remains TL3-side with stderr"
+            );
+            assert_eq!(
                 diagnostics.len(),
                 1,
                 "the verified failure log lost its cause"

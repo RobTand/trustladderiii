@@ -682,3 +682,32 @@ fn current_evidence_shell_matches_production() {
         .unwrap();
     assert!(include_str!("../../results.rs").contains(body));
 }
+
+/// #826/#849: stderr diagnostics do not replace the trusted NoReport classification.
+#[test]
+fn no_report_keeps_harness_class_and_operator_stderr() {
+    let (job, report) = fixture("no-report", "passed", false, false);
+    let mut bytes = raw(&report);
+    bytes.extend_from_slice(b"TL3_EXECUTION_FAILURE {\"outcome\":\"setup_failure\",\"phase\":\"container_start\",\"termination_reason\":\"incomplete_report\",\"test_started\":false,\"stderr_tail\":\"container shim refused: pid limit reached\"}\n");
+    for status in ["executed", "cache_hit", "failed"] {
+        let mut terminal = ending(&bytes);
+        terminal.status = status.into();
+        if status == "failed" {
+            terminal.succeeded = false;
+            terminal.exit_code = Some(1);
+        }
+        let (reported, passed, results, failed, class, diagnostic) =
+            evidence_with_read(terminal, &job, |_| Ok(bytes.clone())).unwrap();
+        assert!(!reported && !passed && !results.is_empty() && !failed.is_empty());
+        assert_eq!(class, (status != "failed").then_some(HARNESS));
+        assert_eq!(
+            serde_json::to_value(diagnostic.unwrap()).unwrap()["stderr_tail"],
+            "container shim refused: pid limit reached"
+        );
+        assert!(
+            !serde_json::to_string(&(results, failed))
+                .unwrap()
+                .contains("pid limit reached")
+        );
+    }
+}
