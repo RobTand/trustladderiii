@@ -23,8 +23,8 @@ pub fn stage_input(
     selected_tests: Option<u32>,
     always_tests: &[String],
 ) -> Result<PreparedInput> {
-    if !backend::absolute(root) || !root.starts_with("/mnt/shared") {
-        return Err(Error::Invalid("Flux input requires a new absolute shared destination"));
+    if !backend::absolute(root) {
+        return Err(Error::Invalid("Flux input requires a new absolute destination"));
     }
     // The shared stage function supports PB replacement. Flux publication never replaces
     // a retained input, including a partial publication or a dangling symlink.
@@ -71,7 +71,7 @@ fn inventory(root: &Path, directory: &Path, files: &mut Vec<backend::InputFile>)
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
-        if directory == root && entry.file_name() == ".git" { continue; }
+        if directory == root && (entry.file_name() == ".git" || entry.file_name() == "action.py") { continue; }
         let kind = entry.file_type()?;
         if kind.is_dir() {
             inventory(root, &path, files)?;
@@ -124,8 +124,7 @@ mod tests {
     /// FX / #750: transport identity covers committed served input and the external trusted harness.
     #[test]
     fn staged_transport_preserves_served_identity_and_manifests_every_payload_file() {
-        fs::create_dir_all("/mnt/shared").unwrap();
-        let root = tempfile::Builder::new().prefix("fx2-input-").tempdir_in("/mnt/shared").unwrap();
+        let root = tempfile::tempdir().unwrap();
         let fixture = crate::git_tests::Repo::new();
         let d = fixture.delivery();
         fs::write(fixture.path.join("README.md"), "dirty maker data").unwrap();

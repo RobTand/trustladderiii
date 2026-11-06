@@ -180,8 +180,29 @@ fn flux_checks_withdraw_waits_for_terminal_and_replays_durable_completion() {
     drop((restored, ownership)); database.stop();
 }
 
-#[path = "../support/workers.rs"]
-mod fake_workers;
+struct ScenarioWorkers(tl3_controller::adapters::workers::Fake);
+fn scenario_completion(completion: &mut tl3_controller::executor::Completion) {
+    use tl3_controller::executor::Observation;
+    for observation in &mut completion.observations {
+        match observation {
+            Observation::Made { sha, .. } => *sha = "b".repeat(40),
+            Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+            _ => {}
+        }
+    }
+}
+impl Executor for ScenarioWorkers {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        let mut completion = self.0.execute(d)?;
+        scenario_completion(&mut completion);
+        Ok(completion)
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        let mut result = self.0.reconcile(d)?;
+        if let Reconciliation::Found(completion) = &mut result { scenario_completion(completion); }
+        Ok(result)
+    }
+}
 
 fn drain(controller: &mut tl3_controller::Controller) {
     for _ in 0..200 {
@@ -203,15 +224,7 @@ fn flux_checks_controller_incident_clearance_allows_fresh_dispatch() {
     let fakes = root.path().join("fakes");
     let mut registry = adapters::simulation(&fakes).unwrap();
     registry.register(Upstream::PrismaBuild, adapter);
-    registry.register(Upstream::Workers, fake_workers::Workers::new(None, adapters::workers::Fake::new(&fakes), vec![], |_: &Delivery, completion: &mut tl3_controller::executor::Completion| {
-        for observation in &mut completion.observations {
-            match observation {
-                Observation::Made { sha, .. } => *sha = "b".repeat(40),
-                Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
-                _ => {}
-            }
-        }
-    }));
+    registry.register(Upstream::Workers, ScenarioWorkers(adapters::workers::Fake::new(&fakes)));
     let mut c = Controller::open_owned(ownership, registry, Bootstrap { repos: vec![delivery().repository], operations: None, rob: 42, slots: 1, pool: 1, fail_fast: false }).unwrap();
     let mut allowances = tl3_config::Allowances::default();
     allowances.prismabuild.silence_secs = 1;
