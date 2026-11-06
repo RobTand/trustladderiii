@@ -1635,7 +1635,9 @@ impl Executor for RpHeldPlans {
                 ..
             }
         ) {
-            return Ok(Reconciliation::Found(Completion::confirmed(vec![])));
+            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                vec![],
+            ))));
         }
         self.fake.reconcile(delivery)
     }
