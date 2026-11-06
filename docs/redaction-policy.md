@@ -27,6 +27,7 @@ Generate both committed consumers with the built controller CLI:
 tl3 redaction-policy --output crates/controller/src/redaction/policy.json
 tl3 redaction-policy --output workers/src/tl3_workers/policy.json
 tl3 redaction-policy --identity-output workers/src/tl3_workers/_policy_identity.py
+tl3 redaction-policy --harness-output harness/src/tl3_harness/_redaction_policy.py
 ```
 
 Check either file with `tl3 redaction-policy --check FILE`. The controller's
@@ -37,6 +38,9 @@ required field names, rule counts, ordered check names, and scalar values to the
 worker build. Every worker package import verifies the hash and structure before
 matching. A stale, missing, empty, or malformed policy aborts worker startup.
 Check the identity with `tl3 redaction-policy --identity-check FILE`.
+Check the standalone harness policy with `tl3 redaction-policy --harness-check FILE`.
+The harness and trace exporter share `tl3_harness.redaction`; the exporter still
+validates its packaged policy and identity before importing the shared matcher.
 
 G0 keeps Python's span matching inside the exporter process. Controller output
 uses Rust matching. The shared matrix, corpus, planted forms, and a seeded

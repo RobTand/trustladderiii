@@ -928,6 +928,7 @@ pub(crate) fn observation_context(
         | Observation::WorktreePrepared { node, .. }
         | Observation::CheckPlan { node, .. }
         | Observation::Checks { node, .. }
+        | Observation::CheckExecutionFailure { node, .. }
         | Observation::Plan { node, .. }
         | Observation::Made { node, .. }
         | Observation::Reviewed { node, .. }

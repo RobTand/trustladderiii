@@ -174,17 +174,21 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                         progress.commit(record.get("test", ""))
                 exit_code = process.exit_code
         except ExecutionFailure as failure:
+            failure.log()
             if messages is not None:
                 messages.update(dict.fromkeys(tests, failure.message()))
             # UNCOLLECTED cannot be assertion RED, GREEN, or an allowed pre-existing error.
             outcome = Outcome.UNCOLLECTED if failure.outcome == ExecutionOutcome.TEST_TIMEOUT else Outcome.NO_REPORT
             return dict.fromkeys(tests, outcome)
         except ValueError:
+            process.incomplete().log()
             return dict.fromkeys(tests, Outcome.NO_REPORT)
     try:
         if invalid:
             raise InvalidReport("invalid report stream")
         outcomes = parse(records, tests, missing, exit_code, additions, messages=messages)
+        if Outcome.NO_REPORT in outcomes.values():
+            process.incomplete().log()
         if selected is not None:
             selected.collected = tuple(test for record in records if record.get("event") == "collection"
                                        for test in record["tests"])
@@ -194,6 +198,7 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                                         if record.get("event") == "collection" and "saturation" in record), None)
         return outcomes
     except InvalidReport:
+        process.incomplete().log()
         return dict.fromkeys(tests, Outcome.NO_REPORT)
 
 

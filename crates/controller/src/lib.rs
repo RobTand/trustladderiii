@@ -17,6 +17,7 @@ mod blocked;
 pub mod board;
 mod branches;
 pub mod budget;
+mod check_execution;
 pub mod check_harness;
 pub mod classifier;
 pub mod cli;
@@ -2552,6 +2553,9 @@ impl Controller {
                     summary.push(' ');
                     summary.push_str(&evidence);
                 }
+                if source == executor::Upstream::PrismaBuild {
+                    check_execution::append(snapshot, commit, node, &mut summary)?;
+                }
                 if source == executor::Upstream::Workers {
                     let failure = commit
                         .rows
@@ -3422,6 +3426,20 @@ impl Controller {
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
+                return Ok(None);
+            }
+            Observation::CheckExecutionFailure {
+                node,
+                generation,
+                action_key,
+                diagnostic,
+            } => {
+                let current =
+                    &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];
+                if current.job == Some(generation) && current.generation == generation {
+                    commit.rows.push(put("check_execution_failures", node.0.to_string(),
+                        json!({"generation":generation, "action_key":action_key, "diagnostic":diagnostic})));
+                }
                 return Ok(None);
             }
             Observation::Checks {
@@ -4402,7 +4420,9 @@ fn observation_upstream(
         | Observation::Plan { .. }
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
-        Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
+        Observation::CheckPlan { .. }
+        | Observation::Checks { .. }
+        | Observation::CheckExecutionFailure { .. } => Some(Upstream::PrismaBuild),
         Observation::RebaseConflict { .. }
         | Observation::Rebased { .. }
         | Observation::WorktreePrepared { .. }

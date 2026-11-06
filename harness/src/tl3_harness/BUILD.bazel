@@ -20,6 +20,7 @@ py_library(
     name = "tl3_harness",
     srcs = [
         "__init__.py",
+        "_redaction_policy.py",
         "execution.py",
         "forcing_ownership.py",
         "generator.py",
@@ -28,6 +29,7 @@ py_library(
         "node_ids.py",
         "proof.py",
         "red_message.py",
+        "redaction.py",
         "report.py",
         "runner.py",
         "scratch.py",

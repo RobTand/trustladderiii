@@ -210,6 +210,12 @@ pub enum Observation {
         sha: String,
         run: crate::adapters::prismabuild::CheckRun,
     },
+    CheckExecutionFailure {
+        node: NodeId,
+        generation: u64,
+        action_key: String,
+        diagnostic: crate::check_execution::Diagnostic,
+    },
     Checks {
         node: NodeId,
         generation: u64,
