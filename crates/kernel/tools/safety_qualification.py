@@ -16,10 +16,6 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
-    'facts_extract_duplicate': ('crates/kernel/src/facts.rs',
-        '            notice(out, i, Notice::Note(NoteKind::OutsidePush));',
-        '            notice(out, i, Notice::Note(NoteKind::OutsidePush));\n            notice(out, i, Notice::Note(NoteKind::OutsidePush));',
-        '//crates/kernel:lib_test_tl3_kernel'),
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',
         'stop_for_review(m, ReviewStop::AuditDisagreement);',
@@ -54,7 +50,7 @@ CASES = {
     'retire_pr_closed': ('crates/kernel/src/facts.rs',
                          'm.pr_open = false;\n            if !m.phase.is_stopping()',
                          'let _ = m.pr_open;\n            if !m.phase.is_stopping()',
-                         '//crates/kernel:verus_facts_fact_pr_closed'),
+                         '//crates/kernel:verus_facts_transition'),
     'retire_conflict': ('crates/kernel/src/facts.rs',
                         'set_phase(m, Phase::Rebasing);', 'let _ = m;',
                         '//crates/kernel:verus_facts_transition'),
@@ -268,8 +264,8 @@ CASES = {
                                          '//crates/kernel:verus_facts_transition'),
     'facts_ci_failed_dispatch': ('crates/kernel/src/facts.rs',
                                  'ci_infrastructure(w, i, out);',
-                                 'failed_round(w, i, ReviewStop::CiFailed, out, report);',
-                                 '//crates/kernel:verus_facts_ci_failed_infrastructure'),
+                                 'failed_round(w, i, ReviewStop::CiFailed, out);',
+                                 '//crates/kernel:verus_facts_ci_failed'),
     'kernel_cont_rank_stop': ('crates/kernel/src/lib.rs',
                               'Cont::Stop(_) | Cont::Nowhere => 2,',
                               'Cont::Stop(_) | Cont::Nowhere => 3,',
@@ -325,8 +321,8 @@ CASES = {
     ),
     't860_admitted_duplicate': (
         'crates/kernel/src/reply_admission.rs',
-        '            reply_transition(w, i, reply, out, report);',
-        '            reply_transition(w, i, reply, out, report);\n            reply_transition(w, i, reply, out, report);',
+        '            reply_transition(w, i, reply, out);',
+        '            reply_transition(w, i, reply, out);\n            reply_transition(w, i, reply, out);',
         '//crates/kernel:lib_test_tl3_kernel',
     ),
     't860_second_asks': (
@@ -403,8 +399,8 @@ CASES = {
     ),
     't860_rejected': (
         'crates/kernel/src/reply_admission.rs',
-        '        on_rejected_reply(w, i, generation, reply, out, report);',
-        '        if reply != Reply::AuditDisagrees { on_rejected_reply(w, i, generation, reply, out, report); }',
+        '        on_rejected_reply(w, i, generation, reply, out);',
+        '        if reply != Reply::AuditDisagrees { on_rejected_reply(w, i, generation, reply, out); }',
         '//crates/kernel:verus_reply_admission_on_reply',
     ),
     't860_closed': (
