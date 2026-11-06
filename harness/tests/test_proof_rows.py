@@ -144,7 +144,7 @@ def test_recorded_main_verdict(tmp_path, key, record):
 
 
 def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
-    from tl3_harness.rules import Edit, SourceEdit
+    from tl3_harness.rules import Edit, SourceEdit, apply_edit, permits
     case = partitions()['proof.observer.exact_method']['bad']
     for side in ('before', 'after'):
         for name, text in case[side].items():
@@ -157,9 +157,14 @@ def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
     assert caught.value.rule == 'proof.observer.exact_method'
     violation = caught.value.violations[0]
     assert isinstance(violation.repair, Edit)
-    assert violation.repair.pointer.value == '/checks/3/tests/0'
+    assert violation.repair.pointer.value == '/checks/3/node_ids/0'
     assert violation.allowed.value == ['tests/test_observer.py::TestOld::test_observer']
     assert len(violation.allowed.value) <= 10
+    reply = apply_edit(violation.facts['reply'], violation.repair, violation.allowed.value[0])
+    assert permits(violation, violation.facts['reply'], reply, role='planner')
+    repaired = model.Check('repair', model.Kind.DEMONSTRATING, tuple(reply['checks'][3]['node_ids']), proof=check.proof)
+    proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'repaired', repaired, case['config'],
+                         role='planner', check_index=3)
     case = partitions()['proof.support.call_allowlist']['bad']
     for side in ('before', 'after'):
         for name, text in case[side].items():
