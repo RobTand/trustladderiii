@@ -244,6 +244,7 @@ impl Executor for Adapter {
                     return job.completion.or_else(|| job.binding.map(|_| Completion::confirmed(vec![])))
                         .ok_or(Error::Invalid("check acceptance remains unknown; reattach without resubmission"));
                 }
+                if delivery.checks.is_none() { return Err(Error::ChecksPending); }
                 let prepared = self.preparation.prepare(delivery)?;
                 match &prepared.request.suite {
                     backend::Suite::DaytimeChecks { base, head, reviewed, .. }
