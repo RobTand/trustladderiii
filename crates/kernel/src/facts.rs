@@ -102,7 +102,6 @@ kernel_fn! {
 /// Fact rows / #771: non-dependency, non-merge facts allocate at most one
 /// generation, one question and one paid credit, and emit at most two notices.
 #[allow(clippy::collapsible_if)]
-#[cfg_attr(verus_keep_ghost, verifier::isolate_assertions)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     out: &mut Outbox) -> (result: ()) [
@@ -166,9 +165,15 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                     old(w).fail_fast, *old(out), *final(out)),
             _ => true,
         },
-] hide [current_item, items] {
+] hide [current_item, items, settle_shape] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
+    kernel_proof! {
+        if matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
+            | Fact::Conflict | Fact::UpstreamStalled) {
+            retirement_handler_lemmas::inline_frame(before_transition@.nodes@[i as int], fact);
+        }
+    }
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
         Fact::Priority(priority) => {
@@ -219,13 +224,23 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             );
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
+                kernel_proof! {
+                    assert(settle_shape(before_transition@.nodes@[i as int])
+                        ==> settle_shape(w.nodes@[i as int])) by { reveal(settle_shape); }
+                }
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
                 kernel_proof! {
                     retirement_runtime::outside_retry(before_transition@.nodes@[i as int], head,
                         before_transition@.fail_fast, before_transition@.next_question,
                         w.nodes@[i as int], w.next_question);
                 }
-                kernel_proof! { reveal(retry_bounds); }
+                kernel_proof! {
+                    assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out)) by {
+                        reveal(retry_bounds);
+                        reveal(retirement::fact_frame);
+                    }
+                    facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+                }
             }
             kernel_proof! {
                 if !published { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }

@@ -67,4 +67,28 @@ pub(super) proof fn recheck_progress(n: Node, target: Phase, id: u64)
         port_review_retry::rechecked(n, target, id).0, target, id,
         port_review_retry::rechecked(n, target, id).1);
 }
+
+/// #771 / #806 fact rows: project scalar frames from exact inline-arm results.
+/// The dispatcher still checks each equation against its real mutable arm.
+#[verifier::spinoff_prover]
+pub(super) proof fn inline_frame(n: Node, fact: Fact)
+    requires node_headroom(n), matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
+        | Fact::Conflict | Fact::UpstreamStalled),
+    ensures (n.phase is Closed ==> retirement::fact_node(n, fact).phase is Closed),
+        retirement::fact_node(n, fact).repo == n.repo,
+        retirement::fact_node(n, fact).footprint == n.footprint,
+        settle_shape(n) ==> settle_shape(retirement::fact_node(n, fact)),
+        retirement::fact_node(n, fact).generation as int <= n.generation as int + 1,
+        retirement::fact_node(n, fact).next_seq == n.next_seq,
+        retirement::fact_node(n, fact).credit.start == n.credit.start,
+        retirement::fact_node(n, fact).credit.earned == n.credit.earned,
+        retirement::fact_node(n, fact).credit.added == n.credit.added,
+        retirement::fact_node(n, fact).credit.spent as int <= n.credit.spent as int + 1,
+        retirement::fact_node(n, fact).last_cmd == n.last_cmd,
+{
+    reveal(retirement::fact_node);
+    reveal(retirement::stopped);
+    reveal(retirement::incident);
+    reveal(settle_shape);
+}
 }
