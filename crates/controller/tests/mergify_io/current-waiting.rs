@@ -576,10 +576,11 @@ impl Adapter {
         hold.witnessed_ms = None;
         let mut commit = tl3_store::Commit::new(
             format!(
-                "queue-destination:{}:{}:{}",
+                "queue-destination:{}:{}:{}:{}",
                 delivery.node().0,
                 head,
-                hold.context.branch
+                hold.context.branch,
+                snapshot.revision.get()
             ),
             json!({"queue_destination":hold.context.branch}),
             snapshot,
