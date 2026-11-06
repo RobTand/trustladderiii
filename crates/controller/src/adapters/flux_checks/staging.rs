@@ -20,6 +20,7 @@ pub fn stage_input(
     trusted_harness: &Path,
     image: &str,
     protected_paths: &[String],
+    generated_paths: &[String],
     selected_tests: Option<u32>,
     always_tests: &[String],
 ) -> Result<PreparedInput> {
@@ -42,7 +43,7 @@ pub fn stage_input(
     let tree_root = root.join("tree");
     let mut staged = delivery.clone();
     staged.checks = Some(run.clone());
-    let tests = crate::adapters::images::AdditionalTests { selected: selected_tests, always: always_tests.to_vec() };
+    let tests = crate::adapters::images::AdditionalTests { selected: selected_tests, always: always_tests.to_vec(), generated: generated_paths.to_vec() };
     let changed_paths = checks::stage(&tree_root, trusted_harness, &staged, image, protected_paths, &tests)?;
     let repository = Worktrees::open(&tree_root, &tree_root)?;
     let head = repository.head()?;
@@ -137,7 +138,7 @@ mod tests {
         fs::write(harness.join("runner.py"), "# trusted fixture\n").unwrap();
         fs::write(harness.join("__init__.py"), "").unwrap();
         let destination = root.path().join("input");
-        let result = stage_input(&d, &destination, &harness, "immutable-image", &["protected/**".into()], Some(3), &["tests/test_always.py".into()]);
+        let result = stage_input(&d, &destination, &harness, "immutable-image", &["protected/**".into()], &["generated/**".into()], Some(3), &["tests/test_always.py".into()]);
         if result.is_err() { writable(root.path()); }
         let staged = result.unwrap();
         let manifest: backend::InputManifest = serde_json::from_slice(&fs::read(&staged.tree.manifest).unwrap()).unwrap();
@@ -155,10 +156,12 @@ mod tests {
         assert_eq!(request["head"], fixture.head);
         assert_eq!(request["base"], fixture.base);
         assert_eq!(request["protected_paths"], serde_json::json!(["protected/**"]));
+        assert_eq!(request["footprint"], serde_json::json!(d.paths));
+        assert_eq!(request["generated_paths"], serde_json::json!(["generated/**"]));
         assert_eq!(request["selected_tests"], 3);
         assert_eq!(request["always_tests"], serde_json::json!(["tests/test_always.py"]));
         assert_eq!(staged.changed_paths, ["README.md"]);
-        assert!(stage_input(&d, &destination, &harness, "changed-image", &[], None, &[]).is_err());
+        assert!(stage_input(&d, &destination, &harness, "changed-image", &[], &[], None, &[]).is_err());
         assert_eq!(durable::digest(&fs::read(&staged.tree.manifest).unwrap()), staged.tree.input_digest);
         writable(root.path());
     }

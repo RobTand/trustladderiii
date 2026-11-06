@@ -57,7 +57,7 @@ def test_declared_edit_needs_a_demonstrating_check(planner_request, digests_plan
     digests_plan['checks'] = digests_plan['checks'][:2]
     digests_plan['checks'][0]['goal_ids'] = [0]
     violations = planned(planner_request, digests_plan)
-    assert any(f'`{FROZEN}` is in edits_tests but no demonstrating check names it' in item
+    assert any(item.startswith('edit.uncovered:') and FROZEN in item
                for item in violations), violations
 
 

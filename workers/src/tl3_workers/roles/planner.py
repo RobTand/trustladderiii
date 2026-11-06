@@ -1,18 +1,23 @@
 """Report plan measurements and rule violations to the controller."""
 
+import ast
 from copy import deepcopy
+from dataclasses import dataclass, replace
 from functools import cache
 import json
 from pathlib import Path, PurePosixPath
 import re
 from subprocess import CalledProcessError
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
+from jsonschema.validators import extend
+
+from tl3_harness.rules import Allowed as MembershipAllowed
 
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight, proof_applicability, subject_covers, planning_refusal
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
-from tl3_harness.model import Diagnostic, named, contextual
+from tl3_harness.model import Diagnostic, named, contextual, validate_symptom
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
 from tl3_harness.limits import validate_check_plan
@@ -21,26 +26,217 @@ from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
 from tl3_workers.turns import InvalidReply, REPAIR_MESSAGE_BYTES, Unrepairable
+from tl3_workers.rules import Allowed as WorkerAllowed, CantMeet, Edit, Name, Rule, at, evaluate, register
 
 
-@cache
-def rules():
-    return json.loads((Path(__file__).parent.parent / 'plan_rules.json').read_text())
+# Frozen JSON values retain their wire types, including integers versus floats.
+def strict_constant(validator, expected, value, schema):
+    if not MembershipAllowed('const', expected).accepts(value):
+        yield ValidationError('value differs from the captured JSON constant')
 
 
-def same(left, right):
-    # Python equality would allow True and 1, or 1.0 and 1, to exchange identities.
-    return type(left) is type(right) and (
-        left.keys() == right.keys() and all(same(left[k], right[k]) for k in left)
-        if isinstance(left, dict) else
-        len(left) == len(right) and all(same(a, b) for a, b in zip(left, right))
-        if isinstance(left, (list, tuple)) else left == right)
+def strict_enum(validator, expected, value, schema):
+    if not MembershipAllowed('enum', expected).accepts(value):
+        yield ValidationError('value is outside the captured JSON alternatives')
+
+
+def ordered_values(validator, facts, value, schema):
+    """Preserve captured order, allowing only named insertions and deletions."""
+    before, additions, removable = (facts[key] for key in ('before', 'add', 'remove'))
+    if (not isinstance(value, list) or len(value) > len(before) + len(additions)
+            or len(unique(before)) == len(before) and len(unique(value)) != len(value)):
+        yield ValidationError('array exceeds the captured identities or multiplicities')
+        return
+    position = 0
+    for item in value:
+        if MembershipAllowed('enum', additions).accepts(item):
+            continue
+        while position < len(before) and not MembershipAllowed('const', before[position]).accepts(item):
+            if not MembershipAllowed('enum', removable).accepts(before[position]):
+                yield ValidationError('captured array identities must remain in order')
+                return
+            position += 1
+        if position == len(before):
+            yield ValidationError('only named additions are permitted')
+            return
+        position += 1
+    if any(not MembershipAllowed('enum', removable).accepts(item) for item in before[position:]):
+        yield ValidationError('only named removals are permitted')
+
+
+def memory_flags(validator, facts, value, schema):
+    """Ordered flags with named deletion and exact supplied-passage replacement."""
+    if not isinstance(value, list):
+        yield ValidationError('memory flags must be an array')
+        return
+    position = 0
+    for index, old in enumerate(facts['before']):
+        if position < len(value) and MembershipAllowed('const', old).accepts(value[position]):
+            position += 1
+            continue
+        if index in facts['claims'] and position < len(value) and isinstance(value[position], dict):
+            new = value[position]
+            claim = new.get('claim')
+            if (MembershipAllowed('const', {k: v for k, v in old.items() if k != 'claim'}).accepts(
+                    {k: v for k, v in new.items() if k != 'claim'})
+                    and isinstance(claim, str) and claim and claim in facts['passages'].get(old['id'], '')):
+                position += 1
+                continue
+        if old['id'] not in facts['drop'] and index not in facts['claims']:
+            yield ValidationError('only named flags or their exact supplied claims may change')
+            return
+    if position != len(value):
+        yield ValidationError('flags must retain their captured order and frozen fields')
+
+
+StrictValidator = extend(Draft202012Validator, {
+    'const': strict_constant, 'enum': strict_enum,
+    'x-ordered': ordered_values, 'x-memory-flags': memory_flags})
+
+
+class Allowed(WorkerAllowed):
+    def render(self):
+        def compact(value):
+            if isinstance(value, dict):
+                return {key: compact(child) for key, child in value.items()}
+            if isinstance(value, list):
+                omitted = len(value) > 8 and len(json.dumps(value, ensure_ascii=False)) > 256
+                preview = [compact(child) for child in (value[:8] if omitted else value)]
+                return preview + ([f'and {len(value) - 8} more (total {len(value)})'] if omitted else [])
+            return value
+        text = f'{self.keyword} {json.dumps(compact(self.value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))}'
+        if '"x-ordered"' in text:
+            text += ' x-ordered: keep before in order; only add/remove named values.'
+        if '"x-memory-flags"' in text:
+            text += ' x-memory-flags: keep order and other fields; drop named IDs or claim indexes, or replace their claim with a nonempty exact passage for the same ID.'
+        return text
+
+    def accepts(self, value):
+        constraint = self.value if self.keyword == 'schema' else {self.keyword: self.value}
+        return StrictValidator(constraint).is_valid(value)
+
+
+def draft_references(value, draft):
+    """Render repeated captured values as pointers without changing membership."""
+    def encoded(item):
+        return json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+    references = {}
+
+    def index(item, pointer=''):
+        key = encoded(item)
+        reference = {'$draft': pointer}
+        if len(encoded(reference)) < len(key):
+            previous = references.get(key)
+            if previous is None or len(pointer) < len(previous['$draft']):
+                references[key] = reference
+        children = item.items() if isinstance(item, dict) else enumerate(item) if isinstance(item, list) else ()
+        for name, child in children:
+            index(child, pointer + '/' + str(name).replace('~', '~0').replace('/', '~1'))
+
+    def render(item):
+        if encoded(item) in references:
+            return references[encoded(item)]
+        if isinstance(item, dict):
+            if set(item) in ({'$draft'}, {'$literal'}):
+                return {'$literal': item}
+            return {key: render(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [render(child) for child in item]
+        return item
+
+    index(draft)
+    return render(value)
+
+
+def expand_draft_references(value, draft):
+    if isinstance(value, dict):
+        if set(value) == {'$literal'}:
+            return deepcopy(value['$literal'])
+        if set(value) == {'$draft'}:
+            return deepcopy(at(draft, value['$draft']))
+        return {key: expand_draft_references(child, draft) for key, child in value.items()}
+    if isinstance(value, list):
+        return [expand_draft_references(child, draft) for child in value]
+    return value
+
+
+@dataclass(frozen=True, eq=False)
+class DraftAllowed(Allowed):
+    draft: dict
+
+    def render(self):
+        text = Allowed(self.keyword, draft_references(self.value, self.draft)).render()
+        if '"$draft"' in text:
+            text += ' $draft names a JSON pointer in the original draft.'
+        if '"$literal"' in text:
+            text += ' $literal is verbatim JSON.'
+        return text
+
+
+@dataclass(frozen=True, eq=False)
+class CoverageAllowed(DraftAllowed):
+    changes: dict
+    appended: dict
+    maximum: int
+
+    def render(self):
+        description = {'edits': self.changes, 'append_checks': {
+            'maximum_total': self.maximum, 'items': self.appended}}
+        return (DraftAllowed('schema', description, self.draft).render()
+                + ' Apply edits to the original draft; preserve all other fields and existing check order.'
+                + ' Appended checks must satisfy items; optional proof/forcing must copy an original value.')
+
+
+@dataclass(frozen=True, eq=False)
+class SplitAllowed(DraftAllowed):
+    def render(self):
+        properties = self.value['properties']
+        piece = properties['pieces']['items']['properties']
+        values = {'reason': properties['reason']['enum'], 'files': piece['files']['items']['enum'],
+                  'goal_ids': piece['goal_ids']['items']['enum']}
+        remove = [key for key in self.draft if key not in properties]
+        return (DraftAllowed('schema', values, self.draft).render()
+                + ' Return split with >=2 reply-schema pieces using only these files/goal_ids.'
+                + " Cover each file; keep each original check's goals and test/proof paths together in one piece."
+                + ' Freeze other root fields; remove ' + json.dumps(remove, separators=(',', ':')) + '.')
+
+
+def coverage_allowed(draft, changes, appended, maximum, *, rendered=False):
+    """Expand the rendered changes against the captured draft for exact membership."""
+    if rendered:
+        changes = expand_draft_references(changes, draft)
+        appended = expand_draft_references(appended, draft)
+
+    def bounded(value, pointer=''):
+        if pointer in changes:
+            return changes[pointer]
+        if pointer != '/checks' and not any(path.startswith(pointer + '/') for path in changes):
+            return {'const': value}
+        if isinstance(value, dict):
+            properties = {key: bounded(child, pointer + '/' + key) for key, child in value.items()}
+            prefix = pointer + '/'
+            for path, constraint in changes.items():
+                suffix = path.removeprefix(prefix)
+                if path.startswith(prefix) and '/' not in suffix:
+                    properties[suffix] = constraint
+            return {'type': 'object', 'properties': properties,
+                    'required': [key for key, constraint in properties.items() if constraint is not False],
+                    'additionalProperties': False}
+        if isinstance(value, list):
+            return {'type': 'array', 'prefixItems': [bounded(child, pointer + f'/{i}') for i, child in enumerate(value)],
+                    'minItems': len(value), 'maxItems': len(value)}
+        return {'const': value}
+
+    constraint = bounded(draft)
+    constraint['properties']['checks'].update({'maxItems': maximum, 'items': appended})
+    return CoverageAllowed('schema', constraint, draft, changes, appended, maximum)
 
 
 def wire(diagnostic):
     if not isinstance(diagnostic, Diagnostic):
         raise TypeError('Unnamed plan-check diagnostic')
-    return {'class': rules()[diagnostic.rule]['class'], 'rule': diagnostic.rule,
+    return {'class': inventory()[diagnostic.rule]['class'], 'rule': diagnostic.rule,
             'items': identities(diagnostic.items), 'diagnostic': str(diagnostic)}
 
 
@@ -62,448 +258,6 @@ def identities(items):
         else:
             result.append(key + '=' + json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
     return result or ['plan']
-
-
-CONSTRAINTS = {
-    'NONE': 'No bounded declaration edit is supported; return cant_meet.',
-    'CODE': 'Delete only named code-owned keys.',
-    'COVERAGE': 'Only add named uncovered goal ids to existing checks; retain citations in order.',
-    'RED_FILL': 'Fill only blank proof.red_message with the exact supported assertion; freeze existing proof values.',
-    'PROOF_FILL': 'Fill only absent proof keys; inferred subjects/observer_support must be []; freeze old values.',
-    'SUBJECT_ADD': 'Append only named missing subjects or covering definitions; retain old subjects in order.',
-    'EXACT_SELECT': 'Replace only named inexact selectors in the same declared files with exact definitions.',
-    'BASE_SELECT': 'Replace only named absent selectors with exact base controls supporting the same goals and kind.',
-    'FORCED_SELECT': 'Replace only named absent forced selectors; preserve forcing, symptom and receipt identity.',
-    'EDIT_COVER': 'Named edits have no demonstrating check. Cover only those edits, retaining kinds, goals and forcing.',
-    'SPLIT': 'Preserve every original obligation and estimate; report cant_meet if no lossless bounded split is supported.',
-    'FILES_FILL': 'Fill empty files only with named source-required subject paths.',
-    'GOAL_ADD': 'Fill empty citations only from an unchanged source-supported proof.',
-    'GOAL_DROP': 'Remove only named unknown goal ids; retain valid citations in order.',
-    'GOAL_SANITIZE': 'Remove only invalid or duplicate citations, retaining each valid first occurrence.',
-    'PIECE_GOALS': 'Fill only empty citations supported by this unchanged piece brief and files.',
-    'PIECE_DROP': 'Remove only unknown piece goal ids; retain valid citations in order.',
-    'PIECE_COVER': 'Add only missing goal ids supported by each unchanged piece brief and files.',
-    'PROOF_FILE': 'Add only the named source-required path of an existing proof unit; freeze proof values.',
-    'EDIT_FILE': 'Add only the named file of an already-observed necessary base-test edit.',
-    'EDIT_DROP': 'Drop only the named absent-base edit already covered by an unchanged demonstrating check.',
-    'FROZEN': 'Remove only named edited nodes from frozen checks; retain kind and independent controls.',
-    'EVIDENCE_EMPTY': 'Add only the missing key as evidence_contract: []. Code supplies the inherited source requirements; list none.',
-    'METHOD_REPLACE': 'Replace only named method choices with supplied capabilities; freeze source requirements.',
-    'MEMORY_DROP': 'Remove only named unsupplied memory ids; retain all other citations.',
-    'FLAG_DROP': 'Remove only named uncited flags.',
-    'FLAG_CLAIM': 'Drop the named flag or replace only its claim with an exact supplied passage for the same memory.',
-    'SYMPTOM_FIELDS': 'Remove extra symptom keys or fill node from the sole original selector; freeze execution identity.',
-    'PATCH_MODE': 'Remove extra patch keys only when one original mode exists; freeze that mode and argument.',
-    'FORCING_KEYS': 'Remove only extra top-level forcing keys; freeze all mutations and symptom.',
-    'PROOF_DEDUP': 'Remove only identical repeated proof units; retain each first occurrence.',
-    'NODE_DEDUP': 'Remove only duplicate selectors; retain each first occurrence.',
-    'FILE_PATH': 'Replace only a named spelling with its unique confined relative path.',
-    'SPLIT_REASON': 'Replace only the invalid split reason with an already-true permitted reason.',
-}
-# These diagnostics ask for an edit their footprint's guard rejects, so the repair
-# line gives the footprint instruction and the named items only (#1574).
-FOOTPRINT_ONLY = frozenset({
-    'evidence.contract_missing',  # asks for requirements; EVIDENCE_EMPTY accepts only []
-    # "Leave it out": no leaf guard removes a declared file; FILE_PATH accepts only the canonical spelling.
-    'path.unusable', 'path.not_regular', 'path.binary', 'path.encoding', 'path.hard_cap', 'path.noncanonical',
-    'size.report', 'size.result',  # "reduce the selected tests": SPLIT preserves every check
-})
-
-
-def message(objections):
-    ordered = sorted(objections, key=lambda o: (o.rule, identities(o.items)))
-    prefix = 'Use only already-read facts. Freeze every unnamed declaration. Return cant_meet if needed.\n'
-    fixed = []
-    descriptions = []
-    grouped = {}
-    for item in ordered:
-        key = (item.rule, json.dumps(identities(item.items), ensure_ascii=False))
-        grouped.setdefault(key, item)
-    for item in grouped.values():
-        operation = rules()[item.rule]['footprint']
-        if item.rule == 'goal.coverage':
-            for goal in item.items['goals']:
-                fixed.append(item.rule + f' goal {goal}: Only add this citation to existing checks; freeze all other fields.')
-                descriptions.append(item.items['descriptions'][goal])
-            continue
-        fixed.append(item.rule + ' ' + '; '.join(identities(item.items)) + ': '
-                     + CONSTRAINTS.get(operation, CONSTRAINTS['NONE']))
-        descriptions.append('' if item.rule in FOOTPRINT_ONLY else item.items.get('description', str(item)))
-    def render(texts):
-        return prefix + '\n'.join(line + (' ' + text if text else '') for line, text in zip(fixed, texts))
-    full = render(descriptions)
-    if len(full.encode()) <= REPAIR_MESSAGE_BYTES:
-        return full
-    mandatory = render([''] * len(fixed))
-    if len(mandatory.encode()) > REPAIR_MESSAGE_BYTES:
-        return None
-    cap = (REPAIR_MESSAGE_BYTES - len(mandatory.encode())) // max(len(fixed), 1)
-    def clip(text):
-        if len(text.encode()) + 1 <= cap:
-            return text
-        marker = ' [...]'
-        if cap <= len(marker.encode()) + 1:
-            return ''
-        return text.encode()[:cap-len(marker.encode())-1].decode(errors='ignore') + marker
-    return render([clip(text) for text in descriptions])
-
-
-def insertion(before, after, allowed):
-    """Retained elements keep their identities and order; additions consume named identities."""
-    remaining = list(before)
-    extras = []
-    for value in after:
-        if remaining and same(value, remaining[0]):
-            remaining.pop(0)
-        else:
-            extras.append(value)
-    return not remaining and all(any(same(value, item) for item in allowed) for value in extras) and len(extras) == len({json.dumps(v) for v in extras})
-
-
-def deletion(before, after, removable):
-    return insertion(after, before, removable)
-
-
-class Correction:
-    """Compare raw drafts before code-owned expansion, inheritance or forecast fields."""
-    def __init__(self, draft, objections, inputs, legacy):
-        self.draft = deepcopy(draft)
-        self.objections = deepcopy(objections)
-        self.inputs = deepcopy(inputs)
-        self.legacy = legacy
-        self.base_nodes = set(getattr(legacy, "base_nodes", ()))
-        self.base_sources = dict(getattr(legacy, 'base_sources', {}))
-        self.permissions = {}
-        for item in objections:
-            operation = rules()[item.rule]['footprint']
-            self.permissions.setdefault(operation, []).append(item.items)
-
-    def check(self, candidate):
-        if candidate.get('kind') == 'cant_meet':
-            original_files = self.draft.get('files', [])
-            if self.draft.get('kind') == 'split':
-                original_files = list(dict.fromkeys(p for piece in self.draft['pieces'] for p in piece['files']))
-            added = [p for p in candidate['files'] if p not in original_files]
-            return self.failure(['/files']) if added else []
-        if candidate.get('kind') == 'split' and all(rules()[item.rule]['class'] == 'size_execution_fit' for item in self.objections):
-            return self.split(candidate)
-        if candidate.get('kind') != self.draft.get('kind'):
-            return self.failure(['/kind'])
-        original = self.draft
-        bad = []
-        for key in set(original) | set(candidate):
-            if key not in {'checks', 'edits_tests', 'pieces'} and (
-                    (key in original) != (key in candidate) or not same(original.get(key), candidate.get(key))):
-                if not self.top_field(key, candidate):
-                    bad.append('/' + key)
-        if original.get('kind') == 'leaf':
-            bad.extend(self.checks(candidate))
-            if not same(original.get('edits_tests'), candidate.get('edits_tests')) or ('edits_tests' in original) != ('edits_tests' in candidate):
-                old, new = original.get('edits_tests', []), candidate.get('edits_tests', [])
-                removable = [*self.legacy.uncovered, *(item['node'] for item in self.permissions.get('EDIT_DROP', [])
-                    if any(item['node'] in check['node_ids'] and check['kind'] == 'demonstrating'
-                           for check in original['checks']))]
-                if not (self.permissions.get('EDIT_COVER') or self.permissions.get('EDIT_DROP')) or not deletion(old, new, removable):
-                    bad.append('/edits_tests')
-        elif original.get('kind') == 'split':
-            bad.extend(self.pieces(candidate))
-        return self.failure(sorted(set(bad)))
-
-    def split(self, candidate):
-        """A size repair records every original obligation; it starts no child."""
-        original = self.draft
-        pieces = candidate['pieces']
-        old_files = (original['files'] if original['kind'] == 'leaf' else
-                     list(dict.fromkeys(path for piece in original['pieces'] for path in piece['files'])))
-        new_files = {path for piece in pieces for path in piece['files']}
-        failures = []
-        if new_files != set(old_files):
-            failures.append('/pieces/files')
-        invariant = set(original) - {'kind', 'files', 'checks', 'edits_tests', 'no_design_questions',
-                                     'lands_on_its_own', 'pieces', 'reason'}
-        for field in invariant | (set(candidate) - {'kind', 'pieces', 'reason'}):
-            if (field in original) != (field in candidate) or not same(original.get(field), candidate.get(field)):
-                failures.append('/' + field)
-        mappings = []
-        for index, check in enumerate(original.get('checks', [])):
-            paths = {node.split('::')[0] for node in check['node_ids']}
-            paths.update(unit.split('::')[0] for field in ('subjects', 'observer_support')
-                         for unit in check.get('proof', {}).get(field, []))
-            owners = [i for i, piece in enumerate(pieces)
-                      if set(check['goal_ids']) <= set(piece['goal_ids']) and paths <= set(piece['files'])]
-            if not owners:
-                failures.append(f'/checks/{index}/piece')
-            mappings.append({'check': index, 'pieces': owners})
-        if failures:
-            return self.failure(failures)
-        self.manifest = {
-            'base': self.inputs.get('base_sha'), 'goals': deepcopy(self.inputs['ingest']['goals']),
-            'checks': deepcopy(original.get('checks', [])), 'original_pieces': deepcopy(original.get('pieces', [])),
-            'edits_tests': deepcopy(original.get('edits_tests', [])), 'files': old_files,
-            'evidence_contract': deepcopy(self.legacy.completed_reply.get('evidence_contract', [])),
-            'forecast': deepcopy(self.legacy.completed_reply['forecast']),
-            'execution': deepcopy(self.legacy.completed_reply['execution']),
-            'parent_estimates': {k: original[k] for k in ('estimated_tool_turns', 'estimated_exploration_turns') if k in original},
-            'mapping': mappings}
-        return []
-
-    def top_field(self, key, candidate):
-        original = self.draft
-        a, b = original.get(key), candidate.get(key)
-        if any(item.get('field') == key or key in item.get('keys', []) for item in self.permissions.get('CODE', [])):
-            return key not in candidate
-        if key == 'files':
-            source_units = [unit for goal in self.inputs['ingest']['goals']
-                            for unit in goal.get('proof_obligation', {}).get('subjects', [])]
-            additions = [item['path'] for item in self.permissions.get('PROOF_FILE', [])
-                         if any(subject_covers(item['unit'], unit) or subject_covers(unit, item['unit']) for unit in source_units)]
-            additions.extend(item['path'] for item in self.permissions.get('EDIT_FILE', [])
-                             if item['node'] in self.base_nodes)
-            if self.permissions.get('FILES_FILL') and not a:
-                additions.extend(unit.split('::')[0] for unit in source_units)
-            if a is not None and b is not None and insertion(a, b, additions):
-                return True
-            renames = {item['path']: str(PurePosixPath(item['path'])) for item in self.permissions.get('FILE_PATH', [])
-                       if not item['path'].startswith(('/', '-')) and '..' not in PurePosixPath(item['path']).parts
-                       and '\\' not in item['path']}
-            return bool(renames) and same([renames.get(path, path) for path in a], b)
-        if key == 'evidence_contract':
-            if 'evidence_contract' not in original and self.permissions.get('EVIDENCE_EMPTY'):
-                return b == []
-            return self.methods(a, b)
-        if key == 'memory_ids' and self.permissions.get('MEMORY_DROP'):
-            removed = [value for item in self.permissions.get('MEMORY_DROP', []) for value in item['ids']]
-            return deletion(a or [], b or [], removed)
-        if key == 'memory_flags' and (self.permissions.get('FLAG_DROP') or self.permissions.get('FLAG_CLAIM')):
-            return self.flags(a or [], b or [])
-        if key == 'reason' and self.permissions.get('SPLIT_REASON'):
-            facts = self.legacy.completed_reply
-            allowed = set()
-            if self.inputs['must_split']:
-                allowed.add('out_of_room')
-            if not facts['forecast']['fits']:
-                allowed.add('does_not_fit')
-            if not facts['execution']['fits']:
-                allowed.add('execution_budget')
-            return b in allowed
-        return False
-
-    def methods(self, before, after):
-        if not isinstance(before, list) or not isinstance(after, list) or len(before) != len(after):
-            return False
-        named_requirements = [item['requirement'] for item in self.permissions.get('METHOD_REPLACE', [])]
-        mutable = {'tool', 'executor', 'runner_features', 'artifacts', 'methods', 'protected_files'}
-        for old, new in zip(before, after):
-            if same(old, new):
-                continue
-            if (old not in named_requirements or old.get('provenance', {}).get('kind') != 'method'
-                    or not same({k: v for k, v in old.items() if k not in mutable},
-                                {k: v for k, v in new.items() if k not in mutable})):
-                return False
-            if not any(all(new[k] == cap[k] if k in {'tool', 'executor'} else set(new[k]) <= set(cap[k])
-                           for k in mutable) for cap in self.inputs.get('tool_capabilities', [])):
-                return False
-        return True
-
-    def flags(self, before, after):
-        removable = {value for item in self.permissions.get('FLAG_DROP', []) for value in item['ids']}
-        claims = {item['flag'] for item in self.permissions.get('FLAG_CLAIM', [])}
-        memories = {item['id']: item['content'] for item in self.inputs.get('memories', [])}
-        position = 0
-        for index, old in enumerate(before):
-            if position < len(after) and same(old, after[position]):
-                position += 1
-            elif index in claims and position < len(after) and after[position].get('id') == old['id']:
-                new = after[position]
-                if (set(new) != set(old) or any(not same(old[k], new[k]) for k in old if k != 'claim')
-                        or not new['claim'] or new['claim'] not in memories.get(old['id'], '')):
-                    return False
-                position += 1
-            elif old['id'] not in removable and index not in claims:
-                return False
-        return position == len(after)
-
-    def supports(self, goal, piece):
-        source = self.inputs['ingest']['goals'][goal]
-        return source['description'] in piece['brief'] and all(unit.split('::')[0] in piece['files']
-            for unit in source.get('proof_obligation', {}).get('subjects', []))
-
-    def pieces(self, candidate):
-        before, after = self.draft['pieces'], candidate['pieces']
-        if len(before) != len(after):
-            return ['/pieces']
-        bad_paths = []
-        source_goals = set(range(len(self.inputs['ingest']['goals'])))
-        missing = source_goals - {g for piece in before for g in piece['goal_ids']}
-        for i, (old, new) in enumerate(zip(before, after)):
-            if not same({k: v for k, v in old.items() if k != 'goal_ids'}, {k: v for k, v in new.items() if k != 'goal_ids'}):
-                bad_paths.append(f'/pieces/{i}')
-            a, b = old['goal_ids'], new['goal_ids']
-            dropping = [g for g in a if g not in source_goals] if any(item.get('piece') == i for item in self.permissions.get('PIECE_DROP', [])) else []
-            retained = [g for g in a if g not in dropping]
-            additions = set()
-            if self.permissions.get('PIECE_COVER'):
-                additions.update(g for g in missing if self.supports(g, old))
-            if not a and any(item.get('piece') == i for item in self.permissions.get('PIECE_GOALS', [])):
-                additions.update(g for g in source_goals if self.supports(g, old))
-            if not insertion(retained, b, additions):
-                bad_paths.append(f'/pieces/{i}/goal_ids')
-        return bad_paths
-
-    def checks(self, candidate):
-        before, after = self.draft['checks'], candidate['checks']
-        bad = []
-        if len(after) < len(before):
-            bad.append('/checks')
-        uncovered = self.legacy.uncovered
-        goal_union = {goal for check in before for goal in check['goal_ids']}
-        for i, new in enumerate(after):
-            path = f'/checks/{i}'
-            if i >= len(before):
-                if (not uncovered or new['kind'] != 'demonstrating'
-                        or not new['node_ids'] or not set(new['node_ids']) <= uncovered
-                        or not set(new['goal_ids']) <= goal_union
-                        or 'forcing' in new and not any(same(new['forcing'], old.get('forcing')) for old in before)
-                        or 'declared_symptom' in new):
-                    bad.append(path)
-                continue
-            old = before[i]
-            for field in old.keys() | new.keys():
-                if same(old.get(field), new.get(field)) and (field in old) == (field in new):
-                    continue
-                a, b = old.get(field), new.get(field)
-                allowed = False
-                if field == 'goal_ids':
-                    allowed = self.goals(i, old, new)
-                elif field == 'node_ids':
-                    allowed = self.nodes(i, old, new)
-                elif field == 'proof':
-                    allowed = self.proof(i, old.get('proof', {}), new.get('proof', {}))
-                elif field == 'forcing':
-                    allowed = self.forcing(i, a, b)
-                elif field == 'declared_symptom':
-                    allowed = self.symptom(i, old, new)
-                if not allowed:
-                    bad.append(path + '/' + field)
-        return bad
-
-    def goals(self, index, old, new):
-        a, b = old['goal_ids'], new['goal_ids']
-        original = a
-        count = len(self.inputs['ingest']['goals'])
-        if any(item.get('check') == index for item in self.permissions.get('GOAL_SANITIZE', [])):
-            a = list(dict.fromkeys(g for g in a if type(g) is int and 0 <= g < count))
-        if any(item.get('check') == index for item in self.permissions.get('GOAL_DROP', [])):
-            unknown = [item['unknown'] for item in self.permissions['GOAL_DROP'] if item.get('check') == index]
-            a = [g for g in a if not any(g in ids for ids in unknown)]
-        additions = list(self.legacy.missing_goals)
-        if not original and any(item.get('check') == index for item in self.permissions.get('GOAL_ADD', [])):
-            proof = old.get('proof', {})
-            for g, goal in enumerate(self.inputs['ingest']['goals']):
-                obligation = goal.get('proof_obligation')
-                if (obligation and proof.get('red_message') == obligation['quote']
-                        and all(any(subject_covers(unit, subject) for unit in proof.get('subjects', []))
-                                for subject in obligation['subjects'])):
-                    additions.append(g)
-        return insertion(a, b, additions)
-
-    def symptom(self, index, old, new):
-        if not any(item.get('check') == index for item in self.permissions.get('SYMPTOM_FIELDS', [])):
-            return False
-        a, b = old['declared_symptom'], new['declared_symptom']
-        if not isinstance(a, dict) or not isinstance(b, dict):
-            return False
-        fixed = {k: v for k, v in a.items() if k in {'node', 'exception', 'phase', 'repeat', 'parallel'}}
-        if 'node' not in fixed and len(old['node_ids']) == 1:
-            fixed['node'] = old['node_ids'][0]
-        return same(fixed, b)
-
-    def forcing(self, index, before, after):
-        if not isinstance(before, dict) or not isinstance(after, dict):
-            return False
-        expected = deepcopy(before)
-        if any(item.get('check') == index for item in self.permissions.get('FORCING_KEYS', [])):
-            expected = {k: v for k, v in expected.items() if k in {'symptom', 'environment', 'patches'}}
-        if any(item.get('check') == index for item in self.permissions.get('PATCH_MODE', [])):
-            for patch in expected.get('patches', []):
-                modes = set(patch) & {'value', 'returns', 'raises', 'delay_seconds'}
-                if len(modes) == 1:
-                    for key in list(patch):
-                        if key not in {'target', *modes}:
-                            del patch[key]
-        # Reserved variables and symptom prose need trusted runner/source facts.
-        # Their presence alone supplies no permission to erase a causal mutation.
-        return same(expected, after)
-
-    def nodes(self, index, old, new):
-        a, b = old['node_ids'], new['node_ids']
-        selectors = self.legacy.selectors.get(index, [])
-        forced = [node for item in self.permissions.get('FORCED_SELECT', [])
-                  if item.get('check') == index for node in item['nodes']]
-        absent = [item['node'] for item in self.permissions.get('BASE_SELECT', []) if item.get('check') == index]
-        replace = [*selectors, *forced, *absent]
-        # Replacement permissions bind slots. Adding one replacement never
-        # authorizes changing another selected node or its order.
-        if replace:
-            if len(a) != len(b):
-                return False
-            for before, after in zip(a, b):
-                if same(before, after):
-                    continue
-                if before not in replace or before.split('::')[0] != after.split('::')[0]:
-                    return False
-                source = self.base_sources.get(after.split('::')[0])
-                if source is None or test_function_source(source, after) is None:
-                    return False
-            return True
-        if any(item.get('check') == index for item in self.permissions.get('NODE_DEDUP', [])) and same(list(dict.fromkeys(a)), b):
-            return True
-        frozen = [item['node'] for item in self.permissions.get('FROZEN', [])]
-        if old['kind'] in {'regression', 'behavior-preserving'} and b and deletion(a, b, frozen):
-            return True
-        if old['kind'] == 'demonstrating' and self.legacy.uncovered:
-            return insertion(a, b, list(self.legacy.uncovered))
-        return False
-
-    def proof(self, index, before, after):
-        if not isinstance(after, dict):
-            return False
-        missing = self.legacy.missing_proof.get(index, set())
-        subjects = self.legacy.missing_subjects.get(index, set())
-        red = [item for item in self.permissions.get('RED_FILL', []) if item.get('check') == index]
-        for key in before.keys() | after.keys():
-            if key in before and key in after and same(before[key], after[key]):
-                continue
-            if key == 'subjects' and subjects:
-                old = before.get(key, [])
-                additions = [unit for unit in after.get(key, []) if unit not in old]
-                if (not same(after.get(key, [])[:len(old)], old)
-                        or any(unit.split('::')[0] not in self.draft['files'] for unit in additions)
-                        or any(not any(subject_covers(unit, required) for required in subjects) for unit in additions)):
-                    return False
-            elif key in {'subjects', 'observer_support'} and any(item.get('check') == index for item in self.permissions.get('PROOF_DEDUP', [])) and same(list(dict.fromkeys(before.get(key, []))), after.get(key)):
-                continue
-            elif key == 'red_message' and red and not before.get(key, '').strip():
-                # An exact source assertion is a fact. An arbitrary plausible
-                # failure invented by the correction is not one.
-                supported = {item['obligation']['quote'] for item in red if 'quote' in item.get('obligation', {})}
-                if after.get(key) not in supported:
-                    return False
-            elif key in missing and key not in before:
-                if key == 'red_message':
-                    supported = {goal['proof_obligation']['quote'] for goal in self.inputs['ingest']['goals']
-                                 if 'proof_obligation' in goal}
-                    if after.get(key) not in supported:
-                        return False
-                elif after.get(key) != []:
-                    return False
-            else:
-                return False
-        return True
-
-    def failure(self, paths):
-        return [named('guard.fields_changed', 'Correction changes declarations outside the named objections: '
-                      + ', '.join(paths), {'paths': paths})] if paths else []
 
 
 def terminal(origin, latest, completed, candidate, *, attempted, unavailable, malformed=False):
@@ -566,270 +320,565 @@ def execution_budget_details(execution):
             f"Components: {components}.")
 
 
-COVERAGE_REPAIR = (
-    'Only add the named uncovered goal ids to goal_ids of existing checks. '
-    'Preserve every existing citation and every other declaration. '
-    'Use already-read facts; return cant_meet if no existing check honestly supports the goals.')
+@cache
+def inventory():
+    return json.loads((Path(__file__).parent.parent / 'plan_rules.json').read_text())
+
+
+def unique(values):
+    return list({json.dumps(value, sort_keys=True): value for value in values}.values())
+
+
+def fixed(value):
+    return Allowed('const', value)
+
+
+def object_constraint(original, changes):
+    properties = {key: {'const': value} for key, value in original.items()}
+    properties.update(changes)
+    return {'type': 'object', 'properties': properties, 'required': list(properties), 'additionalProperties': False}
+
+
+def ordered_constraint(before, additions=(), removable=()):
+    additions = [value for value in unique(additions) if not MembershipAllowed('enum', before).accepts(value)]
+    if not additions and not removable:
+        return {'const': before}
+    return {'x-ordered': {'before': before, 'add': additions, 'remove': list(removable)}}
+
+
+def append_constraint(before, additions):
+    return ordered_constraint(before, additions)
+
+
+def edit(facts, pointer, allowed):
+    try:
+        at(facts['draft'], pointer)
+        op = 'replace'
+    except (KeyError, IndexError):
+        op = 'add'
+    return Edit(Name('field', pointer), op, allowed)
+
+
+def cannot_repair(facts):
+    return [CantMeet('No bounded declaration edit is supported by the captured facts; return cant_meet.')]
+
+
+def code(f):
+    keys = f['items'].get('keys', [f['items'].get('field')])
+    return [Edit(Name('field', '/' + key), 'remove', fixed(None)) for key in keys if key in f['draft']] or cannot_repair(f)
+
+
+def evidence_empty(f):
+    return [edit(f, '/evidence_contract', fixed([]))] if 'evidence_contract' not in f['draft'] else cannot_repair(f)
+
+
+def proof_fill(f):
+    index = f['items'].get('check')
+    if type(index) is not int or index >= len(f['draft'].get('checks', [])):
+        return cannot_repair(f)
+    check = f['draft']['checks'][index]
+    proof = check.get('proof', {})
+    if not isinstance(proof, dict):
+        return cannot_repair(f)
+    missing = [key for key in ('subjects', 'observer_support', 'red_message') if key not in proof]
+    quotes = unique(goal['proof_obligation']['quote'] for goal in f['inputs']['ingest']['goals']
+                    if 'proof_obligation' in goal)
+    if 'red_message' in missing and not quotes:
+        return [CantMeet('No ingest proof_obligation quote permits red_message; return cant_meet without inventing an assertion.')]
+    changes = {key: {'enum': quotes} if key == 'red_message' else {'const': []} for key in missing}
+    local = [item for item in f['diagnostics'] if item.items.get('check') == index]
+    if any(inventory()[item.rule]['footprint'] == 'PROOF_DEDUP' for item in local):
+        changes.update({key: {'const': unique(value)} for key, value in proof.items()
+                        if key in {'subjects', 'observer_support'} and unique(value) != value})
+    red = unique(item.items['obligation']['quote'] for item in local
+                 if inventory()[item.rule]['footprint'] == 'RED_FILL' and item.items.get('obligation', {}).get('quote'))
+    if red and not proof.get('red_message', '').strip():
+        changes['red_message'] = {'enum': red}
+    subject_rows = [item for item in f['diagnostics'] if item.items.get('check') == index
+                    and inventory()[item.rule]['footprint'] == 'SUBJECT_ADD']
+    if subject_rows:
+        subject_repair = subjects(f)[0]
+        if isinstance(subject_repair, CantMeet):
+            return [subject_repair]
+        changes['subjects'] = subject_repair.allowed.value
+    if not changes:
+        return cannot_repair(f)
+    return [edit(f, f'/checks/{index}/proof', Allowed('schema', object_constraint(proof, changes)))]
+
+
+def red_fill(f):
+    index = f['items'].get('check')
+    quote = f['items'].get('obligation', {}).get('quote')
+    if type(index) is not int or not quote or f['draft']['checks'][index].get('proof', {}).get('red_message', '').strip():
+        return cannot_repair(f)
+    return [edit(f, f'/checks/{index}/proof/red_message', Allowed('enum', [quote]))]
+
+
+def subjects(f):
+    index = f['items'].get('check')
+    if type(index) is not int:
+        return cannot_repair(f)
+    before = f['draft']['checks'][index].get('proof', {}).get('subjects', [])
+    if any(item.items.get('check') == index and inventory()[item.rule]['footprint'] == 'PROOF_DEDUP'
+           for item in f['diagnostics']):
+        before = unique(before)
+    required = [unit for item in f['diagnostics'] if item.items.get('check') == index
+                and inventory()[item.rule]['footprint'] == 'SUBJECT_ADD'
+                for unit in item.items.get('subjects', item.items.get('obligation', {}).get('subjects', []))]
+    additions = []
+    for unit in required:
+        path, _, symbol = unit.partition('::')
+        if path in f['draft'].get('files', []):
+            additions.extend([unit, path])
+            if symbol:
+                additions.extend(path + '::' + '::'.join(symbol.split('::')[:n]) for n in range(1, len(symbol.split('::'))))
+    if not additions:
+        return cannot_repair(f)
+    constraint = {'type': 'array', 'prefixItems': [{'const': value} for value in before],
+                  'minItems': len(before), 'items': {'enum': unique(additions)}, 'uniqueItems': True}
+    return [edit(f, f'/checks/{index}/proof/subjects', Allowed('schema', constraint))]
+
+
+def selectors(f):
+    index = f['items'].get('check')
+    if type(index) is not int:
+        return cannot_repair(f)
+    check = f['draft']['checks'][index]
+    rejected = f['items'].get('nodes', [f['items'].get('node')])
+    changes = []
+    for slot, node in enumerate(check['node_ids']):
+        if node not in rejected:
+            continue
+        path = node.split('::')[0]
+        source = f.get('base_sources', {}).get(path)
+        choices = []
+        if source is not None:
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                tree = ast.Module(body=[], type_ignores=[])
+            for definition in tree.body:
+                if isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    choices.append(path + '::' + definition.name)
+                elif isinstance(definition, ast.ClassDef):
+                    choices.extend(path + '::' + definition.name + '::' + method.name for method in definition.body
+                                   if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)))
+        if not choices:
+            return cannot_repair(f)
+        changes.append(edit(f, f'/checks/{index}/node_ids/{slot}', Allowed('enum', choices)))
+    return changes or cannot_repair(f)
+
+
+def files(f):
+    before = f['draft'].get('files')
+    if before is None:
+        return cannot_repair(f)
+    source_units = [unit for goal in f['inputs']['ingest']['goals']
+                    for unit in goal.get('proof_obligation', {}).get('subjects', [])]
+    additions = []
+    replacements = {}
+    for diagnostic in f['diagnostics']:
+        operation, item = inventory()[diagnostic.rule]['footprint'], diagnostic.items
+        if operation == 'FILES_FILL' and not before:
+            additions.extend(unit.split('::')[0] for unit in source_units)
+        elif operation == 'PROOF_FILE' and any(subject_covers(item['unit'], unit) or subject_covers(unit, item['unit'])
+                                               for unit in source_units):
+            additions.append(item['path'])
+        elif operation == 'EDIT_FILE' and item['node'] in f.get('base_nodes', ()):
+            additions.append(item['path'])
+        elif operation == 'FILE_PATH':
+            path = item.get('path', '')
+            canonical = str(PurePosixPath(path))
+            if path and not path.startswith(('/', '-')) and '..' not in PurePosixPath(path).parts and '\\' not in path and canonical != path:
+                replacements[path] = canonical
+    canonical = [replacements.get(value, value) for value in before]
+    if not additions and canonical == before:
+        return cannot_repair(f)
+    return [edit(f, '/files', Allowed('schema', append_constraint(canonical, additions)))]
+
+
+def citations(f):
+    goals = f['inputs']['ingest']['goals']
+    operation, item, draft = f['footprint'], f['items'], f['draft']
+    pieces = operation.startswith('PIECE_')
+    field, identity = ('pieces', 'piece') if pieces else ('checks', 'check')
+    values = draft.get(field, [])
+    indexes = range(len(values)) if operation in {'COVERAGE', 'PIECE_COVER'} else [item.get(identity)]
+    missing = sorted(set(range(len(goals))) - {g for value in values for g in value['goal_ids']})
+    coverage = [g for diagnostic in f['diagnostics'] if diagnostic.rule == 'goal.coverage'
+                for g in diagnostic.items['goals']]
+    repairs = []
+    for index in indexes:
+        if type(index) is not int or index >= len(values):
+            continue
+        value = values[index]
+        before = value['goal_ids']
+        local = {inventory()[diagnostic.rule]['footprint'] for diagnostic in f['diagnostics']
+                 if diagnostic.items.get(identity) == index}
+        retained = before
+        if local & {'GOAL_DROP', 'PIECE_DROP'}:
+            retained = [g for g in retained if g in range(len(goals))]
+        if 'GOAL_SANITIZE' in local:
+            retained = unique(g for g in retained if type(g) is int and 0 <= g < len(goals))
+        additions = list(coverage) if not pieces else []
+        if pieces:
+            candidates = missing if any(d.rule == 'split.goal_missing' for d in f['diagnostics']) else []
+            if not before and 'PIECE_GOALS' in local:
+                candidates = range(len(goals))
+            additions = [g for g in candidates if goals[g]['description'] in value['brief']
+                         and all(unit.split('::')[0] in value['files'] for unit in goals[g].get('proof_obligation', {}).get('subjects', []))]
+        elif not before and 'GOAL_ADD' in local:
+            proof = value.get('proof', {})
+            additions.extend(g for g, goal in enumerate(goals) if 'proof_obligation' in goal
+                             and proof.get('red_message') == goal['proof_obligation']['quote']
+                             and all(any(subject_covers(unit, required) for unit in proof.get('subjects', []))
+                                     for required in goal['proof_obligation']['subjects']))
+        if retained != before or additions:
+            repairs.append(edit(f, f'/{field}/{index}/goal_ids', Allowed('schema', append_constraint(retained, additions))))
+    return repairs or cannot_repair(f)
+
+
+def split_reasons(f):
+    completed, inputs = f['completed'], f['inputs']
+    return (["out_of_room"] if inputs.get('must_split') else []) + (
+        ["does_not_fit"] if not completed.get('forecast', {}).get('fits', True) else []) + (
+        ["execution_budget"] if not completed.get('execution', {}).get('fits', True) else [])
+
+
+def reason(f):
+    choices = split_reasons(f)
+    return [edit(f, '/reason', Allowed('enum', choices))] if choices else [
+        CantMeet('No split reason is true in the captured forecast, execution and must_split facts; return cant_meet.')]
+
+
+def lossless_split(f):
+    draft = f['draft']
+    choices = split_reasons(f)
+    if not choices:
+        return cannot_repair(f)
+    paths = draft.get('files', unique(path for piece in draft.get('pieces', []) for path in piece['files']))
+    goal_ids = list(range(len(f['inputs']['ingest']['goals'])))
+    piece = {'type': 'object', 'properties': {
+        'brief': {'type': 'string', 'minLength': 1}, 'goal_ids': {'type': 'array', 'items': {'enum': goal_ids}},
+        'files': {'type': 'array', 'items': {'enum': paths}},
+        'estimated_exploration_turns': {'type': 'integer', 'minimum': 0},
+        'estimated_tool_turns': {'type': 'integer', 'minimum': 0}},
+        'required': ['brief', 'goal_ids', 'files', 'estimated_exploration_turns'], 'additionalProperties': False}
+    requirements = [({'files': [path], 'goal_ids': []}) for path in paths]
+    for check in draft.get('checks', []):
+        required_paths = unique([node.split('::')[0] for node in check['node_ids']] + [
+            unit.split('::')[0] for field in ('subjects', 'observer_support') for unit in check.get('proof', {}).get(field, [])])
+        requirements.append({'files': required_paths, 'goal_ids': check['goal_ids']})
+    requirements.append({'files': [], 'goal_ids': []})
+    bounded_pieces = {'type': 'array', 'minItems': 2, 'items': piece,
+                      'allOf': [{'contains': {'properties': {
+                          field: {'allOf': [{'contains': {'const': value}} for value in values]}
+                          for field, values in required.items() if values}}} for required in requirements]}
+    frozen = {key: value for key, value in draft.items() if key not in {
+        'kind', 'files', 'checks', 'edits_tests', 'no_design_questions', 'lands_on_its_own', 'pieces', 'reason'}}
+    constraint = object_constraint(frozen, {'kind': {'const': 'split'}, 'pieces': bounded_pieces, 'reason': {'enum': choices}})
+    return [Edit(Name('field', ''), 'replace', SplitAllowed('schema', constraint, draft))]
+
+
+def deduplicate(f):
+    index = f['items'].get('check')
+    if type(index) is not int:
+        return cannot_repair(f)
+    check = f['draft']['checks'][index]
+    if f['footprint'] == 'NODE_DEDUP':
+        return [edit(f, f'/checks/{index}/node_ids', fixed(unique(check['node_ids'])))]
+    return proof_fill(f)
+
+
+def drop_edits(f):
+    nodes = unique(node for item in f['diagnostics'] if inventory()[item.rule]['footprint'] == 'EDIT_DROP'
+                   for node in ([item.items['node']] if 'node' in item.items else item.items.get('nodes', [])))
+    covered = {node for check in f['draft'].get('checks', []) if check['kind'] == 'demonstrating' for node in check['node_ids']}
+    if not set(nodes) <= covered:
+        return cannot_repair(f)
+    return [edit(f, '/edits_tests', fixed([node for node in f['draft'].get('edits_tests', []) if node not in nodes]))]
+
+
+def edit_coverage(f):
+    draft = f['draft']
+    nodes = unique(node for item in f['diagnostics'] if inventory()[item.rule]['footprint'] == 'EDIT_COVER'
+                   for node in item.items.get('nodes', []))
+    if not nodes:
+        return cannot_repair(f)
+    # The alternative is a new demonstrating check or dropping an unnecessary
+    # uncovered edit. One bounded root edit expresses that choice without
+    # requiring the model to perform every alternative at once.
+    changes = {}
+    for item in f['diagnostics']:
+        operation = inventory()[item.rule]['footprint']
+        if operation in {'EDIT_COVER', 'SPLIT'}:
+            continue
+        context = {**f, 'items': item.items, 'footprint': operation}
+        for repair in REPAIRS[operation](context):
+            if isinstance(repair, Edit):
+                changes[repair.pointer.value] = False if repair.op == 'remove' else (
+                    repair.allowed.value if repair.allowed.keyword == 'schema' else {repair.allowed.keyword: repair.allowed.value})
+    for index, check in enumerate(draft.get('checks', [])):
+        if check['kind'] == 'demonstrating':
+            pointer = f'/checks/{index}/node_ids'
+            slots = [changes.get(pointer + f'/{slot}', {'const': node}) for slot, node in enumerate(check['node_ids'])]
+            if any(pointer + f'/{slot}' in changes for slot in range(len(slots))):
+                changes[pointer] = {'type': 'array', 'prefixItems': slots, 'minItems': len(slots),
+                                    'maxItems': len(slots) + len(nodes), 'items': {'enum': nodes}, 'uniqueItems': True}
+            else:
+                retained = changes.get(pointer, {}).get('const', check['node_ids'])
+                changes[pointer] = append_constraint(retained, nodes)
+
+    original_checks = draft.get('checks', [])
+    goals = unique(g for check in original_checks for g in check['goal_ids'])
+    new_check = {'type': 'object', 'properties': {
+        'kind': {'const': 'demonstrating'},
+        'node_ids': {'type': 'array', 'items': {'enum': nodes}, 'minItems': 1, 'uniqueItems': True},
+        'goal_ids': {'type': 'array', 'items': {'enum': goals}, 'minItems': 1},
+        'proof': {'enum': unique(check['proof'] for check in original_checks if 'proof' in check)},
+        'forcing': {'enum': unique(check['forcing'] for check in original_checks if 'forcing' in check)}},
+        'required': ['kind', 'node_ids', 'goal_ids'], 'additionalProperties': False}
+    if 'edits_tests' in draft:
+        changes['/edits_tests'] = ordered_constraint(draft['edits_tests'], removable=nodes)
+    allowed = coverage_allowed(draft, changes, new_check, len(original_checks) + len(nodes))
+    return [Edit(Name('field', ''), 'replace', allowed)]
+
+
+def frozen_nodes(f):
+    nodes = {item.items.get('node') for item in f['diagnostics'] if inventory()[item.rule]['footprint'] == 'FROZEN'}
+    repairs = []
+    for index, check in enumerate(f['draft'].get('checks', [])):
+        remaining = [value for value in check['node_ids'] if value not in nodes]
+        if check['kind'] in {'regression', 'behavior-preserving'} and remaining and remaining != check['node_ids']:
+            repairs.append(edit(f, f'/checks/{index}/node_ids', fixed(remaining)))
+    return repairs or cannot_repair(f)
+
+
+def memory(f):
+    draft = f['draft']
+    local = [(inventory()[item.rule]['footprint'], item.items) for item in f['diagnostics']]
+    if f['footprint'] == 'MEMORY_DROP':
+        removed = {value for operation, item in local if operation == 'MEMORY_DROP' for value in item.get('ids', [])}
+        return [edit(f, '/memory_ids', fixed([value for value in draft.get('memory_ids', []) if value not in removed]))]
+    constraint = {'x-memory-flags': {
+        'before': draft.get('memory_flags', []),
+        'drop': unique(value for operation, item in local if operation == 'FLAG_DROP' for value in item.get('ids', [])),
+        'claims': unique(item['flag'] for operation, item in local if operation == 'FLAG_CLAIM'),
+        'passages': {item['id']: item['content'] for item in f['inputs'].get('memories', [])}}}
+    return [edit(f, '/memory_flags', Allowed('schema', constraint))]
+
+
+def sanitize(f):
+    index = f['items'].get('check')
+    if type(index) is not int:
+        return cannot_repair(f)
+    check = f['draft']['checks'][index]
+    if f['footprint'] == 'SYMPTOM_FIELDS':
+        field = 'declared_symptom'
+        result = {key: value for key, value in check.get(field, {}).items() if key in {'node', 'exception', 'phase', 'repeat', 'parallel'}}
+        if 'node' not in result and len(check['node_ids']) == 1:
+            result['node'] = check['node_ids'][0]
+    else:
+        field = 'forcing'
+        result = deepcopy(check.get(field, {}))
+        local = {inventory()[item.rule]['footprint'] for item in f['diagnostics'] if item.items.get('check') == index}
+        if 'FORCING_KEYS' in local:
+            result = {key: value for key, value in result.items() if key in {'symptom', 'environment', 'patches'}}
+        if 'PATCH_MODE' in local:
+            for patch in result.get('patches', []):
+                modes = patch.keys() & {'value', 'returns', 'raises', 'delay_seconds'}
+                if len(modes) == 1:
+                    for key in list(patch):
+                        if key not in {'target', *modes}:
+                            del patch[key]
+    try:
+        if field == 'declared_symptom':
+            validate_symptom(result, check['node_ids'])
+        else:
+            Forcing.parse(result)
+    except HarnessInputError:
+        return cannot_repair(f)
+    return [edit(f, f'/checks/{index}/{field}', fixed(result))]
+
+
+def methods(f):
+    before = f['draft'].get('evidence_contract', [])
+    mutable = {'tool', 'executor', 'runner_features', 'artifacts', 'methods', 'protected_files'}
+    repairs = []
+    for index, requirement in enumerate(before):
+        if requirement != f['items'].get('requirement') or requirement.get('provenance', {}).get('kind') != 'method':
+            continue
+        alternatives = [object_constraint(requirement, {
+            key: {'const': cap[key]} if key in {'tool', 'executor'} else {'type': 'array', 'items': {'enum': cap[key]}}
+            for key in mutable}) for cap in f['inputs'].get('tool_capabilities', [])]
+        if alternatives:
+            repairs.append(edit(f, f'/evidence_contract/{index}', Allowed('schema', {'anyOf': alternatives})))
+    return repairs or cannot_repair(f)
+
+
+REPAIRS = {
+    'CODE': code, 'EVIDENCE_EMPTY': evidence_empty, 'PROOF_FILL': proof_fill, 'RED_FILL': red_fill,
+    'SUBJECT_ADD': subjects, 'EXACT_SELECT': selectors, 'BASE_SELECT': selectors, 'FORCED_SELECT': selectors,
+    'FILES_FILL': files, 'PROOF_FILE': files, 'EDIT_FILE': files, 'FILE_PATH': files,
+    'COVERAGE': citations, 'GOAL_ADD': citations, 'GOAL_DROP': citations, 'GOAL_SANITIZE': citations,
+    'PIECE_GOALS': citations, 'PIECE_DROP': citations, 'PIECE_COVER': citations,
+    'SPLIT_REASON': reason, 'SPLIT': lossless_split, 'PROOF_DEDUP': deduplicate, 'NODE_DEDUP': deduplicate,
+    'EDIT_DROP': drop_edits, 'EDIT_COVER': edit_coverage, 'FROZEN': frozen_nodes,
+    'MEMORY_DROP': memory, 'FLAG_DROP': memory, 'FLAG_CLAIM': memory,
+    'SYMPTOM_FIELDS': sanitize, 'PATCH_MODE': sanitize, 'FORCING_KEYS': sanitize, 'METHOD_REPLACE': methods,
+    **dict.fromkeys(('NONE', 'FILE_DROP', 'PROTECTED', 'TESTS_FILL', 'FORCING_RULE', 'FORCING_RESERVED',
+                     'FORCING_TEXT', 'RECEIPT_SELECT', 'OBSERVER_SELECT', 'EDIT_SELECT'), cannot_repair),
+}
+
+
+def satisfied(reply, repair):
+    if isinstance(repair, CantMeet):
+        return reply.get('kind') == 'cant_meet'
+    try:
+        value = at(reply, repair.pointer.value)
+    except (KeyError, IndexError):
+        return repair.op == 'remove'
+    return repair.op != 'remove' and repair.allowed.accepts(value)
+
+
+def check_row(rule_id, facts):
+    if facts['reply'].get('kind') == 'cant_meet':
+        return
+    for item in facts.get('diagnostics', ()):
+        if item.rule != rule_id:
+            continue
+        context = {**facts, 'items': item.items, 'footprint': inventory()[rule_id]['footprint']}
+        repairs = REPAIRS[context['footprint']](context) if item.items else cannot_repair(context)
+        for repair in repairs:
+            if isinstance(repair, Edit) and not isinstance(repair.allowed, DraftAllowed):
+                repair = replace(repair, allowed=DraftAllowed(repair.allowed.keyword, repair.allowed.value, facts['draft']))
+            if facts['reply'] == facts['draft'] or not satisfied(facts['reply'], repair):
+                pointer = repair.pointer if isinstance(repair, Edit) else Name('field', subject_pointer(context))
+                yield {**context, 'repair': repair, 'subject': pointer,
+                       'bad_value': item.items}
+
+
+def subject_pointer(f):
+    item = f['items']
+    if type(item.get('check')) is int:
+        return f"/checks/{item['check']}"
+    if type(item.get('piece')) is int:
+        return f"/pieces/{item['piece']}"
+    field = item.get('field')
+    return '/' + field.replace('.', '/') if field else '/reason' if f['footprint'] == 'SPLIT_REASON' else ''
+
+
+def allowed(f):
+    repair = f['repair']
+    return repair.allowed if isinstance(repair, Edit) else Allowed('enum', [])
+
+
+def row_names(f):
+    names = [f['subject']]
+    items = f['items']
+    values = [*items.get('nodes', []), *items.get('subjects', []), items.get('node'), items.get('path')]
+    if re.fullmatch(r'/checks/\d+/node_ids/\d+', f['subject'].value):
+        values = [at(f['draft'], f['subject'].value)]
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        path, separator, symbol = value.partition('::')
+        try:
+            name = Name('symbol', path + '::' + symbol.replace('::', '.')) if separator else Name('path', path)
+        except ValueError:
+            continue
+        if name not in names:
+            names.append(name)
+    return tuple(names)
+
+
+def make_row(rule_id):
+    return Rule(rule_id, lambda f: check_row(rule_id, f), row_names, allowed, lambda f: f['repair'])
+
+
+@cache
+def rows():
+    # Register the actual row callbacks. An impossible draft is a terminal
+    # fixture; interface tests additionally register every bounded edit fixture.
+    from tl3_harness.model import named
+    result = []
+    for rule_id in inventory():
+        example = {'reply': {'kind': 'leaf'}, 'draft': {'kind': 'leaf'},
+                   'completed': {}, 'inputs': {'ingest': {'goals': []}},
+                   'diagnostics': [named(rule_id, '', {})]}
+        result.append(register(replace(make_row(rule_id), example=example, witness={'kind': 'cant_meet'}), roles={'planner'}))
+    return tuple(result)
+
+
+def violations(facts):
+    return evaluate(rows(), facts, role='planner')
 
 
 class PlanConsistencyError(ValueError):
-    """A draft's checks disagree with its declarations or exact base selections."""
+    """A complete planner refusal, rendered and guarded by registered rows."""
 
-    def __init__(self, uncovered, missing_forced=(), *, draft=None, selectors=None, missing_proof=None,
-                 missing_subjects=None, missing_goals=None, base_sha=None):
-        self.draft = deepcopy(draft)
-        self.base_sha = base_sha
-        self.uncovered = set(uncovered)
-        self.missing_forced = set(missing_forced)
-        self.selectors = selectors or {}
-        self.missing_proof = missing_proof or {}
-        self.missing_subjects = missing_subjects or {}
-        self.missing_goals = dict(sorted((missing_goals or {}).items()))
-        self.local = bool(self.selectors or self.missing_proof or self.missing_subjects
-                          or self.missing_goals and not (self.uncovered or self.missing_forced))
-        self.node_ids = (*uncovered, *missing_forced,
-                         *(subject for subjects in self.missing_subjects.values() for subject in sorted(subjects)),
-                         *(node for nodes in self.selectors.values() for node in nodes),
-                         *(f"check-{index + 1} proof: {', '.join(sorted(fields))}"
-                           for index, fields in self.missing_proof.items()))
-        self.violations = [
-            f"`{node_id}` is in edits_tests but no demonstrating check names it. "
-            "Name it in a demonstrating check that fails on the base by an assertion."
-            for node_id in uncovered]
-        self.violations.extend(f"Existing check must name a test defined at the base: {node_id}"
-                               for node_id in missing_forced)
-        self.violations.extend(
-            f"Checks must name exact pytest node IDs. Replace `{node}` with the exact test definitions this check needs."
-            for nodes in self.selectors.values() for node in nodes)
-        self.violations.extend(
-            f"check-{index + 1} is missing required proof declarations: {', '.join(sorted(fields))}. "
-            "State the expected assertion message supported by this check. Missing subjects or observer_support "
-            "may only be filled with [] for an inferred partition. Preserve all existing proof values."
-            for index, fields in self.missing_proof.items())
-        self.violations.extend(
-            f"check-{index + 1} source assertion proof must identify its subjects in proof.subjects: "
-            + ', '.join(sorted(subjects))
-            + '. Only add the named subjects or their covering enclosing modules or definitions.'
-            for index, subjects in self.missing_subjects.items())
-        if self.missing_goals:
-            self.violations.append(self.coverage_violation(self.missing_goals))
-        coverage_only = self.missing_goals and not any((self.uncovered, self.missing_forced,
-            self.selectors, self.missing_proof, self.missing_subjects))
-        if coverage_only:
-            super().__init__('\n'.join(self.violations) + '\n' + COVERAGE_REPAIR)
-            self.repair_text = self.bounded_coverage_message(COVERAGE_REPAIR)
-            return
-        if self.local:
-            super().__init__("\n".join(self.violations) +
-                             "\nUse already-read facts. Only replace the named check's selectors or fill its "
-                             "missing proof fields or named subjects. Preserve every other declaration, existing proof value, "
-                             "check, goal, forcing, evidence obligation, file and estimate. "
-                             "Do not invent base failures; return cant_meet if needed.")
-            if self.missing_goals:
-                self.add_coverage_instruction()
-            return
-        super().__init__("\n".join(self.violations) +
-                         "\nReconcile the declaration and checks using already-read facts. "
-                         "Keep the draft's files, goals, check kinds and forcings. Only add missing "
-                         "demonstrating coverage, replace forced non-base selections with base tests, "
-                         "replace non-exact selectors with the exact base tests the check needs, "
-                         "or drop an uncovered unnecessary edit. Do not expand the draft. "
-                         "Drop an edit only if it is unnecessary for the goals. "
-                         "A forced check must name existing base tests and preserve every required goal, "
-                         "including deterministic and mutant proof; do not treat a passing smoke as red. "
-                         "Do not weaken goals or invent base failures; return cant_meet if needed.")
-        if self.missing_goals:
-            self.add_coverage_instruction()
+    rule_role = 'planner'
+    guard_after_check = True
 
-    @staticmethod
-    def coverage_violation(goals):
-        return 'Required goals have no check coverage: ' + '; '.join(
-            f'goal {index}: {description}' for index, description in goals.items())
+    def __init__(self, raw, completed, diagnostics, inputs, *, base_nodes=(), base_sources=None):
+        from tl3_workers.rules import render_all
 
-    def add_coverage_instruction(self):
-        instructions = str(self).split('\n')[-1] + ' ' + COVERAGE_REPAIR
-        self.args = ('\n'.join(self.violations) + '\n' + instructions,)
-        self.repair_text = self.bounded_coverage_message(instructions)
+        self.raw_draft = deepcopy(raw)
+        self.completed_reply = deepcopy(completed)
+        self.objections = tuple(diagnostics)
+        self.inputs = deepcopy(inputs)
+        self.missing_goals = {g: inputs['ingest']['goals'][g]['description']
+                              for item in diagnostics if item.rule == 'goal.coverage' for g in item.items['goals']}
+        self.node_ids = tuple(identity for item in diagnostics for identity in identities(item.items))
+        self.rule_violations = violations({
+            'reply': raw, 'draft': raw, 'completed': completed, 'diagnostics': diagnostics,
+            'inputs': inputs, 'base_nodes': base_nodes, 'base_sources': base_sources or {}})
+        self.repair_text = render_all(self.rule_violations, role='planner')
+        self.unavailable_reason = ('disabled' if not inputs.get('repair_plan_consistency', False) else
+                                   'message_limit' if len(self.repair_text.encode()) > REPAIR_MESSAGE_BYTES else None)
+        self.contract = self
+        super().__init__(self.repair_text)
 
-    def bounded_coverage_message(self, instructions):
-        """Keep ids/instructions; share the remaining UTF-8 bytes equally among descriptions."""
-        prefix = '\n'.join(self.violations[:-1])
-        if prefix:
-            prefix += '\n'
+    def check(self, candidate):
+        from tl3_workers.rules import PLANNER, permits
 
-        def message(goals):
-            return prefix + self.coverage_violation(goals) + '\n' + instructions
-
-        full = message(self.missing_goals)
-        if len(full.encode()) <= REPAIR_MESSAGE_BYTES:
-            return full
-        marker = ' [...]'
-        fixed = message(dict.fromkeys(self.missing_goals, ''))
-        available = REPAIR_MESSAGE_BYTES - len(fixed.encode())
-        if available < 0:
-            return None
-        cap = available // len(self.missing_goals)
-        return message({index: (description if len(description.encode()) <= cap else
-                                description.encode()[:cap - len(marker)].decode(errors='ignore') + marker
-                                if cap >= len(marker) else '')
-                        for index, description in self.missing_goals.items()})
-
-    @classmethod
-    def semantic(cls, raw, completed, diagnostics, inputs, legacy):
-        error = legacy
-        error.raw_draft = deepcopy(raw)
-        error.completed_reply = deepcopy(completed)
-        error.objections = diagnostics
-        error.contract = Correction(raw, diagnostics, inputs, legacy)
-        error.repair_text = (error.bounded_coverage_message('goal.coverage: ' + COVERAGE_REPAIR)
-                             if diagnostics and all(item.rule == 'goal.coverage' for item in diagnostics)
-                             else message(diagnostics))
-        error.unavailable_reason = ('disabled' if not inputs.get('repair_plan_consistency', False)
-                                    else 'message_limit' if error.repair_text is None else None)
-        error.args = (error.repair_text or '\n'.join(str(item) for item in diagnostics),)
-        return error
+        # An honest terminal reply is available after any bounded edit. CantMeet
+        # rows select that same registered terminal predicate in permits.
+        if PLANNER.predicate(candidate):
+            original = self.raw_draft
+            paths = original.get('files', [path for piece in original.get('pieces', []) for path in piece['files']])
+            if set(candidate.get('files', [])) - set(paths):
+                return [named('guard.fields_changed', 'Terminal correction adds files outside the draft footprint.', {'paths': ['/files']})]
+            return []
+        if permits(self.rule_violations, self.raw_draft, candidate, role='planner'):
+            if candidate.get('kind') == 'split' and self.raw_draft.get('kind') == 'leaf':
+                original = self.raw_draft
+                self.manifest = {
+                    'base': self.inputs.get('base_sha'), 'goals': deepcopy(self.inputs['ingest']['goals']),
+                    'checks': deepcopy(original.get('checks', [])), 'original_pieces': [],
+                    'edits_tests': deepcopy(original.get('edits_tests', [])), 'files': original['files'],
+                    'evidence_contract': deepcopy(self.completed_reply.get('evidence_contract', [])),
+                    'forecast': deepcopy(self.completed_reply['forecast']), 'execution': deepcopy(self.completed_reply['execution']),
+                    'parent_estimates': {k: original[k] for k in ('estimated_tool_turns', 'estimated_exploration_turns') if k in original},
+                    'mapping': [{'check': index, 'pieces': [i for i, piece in enumerate(candidate['pieces'])
+                                 if set(check['goal_ids']) <= set(piece['goal_ids']) and
+                                 {node.split('::')[0] for node in check['node_ids']} <= set(piece['files'])]}
+                                for index, check in enumerate(original.get('checks', []))]}
+            return []
+        changed = ['/' + key for key in sorted(self.raw_draft.keys() | candidate.keys())
+                   if json.dumps(self.raw_draft.get(key), sort_keys=True) != json.dumps(candidate.get(key), sort_keys=True)
+                   or (key in self.raw_draft) != (key in candidate)]
+        # An unchanged rejected draft has no scope violation. Its semantic rows
+        # still reject it in the full check and retain their original classes.
+        return ([named('guard.fields_changed', 'Correction changes declarations outside the named objections: '
+                       + ', '.join(changed), {'paths': changed})] if changed else [])
 
     def constrain(self, reply, raw=None):
-        if hasattr(self, 'contract'):
-            candidate = raw if raw is not None else {key: value for key, value in reply.items()
-                if key not in {'forecast', 'execution', 'violations', 'decision_context', 'evidence_errors', 'forcing_rehearsals'}}
-            errors = self.contract.check(candidate)
-            reply['violations'].extend(str(item) for item in errors)
-            return errors
-        self.constrain_draft(reply)
-        if self.missing_goals and reply['violations']:
-            reply['violations'] = list(dict.fromkeys([
-                *self.violations, *reply['violations'], 'Planner coverage correction attempts: 1.']))
-
-    def constrain_draft(self, reply):
-        """Keep the correction within the declarations of the rejected draft."""
-        draft = self.draft
-        errors = []
-        if reply['kind'] not in {'leaf', 'cant_meet'}:
-            reply['violations'].append('Correction must remain a leaf or honestly report cant_meet.')
-            return
-        added = set(reply['files']) - set(draft['files'])
-        if added:
-            errors.append('Correction expands the draft footprint: ' + ', '.join(sorted(added)))
-        if reply['kind'] == 'cant_meet':
-            reply['violations'].extend(errors)
-            return
-        if set(reply['files']) != set(draft['files']) and not added:
-            errors.append('Correction changes the draft footprint.')
-        mutable = {'checks', 'edits_tests', 'forecast', 'execution', 'violations', 'decision_context', 'evidence_errors', 'forcing_rehearsals'}
-        if ({key: value for key, value in reply.items() if key not in mutable}
-                != {key: value for key, value in draft.items() if key not in mutable}):
-            errors.append('Correction changes declarations outside the test consistency error.')
-        if self.missing_goals:
-            for before, after in zip(draft['checks'], reply['checks']):
-                if [goal for goal in after['goal_ids'] if goal not in self.missing_goals] != before['goal_ids']:
-                    errors.append('Correction may only add the named uncovered goal ids and must preserve every existing citation.')
-        if self.local:
-            errors.extend(self.constrain_local(reply))
-            reply['violations'].extend(dict.fromkeys(errors))
-            return
-        before, after = set(draft.get('edits_tests', [])), set(reply.get('edits_tests', []))
-        if after - before or (before - after) - self.uncovered:
-            errors.append('Correction may only drop uncovered edit declarations.')
-        checks = draft['checks']
-        if len(reply['checks']) < len(checks):
-            errors.append('Correction removes a draft check.')
-        uncovered = {function(node) for node in self.uncovered}
-        goals = {goal for check in checks for goal in check['goal_ids']}
-        for index, check in enumerate(reply['checks']):
-            allowed_goals = goals | self.missing_goals.keys() if index < len(checks) else goals
-            if not set(check['goal_ids']) <= allowed_goals:
-                errors.append('Correction introduces a goal outside the draft checks.')
-            if index >= len(checks):
-                if (check['kind'] != 'demonstrating'
-                        or any(function(node) not in uncovered for node in check['node_ids'])):
-                    errors.append('Correction may only add demonstrating checks for uncovered edits.')
-                if ('forcing' in check
-                        and not any(check['forcing'] == original.get('forcing') for original in checks)):
-                    errors.append('Correction adds a forcing absent from the draft.')
-                if ('declared_symptom' in check and not any(
-                        check['declared_symptom'] == original.get('declared_symptom') for original in checks)):
-                    errors.append('Correction adds a declared symptom absent from the draft.')
-                continue
-            original = checks[index]
-            mutable_check = {'node_ids', 'goal_ids'} if self.missing_goals else {'node_ids'}
-            if ({key: value for key, value in check.items() if key not in mutable_check}
-                    != {key: value for key, value in original.items() if key not in mutable_check}):
-                errors.append('Correction changes a draft check kind, goals or forcing.')
-            old_nodes, new_nodes = set(original['node_ids']), set(check['node_ids'])
-            replacing = original['kind'] == 'demonstrating' and 'forcing' in original
-            removable = self.missing_forced if replacing else set()
-            if (old_nodes - new_nodes) - removable:
-                errors.append('Correction removes a required draft test selection.')
-            if not (replacing and old_nodes & self.missing_forced):
-                if any(check['kind'] != 'demonstrating' or function(node) not in uncovered
-                       for node in new_nodes - old_nodes):
-                    errors.append('Correction adds test selections outside the draft consistency error.')
-        reply['violations'].extend(dict.fromkeys(errors))
-
-    def constrain_local(self, reply):
-        """Only named selectors, proof omissions and uncovered goal citations can change."""
-        errors = []
-        draft = self.draft
-        if reply.get('edits_tests') != draft.get('edits_tests'):
-            errors.append('Correction changes edit declarations.')
-        if len(reply['checks']) != len(draft['checks']):
-            errors.append('Correction changes the number of draft checks.')
-        for index, (before, after) in enumerate(zip(draft['checks'], reply['checks'])):
-            mutable = ({'node_ids'} if index in self.selectors else set())
-            if self.missing_goals:
-                mutable.add('goal_ids')
-            if index in self.missing_proof or index in self.missing_subjects:
-                mutable.add('proof')
-                old, new = before.get('proof', {}), after.get('proof', {})
-                subject_omission = index in self.missing_subjects
-                if (any(new.get(key) != value for key, value in old.items()
-                        if key != 'subjects' or not subject_omission)
-                        or any(new.get(key) != [] for key in self.missing_proof.get(index, ())
-                               if key != 'red_message' and (key != 'subjects' or not subject_omission))):
-                    errors.append('Correction changes the declared proof partition or an existing proof value.')
-                if subject_omission:
-                    previous = old.get('subjects', [])
-                    subjects = new.get('subjects', [])
-                    if ([subject for subject in subjects if subject in previous] != previous
-                            or any(not any(subject_covers(subject, missing)
-                                           for missing in self.missing_subjects[index])
-                                   for subject in subjects if subject not in previous)):
-                        errors.append('Correction may only add the named missing proof subjects or their enclosing definitions.')
-            if ({key: value for key, value in before.items() if key not in mutable}
-                    != {key: value for key, value in after.items() if key not in mutable}):
-                errors.append('Correction changes declarations outside the missing fields or selectors.')
-            if index in self.selectors:
-                for node in after['node_ids']:
-                    try:
-                        Check('planned', Kind(after['kind']), (node,))
-                    except HarnessInputError:
-                        errors.append(f'Corrected check must name an exact pytest node ID: {node}')
-                        continue
-                    oversized, exists = base_definition(node, self.base_sha)
-                    if oversized or not exists:
-                        errors.append(f'Corrected check must name a test defined at the base: {node}')
+        candidate = raw if raw is not None else {key: value for key, value in reply.items()
+            if key not in ROLE.code_only_fields}
+        errors = self.check(candidate)
+        reply['violations'].extend(str(item) for item in errors)
         return errors
-
-
-def coverage_stop(error):
-    """Retain complete coverage evidence when the existing single correction ends."""
-    errors = error.errors if isinstance(error, InvalidReply) else (error,)
-    if any(isinstance(item, Unrepairable) for item in errors):
-        return None
-    coverage = [item for item in errors if isinstance(item, PlanConsistencyError) and item.missing_goals]
-    if not coverage:
-        return None
-    reply = deepcopy(coverage[-1].completed_reply)
-    diagnostics = [violation for item in errors if isinstance(item, PlanConsistencyError)
-                   for violation in item.violations]
-    if not isinstance(error, InvalidReply):
-        diagnostics.append('Planner coverage correction unavailable: the existing input allowance has no room for a correction turn.')
-    if isinstance(error, InvalidReply) and not isinstance(errors[-1], PlanConsistencyError):
-        diagnostics.append('Planner coverage correction failed reply validation.')
-    reply['violations'] = list(dict.fromkeys([
-        *diagnostics, *reply['violations'], f'Planner coverage correction attempts: {len(errors) - 1}.']))
-    return reply
 
 
 def proof_omissions(reply):
@@ -891,7 +940,6 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                   if reply.pop("execution", None) is not None else [])
     violations[:0] = early
     uncovered = []
-    missing_forced = []
     missing_forced_checks = {}
     selectors = {}
     selector_errors = set()
@@ -941,7 +989,7 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                 if check["kind"] != "demonstrating":
                     violations.append(named('check.forcing_kind', "Only a demonstrating check can carry a forcing.", dict(check=index, kind=check["kind"], forcing=check["forcing"])))
                 try:
-                    forcings[index] = Forcing.parse(check["forcing"])
+                    forcings[index] = Forcing.parse(check["forcing"], check_index=index, role='planner')
                 except HarnessInputError as error:
                     cause = contextual(error, check=index, declaration=check["forcing"])
                     violations.append(named(cause.rule, f"Invalid forcing: {error}", cause.items))
@@ -966,7 +1014,6 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                         violations.append(named('check.base_file_large', f"Existing check's test file is over the {HARD_CAP_BYTES}-byte limit: {path}", dict(check=index, node=node_id, path=path, bytes=getattr(definition, "size", None), limit=HARD_CAP_BYTES)))
                     elif not exists:
                         if check["kind"] == "demonstrating" and "forcing" in check:
-                            missing_forced.append(node_id)
                             missing_forced_checks.setdefault(index, []).append(node_id)
                         else:
                             guidance = (' A new assertion observer needs a demonstrating check; adding it only '
@@ -987,7 +1034,7 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
             text = str(error).replace(f'check-{error.items["check"] + 1} ', f'check-{items["check"] + 1} ', 1) if error.rule == 'proof.red_missing' else str(error)
             violations.append(named(error.rule, text, items))
         missing_subjects = {applicable[index][0]: subjects for index, subjects in omissions.items()}
-        edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply, inputs.get('base_sha'))
+        edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply, inputs.get('base_sha'), observed=observed_base)
         violations.extend(edit_errors)
         planned_checks = []
         for i, check in enumerate(reply['checks']):
@@ -1100,17 +1147,19 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
         if rejected is not None:
             failed_work = True
             violations.append(named(rejected.get('rule', 'rehearsal.missing_receipt'), rejected['message'], {'receipt': rejected}))
-    mismatch = PlanConsistencyError(uncovered, missing_forced, draft=raw_draft,
-                                    selectors=selectors, missing_proof=missing_proof,
-                                    missing_subjects=missing_subjects, missing_goals=missing_goals,
-                                    base_sha=inputs.get('base_sha'))
-    legacy_codes = ([('edit.uncovered', {'nodes': [node]}) for node in uncovered]
-                    + [('forced.base_missing', {'check': i, 'nodes': nodes}) for i, nodes in missing_forced_checks.items() for _ in nodes]
-                    + [('check.selector_inexact', {'check': i, 'nodes': nodes}) for i, nodes in selectors.items() for _ in nodes]
-                    + [('proof.omitted', {'check': i, 'fields': sorted(fields)}) for i, fields in missing_proof.items()]
-                    + [('proof.subject_missing', {'check': i, 'subjects': sorted(subjects)}) for i, subjects in missing_subjects.items()]
-                    + ([('goal.coverage', {'goals': sorted(missing_goals), 'descriptions': missing_goals})] if missing_goals else []))
-    violations.extend(named(code, text, items) for text, (code, items) in zip(mismatch.violations, legacy_codes))
+    consistency_facts = (
+        [('edit.uncovered', {'nodes': [node]}) for node in uncovered]
+        + [('forced.base_missing', {'check': i, 'nodes': nodes}) for i, nodes in missing_forced_checks.items()]
+        + [('check.selector_inexact', {'check': i, 'nodes': nodes}) for i, nodes in selectors.items()]
+        + [('proof.omitted', {'check': i, 'fields': sorted(fields)}) for i, fields in missing_proof.items()]
+        + [('proof.subject_missing', {'check': i, 'subjects': sorted(subjects)}) for i, subjects in missing_subjects.items()]
+        + ([('goal.coverage', {'goals': sorted(missing_goals), 'descriptions': missing_goals})] if missing_goals else []))
+    for rule_id, items in consistency_facts:
+        text = rule_id + ': ' + '; '.join(identities(items))
+        if rule_id == 'goal.coverage':
+            text = 'Required goals have no check coverage: ' + '; '.join(
+                f'goal {goal}: {description}' for goal, description in items['descriptions'].items())
+        violations.append(named(rule_id, text, items))
     if reply['kind'] == 'leaf':
         valid = [check for check in reply['checks'] if valid_forcing(check)]
         if rehearsals is not None:
@@ -1130,9 +1179,8 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
     if violations:
         # Record before deduplicating human text; identical messages can name
         # different checks, pieces or fields.
-        mismatch.base_nodes = base_nodes
-        mismatch.base_sources = base_sources
-        repair_error = PlanConsistencyError.semantic(raw_draft, reply, violations, inputs, mismatch)
+        repair_error = PlanConsistencyError(raw_draft, reply, violations, inputs,
+                                            base_nodes=base_nodes, base_sources=base_sources)
         if failed_work:
             repair_error.unavailable_reason = 'failed_work'
         if missing_goals:
@@ -1222,7 +1270,7 @@ def function(node_id):
     return node_id.split("[", 1)[0]
 
 
-def edit_violations(goals, reply, base_sha=None):
+def edit_violations(goals, reply, base_sha=None, *, observed=None):
     """Regression and behavior-preserving checks run tests exactly as the base wrote them,
     so a test the change edits can only be shown by a demonstrating check (#438).
     Return substantive violations separately from uncovered edit declarations."""
@@ -1249,7 +1297,7 @@ def edit_violations(goals, reply, base_sha=None):
         path = node_id.split("::")[0]
         if path not in reply["files"]:
             violations.append(named('edit.file_missing', f"A test the change edits must be in a declared file: `{path}`.", dict(node=node_id, path=path)))
-        definition = base_definition(node_id, base_sha)
+        definition = observed(node_id) if observed is not None else base_definition(node_id, base_sha)
         oversized, exists = definition
         if oversized:
             violations.append(named('edit.file_large', f"edits_tests names a test in a file over the {HARD_CAP_BYTES}-byte limit: {path}", dict(node=node_id, path=path, bytes=getattr(definition, "size", None), limit=HARD_CAP_BYTES)))
@@ -1277,7 +1325,89 @@ def edit_violations(goals, reply, base_sha=None):
     return violations, uncovered
 
 
+class PlannerContract:
+    """The planner's one model-loop contract hook; owns #832 provenance."""
+
+    def __init__(self, inputs, worktree=None):
+        self.inputs, self.worktree = inputs, worktree
+        self.provenance = None
+        self.origin = self.latest = self.completed = self.candidate = None
+        self.calls = 0
+        self.origin_call = None
+
+    def check(self, reply, *, plan_errors=None):
+        from tl3_workers.contracts import validate
+        validate('planner-reply', planner_schema_reply(reply))
+        check_reply(self.inputs, reply, rehearsals=getattr(self.worktree, 'forcing_rehearsals', None),
+                    plan_errors=plan_errors)
+        return reply
+
+    def run(self, control, history, ask, repair, check):
+        from jsonschema import ValidationError
+        from tl3_workers.contracts import read_reply
+
+        ledger = getattr(self.worktree, 'forcing_rehearsals', None)
+
+        def checked(text):
+            self.calls += 1
+            if ledger is not None:
+                ledger.raise_infrastructure()
+                if ledger.failure:
+                    return refused(ledger.failure)
+            captured = []
+            try:
+                self.candidate = read_reply(text)
+                result = check(deepcopy(self.candidate), plan_errors=captured)
+            except Unrepairable:
+                raise
+            except (ValueError, ValidationError) as error:
+                if ledger is not None:
+                    rejected = next((item for item in reversed(ledger.candidates) if item['status'] == 'refused'), None)
+                    if rejected is not None:
+                        return refused(rejected)
+                if isinstance(error, PlanConsistencyError):
+                    capture(error)
+                    self.completed = error.completed_reply
+                raise
+            if captured:
+                capture(captured[-1])
+            else:
+                self.latest = None
+            self.completed = result
+            return result
+
+        def capture(error):
+            self.latest = error
+            if self.origin is None:
+                self.origin, self.origin_call = error, self.calls
+
+        def refused(failure):
+            self.candidate = {'kind': 'cant_meet', 'files': [], 'evidence_contract': [], 'report': failure['message']}
+            captured = []
+            self.completed = check(deepcopy(self.candidate), plan_errors=captured)
+            capture(captured[-1])
+            return self.completed
+
+        failed = None
+        try:
+            reply = repair(control, history, ask, checked)
+        except (PlanConsistencyError, InvalidReply) as error:
+            if self.origin is None:
+                raise
+            failed, reply = error, self.completed
+        if self.origin is not None:
+            attempted = self.origin_call == 1 and control.repair_attempts == 1
+            malformed = failed is not None and isinstance(failed, InvalidReply) and not isinstance(failed.errors[-1], PlanConsistencyError)
+            guards = self.origin.check(self.candidate) if attempted and not malformed else []
+            if self.latest is not None or guards or malformed or reply['kind'] in {'cant_meet', 'split'}:
+                unavailable = self.origin.unavailable_reason or control.repair_unavailable or 'format_allowance_consumed'
+                reply, self.provenance = terminal(self.origin, self.latest, reply, self.candidate,
+                    attempted=attempted, unavailable=unavailable, malformed=malformed)
+        return reply
+
+
 ROLE = Role(
+    reply_contract=PlannerContract,
     name="planner",
     prompt="planner.md",
     input_schema="planner-input",

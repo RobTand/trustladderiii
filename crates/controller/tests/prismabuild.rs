@@ -422,6 +422,7 @@ fn staged_request_carries_the_repository_protected_paths() {
     let delivery = run(root.path(), false);
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.github.repos[0].protected_paths = vec!["release/**".into()];
+    config.github.repos[0].generated_files = vec!["generated/**".into()];
     config.planning.protected_paths = vec!["GLOBAL.md".into()];
     let mut adapter = fixture(root.path(), "done")
         .with_repositories(&config.github.repos)
@@ -434,6 +435,11 @@ fn staged_request_carries_the_repository_protected_paths() {
         .collect();
     let request: serde_json::Value =
         serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
+    assert_eq!(request["footprint"], serde_json::json!(delivery.paths));
+    assert_eq!(
+        request["generated_paths"],
+        serde_json::json!(["generated/**"])
+    );
     let protected: BTreeSet<_> = request["protected_paths"]
         .as_array()
         .expect("the staged request names protected paths")
@@ -3420,6 +3426,14 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--proof-feedback") {
+        startup_ownership::with_database(|database| {
+            proof_rows_survive_check_observation(&database.create("pb_proof_feedback"));
+        });
+        println!("test proof_rows_survive_check_observation ... ok");
+        println!("1 proof feedback scenarios passed; no skips");
+        return;
+    }
     if args
         .get(1)
         .is_some_and(|arg| arg == "--failed-retained-results")
@@ -4013,6 +4027,9 @@ fn main() {
                 oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
             },
         ),
+        ("proof_rows_survive_check_observation", |database| {
+            proof_rows_survive_check_observation(&database.create("pb_proof_feedback"));
+        }),
         ("stored_aliases_do_not_abort_retirement", |database| {
             stored_aliases_do_not_abort_retirement(&database.create("pb_stored_aliases"));
         }),
@@ -4099,7 +4116,7 @@ fn main() {
     );
     assert_eq!(
         names.len(),
-        124,
+        125,
         "preserve every independent row and all stateful scenarios"
     );
     let weights = scenario_shard::weights_ms(
@@ -4664,6 +4681,98 @@ fn result_budget_rejects_repeated_checks() {
         "result budget must complete a plan failure before publication"
     );
     assert!(adapter.action_key(&delivery).unwrap().is_none());
+}
+
+fn proof_rows_survive_check_observation(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let fakes = root.path().join("fakes");
+    let message = format!(
+        "proof.support.declarations: {}\nproof.support.missing: Change \"tests/support.py\" to declare the observer support.",
+        "allowed observer support; ".repeat(60)
+    );
+    assert!(message.chars().count() > 1000);
+    let expected = message.clone();
+    let mut registry = adapters::simulation(&fakes).unwrap();
+    registry.register(
+        Upstream::PrismaBuild,
+        support::workers::Workers::new(
+            None,
+            adapters::prismabuild::Fake::new(&fakes),
+            vec![],
+            move |delivery, completion: &mut Completion| {
+                if matches!(
+                    delivery.output,
+                    Out::Effect {
+                        kind: EffectKind::SubmitChecks,
+                        ..
+                    }
+                ) {
+                    let sha = delivery.head_sha.clone().unwrap();
+                    completion.observations = vec![Observation::Checks {
+                        node: delivery.node(),
+                        generation: delivery.generation,
+                        base_sha: sha.clone(),
+                        sha,
+                        action_key: "a".repeat(64),
+                        changed_paths: vec![],
+                        report: true,
+                        pass: false,
+                        results: vec![],
+                        failed_tests: vec![tl3_controller::findings::FailedTest {
+                            test: "tests/test_value.py::test_value".into(),
+                            message: message.clone(),
+                        }],
+                    }];
+                }
+            },
+        ),
+    );
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        registry,
+        Bootstrap {
+            operations: None,
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+            fail_fast: false,
+        },
+    )
+    .unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "proof-feedback".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "Keep complete proof rows".into(),
+            actor: 1,
+            label: "tl3".into(),
+            labels: Vec::new(),
+        })
+        .unwrap();
+    let mut store = tl3_store::Store::open(settings).unwrap();
+    for _ in 0..100 {
+        assert!(
+            controller.drive_once().unwrap(),
+            "checks must reach feedback"
+        );
+        if let Some(findings) = store.worker_document("0", "maker_findings").unwrap() {
+            let finding = &findings[0];
+            assert_eq!(
+                finding["failed_tests"][0]["message"], expected,
+                "the observation path must preserve the complete proof diagnostic"
+            );
+            assert!(
+                finding["report"].as_str().unwrap().contains(&expected),
+                "the maker report must retain the late rule and its repair"
+            );
+            return;
+        }
+    }
+    panic!("checks produced no maker finding");
 }
 
 fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {

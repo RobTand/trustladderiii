@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from tl3_harness import execution, test_tool
-from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Verdict
+from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Proof, Verdict
 from tl3_harness.trees import git
 
 
@@ -189,6 +189,34 @@ def test_parallel_campaign_preserves_exact_setup_exception_and_forcing(repo):
     assert result.verdict == Verdict.PASS, json.dumps(result.symptom_evidence, indent=2)
     evidence = json.loads(execution.result_json((result,)))[0]['symptom_evidence']
     assert [receipt['outcome'] for receipt in evidence['runs']] == ['symptom', 'passed', 'passed']
+
+
+@pytest.mark.parametrize('parallel', [0, 2])
+def test_source_read_cannot_supply_declared_symptom(repo, parallel):
+    # #933/Q27 option E, found by: live probe. A comment is not a fix.
+    source = 'def value():\n    return 1\n'
+    observer = '''def test_original():
+    import product
+    from pathlib import Path
+    if '# head' not in Path(product.__file__).read_text():
+        raise TimeoutError('bug')
+'''
+    (repo / 'product.py').write_text(source)
+    (repo / 'tests/test_original.py').write_text(observer)
+    base = commit(repo)
+    (repo / 'product.py').write_text(source + '# head\n')
+    head = commit(repo)
+    planned = Check('source symptom', Kind.DEMONSTRATING, (NODE,),
+                    proof=Proof(('product.py',), (), 'bug'),
+                    declared_symptom=declaration(parallel=parallel))
+    result, = execution.run_checks(repo, base, head, (planned,), container=CONTAINER)
+    assert result.verdict == Verdict.FAIL, result
+    runs = result.symptom_evidence['runs']
+    assert [item['outcome'] for item in runs] == ['unrelated', 'unrelated']
+    records = [record for item in runs for record in item['records'] if record['event'] == 'result']
+    assert all(record['outcome'] == 'error' and record['message'].startswith('subject_source_read:')
+               for record in records)
+    assert all(not failure['source'] for record in records for failure in record['failures'])
 
 
 def test_forcing_itself_cannot_raise_the_declared_symptom(repo):

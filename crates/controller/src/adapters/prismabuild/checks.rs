@@ -463,6 +463,8 @@ pub(crate) fn stage(
         plan: run.plan.clone(),
         image: image.to_owned(),
         protected_paths: protected_paths.to_vec(),
+        footprint: delivery.paths.clone(),
+        generated_paths: tests.generated.clone(),
         selected_failures: run.selected_failures.clone(),
         always_tests: tests.always.clone(),
         selected_tests: tests.selected,

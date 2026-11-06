@@ -14,6 +14,8 @@ from planner_fixtures import (
     assert_rule_report,
     cache_tokenizer,  # noqa: F401
     planner_request,  # noqa: F401
+    request156,  # noqa: F401
+    request165,  # noqa: F401
     run_reply,
     run_reply_in_process,
     tool_capable_fake,  # noqa: F401
@@ -110,9 +112,9 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
     result = run_reply_in_process(tmp_path, planner_request, proposal)
     assert_rule_report(result)
-    assert result.events[-1]["reply"]["violations"][:1] == [
-        "Checks must name exact pytest node IDs. Replace `../test.py::test_escape` "
-        "with the exact test definitions this check needs."]
+    diagnostic = result.events[-1]["reply"]["violations"][0]
+    assert diagnostic.startswith("check.selector_inexact:")
+    assert "../test.py::test_escape" in diagnostic
 
 
 @pytest.mark.parametrize("path", [
@@ -246,7 +248,7 @@ def test_t832_q63_proof_message_gets_one_named_repair(planner_request, monkeypat
     history, tools = model.calls[-1]
     assert not tools
     assert 'proof.red_missing' in history[-1].text
-    assert 'check-1' in history[-1].text and 'proof.red_message' in history[-1].text
+    assert '/checks/0/proof/red_message' in history[-1].text
     if change == 'fixed':
         assert event['reply']['violations'] == []
         assert 'plan_check' not in event
@@ -302,38 +304,6 @@ def test_t832_malformed_semantic_correction_retains_original_objections(planner_
     assert len(model.calls) == 2
     assert event['plan_check']['repair'] == {'status': 'attempted'}
     assert any(item['rule'] == 'leaf.not_independent' for item in event['plan_check']['objections'])
-
-
-@pytest.mark.parametrize('target', [2047, 2048, 2049])
-@pytest.mark.parametrize('unicode', [False, True])
-def test_named_repair_message_preserves_all_identity_bytes(target, unicode):
-    from tl3_harness.model import named
-    from tl3_workers.roles.planner import message
-
-    def objection(path):
-        return named('leaf.token_fit', '', {'path': path})
-    fixed = len(message([objection('')]).encode())
-    prefix = 'é界' if unicode else ''
-    identity = prefix + 'x' * (target - fixed - len(prefix.encode()))
-    result = message([objection(identity)])
-    if target == 2049:
-        assert result is None
-    else:
-        assert len(result.encode()) == target
-        assert identity in result
-
-
-def test_named_repair_message_clips_only_optional_descriptions():
-    from tl3_harness.model import named
-    from tl3_workers.roles.planner import message
-
-    objection = named('goal.coverage', 'full safe diagnostic', {
-        'goals': [7, 9], 'descriptions': {7: 'é' * 3000, 9: '界' * 3000}})
-    result = message([objection])
-    assert len(result.encode()) <= 2048
-    assert 'goal 7:' in result and 'goal 9:' in result
-    assert abs(result.count('é') * 2 - result.count('界') * 3) <= 2
-    assert ' [...]' in result
 
 
 @pytest.mark.parametrize('kind', ['regression', 'behavior-preserving'])
@@ -451,193 +421,488 @@ def _fixture_1574():
 
 
 def test_1574_repair_line_asks_only_for_the_empty_contract_the_guard_accepts():
-    """tessera #1574: the one EVIDENCE_EMPTY repair line also told the model to write requirements."""
     from tl3_workers.evidence import preflight
     from tl3_workers.roles import planner
+    from tl3_workers.rules import permits
 
     fixture = _fixture_1574()
     draft = copy.deepcopy(fixture['draft'])
     objections = []
     preflight(fixture['inputs'], draft, planning=True, objections=objections)
-    assert [(item.rule, item.items) for item in objections] == [
-        (item['rule'], item['items']) for item in fixture['objections']]
-    line = planner.message(objections)
-    assert line.split('\n')[1].startswith('evidence.contract_missing field="evidence_contract": ')
-    assert 'evidence_contract: []' in line
-    assert 'Return evidence_contract with source requirements' not in line, line
-    assert 'Code supplies the inherited source requirements' in line, line
-    # Production assembly: the same line reaches the model as the semantic repair text.
-    error = planner.PlanConsistencyError.semantic(fixture['draft'], draft, objections, fixture['inputs'],
-                                                  planner.PlanConsistencyError([], draft=fixture['draft']))
-    assert error.repair_text == line
-    # The guard is unchanged: the answer the line asks for passes; the live correction does not.
-    contract = error.contract
-    assert contract.check({**fixture['draft'], 'evidence_contract': []}) == []
-    rejected = contract.check({**fixture['draft'], 'evidence_contract': fixture['correction_evidence_contract']})
-    assert [(item.rule, item.items) for item in rejected] == [('guard.fields_changed', {'paths': ['/evidence_contract']})]
+    error = planner.PlanConsistencyError(fixture['draft'], draft, objections, fixture['inputs'])
+    assert '/evidence_contract' in error.repair_text
+    assert 'const []' in error.repair_text
+    assert permits(error.rule_violations, fixture['draft'], {**fixture['draft'], 'evidence_contract': []}, role='planner')
+    assert error.check({**fixture['draft'], 'evidence_contract': fixture['correction_evidence_contract']})
 
 
-# Per footprint: words naming the one edit its Correction guard accepts. A repair
-# line must carry them. Footprints with no CONSTRAINTS entry have no guard
-# permission, so their only accepted reply is cant_meet.
-REPAIR_INTENT = {
-    'NONE': 'return cant_meet', 'EDIT_SELECT': 'return cant_meet', 'FILE_DROP': 'return cant_meet',
-    'FORCING_RESERVED': 'return cant_meet', 'FORCING_RULE': 'return cant_meet', 'FORCING_TEXT': 'return cant_meet',
-    'OBSERVER_SELECT': 'return cant_meet', 'PROTECTED': 'return cant_meet', 'RECEIPT_SELECT': 'return cant_meet',
-    'TESTS_FILL': 'return cant_meet',
-    'CODE': 'Delete only named code-owned keys', 'COVERAGE': 'Only add this citation to existing checks',
-    'RED_FILL': 'Fill only blank proof.red_message', 'PROOF_FILL': 'Fill only absent proof keys',
-    'SUBJECT_ADD': 'Append only named missing subjects', 'EXACT_SELECT': 'Replace only named inexact selectors',
-    'BASE_SELECT': 'Replace only named absent selectors with exact base controls',
-    'FORCED_SELECT': 'Replace only named absent forced selectors', 'EDIT_COVER': 'Cover only those edits',
-    'SPLIT': 'Preserve every original obligation', 'FILES_FILL': 'Fill empty files only',
-    'GOAL_ADD': 'Fill empty citations only', 'GOAL_DROP': 'Remove only named unknown goal ids',
-    'GOAL_SANITIZE': 'Remove only invalid or duplicate citations', 'PIECE_GOALS': 'Fill only empty citations',
-    'PIECE_DROP': 'Remove only unknown piece goal ids', 'PIECE_COVER': 'Add only missing goal ids',
-    'PROOF_FILE': 'Add only the named source-required path', 'EDIT_FILE': 'Add only the named file',
-    'EDIT_DROP': 'Drop only the named absent-base edit', 'FROZEN': 'Remove only named edited nodes from frozen checks',
-    'EVIDENCE_EMPTY': 'evidence_contract: []', 'METHOD_REPLACE': 'Replace only named method choices',
-    'MEMORY_DROP': 'Remove only named unsupplied memory ids', 'FLAG_DROP': 'Remove only named uncited flags',
-    'FLAG_CLAIM': 'Drop the named flag or replace only its claim', 'SYMPTOM_FIELDS': 'Remove extra symptom keys',
-    'PATCH_MODE': 'Remove extra patch keys', 'FORCING_KEYS': 'Remove only extra top-level forcing keys',
-    'PROOF_DEDUP': 'Remove only identical repeated proof units', 'NODE_DEDUP': 'Remove only duplicate selectors',
-    'FILE_PATH': 'unique confined relative path', 'SPLIT_REASON': 'Replace only the invalid split reason',
-}
-ANY = None
-# Every edit a diagnostic asks for, and the footprints whose guard accepts it.
-# A new asking diagnostic fails the table test until it is classified here.
-DIAGNOSTIC_ASKS = {
-    'Return evidence_contract with source requirements': set(),  # code owns inherited requirements
-    'Leave it out': set(),  # no leaf guard removes a declared file
-    'reduce the selected tests': set(),  # SPLIT keeps every check; only FROZEN drops named edited nodes
-    'Use a relative worktree path': {'FILE_PATH'},
-    'Replace `': {'EXACT_SELECT'},
-    'Name it in a demonstrating check': {'EDIT_COVER'},
-    'Name it only in a demonstrating check': {'FROZEN'},
-    'Preserve every obligation in bounded pieces': {'SPLIT'},
-    'Propose smaller pieces': {'SPLIT'},
-    'omit execution from the model reply': {'CODE'},
-    'State the expected assertion message': {'PROOF_FILL'},
-    'Only add the named subjects': {'SUBJECT_ADD'},
-    'Preserve': ANY,  # freezing is accepted under every footprint
-    # Not a plan edit: only the operator can change request scope, so cant_meet
-    # (the NONE line) is the planner's one honest reply.
-    'Change the request scope or repository convention': {'NONE'},
-}
-ASKING = r'(?:[Oo]nly )?(?:Return|Add|Leave|Replace|Remove|Drop|Name|State|Propose|Preserve|Change|Fill|Delete|Use|[Rr]educe|[Oo]mit|Keep|List|Append|Cover|Resume)\b'
-
-
-def _unpack_corpus(value):
-    from tl3_harness.model import named
-    if isinstance(value, list):
-        return [_unpack_corpus(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    if '$diagnostic' in value:
-        text, rule, items = value['$diagnostic']
-        return named(rule, text, _unpack_corpus(items))
-    if '$dict' in value:
-        return {_unpack_corpus(key): _unpack_corpus(item) for key, item in value['$dict']}
-    if '$set' in value or '$tuple' in value:
-        return [_unpack_corpus(item) for item in value.get('$set', value.get('$tuple'))]
-    if '$bytes_utf8' in value:
-        return value['$bytes_utf8']
-    return {key: _unpack_corpus(item) for key, item in value.items()}
-
-
-def _emitted_diagnostics(planner_request, monkeypatch):
-    """Real diagnostics: the P2a corpus records, plus emitters it lacks."""
-    import gzip
-    import json
-    from tl3_harness import Check, Kind
-    from tl3_harness.limits import validate_check_plan, validate_plan_size
-    from tl3_harness.model import Diagnostic, named
-    from tl3_workers import forecast
-    from tl3_workers.evidence import EvidenceContractError
+@pytest.mark.parametrize('case', ['proof.omitted', 'split.forecast_fits', 'check.tests_empty'])
+def test_a1_empty_allowed_set_is_an_explicit_terminal_row(planner_request, monkeypatch, case):
+    """PQ #2648 twice, and the TESTS_FILL fallback, must not promise impossible edits."""
     from tl3_workers.roles import planner
+    from tl3_workers.rules import CantMeet, permits
 
-    found = []
-
-    def walk(value):
-        if isinstance(value, dict):
-            if '$diagnostic' in value:
-                found.append(_unpack_corpus(value))
-            for item in value.values():
-                walk(item)
-        elif isinstance(value, list):
-            for item in value:
-                walk(item)
-    walk(json.loads(gzip.decompress(Path(__file__).with_name('planner-vectors.json.gz').read_bytes())))
-    found.append(EvidenceContractError().args[0])
-    for limit in (lambda: validate_plan_size(('tests/test_a.py::' + 'a' * 4_200_000,)),
-                  lambda: validate_check_plan((Check('check-1', Kind.REGRESSION,
-                                                     tuple(f'tests/test_a.py::test_{i}' for i in range(700))),))):
-        with pytest.raises(ValueError) as error:
-            limit()
-        found.append(planner.contextual(error.value, checks=[]))
-    # Every forecaster problem reaches the plan through check_reply's own wrapper.
-    problems = [forecast.DeclaredFileError('greeting.py', 'unusable')] + [
-        forecast.DeclaredFileError('greeting.py', named(rule, rule, {'path': 'greeting.py'}), 7)
-        for rule in ('path.not_regular', 'path.binary', 'path.encoding', 'path.hard_cap', 'path.noncanonical')]
-
-    # Budget arithmetic is Rust-owned and out of scope here; fixed facts keep the
-    # wrapper reachable without a checker call, as the P2a recorder does.
-    class Problems:
-        def __init__(self, config):
-            self.problems = list(problems)
-
-        def measure(self, *args):
-            return {'fits': True, 'tokens': 1}
-    monkeypatch.setattr(planner, 'Forecaster', Problems)
-    monkeypatch.setattr(planner, 'execution_forecast',
-                        lambda *args, **kwargs: {'exploration_declared': False, 'fits': True, 'estimated_tool_turns': 1})
     monkeypatch.chdir(planner_request['worktree'])
-    reply = copy.deepcopy(LEAF)
-    planner.check_reply(planner_request['inputs'], reply)
-    found.extend(item for item in reply['violations'] if isinstance(item, Diagnostic) and item.rule.startswith('path.'))
-    by_rule = {}
-    for item in found:
-        if isinstance(item, Diagnostic) and item.rule in planner.rules():
-            by_rule.setdefault(item.rule, {})[json.dumps([str(item), planner.identities(item.items)])] = item
-    return {rule: list(items.values()) for rule, items in by_rule.items()}
+    inputs = planner_request['inputs']
+    inputs['repair_plan_consistency'] = True
+    monkeypatch.setattr(planner.Forecaster, 'measure', lambda *args: {'fits': True, 'tokens': 97674})
+    monkeypatch.setattr(planner, 'execution_forecast', lambda *args, **kwargs: {
+        'fits': True, 'exploration_declared': True, 'estimated_tool_turns': 10,
+        'allowed_tool_turns': 160, 'components': {}})
+    draft = copy.deepcopy(SPLIT if case.startswith('split.') else LEAF)
+    if case == 'proof.omitted':
+        draft['checks'][0].pop('proof')
+    elif case == 'check.tests_empty':
+        draft['checks'][0]['node_ids'] = []
+    with pytest.raises(planner.PlanConsistencyError) as caught:
+        planner.check_reply(inputs, draft)
+    error = caught.value
+    assert 'cant_meet' in error.repair_text
+    assert 'State the expected assertion message' not in error.repair_text
+    assert 'Replace only the invalid split reason' not in error.repair_text
+    rows = getattr(error, 'rule_violations', ())
+    matching = [item for item in rows if item.rule.id == case]
+    assert matching, 'every refusal must be a row, including fallback footprints'
+    assert any(isinstance(item.rule.repair(item.facts), CantMeet) for item in matching)
+    assert permits(rows, error.raw_draft, CANT_MEET, role='planner')
 
 
-def test_every_footprint_repair_line_asks_only_for_what_its_guard_accepts(planner_request, monkeypatch):
-    """#1574 unactionable-feedback guard: one table over every footprint in plan_rules.json."""
-    import re
+def _row_case(rule_id):
     from tl3_harness.model import named
-    from tl3_workers.roles import planner
+    from tl3_workers.roles.planner import inventory
 
-    footprints = {}
-    for rule, entry in planner.rules().items():
-        footprints.setdefault(entry['footprint'], []).append(rule)
-    assert set(REPAIR_INTENT) == set(footprints)
-    samples = _emitted_diagnostics(planner_request, monkeypatch)
-    for rule in ('evidence.contract_missing', 'size.report', 'size.result', 'path.binary', 'path.hard_cap',
-                 'path.noncanonical', 'path.unusable', 'check.selector_inexact', 'edit.uncovered'):
-        assert samples.get(rule), rule
-    failures = []
-    for footprint, members in sorted(footprints.items()):
-        intent = REPAIR_INTENT[footprint]
-        for rule in members:
-            for diagnostic in samples.get(rule, [named(rule, '', {})]):
-                line = planner.message([diagnostic])
-                if line is None:
-                    continue
-                body = line.split('\n', 1)[1]
-                if intent not in body:
-                    failures.append(f'{footprint} {rule}: line lacks the accepted edit {intent!r}: {body}')
-                if 'description' in diagnostic.items or 'descriptions' in diagnostic.items:
-                    continue  # the line quotes a source goal, not a diagnostic
-                constraint = planner.CONSTRAINTS.get(footprint, planner.CONSTRAINTS['NONE'])
-                asked = body.split(constraint, 1)[-1] if rule != 'goal.coverage' else ''
-                for clause in re.split(r'(?<=[.;:])\s+', asked):
-                    if not re.match(ASKING, clause.strip()):
-                        continue
-                    kind = next((ask for ask in DIAGNOSTIC_ASKS if clause.strip().startswith(ask)), None)
-                    if kind is None:
-                        failures.append(f'{footprint} {rule}: unclassified ask {clause!r}')
-                    elif DIAGNOSTIC_ASKS[kind] is not ANY and footprint not in DIAGNOSTIC_ASKS[kind]:
-                        failures.append(f'{footprint} {rule}: line also asks {clause.strip()!r}, '
-                                        f'which the {footprint} guard rejects; it accepts only {intent!r}')
-    assert not failures, '\n'.join(failures)
+    footprint = inventory()[rule_id]['footprint']
+    proof = {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}
+    check = {'kind': 'demonstrating', 'node_ids': ['test.py::test_old'], 'goal_ids': [0], 'proof': proof}
+    draft = {'kind': 'leaf', 'files': ['pkg.py', 'test.py'], 'checks': [check],
+             'evidence_contract': [], 'estimated_exploration_turns': 0}
+    inputs = {'must_split': False, 'ingest': {'goals': [{'description': 'The obligation.',
+        'proof_obligation': {'subjects': ['pkg.py::target'], 'quote': 'expected regression'}}]}}
+    items, witness = {}, None
+    completed = {'forecast': {'fits': True}, 'execution': {'fits': True}}
+    if footprint == 'CODE':
+        draft['execution'] = {}
+        items = {'keys': ['execution']}
+    elif footprint == 'EVIDENCE_EMPTY':
+        del draft['evidence_contract']
+        items, witness = {'field': 'evidence_contract'}, []
+    elif footprint == 'PROOF_FILL':
+        del check['proof']
+        items, witness = {'check': 0}, proof
+    elif footprint == 'RED_FILL':
+        proof['red_message'] = ''
+        items, witness = {'check': 0, 'obligation': {'quote': 'expected regression'}}, 'expected regression'
+    elif footprint == 'SUBJECT_ADD':
+        items, witness = {'check': 0, 'subjects': ['pkg.py::target']}, ['pkg.py::target']
+    elif footprint in {'EXACT_SELECT', 'BASE_SELECT', 'FORCED_SELECT'}:
+        items, witness = {'check': 0, 'nodes': ['test.py::test_old']}, 'test.py::test_new'
+    elif footprint in {'FILES_FILL', 'PROOF_FILE', 'EDIT_FILE', 'FILE_PATH'}:
+        draft['files'] = [] if footprint == 'FILES_FILL' else ['test.py']
+        if footprint == 'FILE_PATH':
+            draft['files'] = ['./pkg.py']
+        items = {'path': './pkg.py' if footprint == 'FILE_PATH' else 'pkg.py',
+                 'unit': 'pkg.py::target', 'node': 'test.py::test_old'}
+        witness = ['pkg.py'] if footprint in {'FILES_FILL', 'FILE_PATH'} else ['test.py', 'pkg.py']
+    elif footprint in {'COVERAGE', 'GOAL_ADD', 'GOAL_DROP', 'GOAL_SANITIZE'}:
+        check['goal_ids'] = [9, 0, 0, True, 0.0] if footprint == 'GOAL_SANITIZE' else [9, 0, 0] if footprint == 'GOAL_DROP' else []
+        items, witness = {'check': 0, 'goals': [0], 'unknown': [9]}, [0, 0] if footprint == 'GOAL_DROP' else [0]
+        proof['subjects'] = ['pkg.py::target']
+    elif footprint in {'PIECE_GOALS', 'PIECE_DROP', 'PIECE_COVER'}:
+        draft = {'kind': 'split', 'reason': 'multiple_repos', 'pieces': [
+            {'brief': 'The obligation.', 'files': ['pkg.py'], 'goal_ids': [9] if footprint == 'PIECE_DROP' else []}]}
+        items, witness = {'piece': 0, 'missing': [0]}, [] if footprint == 'PIECE_DROP' else [0]
+    elif footprint == 'SPLIT_REASON':
+        draft = {'kind': 'split', 'reason': 'does_not_fit', 'pieces': []}
+        inputs['must_split'] = True
+        items, witness = {'reason': 'does_not_fit'}, 'out_of_room'
+    elif footprint == 'SPLIT':
+        inputs['must_split'] = True
+        items = {'must_split': True}
+        witness = {'kind': 'split', 'reason': 'out_of_room', 'evidence_contract': [], 'estimated_exploration_turns': 0,
+                   'pieces': [{'brief': 'The obligation.', 'files': ['pkg.py', 'test.py'], 'goal_ids': [0],
+                               'estimated_exploration_turns': 0},
+                              {'brief': 'Control.', 'files': ['test.py'], 'goal_ids': [0], 'estimated_exploration_turns': 0}]}
+    elif footprint == 'PROOF_DEDUP':
+        proof['subjects'] = ['pkg.py', 'pkg.py']
+        items, witness = {'check': 0}, {**proof, 'subjects': ['pkg.py']}
+    elif footprint == 'NODE_DEDUP':
+        check['node_ids'] *= 2
+        items, witness = {'check': 0}, ['test.py::test_old']
+    elif footprint == 'EDIT_DROP':
+        draft['edits_tests'] = ['test.py::test_old']
+        items, witness = {'node': 'test.py::test_old'}, []
+    elif footprint == 'EDIT_COVER':
+        items, witness = {'nodes': ['test.py::test_new']}, ['test.py::test_old', 'test.py::test_new']
+    elif footprint == 'FROZEN':
+        check['kind'] = 'regression'
+        check['node_ids'].append('test.py::test_control')
+        items, witness = {'node': 'test.py::test_old'}, ['test.py::test_control']
+    elif footprint == 'MEMORY_DROP':
+        draft['memory_ids'] = ['unknown']
+        items, witness = {'ids': ['unknown']}, []
+    elif footprint in {'FLAG_DROP', 'FLAG_CLAIM'}:
+        draft['memory_flags'] = [{'id': 'm', 'claim': 'unsupported'}]
+        items, witness = {'ids': ['m'], 'flag': 0}, []
+    elif footprint == 'SYMPTOM_FIELDS':
+        check['declared_symptom'] = {'exception': 'builtins.ValueError', 'phase': 'call', 'repeat': 1, 'parallel': 0, 'extra': True}
+        items, witness = {'check': 0}, {'exception': 'builtins.ValueError', 'phase': 'call', 'repeat': 1, 'parallel': 0, 'node': 'test.py::test_old'}
+    elif footprint in {'PATCH_MODE', 'FORCING_KEYS'}:
+        check['forcing'] = {'symptom': 'x', 'environment': {}, 'patches': [{'target': 'pkg.VALUE', 'value': 1}]}
+        witness = copy.deepcopy(check['forcing'])
+        if footprint == 'PATCH_MODE':
+            check['forcing']['patches'][0]['extra'] = True
+        else:
+            check['forcing']['extra'] = True
+        items = {'check': 0}
+    elif footprint == 'METHOD_REPLACE':
+        capability = {'tool': 'run_tests', 'executor': 'fleet', 'runner_features': [], 'artifacts': [], 'methods': [], 'protected_files': []}
+        requirement = {**capability, 'tool': 'absent', 'provenance': {'kind': 'method'}}
+        draft['evidence_contract'] = [requirement]
+        inputs['tool_capabilities'] = [capability]
+        items, witness = {'requirement': requirement}, {**requirement, **capability}
+    if footprint == 'EDIT_COVER':
+        witness = copy.deepcopy(draft)
+        witness['checks'][0]['node_ids'].append('test.py::test_new')
+    facts = {'reply': draft, 'draft': copy.deepcopy(draft), 'completed': completed, 'inputs': inputs,
+             'diagnostics': [named(rule_id, '', items)], 'base_nodes': {'test.py::test_old'},
+             'base_sources': {'test.py': 'def test_new(): assert True\n'}}
+    return facts, witness
+
+
+from tl3_workers.roles.planner import inventory as _rule_inventory
+
+
+@pytest.mark.parametrize('rule_id', sorted(_rule_inventory()))
+def test_a1_each_registered_rule_renders_and_enforces_its_repair(rule_id):
+    """PRD #878: every rule and all 43 footprints have an executable interface contract."""
+    from dataclasses import replace
+    from tl3_workers.roles.planner import rows
+    from tl3_workers.rules import CantMeet, Edit, apply_edit, evaluate, permits, register
+
+    row = next(row for row in rows() if row.id == rule_id)
+    facts, witness = _row_case(rule_id)
+    found = evaluate((row,), facts, role='planner')
+    assert found, rule_id
+    terminal_footprints = {'NONE', 'FILE_DROP', 'PROTECTED', 'TESTS_FILL', 'FORCING_RULE',
+                           'FORCING_RESERVED', 'FORCING_TEXT', 'RECEIPT_SELECT', 'OBSERVER_SELECT', 'EDIT_SELECT'}
+    expected = CantMeet if _rule_inventory()[rule_id]['footprint'] in terminal_footprints else Edit
+    assert all(isinstance(item.repair, expected) for item in found), rule_id
+    terminal = any(isinstance(row.repair(item.facts), CantMeet) for item in found)
+    if terminal:
+        witness = copy.deepcopy(CANT_MEET)
+    registered = register(replace(row, example=facts, witness=witness), roles={'planner'})
+    after = copy.deepcopy(facts['reply'])
+    for item in found:
+        rendered = item.render(role='planner')
+        assert row.id in rendered and row.names(item.facts)[0].render() in rendered
+        assert row.allowed(item.facts).render() in rendered
+        repair = row.repair(item.facts)
+        after = witness if terminal else apply_edit(after, repair, witness)
+    assert permits(found, facts['reply'], after, role='planner')
+    assert not evaluate((registered,), {**facts, 'reply': after}, role='planner')
+    if not terminal:
+        changed = {**after, 'unrelated': True}
+        assert not permits(found, facts['reply'], changed, role='planner')
+
+
+def test_a1_reports_all_rows_without_clipping():
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import render_all
+
+    facts = {'reply': {'kind': 'leaf'}, 'draft': {'kind': 'leaf'}, 'completed': {},
+             'inputs': {'ingest': {'goals': []}},
+             'diagnostics': [named('leaf.design_open', '', {'field': 'x' * 2500}),
+                             named('leaf.not_independent', '', {'field': 'lands_on_its_own'})]}
+    rendered = render_all(violations(facts), role='planner')
+    assert 'x' * 2500 in rendered and 'leaf.not_independent' in rendered
+    assert ' [...]' not in rendered
+
+
+def test_839_closed_prerequisite_input_validates(planner_request):
+    from tl3_workers.contracts import validate
+    inputs = copy.deepcopy(planner_request['inputs'])
+    inputs['prerequisite_closures'] = [{'kind': 'issue', 'number': 2763, 'reason': 'not_planned'}]
+    validate('planner-input', inputs)
+    inputs['prerequisite_closures'][0]['number'] = 0
+    from jsonschema import ValidationError
+    with pytest.raises(ValidationError):
+        validate('planner-input', inputs)
+
+
+def test_a1_coverage_citations_can_be_inserted_between_existing_citations():
+    """#880 preserves the previous guard's retained-order insertion permission."""
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('goal.coverage')
+    facts['draft']['checks'][0]['goal_ids'] = [0, 2]
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    facts['diagnostics'] = [named('goal.coverage', '', {'goals': [1]})]
+    found = violations(facts)
+    after = copy.deepcopy(facts['draft'])
+    after['checks'][0]['goal_ids'] = [0, 1, 2]
+    assert permits(found, facts['draft'], after, role='planner')
+    after['checks'][0]['goal_ids'] = [2, 1, 0]
+    assert not permits(found, facts['draft'], after, role='planner')
+
+
+def test_a1_frozen_json_numbers_keep_their_wire_type():
+    """#880 a bounded root edit cannot change frozen integer estimates to floats."""
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import apply_edit, permits
+
+    facts, witness = _row_case('edit.uncovered')
+    facts['draft']['estimated_tool_turns'] = 1
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    witness['estimated_tool_turns'] = 1
+    found = violations(facts)
+    after = apply_edit(facts['draft'], found[0].rule.repair(found[0].facts), witness)
+    assert permits(found, facts['draft'], after, role='planner')
+    after['estimated_tool_turns'] = 1.0
+    assert not permits(found, facts['draft'], after, role='planner')
+
+
+def test_a1_multiple_file_objections_share_the_combined_allowed_set():
+    """#880 independently missing proof files must be repairable in the same turn."""
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('proof.file_missing')
+    facts['inputs']['ingest']['goals'] = [{'proof_obligation': {'subjects': ['first.py', 'second.py']}}]
+    facts['diagnostics'] = [named('proof.file_missing', '', {'unit': path, 'path': path})
+                            for path in ['first.py', 'second.py']]
+    after = copy.deepcopy(facts['draft'])
+    after['files'].extend(['first.py', 'second.py'])
+    assert permits(violations(facts), facts['draft'], after, role='planner')
+
+
+@pytest.mark.parametrize('patch', [{'target': 'pkg.VALUE'}, {'target': 'pkg.VALUE', 'value': 1, 'returns': 2}])
+def test_a1_ambiguous_patch_mode_has_no_bounded_repair(patch):
+    """#880 trimming keys cannot invent which causal forcing mode the author meant."""
+    from tl3_harness import Forcing, HarnessInputError
+    from tl3_harness.model import contextual
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import CantMeet, permits
+
+    facts, _ = _row_case('forcing.patch_mode')
+    forcing = {'symptom': 'x', 'environment': {}, 'patches': [patch]}
+    facts['draft']['checks'][0]['forcing'] = forcing
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    with pytest.raises(HarnessInputError) as caught:
+        Forcing.parse(forcing)
+    facts['diagnostics'] = [contextual(caught.value, check=0)]
+    found = violations(facts)
+    assert found and all(isinstance(item.rule.repair(item.facts), CantMeet) for item in found)
+    assert permits(found, facts['draft'], CANT_MEET, role='planner')
+
+
+def test_a1_unknown_and_missing_citations_share_one_repair():
+    """#880 dropping a bad citation must compose with adding the named missing one."""
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('check.goal_unknown')
+    facts['inputs']['ingest']['goals'].append({'description': 'The second obligation.'})
+    facts['draft']['checks'][0]['goal_ids'] = [9, 0]
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    facts['diagnostics'] = [named('check.goal_unknown', '', {'check': 0, 'unknown': [9]}),
+                            named('goal.coverage', '', {'goals': [1]})]
+    after = copy.deepcopy(facts['draft'])
+    after['checks'][0]['goal_ids'] = [0, 1]
+    assert permits(violations(facts), facts['draft'], after, role='planner')
+
+
+def test_a1_subject_addition_composes_with_proof_deduplication():
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('proof.units_repeat')
+    facts['draft']['checks'][0]['proof']['subjects'] = ['pkg.py::kept', 'pkg.py::kept']
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    facts['diagnostics'] = [named('proof.units_repeat', '', {'check': 0}),
+                            named('proof.subject_missing', '', {'check': 0, 'subjects': ['pkg.py::target']})]
+    after = copy.deepcopy(facts['draft'])
+    after['checks'][0]['proof']['subjects'] = ['pkg.py::kept', 'pkg.py::target']
+    assert permits(violations(facts), facts['draft'], after, role='planner')
+
+
+@pytest.mark.parametrize('case', ['edit.base_missing', 'edit.frozen', 'memory.claim_absent',
+    'memory.flag_uncited', 'memory.mixed', 'forcing.combined', 'coverage.forced', 'coverage.selector'])
+def test_r1_composition(case):
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import Edit, evaluate, permits
+
+    first = {'forcing.combined': 'forcing.extra_keys', 'coverage.forced': 'edit.uncovered',
+             'coverage.selector': 'edit.uncovered', 'memory.mixed': 'memory.claim_absent'}.get(case, case)
+    facts, _ = _row_case(first)
+    draft = facts['draft']
+    a, b, kept = ('test.py::test_' + suffix for suffix in ('a', 'b', 'kept'))
+    if case == 'edit.base_missing':
+        draft['edits_tests'] = [a, b]
+        draft['checks'][0]['node_ids'] = [a, b]
+        diagnostics = [named(first, '', {'node': node}) for node in (a, b)]
+    elif case == 'edit.frozen':
+        draft['checks'][0].update(kind='regression', node_ids=[a, b, kept])
+        diagnostics = [named(first, '', {'node': node}) for node in (a, b)]
+    elif case.startswith('memory.'):
+        draft['memory_flags'] = [{'id': key, 'claim': 'absent', 'reason': 'keep'} for key in ('a', 'b')]
+        diagnostics = ([named('memory.flag_uncited', '', {'ids': [key]}) for key in ('a', 'b')]
+            if case == 'memory.flag_uncited' else [named('memory.claim_absent', '', {'flag': i}) for i in (0, 1)])
+        if case == 'memory.mixed':
+            diagnostics[1] = named('memory.flag_uncited', '', {'ids': ['b']})
+    elif case == 'forcing.combined':
+        draft['checks'][0]['forcing'] = {'symptom': 'x', 'environment': {}, 'extra': True,
+            'patches': [{'target': 'pkg.VALUE', 'value': 1, 'extra': True}]}
+        diagnostics = [named(rule, '', {'check': 0}) for rule in ('forcing.extra_keys', 'forcing.patch_mode')]
+    else:
+        draft['edits_tests'] = [b]
+        draft['checks'][0]['node_ids'] = [a]
+        diagnostics = [named('edit.uncovered', '', {'nodes': [b]}),
+            named('forced.base_missing' if case == 'coverage.forced' else 'check.selector_inexact',
+                  '', {'check': 0, 'nodes': [a]})]
+        facts['base_sources'] = {'test.py': 'def test_kept(): assert True\n'}
+    facts['reply'] = copy.deepcopy(draft)
+    facts['diagnostics'] = diagnostics
+    after = copy.deepcopy(draft)
+    if case == 'edit.base_missing':
+        after['edits_tests'] = []
+    elif case == 'edit.frozen':
+        after['checks'][0]['node_ids'] = [kept]
+    elif case.startswith('memory.'):
+        after['memory_flags'] = []
+    elif case == 'forcing.combined':
+        after['checks'][0]['forcing'].pop('extra')
+        after['checks'][0]['forcing']['patches'][0].pop('extra')
+    else:
+        after['checks'][0]['node_ids'] = [kept, b]
+    found = violations(facts)
+    assert len(found) >= 2 and all(isinstance(v.repair, Edit) for v in found)
+    assert permits(found, draft, after, role='planner')
+    assert not evaluate(tuple({v.rule.id: v.rule for v in found}.values()), {**facts, 'reply': after}, role='planner')
+    after['files'].append('unrelated.py')
+    assert not permits(found, draft, after, role='planner')
+
+
+def test_r1_flag_claim_accepts_exact_supplied_passage():
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+    facts, _ = _row_case('memory.claim_absent')
+    facts['inputs']['memories'] = [{'id': 'm', 'content': 'prefix exact supplied passage suffix'}]
+    after = copy.deepcopy(facts['draft'])
+    after['memory_flags'][0]['claim'] = 'exact supplied passage'
+    found = violations(facts)
+    assert permits(found, facts['draft'], after, role='planner')
+    assert 'nonempty exact passage' in found[0].render(role='planner')
+    for field, value in [('id', 'other'), ('claim', '')]:
+        invalid = copy.deepcopy(after)
+        invalid['memory_flags'][0][field] = value
+        assert not permits(found, facts['draft'], invalid, role='planner')
+    after['memory_flags'][0]['claim'] = 'invented passage'
+    assert not permits(found, facts['draft'], after, role='planner')
+
+
+@pytest.mark.parametrize('kind', ['leaf', 'split'])
+def test_r1_terminal_reply_cannot_grow_footprint(kind):
+    from tl3_workers.roles.planner import PlanConsistencyError
+    facts, _ = _row_case('leaf.design_open')
+    if kind == 'split':
+        facts['draft'] = {'kind': 'split', 'pieces': [{'files': ['pkg.py']}]}
+    error = PlanConsistencyError(facts['draft'], facts['draft'], facts['diagnostics'], facts['inputs'])
+    assert not error.check({**CANT_MEET, 'files': ['pkg.py']})
+    errors = error.check({**CANT_MEET, 'files': ['pkg.py', 'unrelated.py']})
+    assert errors and errors[0].rule == 'guard.fields_changed'
+    assert errors[0].items['paths'] == ['/files']
+
+
+def test_r1_allowed_rendering_is_bounded_without_changing_membership():
+    from tl3_workers.roles.planner import Allowed
+    allowed = Allowed('enum', list(range(100)))
+    text = allowed.render()
+    assert 'and ' in text and 'more' in text and 'total 100' in text
+    assert len(text.encode()) < 256
+    assert allowed.accepts(99) and not allowed.accepts(100)
+
+
+def test_r1_pb2710_large_message_keeps_message_limit_provenance():
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import PlanConsistencyError, terminal
+    facts, _ = _row_case('goal.coverage')
+    facts['inputs']['repair_plan_consistency'] = True
+    facts['inputs']['ingest']['goals'] *= 500
+    facts['diagnostics'] = [named('goal.coverage', '', {'goals': list(range(500)), 'descriptions': {}}),
+                           named('edit.uncovered', '', {'nodes': ['test.py::test_' + str(i) for i in range(200)]})]
+    error = PlanConsistencyError(facts['draft'], facts['draft'], facts['diagnostics'], facts['inputs'])
+    assert error.unavailable_reason == 'message_limit'
+    reply, provenance = terminal(error, error, facts['draft'], facts['draft'], attempted=False,
+                                 unavailable=error.unavailable_reason)
+    assert provenance['repair'] == {'status': 'unavailable', 'reason': 'message_limit'}
+    assert '"unavailable_reason": "message_limit"' in '\n'.join(reply['violations'])
+
+
+def test_r1_p2a_live_python_replay():
+    import json
+    from pathlib import PurePosixPath
+    from tl3_workers import prerequisites, recall, evidence
+    from tl3_workers.roles.planner import asks_to_edit, mentions
+    fixture = json.loads((Path(__file__).resolve().parents[2] / 'crates/plan-check/tests/fixtures/p2a.json').read_text())
+
+    def decode(value):
+        if isinstance(value, list):
+            return [decode(v) for v in value]
+        if isinstance(value, dict):
+            if '$tuple' in value:
+                return tuple(decode(v) for v in value['$tuple'])
+            if '$dict' in value:
+                return {decode(k): decode(v) for k, v in value['$dict']}
+        return value
+
+    for case in fixture['english']:
+        found = list(mentions(case['description'], case['test']))
+        assert found == decode(case['mentions']), case['id']
+        assert any(asks_to_edit(*item) for item in found) == case['verdict'], case['id']
+    for case in fixture['globs']:
+        assert PurePosixPath(case['path']).full_match(case['pattern']) == case['verdict'], case['id']
+    modules = {'prerequisites': prerequisites, 'recall': recall, 'evidence': evidence}
+    for case in fixture['cases']:
+        module, name = case['operation'].split('.')
+        try:
+            result = getattr(modules[module], name)(*decode(case['args']))
+        except ValueError as error:
+            assert 'error' in case['outcome'] and str(error) == case['outcome']['error']['message'], case['id']
+        else:
+            assert 'return' in case['outcome'] and result == decode(case['outcome']['return']), case['id']
+
+
+@pytest.mark.parametrize('fixture', ['request156', 'request165'])
+def test_r1_live_coverage_rendering_fits_and_preserves_membership(request, fixture):
+    import json
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import PlanConsistencyError, coverage_allowed
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES
+
+    draft = copy.deepcopy(request.getfixturevalue(fixture))
+    if fixture == 'request165':
+        draft['checks'][0]['node_ids'].remove(draft['edits_tests'][0])
+    inputs = request.getfixturevalue('planner_request')['inputs']
+    covered = {node for check in draft['checks'] if check['kind'] == 'demonstrating' for node in check['node_ids']}
+    missing = [node for node in draft['edits_tests'] if node not in covered]
+    assert missing
+    error = PlanConsistencyError(draft, draft, [named('edit.uncovered', '', {'nodes': missing})], inputs)
+    assert len(error.repair_text.encode()) <= REPAIR_MESSAGE_BYTES, error.repair_text
+    assert error.unavailable_reason is None
+    allowed = error.rule_violations[0].allowed
+    rendered, _ = json.JSONDecoder().raw_decode(allowed.render().removeprefix('schema '))
+    replay = coverage_allowed(draft, rendered['edits'], rendered['append_checks']['items'],
+                              rendered['append_checks']['maximum_total'], rendered=True)
+    assert replay.value == allowed.value
+    fixed = copy.deepcopy(draft)
+    fixed['checks'][0]['node_ids'].extend(missing)
+    assert allowed.accepts(fixed) and replay.accepts(fixed)
+    fixed['files'].append('unrelated.py')
+    assert not allowed.accepts(fixed) and not replay.accepts(fixed)

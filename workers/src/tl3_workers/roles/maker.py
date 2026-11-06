@@ -251,7 +251,7 @@ def _budget_reply(request, allowance, history, worktree, reply):
                       for check in inputs["plan"]["checks"] if not set(check["tests"]) <= verified)
     # A read or diff before the last mutation cannot verify the final files.
     last_edit = max((i for i, message in enumerate(history) if isinstance(message, AIMessage)
-                     and any(call["name"] in {"write", "edit", "run_generator"} for call in message.tool_calls)), default=-1)
+                     and any(call["name"] in {"write", "edit", "delete", "run_generator"} for call in message.tool_calls)), default=-1)
     successful = {message.tool_call_id for message in history if isinstance(message, ToolMessage)
                   and message.status != "error"}
     final_calls = [call for message in history[last_edit + 1:] if isinstance(message, AIMessage)
@@ -600,8 +600,9 @@ ROLE = Role(
         "glob": "Find relative worktree paths relevant to the declared plan. The path must be a directory.",
         "grep": "Find references in worktree text while implementing a goal. The pattern is an RE2 regular expression, with no backreferences or lookarounds, matched per line; set literal to true to search text as written. The path may be a file or a directory.",
         "diff": "Read-only: show every change in the worktree against check_base_sha, as a stat and unified hunks, paged. Use it to check what changed and the plan's scope.",
-        "write": "Create or overwrite a declared file with UTF-8 text.",
-        "edit": "Replace exact text in a declared file. Read it first and use a unique match.",
+        "write": "Create or overwrite a file in the declared footprint with UTF-8 text. Reserved paths, protected paths and generated outputs are refused.",
+        "edit": "Replace exact text in a file in the declared footprint. Reserved paths, protected paths and generated outputs are refused. Read it first and use a unique match.",
+        "delete": "Delete a regular file in the declared footprint. An already-absent declared path reports success. Undeclared paths, reserved paths, protected paths, generated outputs, directories and symlinks are refused.",
         "run_tests": ("Run named pytest tests or the suite through PrismaBuild. No shell or commands. "
                       "Options: repeat 1 to 10 fresh pytest runs; parallel 2 to 4 xdist workers, or 0; "
                       "priority -10 to 0, omitted for PrismaBuild's default. Results carry receipts; "

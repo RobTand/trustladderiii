@@ -404,6 +404,7 @@ The available names and arguments are:
 | `diff` | `path="."`, `offset=0`. Maker and reviewer only, read-only. The worktree's change against its base (`check_base_sha` for the maker, `base_sha` for the reviewer), committed and uncommitted, including untracked files. The first page has `stat` (path, status, added, deleted) and `diff`, unified hunks cut by line; later pages have `diff` only. `next_offset` continues a truncated page. |
 | `write` | `path`, `content`. Create or overwrite UTF-8 text, creating parents. |
 | `edit` | `path`, `old`, `new`, `replace_all=false`. Exact replacement. `old` must be nonempty and unique unless `replace_all` is true. |
+| `delete` | `path`. Maker only. Remove an existing regular file in the declared footprint. |
 
 `READ_TOOLS` and `WRITE_TOOLS` group the names for checks. Each role still writes
 its own descriptions. `TOOL_FACTORIES` maps each name to its factory. Unknown tool names and empty descriptions fail graph
@@ -470,7 +471,9 @@ also describes file paths as absolute. TL3 instead supplies its own tools and
 keeps the required built-in `read_file` excluded over an empty `StateBackend`.
 The built-in `glob` and `grep` are absent; those names refer only to TL3 tools.
 
-No role can declare shell, general network, delete, or delegation tools. The model
+The maker's delete tool removes only existing regular files in its footprint and
+refuses protected, generated and reserved paths, directories and symlinks.
+No role can declare shell, general network or delegation tools. The model
 transport still connects to the configured proxy. The `TOOL_FACTORIES` table
 supplies PrismaBuild tests and read-only Hindsight recall without changing
 `build_tools` or file confinement. Tests submit admitted work through PrismaBuild.

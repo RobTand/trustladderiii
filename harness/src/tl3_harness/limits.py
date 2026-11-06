@@ -36,6 +36,7 @@ MAX_RESULT_BYTES = 8 * 1024 * 1024
 RESULT_ENVELOPE_BYTES = 65536
 MAX_DETAILED_FAILURES = 20
 MAX_MESSAGE_CHARS = 1000
+MAX_PROOF_MESSAGE_CHARS = 65536
 # Three phases, each with at most 200 Unicode exception-class characters.
 PHASE_RUN_BYTES = 3 * (200 * 12 + 100) + 100
 PLAN_SIZE_ERROR = named('size.report', f'Check plan exceeds the {MAX_REPORT_LINE_BYTES}-byte report limit; reduce the selected tests or parameter cases.', {})

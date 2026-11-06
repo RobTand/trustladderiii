@@ -241,7 +241,7 @@ class ExplorationMiddleware(AgentMiddleware):
                                "New edits and generation are unavailable. Report unfinished work precisely.",
                                tool_call_id=request.tool_call["id"], status="error")
         response = handler(request)
-        if (request.tool_call["name"] in {"write", "edit"}
+        if (request.tool_call["name"] in {"write", "edit", "delete"}
                 and request.tool_call["args"].get("path") in self.implementation_files
                 and isinstance(response, ToolMessage) and response.status != "error"):
             self.implementation_started = True
