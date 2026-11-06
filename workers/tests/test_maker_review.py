@@ -222,7 +222,9 @@ def test_maker_refusals_render_and_guard_the_same_repair(review_fix, case, point
         assert not permits(violations, before, original, role='maker')
     else:
         value = original['self_check'] if case == 'goals' else (
-            original['self_check'][0] if case in ('maker_status', 'downstream_status') else original['reproductions'])
+            original['self_check'][0] if case in ('maker_status', 'downstream_status') else [
+                {'finding_id': item['id'], 'reason': 'Review manually without inventing assertion evidence.'}
+                for item in inputs['current_review_findings']])
         assert isinstance(violation.repair, Edit)
         after = apply_edit(before, violation.repair, value)
         assert violation.allowed.accepts(value)

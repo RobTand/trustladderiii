@@ -94,9 +94,11 @@ def _finding_coverage(facts):
     mapped = [item['finding_id'] for item in reply.get('reproductions', [])]
     if len(mapped) != len(findings) or set(mapped) != set(findings):
         document = _done_property('reproductions')
+        captured = [item for item in reply.get('reproductions', []) if item['finding_id'] in findings]
         yield {'pointer': '/reproductions', 'op': 'replace' if 'reproductions' in reply else 'add',
                'allowed': Allowed('schema', {**document, 'minItems': len(findings), 'maxItems': len(findings),
-                   'items': {'allOf': [document['items'], {'properties': {'finding_id': {'enum': findings}}}]},
+                   'items': {'allOf': [document['items'], {'properties': {'finding_id': {'enum': findings}}},
+                                       {'anyOf': [{'not': {'required': ['tests']}}, {'enum': captured}]}]},
                    'allOf': [{'contains': {'properties': {'finding_id': {'const': finding}}},
                               'minContains': 1, 'maxContains': 1} for finding in findings]})}
 

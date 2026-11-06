@@ -333,7 +333,7 @@ def test_generated_freeze_second_invalid_reply_is_bounded_and_safe(request_doc, 
     reason = json.loads(Path(request_doc["memory"]["summary_file"]).read_text())["reason"]
     assert reason['failure_class'] == 'InvalidReply'
     assert SCOPE_REPAIR in reason['failure_message']
-    assert 'repaired reply changed fields outside the permitted edits' in reason['failure_message']
+    assert 'schema validation failed: repair_scope' in reason['failure_message']
     assert "private-request-canary" not in json.dumps(reason)
 
 

@@ -630,6 +630,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
         "@tl3_pip//tiktoken",
