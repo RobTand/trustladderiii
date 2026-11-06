@@ -170,25 +170,25 @@ fn run(schedule: &Schedule, current: bool, cut_at: Option<(usize, bool)>) -> Run
     let mut commit = Commit {
         rows: Rows(schedule.rows.clone()),
     };
-    let failed = schedule
-        .failed
-        .iter()
-        .map(|(test, message)| findings::FailedTest {
-            test: test.clone(),
-            message: message.clone(),
-        })
-        .collect();
-    let checks = schedule
-        .checks
-        .iter()
-        .map(|(name, summary, url)| findings::CiFailure {
-            name: name.clone(),
-            summary: summary.clone(),
-            url: url.clone(),
-        })
-        .collect();
     let result = catch_unwind(AssertUnwindSafe(|| {
         if current {
+            let failed = schedule
+                .failed
+                .iter()
+                .map(|(test, message)| current::findings::FailedTest {
+                    test: test.clone(),
+                    message: message.clone(),
+                })
+                .collect();
+            let checks = schedule
+                .checks
+                .iter()
+                .map(|(name, summary, url)| current::findings::CiFailure {
+                    name: name.clone(),
+                    summary: summary.clone(),
+                    url: url.clone(),
+                })
+                .collect();
             current::Shell(&mut controller).tail(
                 &Snapshot,
                 &world,
@@ -201,6 +201,23 @@ fn run(schedule: &Schedule, current: bool, cut_at: Option<(usize, bool)>) -> Run
                 checks,
             )
         } else {
+            let failed = schedule
+                .failed
+                .iter()
+                .map(|(test, message)| findings::FailedTest {
+                    test: test.clone(),
+                    message: message.clone(),
+                })
+                .collect();
+            let checks = schedule
+                .checks
+                .iter()
+                .map(|(name, summary, url)| findings::CiFailure {
+                    name: name.clone(),
+                    summary: summary.clone(),
+                    url: url.clone(),
+                })
+                .collect();
             reference::Shell(&mut controller).tail(
                 &Snapshot,
                 &world,

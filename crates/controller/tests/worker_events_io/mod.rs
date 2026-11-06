@@ -10,8 +10,9 @@ use crate::{
 use serde_json::Value;
 use std::{collections::BTreeMap, io::SeekFrom, path::PathBuf};
 mod current;
+mod f2_compat;
 mod io;
-mod pre_fix;
+use f2_compat as pre_fix;
 mod reference;
 
 #[derive(Debug)]
@@ -261,8 +262,8 @@ fn parser_roundtrip() {
             1 => (json!({"event":"progress","unit":"tool_result"}), WorkerEvent::Progress {unit:ProgressUnit::ToolResult}),
             2 => (json!({"event":"progress","unit":"external_wait","wait":{"upstream":"prismabuild","key":key}}), WorkerEvent::Progress {unit:ProgressUnit::ExternalWait}),
             3 => (json!({"event":"reply","role":role,"reply":{"arbitrary":"payload"}}), WorkerEvent::Reply),
-            4 => (json!({"event":"quota","role":role,"reset_ms":reset}), WorkerEvent::Quota {model:QuotaModel::Implicit,reset_ms:Some(reset)}),
-            5 => (json!({"event":"quota","role":role,"reset_ms":reset,"model":"grade"}), WorkerEvent::Quota {model:if postmortem {QuotaModel::Grade} else {QuotaModel::Forbidden},reset_ms:Some(reset)}),
+            4 => (json!({"event":"quota","role":role,"reset_ms":reset}), WorkerEvent::Quota {model:QuotaModel::Implicit,reset_ms:Some(reset),facts:None}),
+            5 => (json!({"event":"quota","role":role,"reset_ms":reset,"model":"grade"}), WorkerEvent::Quota {model:if postmortem {QuotaModel::Grade} else {QuotaModel::Forbidden},reset_ms:Some(reset),facts:None}),
             _ => (json!({"event":"progress","unit":"unknown"}), WorkerEvent::Invalid),
         };
         let bytes=serde_json::to_vec(&value).unwrap();
@@ -400,6 +401,55 @@ fn mandatory_postmortem_model_and_reply() {
     );
 }
 
+/// P5/Q53: the existing typed event uses the worker sample through decoding,
+/// the core reset decision, and the original quota terminal-order decision.
+#[test]
+fn sampled_quota_uses_f1_event_core() {
+    use tl3_controller_core::worker_events::*;
+    let link = json!({"response_status":429,"headers":{"x-ratelimit-reset":"1000.125"},
+        "api_status":429,"api_code":null,"judge":false,"judge_status":null,
+        "judge_code":null,"grade_judge":false});
+    for (now, expected) in [
+        ("1000.0", 1_000_125),
+        ("1000.125", 1_120_125),
+        ("1000.25", 1_120_250),
+    ] {
+        let value = json!({"event":"quota","role":"ingest",
+            "facts":{"now":now,"role":"ingest","links":[link.clone()]}});
+        let mut bytes = serde_json::to_vec(&value).unwrap();
+        bytes.push(b'\n');
+        let parsed = super::parse_event(&bytes, Some("ingest"), false, &Value::Null).unwrap();
+        let WorkerEvent::Quota {
+            reset_ms,
+            facts: Some(facts),
+            ..
+        } = parsed.event
+        else {
+            panic!("{parsed:?}")
+        };
+        assert_eq!(reset_ms, Some(expected));
+        assert_eq!(
+            facts.sampled_now.bits,
+            now.parse::<f64>().unwrap().to_bits()
+        );
+        assert_eq!(quota_reset(facts), Some(expected));
+        assert_eq!(
+            reply_step(parsed.event, false, 1, 2),
+            ReplyDecision::AfterQuota
+        );
+        assert_eq!(
+            reply_step(parsed.event, true, 2, 2),
+            ReplyDecision::AfterReply
+        );
+        let result = outcome(super::parse_reply(&bytes, &delivery(false), &Value::Null));
+        assert_eq!(result["ok"]["Quota"]["reset_ms"], expected);
+        bytes.extend(line(0, false));
+        assert_eq!(
+            outcome(super::parse_reply(&bytes, &delivery(false), &Value::Null))["error"],
+            "event after quota ending"
+        );
+    }
+}
 include!("quota_position_red.rs");
 
 #[test]
