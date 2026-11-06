@@ -1,11 +1,14 @@
 //! Per-delivery enqueue decisions. The adapter owns file formats and I/O.
 use super::{Head, QueueState, Status, Time};
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const GRACE_MS: u64 = 300_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[cfg_attr(not(verus_keep_ghost), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Requeue {
     Ready,
     Sending,
@@ -14,7 +17,9 @@ pub enum Requeue {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[cfg_attr(not(verus_keep_ghost), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Command {
     Ready,
     Sending,
@@ -26,6 +31,8 @@ pub enum Command {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct Recovery {
     pub eligible_since_ms: Option<u64>,
     pub command: Command,
@@ -33,12 +40,16 @@ pub struct Recovery {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct Intent {
     pub requeue: Option<Requeue>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct Rerun {
     pub attempt: u64,
     pub accepted: bool,
@@ -49,6 +60,8 @@ pub struct Rerun {
 /// `rerun` is the receipt for the workflow run currently being reconciled.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct EnqueueState {
     pub intent: Option<Intent>,
     pub confirmed: bool,
@@ -58,6 +71,8 @@ pub struct EnqueueState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct IssueRead {
     pub queue_label: bool,
     pub repaired: Option<bool>,
@@ -72,6 +87,8 @@ pub struct IssueRead {
 /// short circuits, including refusal before reruns and stale-head handling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct QueueRead {
     pub head: Head,
     pub queue: QueueState,
@@ -87,6 +104,8 @@ pub struct QueueRead {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Need {
     Queue,
     Refusal,
@@ -107,6 +126,8 @@ pub enum Need {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Failure {
     Refused,
     Permission,
@@ -138,6 +159,8 @@ impl Failure {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Complete {
     Confirmed { progress: bool, conflict: bool },
     Retryable,
@@ -148,6 +171,8 @@ pub enum Complete {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Write {
     Label,
     Command,
@@ -156,6 +181,8 @@ pub enum Write {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum CommandResult {
     Accepted,
     PermissionDenied,
@@ -165,6 +192,8 @@ pub enum CommandResult {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum RerunResult {
     Accepted,
     InProgress,
@@ -174,6 +203,8 @@ pub enum RerunResult {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub struct CommandRead {
     pub head: Head,
     pub open: bool,
@@ -188,6 +219,8 @@ pub struct CommandRead {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum QueueEvent {
     Begin,
     ExecuteGate {
@@ -232,6 +265,8 @@ pub enum QueueEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Effect {
     Read(Need),
     SaveIntent,
@@ -272,6 +307,7 @@ impl Effects {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result == crate::enqueue_helpers::completion(command),))]
 fn command_completion(command: Command) -> Complete {
     match command {
         Command::Refused => Complete::Permanent(Failure::Refused),
@@ -281,6 +317,7 @@ fn command_completion(command: Command) -> Complete {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures crate::enqueue_helpers::issue(intent, queue, issue, result),))]
 fn reconcile_issue(intent: Option<Intent>, queue: QueueState, issue: IssueRead) -> Effect {
     if queue == QueueState::Waiting && issue.queue_label {
         let Some(recovery) = issue.recovery else {
@@ -327,6 +364,7 @@ fn reconcile_issue(intent: Option<Intent>, queue: QueueState, issue: IssueRead) 
     }
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures crate::enqueue_contract::contract(state, event, result.0, result.1),))]
 pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effects) {
     let mut out = Effects::new();
     let refused_intent = matches!(
@@ -435,9 +473,12 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                         || read.head == Head::Current
                             && (active
                                 || terminal
-                                    && state.intent.is_some_and(|before| {
-                                        before.requeue.is_none() && read.check_changed
-                                    }))
+                                    && match state.intent {
+                                        Some(before) => {
+                                            before.requeue.is_none() && read.check_changed
+                                        }
+                                        None => false,
+                                    })
                     {
                         Complete::Confirmed {
                             progress: true,
@@ -469,7 +510,11 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
                 out.push(Effect::Error(Failure::ChecksPending));
             } else {
                 let intent = *state.intent.get_or_insert(Intent {
-                    requeue: queue_label.then_some(Requeue::Ready),
+                    requeue: if queue_label {
+                        Some(Requeue::Ready)
+                    } else {
+                        None
+                    },
                 });
                 out.push(Effect::SaveIntent);
                 out.push(if intent.requeue.is_some() {
@@ -516,7 +561,10 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             }
         }
         QueueEvent::CommandStatus => {
-            let command = state.recovery.map_or(Command::Ready, |r| r.command);
+            let command = match state.recovery {
+                None => Command::Ready,
+                Some(r) => r.command,
+            };
             out.push(match command {
                 Command::Ready => Effect::Continue,
                 Command::Sending | Command::Sent => Effect::Read(Need::CommandReply),
@@ -588,12 +636,15 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
         } => {
             if head != Head::Current {
                 out.push(Effect::Error(Failure::PullChanged));
-            } else if state
-                .rerun
-                .is_some_and(|r| r.accepted || attempt > r.attempt)
-            {
+            } else if match state.rerun {
+                Some(r) => r.accepted || attempt > r.attempt,
+                None => false,
+            } {
                 out.push(Effect::Continue);
-            } else if state.rerun.is_some_and(|r| !r.waiting) {
+            } else if match state.rerun {
+                Some(r) => !r.waiting,
+                None => false,
+            } {
                 out.push(Effect::Error(Failure::RerunUnknown));
             } else if status != Status::Completed {
                 state.rerun = Some(Rerun {
@@ -639,12 +690,15 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
             attempt,
             status,
         } => {
-            let pending = state.rerun.is_some_and(|saved| {
-                !saved.accepted
-                    && (head != Head::Current
-                        || attempt <= saved.attempt
-                            && (!saved.waiting || status != Status::Completed))
-            });
+            let pending = match state.rerun {
+                Some(saved) => {
+                    !saved.accepted
+                        && (head != Head::Current
+                            || attempt <= saved.attempt
+                                && (!saved.waiting || status != Status::Completed))
+                }
+                None => false,
+            };
             out.push(Effect::RerunPending(pending));
         }
     }
