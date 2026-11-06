@@ -1134,6 +1134,16 @@ def test_change_gate_is_used_before_any_mutation(tree, op, monkeypatch):
     assert (root / "src/code.py").read_text() == "hello\nhello again\n"
 
 
+def test_change_refusal_keeps_a_long_first_declared_path(tree):
+    root, _ = tree
+    declared = '/'.join(['a' * 180] * 6) + '/file.py'
+    with Worktree(root, footprint=[declared]) as worktree:
+        with pytest.raises(ValueError) as caught:
+            with worktree.check_change('other.py', 'write'):
+                pytest.fail('change gate admitted an undeclared path')
+    assert f'Allowed: enum {json.dumps([declared])}' in str(caught.value)
+
+
 def test_change_refusal_bounds_the_visible_footprint(tree):
     root, _ = tree
     footprint = [f"tests/test_{index:04d}.py" for index in range(1000)]
