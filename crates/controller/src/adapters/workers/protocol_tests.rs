@@ -577,6 +577,7 @@ fn pq_2648_empty_allowed_replans_once_under_both_flags() {
         "../../../tests/fixtures/pq-2648-empty-replan.json"
     ))
     .unwrap();
+    let mut failures = Vec::new();
     for case in fixtures {
         for fail_fast in [false, true] {
             let provenance = PlanCheckProvenance {
@@ -608,12 +609,9 @@ fn pq_2648_empty_allowed_replans_once_under_both_flags() {
                     reply,
                 },
             );
-            assert!(
-                matches!(after.nodes[0].phase, Phase::Planning { .. }),
-                "PQ #2648 {} fail_fast={fail_fast}: empty allowed repair stopped instead of re-planning: {:?}",
-                case["rule"],
-                after.nodes[0].phase
-            );
+            if !matches!(after.nodes[0].phase, Phase::Planning { .. }) {
+                failures.push(format!("{} fail_fast={fail_fast}: {:?}", case["rule"], after.nodes[0].phase));
+            }
             assert!(after.nodes[0].generation > generation);
             assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
             assert!(after.nodes[0].question.is_none());
@@ -627,4 +625,5 @@ fn pq_2648_empty_allowed_replans_once_under_both_flags() {
             assert!(after.valid());
         }
     }
+    assert!(failures.is_empty(), "PQ #2648 stopped instead of re-planning: {failures:?}");
 }
