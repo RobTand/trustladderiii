@@ -50,7 +50,8 @@ pub(super) fn verify_phase(mut w: World) -> (result: (World, Outbox, bool)) [
         exists|c: AdvanceContext| c.node == 0
             && result.2 == advance_enabled(w.nodes@[0], c)
             && result.0.nodes@[0] == port_advance_contracts::node_after(w.nodes@[0], w.next_ticket, c),
-        matches!(w.nodes@[0].phase, Phase::Queued | Phase::AwaitingRob | Phase::Closed(_))
+        (w.nodes@[0].phase == Phase::Queued || w.nodes@[0].phase == Phase::AwaitingRob
+            || w.nodes@[0].phase is Closed)
             ==> !result.2,
 ] proof [reveal(advance_post); reveal(empty_outbox); reveal(accepted);
     reveal(retirement_domain); reveal(retirement_accepted);
@@ -72,7 +73,8 @@ pub(super) fn verify_phase(mut w: World) -> (result: (World, Outbox, bool)) [
             && port_advance_contracts::exact(before@.nodes@[0], w.nodes@[0], before@.next_ticket,
                 w.next_ticket, c, empty@, out);
         reveal(port_advance_contracts::exact);
-        if matches!(before@.nodes@[0].phase, Phase::Queued | Phase::AwaitingRob | Phase::Closed(_)) {
+        if before@.nodes@[0].phase == Phase::Queued || before@.nodes@[0].phase == Phase::AwaitingRob
+            || before@.nodes@[0].phase is Closed {
             reveal(retirement::node_rules);
             assert(!changed);
         }
