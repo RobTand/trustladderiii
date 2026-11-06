@@ -121,6 +121,7 @@ def _change_repair(facts):
     context = f" Footprint has {omitted} more entries." if omitted else ""
     basename = facts['path'].rsplit('/', 1)[-1]
     candidates = sorted(facts['footprint'], key=lambda path: (path.rsplit('/', 1)[-1] != basename, path))[:200]
+    candidates = [path for path in candidates if path.rsplit('/', 1)[-1] == basename] or candidates
     query = facts['path'].encode('utf-8')[-512:].decode('utf-8', errors='ignore')
     nearest = get_close_matches(query, candidates, n=1, cutoff=0)
     context += f" The nearest declared path is {json.dumps(nearest[0])}." if nearest else " The footprint is empty."
@@ -149,7 +150,7 @@ class ChangeRefusal(ValueError):
             'refusal': refusal, 'path': path, 'op': op, 'footprint': footprint or (),
             'target_kind': target_kind,
         }, role=MAKER.role)
-        super().__init__(render_all(self.violations, role=MAKER.role))
+        super().__init__(render_all(self.violations, role=MAKER.role, context="tool"))
 
 
 def _matching_lines(stream, pattern, regex=None, cut=None):

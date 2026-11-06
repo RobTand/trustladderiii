@@ -14,19 +14,27 @@ impl Footprint {
         let mut seen = BTreeSet::new();
         let mut canonical = Vec::new();
         for path in paths {
+            if path.contains(['\r', '\n']) {
+                return Err("Use a single-line relative path without carriage returns or newlines");
+            }
             if path.is_empty() || path.starts_with('/') || path.contains(['\\', '\0']) {
-                return Err(
-                    "footprint entries must be nonempty repository-relative POSIX paths without NUL",
-                );
+                return Err("Use a relative worktree path");
+            }
+            if path.split('/').any(|part| part == "..") {
+                return Err("Parent traversal is forbidden");
             }
             let parts: Vec<_> = path
                 .split('/')
                 .filter(|part| !matches!(*part, "" | "."))
                 .collect();
-            if parts.is_empty() || parts.iter().any(|part| matches!(*part, ".." | ".git")) {
-                return Err(
-                    "footprint entries must name repository files without parent traversal or Git metadata",
-                );
+            if parts.contains(&".git") {
+                return Err("Git metadata paths are forbidden");
+            }
+            if path.len() > 3072 || parts.iter().any(|part| part.len() > 255) {
+                return Err("Path is too long");
+            }
+            if parts.is_empty() {
+                return Err("expected a declared file");
             }
             let path = parts.join("/");
             if seen.insert(path.clone()) {

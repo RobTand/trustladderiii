@@ -112,6 +112,15 @@ pub enum Error {
     WorkerDispatchMissing,
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("TL3 invariant: invalid footprint path {path:?} from planner request {request} node {node} attempt {attempt} run {run}: {reason}")]
+    FootprintInvariant {
+        path: String,
+        request: String,
+        node: u64,
+        attempt: u8,
+        run: String,
+        reason: &'static str,
+    },
     #[error("merge prerequisite update is missing its issue or pull request number")]
     PrerequisiteNumber,
     #[error("{0}")]
@@ -2769,15 +2778,25 @@ impl Controller {
         paths: &[String],
     ) -> Result<tl3_kernel::Footprint> {
         let request = request(snapshot, node)?;
+        let paths = tl3_contracts::footprint::Footprint::new(paths.to_vec()).map_err(|reason| {
+            let n = &world.nodes[node.0 as usize];
+            Error::FootprintInvariant {
+                path: paths.iter().find(|path| {
+                    tl3_contracts::footprint::Footprint::new(vec![(*path).clone()]).is_err()
+                }).expect("Footprint rejects an invalid individual path").clone(),
+                request: format!("{}/{}#{}", request.repo.owner, request.repo.name, request.issue),
+                node: node.0,
+                attempt: n.attempt,
+                run: n.run.map_or_else(|| "<absent>".into(), |run| run.to_string()),
+                reason,
+            }
+        })?;
         let repo = self
             .store
             .intern_repo(&request.repo.owner, &request.repo.name)?;
         let files = paths
             .iter()
             .map(|p| {
-                if p.is_empty() {
-                    return Err(Error::Invalid("footprint path must be nonempty"));
-                }
                 self.store
                     .intern_path(repo, p)
                     .map_err(Error::from)
@@ -4115,19 +4134,12 @@ impl Controller {
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
-                        let request = request(snapshot, node)?;
-                        let repo = self
-                            .store
-                            .intern_repo(&request.repo.owner, &request.repo.name)?;
+                        let additional = self.footprint(snapshot, world, node, &paths)?;
                         let mut files = world
                             .files(n.footprint)
                             .ok_or(Error::Invalid("unknown footprint"))?
                             .collect::<Vec<_>>();
-                        for path in paths {
-                            files.push(tl3_kernel::FileId(
-                                self.store.intern_path(repo, &path)?.get() as u64,
-                            ));
-                        }
+                        files.extend(world.files(additional).ok_or(Error::Invalid("unknown footprint"))?);
                         Reply::MakerNeedsFiles {
                             files: world.intern_footprint(files),
                             fits,

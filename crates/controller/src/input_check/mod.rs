@@ -65,26 +65,7 @@ pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
 }
 
 fn declared_file(path: &str) -> Result<(), &'static str> {
-    if path.is_empty() || path.contains(['\\', '\0']) || path.starts_with('/') {
-        return Err("Use a relative worktree path");
-    }
-    if path.split('/').any(|part| part == "..") {
-        return Err("Parent traversal is forbidden");
-    }
-    let parts: Vec<_> = path
-        .split('/')
-        .filter(|part| !matches!(*part, "" | "."))
-        .collect();
-    if parts.contains(&".git") {
-        return Err("Git metadata paths are forbidden");
-    }
-    if path.len() > 3072 || parts.iter().any(|part| part.len() > 255) {
-        return Err("Path is too long");
-    }
-    if parts.is_empty() {
-        return Err("expected a declared file");
-    }
-    Ok(())
+    tl3_contracts::footprint::Footprint::new(vec![path.into()]).map(|_| ())
 }
 
 pub fn request(request: &Value) -> crate::Result<Vec<String>> {
