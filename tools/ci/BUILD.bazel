@@ -346,3 +346,14 @@ tl3_py_test(
     name = "test_controller_test_runner",
     srcs = ["test_controller_test_runner.py"],
 )
+
+py_library(
+    name = "mirror_lint",
+    srcs = ["mirror_lint.py"],
+)
+
+tl3_py_test(
+    name = "test_mirror_lint",
+    srcs = ["test_mirror_lint.py"],
+    deps = [":mirror_lint"],
+)
