@@ -14,13 +14,23 @@ pub(super) fn finish_ingest(w: &mut World, i: usize, size: u8, early_end: Option
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, 0, 0),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        old(w).dependencies@.len() == 0 ==> final(w).nodes@[i as int]
+            == port_replies_contracts::ingested(old(w).nodes@[i as int], size, early_end),
+        final(w).next_question == old(w).next_question,
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds);] {
     kernel_snapshot! { before_ingest = *w }
     finish_ingest_node(&mut w.nodes[i], size, early_end);
+    kernel_proof! { port_replies_frames::empty_prerequisites(*w, i as int); }
     w.withhold_dependency_credit(i);
     kernel_proof! {
         assert forall|j: int| 0 <= j < before_ingest@.nodes@.len() && j != i implies
             w.nodes@[j] == before_ingest@.nodes@[j] by {}
+    }
+    kernel_proof! {
+        assert(before_ingest@.dependencies@.len() == 0 ==> w.nodes@[i as int]
+            == port_replies_contracts::ingested(before_ingest@.nodes@[i as int], size, early_end)) by {
+            reveal(port_replies_contracts::ingested);
+        }
     }
 }
 }
@@ -70,7 +80,15 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+        (old(w).dependencies@.len() == 0
+            && port_replies_contracts::ingest_accepted(old(w).nodes@[i as int], reply))
+            ==> port_replies_contracts::node_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).next_question, old(w).fail_fast, reply),
+        final(w).next_question == (old(w).next_question
+            + if matches!(reply, Reply::AuditDisagrees) && old(w).nodes@[i as int].audit_rounds >= 1
+                { 1u64 } else { 0u64 }) as u64,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] hide [retirement::notices_only] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds); reveal(port_replies_contracts::node_post); reveal(port_replies_contracts::transitioned); reveal(port_replies_contracts::ingested); reveal(retirement::stopped);] {
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);

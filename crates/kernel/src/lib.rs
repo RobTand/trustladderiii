@@ -2283,3 +2283,31 @@ mod port_review_output;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_failfast_retry.rs"]
 mod port_failfast_retry;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_apply.rs"]
+mod port_replies_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_contracts.rs"]
+mod port_replies_contracts;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_frames.rs"]
+mod port_replies_frames;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_witness.rs"]
+mod port_replies_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_safety.rs"]
+mod port_replies_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_failure.rs"]
+mod port_replies_failure;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_admission.rs"]
+mod port_replies_admission;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_exec.rs"]
+mod port_replies_exec;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_handlers.rs"]
+mod port_replies_handlers;

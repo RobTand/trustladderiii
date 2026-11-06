@@ -289,7 +289,11 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
+        // #806 W1 worker-family contract, separate from W2's shared forwarding.
+        port_replies_contracts::transition_post(*old(w), *final(w), i as int,
+            old(w).nodes@[i as int], reply, *old(out), *final(out)),
+] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);
+    reveal(port_replies_contracts::transition_post); reveal(reply_bounds);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),

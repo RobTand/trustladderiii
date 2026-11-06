@@ -17,7 +17,16 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+        port_replies_contracts::transition_post(*old(w), *final(w), i as int,
+            old(w).nodes@[i as int], reply, *old(out), *final(out)),
+        (old(w).nodes@[i as int].phase is Planning) ==> port_replies_contracts::node_post(
+            old(w).nodes@[i as int], final(w).nodes@[i as int], old(w).next_question, old(w).fail_fast, reply),
+        port_replies_contracts::output_post(*old(out), *final(out), i as int,
+            port_replies_contracts::emission(old(w).nodes@[i as int], old(w).next_question, old(w).fail_fast, reply)),
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(reply_bounds); reveal(retry_bounds);] {
+    kernel_snapshot! { worker_before = *w }
+    kernel_snapshot! { worker_outputs = *out }
     kernel_proof! { footprint::inline_is_valid(*w, 1); }
     match reply {
         Reply::PlanLeaf { footprint, fits } => {
@@ -30,13 +39,58 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
                 m.round = 0;
                 m.plan_retries = 0;
                 set_phase(m, Phase::Ready(Resume::Making));
+                kernel_proof! { if worker_before@.nodes@[i as int].phase is Planning {
+                    port_replies_handlers::leaf_ready_result(worker_before@.nodes@[i as int],
+                        w.nodes@[i as int], worker_before@.next_question, worker_before@.fail_fast, footprint, fits);
+                } }
             } else {
                 plan_retry(w, i, false, out);
+                kernel_proof! { if worker_before@.nodes@[i as int].phase is Planning {
+                    port_replies_handlers::plan_exact(worker_before@.nodes@[i as int], w.nodes@[i as int],
+                        worker_before@.next_question, worker_before@.fail_fast, false);
+                    port_replies_handlers::leaf_retry_result(worker_before@.nodes@[i as int],
+                        w.nodes@[i as int], worker_before@.next_question, worker_before@.fail_fast, footprint, fits);
+                } }
             }
         }
-        Reply::PlanSplit => ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out),
-        Reply::PlanCantMeet => plan_retry(w, i, true, out),
+        Reply::PlanSplit => {
+            ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out);
+            kernel_proof! { if worker_before@.nodes@[i as int].phase is Planning {
+                port_replies_handlers::split_result(worker_before@.nodes@[i as int],
+                    w.nodes@[i as int], worker_before@.next_question, worker_before@.fail_fast);
+            } }
+        },
+        Reply::PlanCantMeet => {
+            plan_retry(w, i, true, out);
+            kernel_proof! { if worker_before@.nodes@[i as int].phase is Planning {
+                port_replies_handlers::plan_exact(worker_before@.nodes@[i as int], w.nodes@[i as int],
+                    worker_before@.next_question, worker_before@.fail_fast, true);
+                port_replies_handlers::cant_result(worker_before@.nodes@[i as int],
+                    w.nodes@[i as int], worker_before@.next_question, worker_before@.fail_fast);
+            } }
+        },
         _ => {}
+    }
+    kernel_proof! {
+        if successful_reply_input(worker_before@.nodes@[i as int], reply) {
+            port_replies_handlers::plan_progress(worker_before@.nodes@[i as int], w.nodes@[i as int],
+                worker_before@.next_question, worker_before@.fail_fast, reply);
+        }
+        assert(port_replies_contracts::output_post(worker_outputs@, *out, i as int,
+            port_replies_contracts::emission(worker_before@.nodes@[i as int], worker_before@.next_question,
+                worker_before@.fail_fast, reply))) by {
+            reveal(port_replies_contracts::output_post);
+        }
+        if retirement::notices_only(worker_outputs@) {
+            port_replies_handlers::output_notices(worker_outputs@, *out, i as int,
+                port_replies_contracts::emission(worker_before@.nodes@[i as int], worker_before@.next_question,
+                    worker_before@.fail_fast, reply));
+        }
+        assert(port_replies_contracts::transition_post(worker_before@, *w, i as int,
+            worker_before@.nodes@[i as int], reply, worker_outputs@, *out)) by {
+            reveal(port_replies_contracts::transition_post);
+            reveal(port_failfast_diversion::plan_retry_post);
+        }
     }
 }
 }
