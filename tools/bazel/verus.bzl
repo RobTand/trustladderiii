@@ -618,6 +618,13 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_acks_specs::owner_command": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_acks_specs::command_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_acks_specs::world_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_acks_specs::command_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_acks_specs::empty": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_acks_specs::node_transition": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_acks_specs::q54": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -845,6 +852,13 @@ def verus_proofs():
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 3),
+            "port_acks_stop_frame": ("kernel::port_acks_commands#stop_frame", 1),
+            "port_acks_change_request_frame": ("kernel::port_acks_commands#change_request_frame", 1),
+            "port_acks_pause_frame": ("kernel::port_acks_commands#pause_frame", 1),
+            "port_acks_resume_frame": ("kernel::port_acks_commands#resume_frame", 1),
+            "port_acks_command_rules": ("kernel::port_acks_commands#command_rules", 1),
+            "port_acks_command_world": ("kernel::port_acks_commands#command_world", 1),
+            "port_acks_verify_command_apply": ("kernel::port_acks_commands#verify_command_apply", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

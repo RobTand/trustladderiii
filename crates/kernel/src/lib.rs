@@ -69,6 +69,12 @@ pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
 /// #806: complete acceptance predicate, equivalent to the real checker in this domain.
 pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
 }
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_specs.rs"]
+mod port_acks_specs;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_acks_commands.rs"]
+mod port_acks_commands;
 use events::*;
 mod allocation;
 use allocation::*;
