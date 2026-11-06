@@ -94,10 +94,10 @@ def _parts(path):
 
 
 def _visible_footprint(declared, limit=1000):
-    """Show complete declared paths within a bounded JSON representation."""
+    """Show at least the first complete path, then bound additional entries."""
     shown = []
     for name in sorted(declared):
-        if len(json.dumps([*shown, name], ensure_ascii=False)) > limit:
+        if shown and len(json.dumps([*shown, name], ensure_ascii=False)) > limit:
             break
         shown.append(name)
     return shown

@@ -602,7 +602,7 @@ ROLE = Role(
         "diff": "Read-only: show every change in the worktree against check_base_sha, as a stat and unified hunks, paged. Use it to check what changed and the plan's scope.",
         "write": "Create or overwrite a file in the declared footprint with UTF-8 text. Reserved paths, protected paths and generated outputs are refused.",
         "edit": "Replace exact text in a file in the declared footprint. Reserved paths, protected paths and generated outputs are refused. Read it first and use a unique match.",
-        "delete": "Delete an existing regular file in the declared footprint. Reserved paths, protected paths, generated outputs, missing paths, directories and symlinks are refused.",
+        "delete": "Delete a regular file in the declared footprint. An already-absent declared path reports success. Undeclared paths, reserved paths, protected paths, generated outputs, directories and symlinks are refused.",
         "run_tests": ("Run named pytest tests or the suite through PrismaBuild. No shell or commands. "
                       "Options: repeat 1 to 10 fresh pytest runs; parallel 2 to 4 xdist workers, or 0; "
                       "priority -10 to 0, omitted for PrismaBuild's default. Results carry receipts; "
