@@ -535,3 +535,22 @@ def test_in_job_refuses_missing_runtime_prerequisites_before_launch(tmp_path, mo
     with pytest.raises(RuntimeError, match='crun and catatonit'):
         runtime.command(tmp_path / 'checkout', tmp_path / 'private')
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('entrypoint', ['host-collector', 'host-cleanup'])
+def test_published_host_entry_verifies_imported_bytes_before_any_operation(tmp_path, entrypoint):
+    import subprocess
+    from tl3_harness import runtime
+
+    destination = tmp_path / 'artifact'
+    executable, manifest, trusted_root = runtime.stage_host_runtime(destination, interpreter=sys.executable)
+    target = trusted_root / 'runtime.py'
+    target.chmod(0o600)
+    target.write_text('raise RuntimeError("untrusted import executed")\n')
+    completed = subprocess.run([str(destination / entrypoint), '--help'], capture_output=True, timeout=10)
+    assert completed.returncode != 0
+    assert b'trusted runtime' in completed.stderr
+    assert b'untrusted import executed' not in completed.stderr
+    assert executable.stat().st_mode & 0o777 == 0o500
+    assert manifest.stat().st_mode & 0o777 == 0o400
+    assert destination.stat().st_mode & 0o777 == 0o500
