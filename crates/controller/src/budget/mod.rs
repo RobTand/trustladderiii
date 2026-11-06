@@ -908,6 +908,20 @@ fn tool_policy(
         other: rule(""),
     }
 }
+
+#[cfg(test)]
+mod deletion_tests {
+    /// #895: a fresh successful removal is implementation progress, like an edit.
+    #[test]
+    fn deletion_is_progress_but_cannot_bypass_finalization() {
+        let policy = super::tool_policy(true, 16, false, false, false);
+        let value = serde_json::to_value(policy).unwrap();
+        assert_eq!(value["tools"]["delete"]["progress"][1][1][0], true);
+        assert_eq!(value["tools"]["delete"]["progress"][1][0][0], false);
+        let reserve = serde_json::to_value(super::tool_policy(true, 16, true, false, false)).unwrap();
+        assert_eq!(reserve["tools"]["delete"]["permission"], "reserve");
+    }
+}
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Dimension {
