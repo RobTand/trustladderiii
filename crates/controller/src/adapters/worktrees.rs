@@ -52,6 +52,8 @@ impl Executor for Fake {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
     BeforeApply,
+    AfterGenerationRecorded,
+    AfterGenerationInstalled,
     AfterApply,
 }
 
@@ -630,10 +632,12 @@ impl Served {
                                     write(&self.record_path(&record.delivery), record)?;
                                     return Ok(Some(completion));
                                 }
+                                hook(Boundary::AfterGenerationRecorded);
                                 let generated = CommitId::new(report.head).map_err(adapter)?;
                                 self.git
                                     .install_generated(branch, checkout, &head, &generated)
                                     .map_err(adapter)?;
+                                hook(Boundary::AfterGenerationInstalled);
                                 head = generated;
                             }
                         }

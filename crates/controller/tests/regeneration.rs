@@ -243,6 +243,7 @@ struct Controlled {
     _db: support::Database,
     g: Generated,
     sequence: u64,
+    dispatched: std::sync::Arc<std::sync::Mutex<Vec<(Delivery, String, String)>>>,
 }
 impl Controlled {
     fn new(mut g: Generated) -> Self {
@@ -254,6 +255,14 @@ impl Controlled {
             Real::new(g._root.path().join("unused"), 1).unwrap(),
         );
         registry.register(Upstream::Worktrees, adapter);
+        let dispatched = std::sync::Arc::default();
+        registry.register(
+            Upstream::Workers,
+            InspectMaker {
+                checkout: g.checkout.clone(),
+                dispatched: std::sync::Arc::clone(&dispatched),
+            },
+        );
         let mut c = Controller::open(
             Store::open(&settings).unwrap(),
             registry,
@@ -287,13 +296,14 @@ impl Controlled {
             _db: db,
             g,
             sequence: 0,
+            dispatched,
         };
         f.arm(Phase::Planning { must_split: false }, None);
         let generation = f.c.world().unwrap().nodes[0].generation;
         f.observe(Observation::Plan {
             node: NodeId(0),
             generation,
-            files: f.g.prepare.paths.clone(),
+            paths: f.g.prepare.paths.clone(),
             fits: true,
         });
         f
@@ -310,6 +320,10 @@ impl Controlled {
         n.head = sha.map(|sha| HeadId(store.intern_commit("0", sha).unwrap().get() as u64));
         n.checked = None;
         n.approved = None;
+        if matches!(phase, Phase::Queued | Phase::Publishing) {
+            n.checked = n.head;
+            n.approved = n.head;
+        }
         n.effect = None;
         n.ticket = None;
         n.job = (phase == Phase::Checking).then_some(n.generation);
@@ -442,4 +456,245 @@ fn controller_generator_failure_is_a_leaf_rebase_failure() {
     assert!(f.c.snapshot().unwrap().rows.iter().any(
         |row| row.table == "maker_findings" && row.value.to_string().contains("run_generator")
     ));
+}
+
+struct InspectMaker {
+    checkout: PathBuf,
+    dispatched: std::sync::Arc<std::sync::Mutex<Vec<(Delivery, String, String)>>>,
+}
+impl Executor for InspectMaker {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        self.dispatched.lock().unwrap().push((
+            delivery.clone(),
+            git(&self.checkout, &["rev-parse", "HEAD"]),
+            fs::read_to_string(self.checkout.join("gen/manifest.json")).unwrap(),
+        ));
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Absent)
+    }
+}
+
+#[test]
+fn required_queue_check_refuses_stale_tree_then_updates_repairs_and_rechecks() {
+    let g = Generated::new();
+    g.leaf();
+    let old = g.f.head(&g.prepare);
+    let old_base = git(&g.checkout, &["rev-parse", "HEAD~2"]);
+    g.upstream();
+    let target = git(&g.f.source, &["rev-parse", "HEAD"]);
+    let queue = g._root.path().join("queue");
+    git(
+        g._root.path(),
+        &[
+            "clone",
+            g.f.remote.to_str().unwrap(),
+            queue.to_str().unwrap(),
+        ],
+    );
+    git(
+        &queue,
+        &[
+            "fetch",
+            g.f.repo.to_str().unwrap(),
+            g.f.branch(&g.prepare).as_str(),
+        ],
+    );
+    git(&queue, &["merge", "--no-edit", "FETCH_HEAD"]);
+    assert!(
+        std::process::Command::new("python3")
+            .args(["tools/gen_manifest.py"])
+            .current_dir(&queue)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let required = std::process::Command::new("git")
+        .args(["diff", "--exit-code", "--", "gen/"])
+        .current_dir(&queue)
+        .output()
+        .unwrap();
+    assert!(
+        !required.status.success(),
+        "the required queue-tree check must refuse the clean but stale merge"
+    );
+    // The queue never pushes that rejected tree to main.
+    assert_eq!(git(&g.f.remote, &["rev-parse", "main"]), target);
+    let mut f = Controlled::new(g);
+    f.arm(Phase::Queued, Some(&old));
+    let run =
+        serde_json::from_value(json!({"repository":f.g.checkout,"base_sha":old_base,"plan":[]}))
+            .unwrap();
+    f.observe(Observation::CheckPlan {
+        node: NodeId(0),
+        sha: old.clone(),
+        run,
+    });
+    f.observe(Observation::CiFailed {
+        node: NodeId(0),
+        infra: false,
+        checks: vec![tl3_controller::findings::CiFailure {
+            name: "generated outputs".into(),
+            summary: "Required queue-tree regeneration changed gen/manifest.json".into(),
+            url: None,
+        }],
+    });
+    assert_ne!(f.c.world().unwrap().nodes[0].phase, Phase::Queued);
+    for _ in 0..80 {
+        if !f.dispatched.lock().unwrap().is_empty() {
+            break;
+        }
+        assert!(f.c.drive_once().unwrap());
+    }
+    let (delivery, head, manifest) = f.dispatched.lock().unwrap().last().unwrap().clone();
+    assert_eq!(
+        manifest.trim(),
+        "{\"count\": 2}",
+        "update and generation must finish before maker dispatch"
+    );
+    assert_ne!(head, old);
+    assert_eq!(
+        delivery.checks.unwrap().base_sha.as_str(),
+        target,
+        "upstream files must not become out-of-scope leaf changes"
+    );
+    assert!(
+        f.c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "generation_repair_evidence")
+    );
+    let generation = f.c.world().unwrap().nodes[0].generation;
+    f.observe(Observation::Made {
+        node: NodeId(0),
+        generation,
+        sha: head.clone(),
+    });
+    assert_eq!(f.c.world().unwrap().nodes[0].phase, Phase::Checking);
+    f.check(&head);
+    let n = f.c.world().unwrap().nodes[0];
+    assert_eq!(n.phase, Phase::Reviewing);
+    assert_eq!(n.checked, n.head);
+}
+
+#[test]
+fn queue_repair_preserves_non_generator_and_conflicted_update_routes() {
+    for generator in [false, true] {
+        let mut g = Generated::new();
+        g.leaf();
+        let old = g.f.head(&g.prepare);
+        if generator {
+            commit(&g.f.source, "src/a.txt", "2\n");
+            git(&g.f.source, &["push", g.f.remote.to_str().unwrap(), "main"]);
+        } else {
+            g.upstream();
+            g.config.github.repos[0].generator = None;
+            g.adapter = g.adapter.with_generation(&g.config).unwrap();
+        }
+        let mut f = Controlled::new(g);
+        f.arm(Phase::Queued, Some(&old));
+        f.observe(Observation::CiFailed {
+            node: NodeId(0),
+            infra: false,
+            checks: vec![],
+        });
+        for _ in 0..80 {
+            if !f.dispatched.lock().unwrap().is_empty() {
+                break;
+            }
+            assert!(f.c.drive_once().unwrap());
+        }
+        let (_, head, manifest) = f.dispatched.lock().unwrap().last().unwrap().clone();
+        assert_eq!(
+            head, old,
+            "non-generator/conflict must keep the existing maker route"
+        );
+        assert_eq!(manifest.trim(), "{\"count\": 1}");
+        assert_eq!(git(&f.g.checkout, &["status", "--porcelain"]), "");
+        if !generator {
+            assert!(
+                !f.c.snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "generation_repair_evidence")
+            );
+        }
+    }
+}
+
+#[test]
+fn generation_recovery_after_record_install_and_before_observation() {
+    use tl3_controller::adapters::worktrees::Boundary;
+    if let Some(root) = std::env::var_os("TL3_GENERATION_CRASH_ROOT") {
+        let stage = std::env::var("TL3_GENERATION_CRASH_STAGE").unwrap();
+        let mut f = Fixture::open(std::path::Path::new(&root));
+        f.repositories[0].generated_files = vec!["gen/**/*.json".into()];
+        f.repositories[0].generator = Some("python3 tools/gen_manifest.py".into());
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        config.github.repos = f.repositories.clone();
+        config.workers.python = f.root.join("python");
+        config.prismabuild.container_image = format!("sha256:{}", "1".repeat(64));
+        config.planning.protected_paths.clear();
+        let mut adapter = f.adapter().with_generation(&config).unwrap();
+        let mut delivery = f.delivery(EffectKind::StartRebase, 2);
+        delivery.paths = vec!["src/a.txt".into(), "gen/manifest.json".into()];
+        delivery.head_sha = Some(f.head(&delivery));
+        adapter
+            .execute_with(&delivery, |boundary| {
+                if matches!(
+                    (stage.as_str(), boundary),
+                    ("record", Boundary::AfterGenerationRecorded)
+                        | ("install", Boundary::AfterGenerationInstalled)
+                        | ("observe", Boundary::AfterApply)
+                ) {
+                    std::process::exit(77);
+                }
+            })
+            .unwrap();
+        panic!("crash boundary was not reached");
+    }
+    for stage in ["record", "install", "observe"] {
+        let mut g = Generated::new();
+        g.leaf();
+        g.upstream();
+        let delivery = g.rebase(2);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "generation_recovery_after_record_install_and_before_observation",
+                "--nocapture",
+            ])
+            .env("TL3_GENERATION_CRASH_ROOT", g._root.path())
+            .env("TL3_GENERATION_CRASH_STAGE", stage)
+            .output()
+            .unwrap();
+        assert_eq!(
+            child.status.code(),
+            Some(77),
+            "{}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        let completion = g.adapter.execute(&delivery).unwrap();
+        let head = completion
+            .observations
+            .iter()
+            .find_map(|observation| match observation {
+                Observation::Rebased { sha, .. } => Some(sha),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            git(&g.f.repo, &["show", &format!("{head}:gen/manifest.json")]),
+            "{\"count\": 2}"
+        );
+        assert_eq!(git(&g.checkout, &["status", "--porcelain"]), "");
+        assert_eq!(
+            serde_json::to_value(g.adapter.execute(&delivery).unwrap()).unwrap(),
+            serde_json::to_value(completion).unwrap()
+        );
+    }
 }
