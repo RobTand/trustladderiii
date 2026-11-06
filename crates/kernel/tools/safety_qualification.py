@@ -357,6 +357,17 @@ CASES = {
         '    m.rechecks = 0;',
         '//crates/kernel:verus_review_retry_recheck'),
 
+
+
+    'review_stopping_release': ('crates/kernel/src/reply_admission.rs',
+        '    if m.job == Some(generation) {\n        m.job = None;\n    }',
+        '    if m.job != Some(generation) {\n        m.job = None;\n    }',
+        '//crates/kernel:verus_review_stopping_release'),
+    'review_stopping_duplicate': ('crates/kernel/src/reply_admission.rs',
+        '    if m.run == Some(generation) {\n        m.run = None;\n        m.pool = false;\n    }',
+        '    m.run = None;\n    if m.run == Some(generation) {\n        m.run = None;\n        m.pool = false;\n    }',
+        '//crates/kernel:lib_test_tl3_kernel'),
+
 }
 
 
