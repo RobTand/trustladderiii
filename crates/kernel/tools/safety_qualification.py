@@ -331,6 +331,14 @@ CASES = {
                              'm.holds = false;\n        m.pos += 1;',
                              'm.holds = false;\n        m.pos += 0;',
                              '//crates/kernel:verus_ranks'),
+    'advance_idle_moves': ('crates/kernel/src/ranks.rs',
+                           'reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {\n        false',
+                           'reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {\n        true',
+                           '//crates/kernel:verus_ranks_advance_idle'),
+    'advance_terminal_outcome': ('crates/kernel/src/ranks.rs',
+                                 'close_node(node, context.node, outcome, out);',
+                                 'close_node(node, context.node, Outcome::Stopped, out);',
+                                 '//crates/kernel:verus_ranks_advance_finished'),
 
 
     'w7_deps_reachability': ('crates/kernel/src/dependencies.rs',

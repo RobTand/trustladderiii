@@ -47,6 +47,12 @@ pub(super) fn verify_phase(mut w: World) -> (result: (World, Outbox, bool)) [
                 < 4 * node_distance(w.nodes@[0]) + pending_rank(w.nodes@[0]),
         !result.2 ==> same_world(w, result.0) && result.1.len == 0,
         movable(w, 0) ==> result.2,
+        exists|c: AdvanceContext| c.node == 0
+            && result.2 == advance_enabled(w.nodes@[0], c)
+            && result.0.nodes@[0] == port_advance_contracts::node_after(w.nodes@[0], w.next_ticket, c),
+        (w.nodes@[0].phase == Phase::Queued || w.nodes@[0].phase == Phase::AwaitingRob
+            || w.nodes@[0].phase is Closed)
+            ==> !result.2,
 ] proof [reveal(advance_post); reveal(empty_outbox); reveal(accepted);
     reveal(retirement_domain); reveal(retirement_accepted);
     reveal(storage_ordered); reveal(footprint::ordered_table);] {
@@ -66,6 +72,12 @@ pub(super) fn verify_phase(mut w: World) -> (result: (World, Outbox, bool)) [
             && port_advance_contracts::pool_context(before@, 0, c)
             && port_advance_contracts::exact(before@.nodes@[0], w.nodes@[0], before@.next_ticket,
                 w.next_ticket, c, empty@, out);
+        reveal(port_advance_contracts::exact);
+        if before@.nodes@[0].phase == Phase::Queued || before@.nodes@[0].phase == Phase::AwaitingRob
+            || before@.nodes@[0].phase is Closed {
+            reveal(retirement::node_rules);
+            assert(!changed);
+        }
         port_advance_world::consistent(before@, w, c, empty@, out);
         port_advance_world::checker_reserves(before@, w, c, empty@, out);
         port_advance_contracts::transition_rules(before@.nodes@[0], w.nodes@[0], before@.next_ticket,

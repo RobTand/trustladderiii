@@ -706,6 +706,8 @@ def verus_proofs():
             "kernel::port_deps_pool_witness::pool_fixture": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_pool::best": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_pool_grant::pool_step": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_tail_witness::selected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_tail_witness::moves": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1025,6 +1027,8 @@ def verus_proofs():
             "port_deps_grant_cover": ("kernel::port_deps_pool_grant#grant_cover", 1),
             "port_deps_grant_is_checked": ("kernel::port_deps_pool_grant#grant_is_checked", 1),
             "port_deps_pool_key": ("kernel#pool_key", 1),
+            "port_advance_tail_world": ("kernel::port_advance_tail_witness#phase_world", 1),
+            "port_advance_tail_cover": ("kernel::port_advance_tail_witness#phase_cover", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
