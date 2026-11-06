@@ -556,16 +556,25 @@ impl Adapter {
             return Ok(());
         };
         let (number, head) = enqueue(delivery)?;
-        let Some(mut hold) = queue_retry::held(snapshot, delivery.node(), head)? else {
-            return Ok(());
+        let retargeted = |snapshot: &Snapshot| -> Result<Option<queue_retry::Hold>> {
+            let hold = queue_retry::held(snapshot, delivery.node(), head)?;
+            Ok(hold.filter(|hold| {
+                hold.repository == delivery.repository
+                    && hold.number == number
+                    && fresh.pull_request.head.sha == head
+                    && hold.context.branch != fresh.pull_request.base.branch
+            }))
         };
-        if hold.repository != delivery.repository
-            || hold.number != number
-            || fresh.pull_request.head.sha != head
-            || hold.context.branch == fresh.pull_request.base.branch
-        {
+        if retargeted(snapshot)?.is_none() {
             return Ok(());
         }
+        // The caller's snapshot predates the upstream PR read. Rebind against
+        // the latest revision so a concurrent commit cannot fail this read.
+        let mut store = tl3_store::Store::open(settings)?;
+        let snapshot = &store.load()?;
+        let Some(mut hold) = retargeted(snapshot)? else {
+            return Ok(());
+        };
         hold.context = queue_retry::QueueContext {
             base: fresh.pull_request.base.sha.clone(),
             branch: fresh.pull_request.base.branch.clone(),
@@ -590,7 +599,7 @@ impl Adapter {
             queue_retry::key(delivery.node(), head),
             json!(hold),
         ));
-        tl3_store::Store::open(settings)?.commit(&commit)?;
+        store.commit(&commit)?;
         Ok(())
     }
 }
