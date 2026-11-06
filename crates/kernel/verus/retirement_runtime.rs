@@ -133,37 +133,4 @@ pub(super) proof fn ci_retirement(n: Node, after: Node, infra: bool, fast: bool,
     }
 }
 
-/// State-table fact rows / #806: the actor portion of the existing fact frame.
-#[verifier::opaque]
-pub(super) open spec fn transition_node_frame(b: Node, n: Node) -> bool {
-    (b.phase is Closed ==> n.phase is Closed)
-        && n.repo == b.repo && n.footprint == b.footprint
-        && (settle_shape(b) ==> settle_shape(n))
-        && n.generation as int <= b.generation as int + 1
-        && n.next_seq == b.next_seq && n.last_cmd == b.last_cmd
-        && n.credit.start == b.credit.start && n.credit.earned == b.credit.earned
-        && n.credit.added == b.credit.added
-        && n.credit.spent as int <= b.credit.spent as int + 1
-}
-/// State-table non-merge safety facts / #806: derive actor frames outside dispatch.
-pub(super) proof fn selected_node_frame(n: Node, fact: Fact)
-    requires node_headroom(n), arithmetic_consistent(n), retirement::selected(fact), !(fact is PrMerged),
-    ensures transition_node_frame(n, retirement::fact_node(n, fact)),
-{
-    reveal(transition_node_frame); reveal(retirement::fact_node);
-    reveal(retirement::stopped); reveal(retirement::incident);
-}
-/// Q50 / Q54 / #806: derive the identical actor frame for both exact retry facts.
-pub(super) proof fn retry_node_frame(n: Node, fact: Fact, fast: bool, id: u64)
-    requires node_headroom(n), arithmetic_consistent(n), id < u64::MAX,
-        retirement_retry::selected(fact),
-    ensures transition_node_frame(n, retirement_retry::fact_result(n, fact, fast, id).0),
-{
-    reveal(transition_node_frame); reveal(retirement_retry::fact_result);
-    reveal(retirement_retry::failed); reveal(retirement_retry::rung);
-    reveal(retirement_retry::rechecked); reveal(retirement_retry::recheck_core);
-    reveal(retirement_retry::continued); reveal(retirement::stopped);
-    reveal(retirement::fact_node); reveal(retirement::incident);
-}
-
 }

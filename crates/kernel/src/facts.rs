@@ -241,18 +241,72 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     }
 
     kernel_proof! {
-        if retirement::selected(fact) {
-            retirement_runtime::selected_node_frame(before_transition@.nodes@[i as int], fact);
-        }
-        if retirement_retry::selected(fact) {
-            retirement_runtime::retry_node_frame(before_transition@.nodes@[i as int], fact,
-                before_transition@.fail_fast, before_transition@.next_question);
-        }
-        reveal(retirement_runtime::transition_node_frame);
         if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
     }
+    kernel_proof! {
+        // #806: P and !P partition every fact. Both subproofs retain the entire contract.
+        let dispatch_post = ((fact == Fact::IncidentCleared { by_rob: true }
+            && before_transition@.nodes@[i as int].waiting_incident && before_transition@.nodes@[i as int].effect.is_none()
+            && (!before_transition@.nodes@[i as int].paused || before_transition@.nodes@[i as int].phase is Stopping)
+            && !(before_transition@.nodes@[i as int].phase is Closed)
+            ==> distance(w.nodes@[i as int]) < distance(before_transition@.nodes@[i as int])))
+            && ((before_transition@.nodes@[i as int].phase is Closed ==> w.nodes@[i as int].phase is Closed))
+            && (w.nodes@[i as int].repo == before_transition@.nodes@[i as int].repo)
+            && (w.nodes@[i as int].footprint == before_transition@.nodes@[i as int].footprint)
+            && ((settle_shape(before_transition@.nodes@[i as int]) ==> settle_shape(w.nodes@[i as int])))
+            && (w.nodes@.len() == before_transition@.nodes@.len())
+            && (forall|j: int| 0 <= j < before_transition@.nodes@.len() && j != i
+            ==> w.nodes@[j] == before_transition@.nodes@[j])
+            && (w.nodes@[i as int].generation as int <= before_transition@.nodes@[i as int].generation as int + 1)
+            && (w.nodes@[i as int].next_seq == before_transition@.nodes@[i as int].next_seq)
+            && (w.nodes@[i as int].credit.start == before_transition@.nodes@[i as int].credit.start)
+            && (w.nodes@[i as int].credit.earned == before_transition@.nodes@[i as int].credit.earned)
+            && (w.nodes@[i as int].credit.added == before_transition@.nodes@[i as int].credit.added)
+            && (w.nodes@[i as int].credit.spent as int <= before_transition@.nodes@[i as int].credit.spent as int + 1)
+            && (w.next_ticket == before_transition@.next_ticket)
+            && (w.next_question as int <= before_transition@.next_question as int + 1)
+            && (w.gates@ == before_transition@.gates@)
+            && (w.pool_capacity == before_transition@.pool_capacity)
+            && (w.fail_fast == before_transition@.fail_fast)
+            && (w.file_sets@ == before_transition@.file_sets@)
+            && (w.dependencies@ == before_transition@.dependencies@)
+            && (out.len <= before_out@.len + 2)
+            && (w.nodes@[i as int].last_cmd == before_transition@.nodes@[i as int].last_cmd)
+            && (retirement::selected(fact) ==> w.next_question == before_transition@.next_question)
+            && (retirement::selected(fact) ==> w.dependencies@ == before_transition@.dependencies@)
+            && (retirement::selected(fact) ==> w.nodes@[i as int]
+            == retirement::fact_node(before_transition@.nodes@[i as int], fact))
+            && (retirement::selected(fact) && retirement::notices_only(before_out@)
+            ==> retirement::notices_only(*out))
+            && (fact is Priority ==> *out == before_out@)
+            && (match fact {
+            Fact::PrMerged { head, checks_passed } => before_transition@.nodes@[i as int].had_pr
+                && before_transition@.nodes@[i as int].merged.is_none()
+                && !(before_transition@.nodes@[i as int].phase is Closed)
+                && !(before_transition@.nodes@[i as int].approved == Some(head) && checks_passed)
+                ==> retirement::unapproved_note(*out, i),
+            _ => true,
+        })
+            && (retirement_retry::selected(fact) ==> w.nodes@[i as int]
+            == retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).0)
+            && (retirement_retry::selected(fact) ==> w.next_question as int == before_transition@.next_question as int
+            + if retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).1 { 1int } else { 0int })
+            && (retirement_retry::selected(fact) && retirement::notices_only(before_out@) ==> retirement::notices_only(*out))
+            && (retirement_retry::selected(fact) ==> w.dependencies@ == before_transition@.dependencies@)
+            && (match fact {
+            Fact::CiFailed { infra } => retirement_runtime::ci_post(before_transition@.nodes@[i as int],
+                w.nodes@[i as int], infra, before_transition@.fail_fast, before_transition@.next_question, w.next_question),
+            _ => true,
+        });
+        if fact is PushByOther {
+            assert(dispatch_post) by {};
+        } else {
+            assert(dispatch_post) by {};
+        }
+    }
+
 }
 }
 
