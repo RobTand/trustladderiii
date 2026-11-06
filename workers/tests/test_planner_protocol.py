@@ -796,6 +796,11 @@ def test_r1_flag_claim_accepts_exact_supplied_passage():
     after['memory_flags'][0]['claim'] = 'exact supplied passage'
     found = violations(facts)
     assert permits(found, facts['draft'], after, role='planner')
+    assert 'nonempty exact passage' in found[0].render(role='planner')
+    for field, value in [('id', 'other'), ('claim', '')]:
+        invalid = copy.deepcopy(after)
+        invalid['memory_flags'][0][field] = value
+        assert not permits(found, facts['draft'], invalid, role='planner')
     after['memory_flags'][0]['claim'] = 'invented passage'
     assert not permits(found, facts['draft'], after, role='planner')
 

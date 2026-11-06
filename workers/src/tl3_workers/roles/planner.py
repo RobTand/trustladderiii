@@ -40,6 +40,30 @@ def strict_enum(validator, expected, value, schema):
         yield ValidationError('value is outside the captured JSON alternatives')
 
 
+def ordered_values(validator, facts, value, schema):
+    """Preserve captured order, allowing only named insertions and deletions."""
+    before, additions, removable = (facts[key] for key in ('before', 'add', 'remove'))
+    if (not isinstance(value, list) or len(value) > len(before) + len(additions)
+            or len(unique(before)) == len(before) and len(unique(value)) != len(value)):
+        yield ValidationError('array exceeds the captured identities or multiplicities')
+        return
+    position = 0
+    for item in value:
+        if MembershipAllowed('enum', additions).accepts(item):
+            continue
+        while position < len(before) and not MembershipAllowed('const', before[position]).accepts(item):
+            if not MembershipAllowed('enum', removable).accepts(before[position]):
+                yield ValidationError('captured array identities must remain in order')
+                return
+            position += 1
+        if position == len(before):
+            yield ValidationError('only named additions are permitted')
+            return
+        position += 1
+    if any(not MembershipAllowed('enum', removable).accepts(item) for item in before[position:]):
+        yield ValidationError('only named removals are permitted')
+
+
 def memory_flags(validator, facts, value, schema):
     """Ordered flags with named deletion and exact supplied-passage replacement."""
     if not isinstance(value, list):
@@ -66,7 +90,8 @@ def memory_flags(validator, facts, value, schema):
 
 
 StrictValidator = extend(Draft202012Validator, {
-    'const': strict_constant, 'enum': strict_enum, 'x-memory-flags': memory_flags})
+    'const': strict_constant, 'enum': strict_enum,
+    'x-ordered': ordered_values, 'x-memory-flags': memory_flags})
 
 
 class Allowed(WorkerAllowed):
@@ -78,7 +103,12 @@ class Allowed(WorkerAllowed):
                 preview = [compact(child) for child in value[:8]]
                 return preview + ([f'and {len(value) - 8} more (total {len(value)})'] if len(value) > 8 else [])
             return value
-        return f'{self.keyword} {json.dumps(compact(self.value), ensure_ascii=False, sort_keys=True)}'
+        text = f'{self.keyword} {json.dumps(compact(self.value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))}'
+        if '"x-ordered"' in text:
+            text += ' x-ordered: keep before in order; only add/remove named values.'
+        if '"x-memory-flags"' in text:
+            text += ' x-memory-flags: keep order and other fields; drop named IDs or claim indexes, or replace their claim with a nonempty exact passage for the same ID.'
+        return text
 
     def accepts(self, value):
         constraint = self.value if self.keyword == 'schema' else {self.keyword: self.value}
@@ -192,24 +222,10 @@ def object_constraint(original, changes):
 
 
 def ordered_constraint(before, additions=(), removable=()):
-    """Bound insertions/deletions while retaining the order of existing identities."""
-    additions = [value for value in unique(additions) if value not in before]
+    additions = [value for value in unique(additions) if not MembershipAllowed('enum', before).accepts(value)]
     if not additions and not removable:
         return {'const': before}
-    choices = unique([*before, *additions])
-    maximum = len(before) + len(additions)
-    constraints = []
-    for index, value in enumerate(before):
-        if value not in removable:
-            constraints.append({'contains': {'const': value}, 'minContains': before.count(value)})
-        # Once an original identity occurs, only later identities or additions
-        # may follow. The schema stays polynomial in the bounded array length.
-        later = unique([*before[index + 1:], *additions])
-        for slot in range(maximum):
-            constraints.append({'if': {'minItems': slot + 1, 'prefixItems': [{}] * slot + [{'const': value}]},
-                                'then': {'prefixItems': [{}] * (slot + 1), 'items': {'enum': later}}})
-    return {'type': 'array', 'items': {'enum': choices}, 'maxItems': maximum,
-            'uniqueItems': len(unique(before)) == len(before), 'allOf': constraints}
+    return {'x-ordered': {'before': before, 'add': additions, 'remove': list(removable)}}
 
 
 def append_constraint(before, additions):

@@ -98,7 +98,7 @@ if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate"
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from tl3_workers import runtime
-from tl3_workers.rules import Allowed
+from tl3_workers.roles.planner import Allowed
 
 
 class ConsistencyModel(FakeMessagesListChatModel):
