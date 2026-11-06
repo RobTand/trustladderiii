@@ -413,6 +413,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     }
     kernel_snapshot! { prepared_ci = *w }
     kernel_snapshot! { prepared_out = *out }
+    kernel_proof! { retirement_runtime::ci_inputs(before_ci@); }
     if !infra {
         failed_round(w, i, ReviewStop::CiFailed, out);
         kernel_proof! {

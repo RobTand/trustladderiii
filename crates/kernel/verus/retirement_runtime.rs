@@ -118,4 +118,11 @@ pub(super) proof fn ci_forward(n: Node, after: Node, infra: bool, fast: bool, id
         retirement_retry_bridge::round(ci_prepared(n), fast, id, ReviewStop::CiFailed);
     }
 }
+
+/// Q50 / #806: cancellation preserves the source agenda and every callee premise.
+pub(super) proof fn ci_inputs(n: Node)
+    ensures current_item(ci_prepared(n)) == current_item(n),
+        node_headroom(ci_prepared(n)) == node_headroom(n),
+        arithmetic_consistent(ci_prepared(n)) == arithmetic_consistent(n),
+{ }
 }
