@@ -266,9 +266,9 @@ fn queue_conditions(nodes: serde_json::Value) -> CheckRun {
     queue_payload(serde_json::json!({"version":1,"state":"waiting","required_conditions":nodes}))
 }
 
-/// #854 r1: boundary identities round-trip through arbitrarily satisfied groups.
 proptest! {
     #![proptest_config(Config { failure_persistence: None, ..Config::default() })]
+    /// #854 r1: boundary identities round-trip through arbitrarily satisfied groups.
     #[test]
     fn queue_check_identity_round_trips(
         name in "[A-Za-z_][A-Za-z0-9_ /.-]{0,48}",
