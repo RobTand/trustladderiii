@@ -16,6 +16,9 @@ def prepare():
     # Reuse the pinned in-tree bootstrap, without its unrelated P5 generators.
     runpy.run_path('workers/tests/p5/remote.py')['bootstrap']()
     run('bash', 'tools/bazel/generate.sh')
+    scratch = Path('/home/buildbuddy/ep-runtime')
+    scratch.mkdir(exist_ok=True)
+    os.environ['TEST_TMPDIR'] = str(scratch)
     run('bazel', 'run', '--config=remote', '--jobs=16', '//tools/bazel:worker_python', '--',
         str(Path(__file__).resolve()), 'identities')
     run('python3', 'crates/controller/src/prompt_render/oracle.py')
@@ -57,5 +60,46 @@ def identities():
     vectors.VECTORS.write_text(json.dumps(generated, indent=2, ensure_ascii=False) + '\n')
 
 
+def verify():
+    import ast
+    import re
+    import xml.etree.ElementTree as ET
+
+    mode = sys.argv[2]
+    artifact = Path(os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
+    if mode == 'workers':
+        targets = ['//workers/tests/...']
+    elif mode == 'controller':
+        text = Path('tools/bazel/rust.bzl').read_text()
+        names = ast.literal_eval(re.search(r'_CONTROLLER_WORKERS = (\[.*?\])', text, re.S)[1])
+        labels = subprocess.check_output(['bazel', 'query',
+            'filter("^//crates/controller:test_test_.*_io$", tests(//crates/controller:all))'], text=True)
+        targets = list(dict.fromkeys(['//crates/controller:' + name for name in names] + labels.splitlines()))
+    else:
+        run('bazel', 'mod', 'deps', '--config=ci', '--lockfile_mode=error')
+        run('python3', 'tools/ci/graph_impact_check.py', '--base', sys.argv[3])
+        return
+    results = []
+    for target in targets:
+        print('EP QUALIFY START', target, flush=True)
+        result = subprocess.run(['bazel', 'test', '--config=remote', '--jobs=16',
+                                 target, '--keep_going', '--nocache_test_results'])
+        roots = [Path('bazel-testlogs/workers/tests')] if mode == 'workers' else [
+            Path('bazel-testlogs') / target[2:].replace(':', '/')]
+        counts = []
+        for root in roots:
+            for path in root.rglob('test.xml'):
+                document = ET.parse(path).getroot()
+                count = int(document.get('tests', 0)) if document.tag == 'testsuite' else sum(
+                    int(child.get('tests', 0)) for child in document.findall('testsuite'))
+                counts.append({'path': str(path), 'tests': count})
+        record = {'target': target, 'returncode': result.returncode, 'xml': counts,
+                  'executed_cases': sum(row['tests'] for row in counts)}
+        results.append(record)
+        print('EP QUALIFY RESULT', json.dumps(record), flush=True)
+        (artifact / ('ep-' + mode + '-results.json')).write_text(json.dumps(results, indent=2) + '\n')
+    assert all(row['returncode'] == 0 and row['executed_cases'] > 0 for row in results), results
+
+
 if __name__ == '__main__':
-    {'prepare': prepare, 'identities': identities}[sys.argv[1]]()
+    {'prepare': prepare, 'identities': identities, 'verify': verify}[sys.argv[1]]()
