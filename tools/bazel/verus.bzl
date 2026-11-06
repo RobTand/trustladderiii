@@ -872,6 +872,19 @@ def verus_proofs():
             "review_retry_plan": ("kernel::retries#plan_retry", 1),
             "review_retry_recheck": ("kernel::retries#recheck", 1),
 
+            "port_advance_node_environment_frame": ("kernel::port_advance_node_rules#environment_frame", 1),
+            "port_advance_node_blocked_rules": ("kernel::port_advance_node_rules#blocked_rules", 1),
+            "port_advance_node_finished_rules": ("kernel::port_advance_node_rules#finished_rules", 1),
+            "port_advance_node_do_rules": ("kernel::port_advance_node_rules#do_rules", 1),
+            "port_advance_node_start_rules": ("kernel::port_advance_node_rules#start_rules", 1),
+            "port_advance_node_admit_rules": ("kernel::port_advance_node_rules#admit_rules", 1),
+            "port_advance_node_slot_rules": ("kernel::port_advance_node_rules#slot_rules", 1),
+            "port_advance_node_checks_rules": ("kernel::port_advance_node_rules#checks_rules", 1),
+            "port_advance_node_rebase_rules": ("kernel::port_advance_node_rules#rebase_rules", 1),
+            "port_advance_node_release_rules": ("kernel::port_advance_node_rules#release_rules", 1),
+            "port_advance_node_teardown_rules": ("kernel::port_advance_node_rules#teardown_rules", 1),
+            "port_advance_node_idle_rules": ("kernel::port_advance_node_rules#idle_rules", 1),
+            "port_advance_node_node_rules": ("kernel::port_advance_node_rules#node_rules", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

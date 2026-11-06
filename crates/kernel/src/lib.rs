@@ -2256,3 +2256,7 @@ mod port_review_retry;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_reply.rs"]
 mod port_review_reply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_node_rules.rs"]
+mod port_advance_node_rules;
