@@ -1,11 +1,13 @@
 //! Event-driven controller observer ownership. Native execution stays with RunBackend.
-use crate::{Result, cli::Input, run_backend::{Observation, Owner, RunBackend, WatchStop}};
+use crate::{Result, cli::Input, run_backend::{Event, Observation, Owner, RunBackend, WatchStop}};
 use crate::sync::mpsc::Sender as InputSender;
 use std::{collections::BTreeMap, sync::{Arc, mpsc}, thread};
 
 /// The adapter must journal its final completion before returning an ingress input.
 /// This callback performs bounded local journal work, with no upstream wait or retry loop.
 pub type Finish = Arc<dyn Fn(&Owner, Observation) -> Result<Option<Input>> + Send + Sync>;
+/// Journal typed historical progress before publishing its ingress notification.
+pub type Progress = Arc<dyn Fn(&Owner, &Event) -> Result<Option<Input>> + Send + Sync>;
 pub type Backend = Arc<dyn RunBackend + Send + Sync>;
 
 enum Command {
@@ -30,6 +32,7 @@ pub struct Source {
     handle: Handle,
     recovered: Vec<Owner>,
     finish: Finish,
+    progress: Progress,
 }
 
 struct Watch {
@@ -76,7 +79,12 @@ impl Source {
     pub fn new(backend: Backend, recovered: Vec<Owner>, finish: Finish) -> (Handle, Self) {
         let (sender, commands) = mpsc::channel();
         let handle = Handle(sender);
-        (handle.clone(), Self { backend, commands, handle, recovered, finish })
+        (handle.clone(), Self { backend, commands, handle, recovered, finish, progress: Arc::new(|_, _| Ok(None)) })
+    }
+
+    pub fn with_progress(mut self, progress: Progress) -> Self {
+        self.progress = progress;
+        self
     }
 
     pub fn spawn(self, sender: InputSender<Input>) -> RunningSource {
@@ -114,6 +122,7 @@ impl Source {
                         }
                         let backend = self.backend.clone();
                         let finish = self.finish.clone();
+                        let progress = self.progress.clone();
                         let sender = sender.clone();
                         let done = self.handle.0.clone();
                         let stop = WatchStop::default();
@@ -123,7 +132,11 @@ impl Source {
                         let thread = thread::spawn(move || {
                             // Always notify the source, including a callback panic, so it can reap us.
                             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
-                                let observation = backend.attach(&owner, &watching, &mut |_| {
+                                let observation = backend.attach(&owner, &watching, &mut |event| {
+                                    if watching.is_stopped() { return Ok(()); }
+                                    if let Some(input) = progress(&owner, event).map_err(|_| crate::run_backend::BackendError::unknown("controller progress journal unavailable"))? {
+                                        sender.send(input).map_err(|_| crate::run_backend::BackendError::unknown("controller ingress closed"))?;
+                                    }
                                     sender.send(Input::Wake).map_err(|_| crate::run_backend::BackendError::unknown("controller ingress closed"))
                                 }).map_err(|error| crate::Error::Adapter(Box::new(error)))?;
                                 if watching.is_stopped() { return Ok(()); }

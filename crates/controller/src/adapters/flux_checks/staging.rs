@@ -90,24 +90,6 @@ fn inventory(root: &Path, directory: &Path, files: &mut Vec<backend::InputFile>)
     Ok(())
 }
 
-/// Consume the paths returned by FXR stage_host_runtime; staging itself is admitted generation.
-/// The caller supplies the exact trusted action argv after the collector separator.
-pub fn collector_identity(executable: &Path, manifest: &Path, timeout: std::num::NonZeroU32, action: &[String]) -> Result<backend::RunnerIdentity> {
-    if timeout.get() > 86400 || action.is_empty() {
-        return Err(Error::Invalid("collector requires bounded timeout and trusted action argv"));
-    }
-    for path in [executable, manifest] {
-        if !backend::absolute(path) || !path.canonicalize()?.starts_with("/mnt/shared") || !fs::metadata(path)?.permissions().readonly() {
-            return Err(Error::Invalid("collector artifact requires immutable shared files"));
-        }
-    }
-    let executable_digest = durable::digest(&durable::read(executable).map_err(adapter_error)?);
-    let manifest_digest = durable::digest(&durable::read(manifest).map_err(adapter_error)?);
-    let mut arguments = vec!["--timeout".into(), timeout.to_string(), "--".into()];
-    arguments.extend_from_slice(action);
-    Ok(backend::RunnerIdentity { executable: executable.to_owned(), executable_digest, manifest: manifest.to_owned(), manifest_digest, arguments })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

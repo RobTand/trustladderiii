@@ -47,6 +47,7 @@ impl Preparation for Staging {
 struct State {
     submits: usize, cancels: usize, unknown_submit: bool,
     binding: Option<RunBinding>, terminal: Option<Terminal>, probe: Option<Availability>,
+    authority: Option<ProgressAuthority>, phase: Option<NativePhase>, emit_progress: bool,
 }
 struct Backend { state: Mutex<State>, changed: Condvar, attached: mpsc::Sender<Owner>, records: std::path::PathBuf }
 impl Backend {
@@ -69,9 +70,17 @@ impl RunBackend for Backend {
         state.binding = Some(binding.clone());
         Ok(if state.unknown_submit { Submission::Unknown { reason: "acceptance reply lost".into() } } else { Submission::Accepted { binding } })
     }
-    fn attach(&self, owner: &Owner, stop: &WatchStop, _: &mut dyn FnMut(&Event) -> api::Result<()>) -> api::Result<api::Observation> {
+    fn attach(&self, owner: &Owner, stop: &WatchStop, emit: &mut dyn FnMut(&Event) -> api::Result<()>) -> api::Result<api::Observation> {
         self.attached.send(owner.clone()).unwrap();
         let mut state = self.state.lock().unwrap();
+        if state.emit_progress {
+            let run = state.binding.as_ref().unwrap().id.clone();
+            drop(state);
+            let digest = "3".repeat(64);
+            emit(&Event { sequence: 7, digest: digest.clone(), fact: NativeFact::Start,
+                progress: NativeProgress { owner: owner.clone(), run, cursor: EventCursor { sequence: 7, digest }, phase: NativePhase::Running, authority: ProgressAuthority::Historical } })?;
+            state = self.state.lock().unwrap();
+        }
         while state.terminal.is_none() && !stop.is_stopped() {
             state = self.changed.wait_timeout(state, Duration::from_millis(10)).unwrap().0;
         }
@@ -89,6 +98,15 @@ impl RunBackend for Backend {
         assert_eq!(r, &reservation()); assert_eq!(p, &placement());
         Ok(Probe { availability: self.state.lock().unwrap().probe.clone().unwrap_or(Availability::Busy), reason: "eligible dl380 census".into(), total_cpus: 40, free_cpus: 0, total_gpus: 0, free_gpus: 0, memory_guarantee: MemoryGuarantee::DeclaredOnly })
     }
+    fn liveness(&self, owner: &Owner) -> api::Result<Liveness> {
+        let state = self.state.lock().unwrap();
+        Ok(Liveness { owner: owner.clone(), run: state.binding.as_ref().map(|binding| binding.id.clone()), cursor: None,
+            phase: if state.terminal.is_some() { NativePhase::Terminal } else { state.phase.unwrap_or(NativePhase::Running) },
+            authority: if state.terminal.is_some() { ProgressAuthority::CommittedTerminal } else { state.authority.unwrap_or(ProgressAuthority::FreshNative) },
+            observed_unix_ms: 1, terminal: state.terminal.clone(), evidence: Some(BlobRef { path: "/output/native-state".into(), sha256: "2".repeat(64), bytes: 1 }), reason: "bounded native fixture".into() })
+    }
+    fn validate_allocation(&self, _: &Owner, _: &AllocationInput) -> api::Result<CpuGrant> { panic!("controller must not qualify allocation") }
+    fn worker_payload(&self, _: &Owner, _: &Terminal) -> api::Result<WorkerPayload> { panic!("daytime adapter must not consume worker payload") }
     fn launch_context(&self, _: &Owner, _: &str) -> api::Result<LaunchContext> { panic!("controller must not launch") }
     fn retain_runtime(&self, _: &Owner, _: RuntimeOwnership) -> api::Result<()> { panic!("controller must not own runtime launch") }
     fn cleanup_runtime(&self, _: &Owner) -> api::Result<CleanupResult> { panic!("controller must not infer cleanup") }
@@ -254,15 +272,49 @@ fn flux_checks_controller_incident_clearance_allows_fresh_dispatch() {
     std::thread::sleep(Duration::from_millis(1100));
     c.look_due().unwrap(); drain(&mut c);
     assert!(c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == incident.id && r.value["open"] == true));
+    let before = backend.state.lock().unwrap().submits;
+    assert_eq!(before, 2);
     backend.state.lock().unwrap().probe = Some(Availability::Busy);
     std::thread::sleep(Duration::from_millis(1100));
     c.look_due().unwrap(); drain(&mut c);
     assert!(c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == incident.id && r.value["open"] == false));
     assert!(!c.world().unwrap().nodes[0].waiting_incident);
-    let before = backend.state.lock().unwrap().submits;
-    c.observe("flux-plan-after-clearance", Observation::CheckPlan { node: NodeId(0), sha: "b".repeat(40), run: plan }).unwrap();
-    drain(&mut c);
-    assert_eq!(backend.state.lock().unwrap().submits, before + 1, "healthy capacity must permit a fresh dispatch");
+    let after = backend.state.lock().unwrap().submits;
+    assert_eq!(after, before + 1, "incident clearance must permit an automatic fresh dispatch");
     running.stop().unwrap(); running.join().unwrap();
     drop(c); database.stop();
+}
+
+
+/// FX / #369: historical progress is durable before ingress but only fresh native authority proves liveness.
+#[test]
+fn flux_checks_historical_progress_is_journaled_without_fabricating_liveness() {
+    use tl3_controller::executor::Look;
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership = Ownership::claim(Store::open(&database.create("flux_progress")).unwrap()).unwrap();
+    let (mut adapter, backend, _, _) = setup(root.path(), &mut ownership);
+    backend.state.lock().unwrap().emit_progress = true;
+    let d = delivery();
+    adapter.execute(&d).unwrap();
+    let (sender, inputs) = mpsc::channel();
+    let running = adapter.source().unwrap().spawn(sender);
+    let input = inputs.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(input, Input::Observation { observation: tl3_controller::executor::Observation::Progress { .. }, .. }));
+    let journal: serde_json::Value = serde_json::from_slice(&fs::read(backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())))).unwrap()).unwrap();
+    assert_eq!(journal["progress"]["cursor"]["sequence"], 7);
+    assert!(matches!(inputs.recv_timeout(Duration::from_secs(5)).unwrap(), Input::Wake));
+    backend.state.lock().unwrap().authority = Some(ProgressAuthority::Historical);
+    assert!(matches!(adapter.look(&d).unwrap(), Look::Pending));
+    backend.state.lock().unwrap().authority = Some(ProgressAuthority::Unknown);
+    assert!(matches!(adapter.look(&d).unwrap(), Look::Pending));
+    backend.state.lock().unwrap().authority = Some(ProgressAuthority::FreshNative);
+    backend.state.lock().unwrap().phase = Some(NativePhase::Queued);
+    assert!(matches!(adapter.look(&d).unwrap(), Look::Alive { .. }));
+    backend.state.lock().unwrap().phase = Some(NativePhase::Unknown);
+    assert!(matches!(adapter.look(&d).unwrap(), Look::Pending));
+    assert!(adapter.wait_record("foreign-owner", Path::new("/foreign-checkout")).is_err());
+    running.stop().unwrap(); running.join().unwrap();
+    assert_eq!(backend.state.lock().unwrap().cancels, 0);
+    drop((adapter, ownership)); database.stop();
 }

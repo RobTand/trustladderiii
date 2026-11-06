@@ -40,6 +40,8 @@ struct Job {
     binding: Option<backend::RunBinding>,
     terminal: Option<backend::Terminal>,
     completion: Option<Completion>,
+    #[serde(default)]
+    progress: Option<backend::NativeProgress>,
 }
 impl Job {
     fn validate(&self, key: &str) -> Result<()> {
@@ -136,6 +138,30 @@ impl Shared {
         if incoming < accepted || incoming < 0 { return Err(Error::Invalid("check adapter refused an older epoch")); }
         durable::atomic(&path, &serde_json::to_vec(&incoming)?).map_err(adapter_error)
     }
+    fn progress(&self, owner: &backend::Owner, event: &backend::Event) -> Result<Option<Input>> {
+        self.transaction(|| {
+            let mut job = self.load(&owner.correlation)?.ok_or(Error::Invalid("progress has no controller intent"))?;
+            if job.owner() != *owner || event.progress.owner != *owner
+                || event.progress.run.instance != job.intent.instance || event.progress.run.uri != job.intent.uri
+                || event.progress.cursor.sequence != event.sequence || event.progress.cursor.digest != event.digest
+                || event.progress.authority != backend::ProgressAuthority::Historical
+                || job.binding.as_ref().is_some_and(|binding| binding.id != event.progress.run)
+            { return Err(Error::Invalid("typed progress does not match the controller check binding")); }
+            event.progress.run.validate().map_err(adapter_error)?;
+            if let Some(previous) = &job.progress {
+                if previous.cursor.sequence > event.sequence { return Ok(None); }
+                if previous.cursor.sequence == event.sequence {
+                    if previous != &event.progress { return Err(Error::Invalid("conflicting check progress cursor")); }
+                    return Ok(None);
+                }
+            }
+            job.progress = Some(event.progress.clone());
+            self.save(&job)?;
+            Ok(Some(Input::Observation { key: format!("flux-progress:{}:{}:{}", owner.correlation, event.sequence, event.digest),
+                observation: crate::executor::Observation::Progress { key: job.delivery.key,
+                    checkpoint: format!("flux:{}:{}", event.sequence, event.digest) } }))
+        })
+    }
     fn observe(&self, owner: &backend::Owner, observed: backend::Observation) -> Result<Option<Input>> {
         let job = self.transaction(|| self.load(&owner.correlation))?.ok_or(Error::Invalid("observer has no durable controller intent"))?;
         if job.owner() != *owner { return Err(Error::Invalid("check observer owner mismatch")); }
@@ -143,6 +169,7 @@ impl Shared {
             backend::Observation::Unknown { binding, .. } => (binding, None),
             backend::Observation::Terminal { binding, terminal } => (binding, Some(terminal)),
         };
+        if let Some(binding) = &binding { binding.id.validate().map_err(adapter_error)?; }
         if binding.as_ref().is_some_and(|binding| binding.intent != job.intent
             || binding.id.instance != job.intent.instance || binding.id.uri != job.intent.uri) {
             return Err(Error::Invalid("check observation belongs to another submission"));
@@ -188,8 +215,10 @@ impl Adapter {
         let shared = Arc::new(Shared { backend, options, root: root.to_owned() });
         let recovered = shared.transaction(|| Ok(shared.jobs()?.into_iter().map(|job| job.owner()).collect()))?;
         let finishing = shared.clone();
+        let progressing = shared.clone();
         let (handle, source) = backend_watch::Source::new(shared.backend.clone(), recovered,
             Arc::new(move |owner, observation| finishing.observe(owner, observation)));
+        let source = source.with_progress(Arc::new(move |owner, event| progressing.progress(owner, event)));
         Ok(Self { shared, preparation: Box::new(preparation), worker_waits: None, handle, source: Some(source) })
     }
     pub fn with_worker_waits(mut self, waits: impl WorkerWaits + 'static) -> Self {
@@ -261,7 +290,7 @@ impl Executor for Adapter {
                     output_dir: Path::new("/mnt/shared/flux-out/tl3").join(&key) };
                 let job = Job { delivery: delivery.clone(), request: prepared.request, intent,
                     run: prepared.run, changed_paths: prepared.changed_paths, selected_tests: prepared.selected_tests,
-                    always_tests: prepared.always_tests, binding: None, terminal: None, completion: None };
+                    always_tests: prepared.always_tests, binding: None, terminal: None, completion: None, progress: None };
                 self.shared.transaction(|| {
                     self.shared.fence(delivery.epoch)?;
                     if self.shared.load(&key)?.is_some() { return Err(Error::Invalid("check intent was concurrently retained; reconcile before dispatch")); }
@@ -296,6 +325,43 @@ impl Executor for Adapter {
             }
             _ => Err(Error::Invalid("unsupported shared check effect")),
         }
+    }
+    fn look(&mut self, delivery: &Delivery) -> Result<crate::executor::Look> {
+        use crate::executor::Look;
+        if !matches!(delivery.output, Output::Effect { kind: EffectKind::SubmitChecks, .. }) {
+            return Ok(match self.reconcile(delivery)? {
+                Reconciliation::Found(completion) => Look::Found(completion),
+                Reconciliation::Absent => Look::Absent,
+                Reconciliation::Pending => Look::Pending,
+            });
+        }
+        let Some(job) = self.shared.transaction(|| self.shared.load(&correlation(delivery)))? else { return Ok(Look::Absent); };
+        if !job.matches(delivery)? { return Err(Error::Invalid("check look identity changed")); }
+        if let Some(completion) = &job.completion { return Ok(Look::Found(Box::new(completion.clone()))); }
+        self.handle.watch(job.owner())?;
+        let live = self.shared.backend.liveness(&job.owner()).map_err(adapter_error)?;
+        if live.owner != job.owner() { return Err(Error::Invalid("native liveness belongs to another owner")); }
+        let binding = live.run.map(|id| backend::RunBinding { id, intent: job.intent.clone() });
+        self.shared.observe(&job.owner(), backend::Observation::Unknown { binding: binding.clone(), reason: "bounded native liveness".into() })?;
+        let current = self.shared.transaction(|| self.shared.load(&correlation(delivery)))?.ok_or(Error::Invalid("check intent disappeared"))?;
+        if let Some(completion) = current.completion { return Ok(Look::Found(Box::new(completion))); }
+        if live.authority == backend::ProgressAuthority::CommittedTerminal && live.phase == backend::NativePhase::Terminal {
+            let terminal = live.terminal.ok_or(Error::Invalid("terminal liveness has no committed ending"))?;
+            self.shared.observe(&job.owner(), backend::Observation::Terminal { binding, terminal })?;
+            return Ok(match self.reconcile(delivery)? {
+                Reconciliation::Found(completion) => Look::Found(completion),
+                _ => Look::Pending,
+            });
+        }
+        if matches!(live.authority, backend::ProgressAuthority::FreshNative | backend::ProgressAuthority::Historical) && live.evidence.is_some()
+            && current.binding.is_some() && live.observed_unix_ms > 0
+            && matches!(live.phase, backend::NativePhase::Queued | backend::NativePhase::Running | backend::NativePhase::Finishing)
+        {
+            let checkpoint = current.progress.map(|progress| format!("{}:{}", progress.cursor.sequence, progress.cursor.digest)).unwrap_or_else(|| "bound".into());
+            return Ok(Look::Alive { progress: format!("flux:{:?}:{checkpoint}", live.phase) });
+        }
+        // A historical event or local observer cannot turn an unknown native read into health.
+        Ok(Look::Pending)
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         match delivery.output {
