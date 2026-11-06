@@ -24,6 +24,16 @@ CASES = {
     'retire_new_adoption': ('crates/kernel/src/events.rs', '                node.proposed = Some(head);', '                node.proposed = None;', '//crates/kernel:verus_events'),
     'retire_gate_grant_w2': ('crates/kernel/src/ranks.rs', 'm.holds = true;', 'm.holds = false;', '//crates/kernel:verus_ranks_advance_slot'),
     'retire_gate_grant_w3': ('crates/kernel/src/ranks.rs', 'set_phase(m, r.phase());', 'let _ = r;', '//crates/kernel:verus_ranks_advance_slot'),
+    'plan_check_rejected_asks': (
+        'crates/kernel/src/plan_check.rs',
+        'Reply::PlanCheckRejected => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
+        'Reply::PlanCheckRejected => {\n            ask_rob(w, i, QKind::CantMeet, Cont::Nowhere, 0, _out);',
+        '//crates/kernel:verus_plan_check'),
+    'plan_check_needs_split_asks': (
+        'crates/kernel/src/plan_check.rs',
+        'Reply::PlanCheckNeedsSplit => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
+        'Reply::PlanCheckNeedsSplit => {\n            ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, _out);',
+        '//crates/kernel:verus_plan_check'),
     'selector_inventory': ('crates/kernel/src/allocation.rs',
                            'use super::*;',
                            'use super::*;\nkernel_fn! { fn selector_inventory_unlisted() '

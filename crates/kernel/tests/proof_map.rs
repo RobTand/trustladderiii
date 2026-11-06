@@ -66,6 +66,9 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_upstream_stalled", "retirement_verify_selected_apply"),
     ("gate_grant_w2", "retirement_gate_verify_grant"),
     ("gate_grant_w3", "retirement_gate_verify_grant"),
+    // #832: new semantic replies are covered by Verus; Kani stays frozen.
+    ("apply_plan_check_rejected", "plan_check_witness"),
+    ("apply_plan_check_needs_split", "plan_check_witness"),
     ("apply_incident_cleared", "facts_incident_cleared"),
     ("apply_pr_dequeued", "facts_pr_dequeued"),
     (

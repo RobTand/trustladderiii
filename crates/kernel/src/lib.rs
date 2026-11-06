@@ -42,6 +42,11 @@ mod events;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/events_lemmas.rs"]
 mod events_lemmas;
+mod plan_check;
+use plan_check::reply_plan_check;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/plan_check_witness.rs"]
+mod plan_check_witness;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;
@@ -943,6 +948,10 @@ pub enum Reply {
     },
     PlanSplit,
     PlanCantMeet,
+    /// #832: worker-owned semantic rejection after the bounded correction.
+    PlanCheckRejected,
+    /// #832 part 1: record required decomposition and stop without a question.
+    PlanCheckNeedsSplit,
     ProtectedPaths,
     MakerDone {
         head: HeadId,
@@ -1651,6 +1660,8 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Reply::PlanLeaf { .. } => "apply_plan_leaf",
             Reply::PlanSplit => "apply_plan_split",
             Reply::PlanCantMeet => "apply_plan_cant_meet",
+            Reply::PlanCheckRejected => "apply_plan_check_rejected",
+            Reply::PlanCheckNeedsSplit => "apply_plan_check_needs_split",
             Reply::ProtectedPaths => "apply_protected_paths",
             Reply::MakerDone { .. } => "apply_maker_done",
             Reply::MakerNeedsFiles { .. } => "apply_maker_needs_files",

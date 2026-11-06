@@ -875,6 +875,8 @@ def verus_proofs():
             "facts_merge_late_result": ("kernel::facts_merge_lemmas#late_result", 1),
             "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
+            "plan_check": ("kernel::plan_check", 1),
+            "plan_check_witness": ("kernel::plan_check_witness", 3),
             "retirement_gate_slot_count": ("kernel::retirement_gate#slot_count", 1),
             "retirement_gate_line_excludes_overlap": ("kernel::retirement_gate#line_excludes_overlap", 1),
             "retirement_gate_prefix_step": ("kernel::retirement_gate#prefix_step", 1),

@@ -112,5 +112,6 @@ pub(super) fn parse_reply(
         role: role.into(),
         reply: reply.ok_or(Error::Invalid("worker reply is missing"))?,
         model: None,
+        plan_check: None,
     })
 }
