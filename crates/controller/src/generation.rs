@@ -157,6 +157,11 @@ impl Runner {
             check_run: None,
         };
         if let Some(receipt) = &report.evidence {
+            if git.tree(head)? != receipt.input_tree.as_str() {
+                return Err(Error::Invalid(
+                    "generator receipt has a different input tree",
+                ));
+            }
             let generated = snapshot.commit_generation_input(head)?;
             if snapshot.tree(&generated)? != receipt.output_tree.as_str() {
                 return Err(Error::Invalid(

@@ -476,7 +476,7 @@ def verus_proofs():
         # Group G2a2: preparation, plan retargeting and check replies.
         for name, module, count in [
             ("decisions", "translate_checks", 7),
-            ("witnesses", "translate_checks_witnesses", 3),
+            ("witnesses", "translate_checks_witnesses", 4),
         ]:
             verus_test(
                 name = "verus_translate_checks_" + name,

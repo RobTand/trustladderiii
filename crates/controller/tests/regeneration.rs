@@ -94,6 +94,7 @@ impl Generated {
         config.workers.python = launcher;
         let mut adapter = f.adapter().with_generation(&config).unwrap();
         let mut prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        prepare.epoch = 0;
         prepare.paths = vec!["src/a.txt".into(), "gen/manifest.json".into()];
         adapter.execute(&prepare).unwrap();
         let checkout = adapter.checkout(&prepare);
@@ -108,6 +109,7 @@ impl Generated {
     }
     fn rebase(&self, seq: u64) -> Delivery {
         let mut delivery = self.f.delivery(EffectKind::StartRebase, seq);
+        delivery.epoch = 0;
         delivery.paths = self.prepare.paths.clone();
         delivery.head_sha = Some(self.f.head(&delivery));
         delivery
@@ -312,7 +314,10 @@ impl Controlled {
         let mut n = self.c.world().unwrap().nodes[0];
         let mut store = Store::open(&self.settings).unwrap();
         n.phase = phase;
-        n.pos = if matches!(phase, Phase::Checking | Phase::Planning { .. }) {
+        n.pos = if matches!(
+            phase,
+            Phase::Checking | Phase::Planning { .. } | Phase::Rebasing
+        ) {
             1
         } else {
             0
@@ -327,8 +332,10 @@ impl Controlled {
         n.effect = None;
         n.ticket = None;
         n.job = (phase == Phase::Checking).then_some(n.generation);
-        n.run = matches!(phase, Phase::Planning { .. }).then_some(n.generation);
-        n.pool = n.run.is_some();
+        n.run = matches!(phase, Phase::Planning { .. } | Phase::Rebasing).then_some(n.generation);
+        n.pool = n.run.is_some() && phase != Phase::Rebasing;
+        n.pr_open = phase == Phase::Queued;
+        n.had_pr = n.pr_open;
         n.holds = !matches!(phase, Phase::Planning { .. });
         n.worktree = n.holds;
         n.paused = false;
@@ -641,6 +648,7 @@ fn generation_recovery_after_record_install_and_before_observation() {
         config.planning.protected_paths.clear();
         let mut adapter = f.adapter().with_generation(&config).unwrap();
         let mut delivery = f.delivery(EffectKind::StartRebase, 2);
+        delivery.epoch = 0;
         delivery.paths = vec!["src/a.txt".into(), "gen/manifest.json".into()];
         delivery.head_sha = Some(f.head(&delivery));
         adapter

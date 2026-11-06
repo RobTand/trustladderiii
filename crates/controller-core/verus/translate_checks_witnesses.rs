@@ -32,4 +32,12 @@ pub fn checks_routes() {
     assert(!stale.record && !stale.pass);
     assert(failed.record && !failed.pass);
 }
+/// #845 / Checking: all success and unchanged-output combinations are reachable.
+pub fn generation_routes() {
+    let fresh = generation_fresh(true, true);
+    let stale = generation_fresh(true, false);
+    let failed = generation_fresh(false, true);
+    let failed_changed = generation_fresh(false, false);
+    assert(fresh && !stale && !failed && !failed_changed);
+}
 }
