@@ -228,7 +228,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
                 set_phase(m, Phase::Rebasing);
             }
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! {
+                reveal(retirement::fact_node);
+                assert(*m == retirement::fact_node(before_transition@.nodes@[i as int],
+                    Fact::Conflict)) by {};
+            }
         }
         Fact::UpstreamStalled => {
             let m = &mut w.nodes[i];
