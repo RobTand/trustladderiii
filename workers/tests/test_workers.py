@@ -1322,7 +1322,7 @@ def test_ep2_reporting_clause_does_not_hide_verification_dimension(guard, dimens
     else:
         inputs = {'tool_capabilities': [capability]}
         reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
-    preflight(inputs, reply, role=role)
+    preflight(inputs, reply, planning=role == 'planner', objections=[] if role == 'planner' else None)
     assert reply['evidence_contract'] == [entry]
     assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
 
