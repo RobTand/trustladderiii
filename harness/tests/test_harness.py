@@ -336,3 +336,19 @@ def test_runner_siblings_load_without_the_tl3_harness_package(tmp_path):
         result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", code], cwd=tmp_path,
                                 capture_output=True, text=True)
         assert result.returncode == 0, (sibling, result.stderr[-2000:])
+
+
+@pytest.mark.parametrize('module', ['rules', 'proof_rules'])
+def test_r1_rule_modules_import_only_the_standard_library(module):
+    import ast
+    package = Path(container_command.__code__.co_filename).parent
+    path = package / (module + '.py')
+    assert path.is_file(), f'{module} is missing'
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            assert all(alias.name.split('.')[0] in sys.stdlib_module_names for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                assert node.module == 'rules', node.module
+            else:
+                assert node.module.split('.')[0] in sys.stdlib_module_names

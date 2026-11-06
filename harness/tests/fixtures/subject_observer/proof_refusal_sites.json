@@ -1,0 +1,134 @@
+[
+  {
+    "line": 34,
+    "rule": "proof.source.definition"
+  },
+  {
+    "line": 123,
+    "rule": "proof.support.definition_write"
+  },
+  {
+    "line": 128,
+    "rule": "proof.support.definition_use"
+  },
+  {
+    "line": 147,
+    "rule": "proof.support.definition_binding"
+  },
+  {
+    "line": 159,
+    "rule": "proof.support.literal_initializer"
+  },
+  {
+    "line": 163,
+    "rule": "proof.support.literal_assignment"
+  },
+  {
+    "line": 185,
+    "rule": "proof.support.literal_binding"
+  },
+  {
+    "line": 297,
+    "rule": "proof.support.wildcard_import"
+  },
+  {
+    "line": 310,
+    "rule": "proof.support.namespace_api"
+  },
+  {
+    "line": 336,
+    "rule": "proof.support.decorator"
+  },
+  {
+    "line": 341,
+    "rule": "proof.support.class_bases"
+  },
+  {
+    "line": 345,
+    "rule": "proof.support.context_manager"
+  },
+  {
+    "line": 370,
+    "rule": "proof.support.call_allowlist"
+  },
+  {
+    "line": 384,
+    "rule": "proof.support.percent_format"
+  },
+  {
+    "line": 387,
+    "rule": "proof.support.reflective_attribute"
+  },
+  {
+    "line": 405,
+    "rule": "proof.support.member_write"
+  },
+  {
+    "line": 484,
+    "rule": "proof.loader.stdlib_shadow"
+  },
+  {
+    "line": 495,
+    "rule": "proof.tree.destination_fresh"
+  },
+  {
+    "line": 505,
+    "rule": "proof.subject.overlap"
+  },
+  {
+    "line": 507,
+    "rule": "proof.subject.changed"
+  },
+  {
+    "line": 510,
+    "rule": "proof.support.new"
+  },
+  {
+    "line": 513,
+    "rule": "proof.observer.overlap"
+  },
+  {
+    "line": 518,
+    "rule": "proof.observer.test_path"
+  },
+  {
+    "line": 521,
+    "rule": "proof.observer.module_missing"
+  },
+  {
+    "line": 550,
+    "rule": "proof.observer.subject_module"
+  },
+  {
+    "line": 568,
+    "rule": "proof.support.graft_binding"
+  },
+  {
+    "line": 573,
+    "rule": "proof.observer.exact_method"
+  },
+  {
+    "line": 575,
+    "rule": "proof.support.existing_module"
+  },
+  {
+    "line": 590,
+    "rule": "proof.observer.subject_class"
+  },
+  {
+    "line": 600,
+    "rule": "proof.observer.binding_shadow"
+  },
+  {
+    "line": 645,
+    "rule": "proof.support.literal_wildcard"
+  },
+  {
+    "line": 653,
+    "rule": "proof.observer.unresolved_symbol"
+  },
+  {
+    "line": 673,
+    "rule": "proof.subject.preserved"
+  }
+]
