@@ -46,7 +46,7 @@ pub fn issue(before: Upstream) -> Upstream {
 /// (prismabuild/src/submit.rs:310-319); supervisor start reuses its operation ID.
 /// Adapters' external implementations must satisfy this law for Once to hold.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
-    requires class == Class::Once ==> once_key_deduplication(laws),
+    requires class == Class::Once ==> (laws.atomic_original_key_dedup && laws.stable_operation_identity),
         (before.outstanding as int) > 0, (before.copies as int) < u64::MAX,
         (before.incorrect as int) <= (before.copies as int),
     ensures out.outstanding == (before.outstanding as int) - 1,

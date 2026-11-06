@@ -66,8 +66,10 @@ fn delayed_delete_is_idempotent(copy:CopyState, keeper:CopyState)
     let current=apply_repair(copy,issue_repair(request));
     let late=apply_repair(current,restarted);
     assert(!late.exists && late == current);
-    assert(apply_repair(late,restarted) == late);
-    assert(apply_repair(keeper,restarted) == keeper);
+    let checked_1=apply_repair(late,restarted);
+    assert(checked_1 == late);
+    let checked_2=apply_repair(keeper,restarted);
+    assert(checked_2 == keeper);
 }
 /// Count projection cannot delete an extra copy twice when the old request lands
 /// after a newer controller has already removed its target.

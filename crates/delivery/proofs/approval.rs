@@ -51,7 +51,8 @@ fn grant_spent_exactly_once(before: mirror::Approval)
     let grant=mirror::clear_approval(before);
     assert(grant.grant == mirror::Grant::HumanClear && grant.lineage_safe);
     assert(grant.state == State::Intended);
-    assert(mirror::approval_decision(grant,true,false,mirror::Read::Pending) == mirror::Action::Send);
+    let checked_1=mirror::approval_decision(grant,true,false,mirror::Read::Pending);
+    assert(checked_1 == mirror::Action::Send);
     let sent=mirror::send_approval(grant);
     assert(sent.state == State::Sent && sent.grant == mirror::Grant::None);
     let observed=mirror::continue_after_observations(true);
@@ -59,7 +60,8 @@ fn grant_spent_exactly_once(before: mirror::Approval)
     let uncertain=mirror::Approval {state:State::Uncertain,..sent};
     let incident=mirror::ambiguous_approval(uncertain);
     assert(incident.grant == mirror::Grant::None);
-    assert(mirror::approval_decision(incident,true,false,mirror::Read::Pending) != mirror::Action::Send);
+    let checked_2=mirror::approval_decision(incident,true,false,mirror::Read::Pending);
+    assert(checked_2 != mirror::Action::Send);
 }
 /// lib.rs:1853-1866: replacement provenance comes from actual Retryable kernel
 /// completion, not the empty network read. Old sequence, watch and retirement
@@ -104,7 +106,8 @@ fn delayed_patch_is_idempotent(copy:CopyState, conclusion:u64, output:u64, other
     let replay=apply_repair(late,restart_repair(restarted));
     assert(replay == late);
     let other=CopyState {id:other_id,..copy};
-    assert(apply_repair(other,restarted) == other);
+    let checked_3=apply_repair(other,restarted);
+    assert(checked_3 == other);
     if copy.exists { assert(late.conclusion == conclusion && late.output == output); }
 }
 /// Q27 / F3: an old POST can land after confirmation and restart. Its differing
@@ -118,7 +121,8 @@ fn approval_late_witness() {
     let delayed=lose_response(old);
     let ambiguous=mirror::ambiguous_approval(sent);
     let grant=mirror::clear_approval(ambiguous);
-    assert(mirror::approval_decision(grant,true,false,mirror::Read::Pending) == mirror::Action::Send);
+    let checked_4=mirror::approval_decision(grant,true,false,mirror::Read::Pending);
+    assert(checked_4 == mirror::Action::Send);
     let retry_sent=mirror::send_approval(grant);
     assert(retry_sent.grant == mirror::Grant::None);
     let retry=issue(restart(delayed));
@@ -137,7 +141,8 @@ fn approval_late_witness() {
     let patch=issue_repair(RepairRequest {target:2,kind:RepairKind::Patch,conclusion:1,output:2});
     let late=restart_repair(lose_repair_response(patch));
     let repaired=apply_repair(copy,patch);
-    assert(apply_repair(repaired,late) == repaired);
+    let checked_5=apply_repair(repaired,late);
+    assert(checked_5 == repaired);
 }
 }
 fn main() {}
