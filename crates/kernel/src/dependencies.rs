@@ -64,7 +64,16 @@ pub(super) proof fn single_dependency_delivery(w: World, dependency: Dependency)
 {
     reveal(prerequisites_delivered);
     reveal(delivered);
-    assert forall|j: int| 0 <= j < w.dependencies@.len() implies j == 0 by {}
+    if dependency.status == DependencyStatus::Delivered {
+        assert forall|j: int| 0 <= j < w.dependencies@.len()
+            && w.dependencies@[j].node == NodeId(0)
+            implies !w.dependencies@[j].rejected
+                && w.dependencies@[j].status == DependencyStatus::Delivered by {
+            assert(j == 0);
+        }
+    } else {
+        assert(w.dependencies@[0].node == NodeId(0));
+    }
 }
 
 /// #693 / #806: blocked credit is unavailable or has zero ledger balance.
