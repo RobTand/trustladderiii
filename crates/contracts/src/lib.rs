@@ -8,6 +8,7 @@
 pub mod bounded;
 pub mod checks;
 pub mod execution;
+pub mod footprint;
 pub mod prerequisites;
 pub mod report;
 

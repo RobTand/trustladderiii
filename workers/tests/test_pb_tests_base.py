@@ -149,6 +149,7 @@ def test_request_2709_legacy_plan_extends_before_final_head(
                 "generated_files": ["**/BUILD.bazel"], "generator": "python3 generate.py", "generator_available": True},
             "attempt": 1, "round": 0, "context_size": 150000,
             "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools")}}}
+    request["inputs"]["footprint"] = request["inputs"]["plan"]["files"]
     events = []
     runtime.run(request, events.append)
     extension = events[-1]["reply"]

@@ -98,7 +98,8 @@ pub(super) fn run(mode: &str) {
             node: NodeId(0),
             notice: Notice::Summary(Outcome::Merged),
         };
-        effect.paths = vec!["workers/src".into()];
+        effect.paths =
+            tl3_contracts::footprint::Footprint::new(vec!["workers/src".into()]).unwrap();
         effect.scope_removals = Some(removed.into());
     }
     let completion = adapter.execute(&effect).unwrap();

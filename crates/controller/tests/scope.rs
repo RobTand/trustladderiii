@@ -50,9 +50,12 @@ fn repository_protected_paths_trim_only_that_repository() {
             fs::write(checkout.join(file), "requested\n").unwrap();
         }
         commit(&checkout, "shared.txt", "requested\n");
-        delivery.paths = ["shared.txt", "CHANGELOG.md", "global.txt", "pyproject.toml"]
-            .map(String::from)
-            .to_vec();
+        delivery.paths = tl3_contracts::footprint::Footprint::new(
+            ["shared.txt", "CHANGELOG.md", "global.txt", "pyproject.toml"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .unwrap();
         let trim = adapter
             .trim_scope(&delivery, &["global.txt".into()])
             .unwrap();

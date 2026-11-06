@@ -384,7 +384,7 @@ pub fn verify_contracts() {
             repository: crate::bootstrap().repos.remove(0),
             issue: 42,
             pull_request: Some(100),
-            paths: vec![],
+            paths: Default::default(),
             attempt: 1,
             round: 1,
             replanned: false,

@@ -170,7 +170,7 @@ impl Controller {
                             issue,
                             pull_request: None,
                             proposed: None,
-                            paths: vec![],
+                            paths: Default::default(),
                             attempt: 0,
                             round: 0,
                             replanned: false,

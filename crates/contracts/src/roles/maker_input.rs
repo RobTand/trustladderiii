@@ -325,6 +325,7 @@ pub struct MakerInputFields {
     pub brief: WireText,
     pub goals: List<Goalsitem, 1, UNBOUNDED, false>,
     pub plan: Plan,
+    pub footprint: crate::footprint::Footprint,
     pub attempt: Integer<1, 3>,
     pub round: Round,
     #[serde(
@@ -488,6 +489,7 @@ impl SchemaOrder for MakerInput {
                     "brief",
                     "goals",
                     "plan",
+                    "footprint",
                     "attempt",
                     "round",
                     "check_base_sha",
@@ -501,6 +503,12 @@ impl SchemaOrder for MakerInput {
                     "context_size",
                 ],
             ),
+            ("/properties/footprint", &["type", "uniqueItems", "items"]),
+            (
+                "/properties/footprint/items",
+                &["type", "minLength", "pattern", "not"],
+            ),
+            ("/properties/footprint/items/not", &["pattern"]),
             ("/properties/goals", &["type", "minItems", "items"]),
             ("/properties/round", &["type", "enum"]),
             ("/properties/check_base_sha", &["type", "pattern"]),
