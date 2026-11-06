@@ -91,7 +91,6 @@ def verus_proofs():
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
 
-
         # Group B1: production recovery residue and full-domain witnesses.
         for name, count in [("budget", 10), ("eligibility", 10), ("schedule", 8), ("command", 6)]:
             verus_test(
@@ -107,9 +106,6 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
-        # ctrl-core C1: production required-check/rerun residue and witnesses.
-
-
         # ctrl-core A1: shell residue, with no contract changes to enqueue::decide.
         verus_test(
             name = "verus_completion",

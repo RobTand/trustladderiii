@@ -16,10 +16,6 @@
 //! The module does no I/O and uses no `std` item. It has no `unsafe`, no
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
 
-use tl3_github::{decide_predicate, decide_proof, decide_while};
-#[cfg(any(test, verus_keep_ghost))]
-use tl3_github::{decide_infra, decide_report};
-
 pub use tl3_github::checks::check;
 pub mod enqueue;
 pub mod facts;
