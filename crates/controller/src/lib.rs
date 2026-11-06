@@ -3001,8 +3001,10 @@ impl Controller {
             }
         };
         ci_details = adapters::mergify::ci_evidence::bounded(ci_details);
-        feedback.ci_checks = ci_details.checks.clone();
-        feedback.failed_tests = ci_details.failed_tests.clone();
+        let ci_checks = ci_details.checks.clone();
+        let mut failed_tests = ci_details.failed_tests.clone();
+        let mut outside_paths = Vec::new();
+        let mut outside_paths_total = 0;
         let event = match observation {
             Observation::PrerequisiteRead {
                 repository,
@@ -3621,14 +3623,14 @@ impl Controller {
                 for path in changed_paths {
                     let id = self.store.intern_path(repo, &path)?;
                     if !footprint.contains(&tl3_kernel::FileId(id.get() as u64)) {
-                        feedback.outside_paths_total += 1;
-                        if feedback.outside_paths.len() < findings::MAX_OUTSIDE_PATHS {
-                            feedback.outside_paths.push(findings::clipped(&path, findings::MAX_PATH_CHARS));
+                        outside_paths_total += 1;
+                        if outside_paths.len() < findings::MAX_OUTSIDE_PATHS {
+                            outside_paths.push(findings::clipped(&path, findings::MAX_PATH_CHARS));
                         }
                         in_footprint = false;
                     }
                 }
-                feedback.failed_tests = tests
+                failed_tests = tests
                     .into_iter()
                     .take(findings::MAX_FAILED_TESTS)
                     .map(|test| findings::FailedTest {
@@ -4150,6 +4152,10 @@ impl Controller {
         if let Some((receipt, _)) = queue_receipt {
             commit.rows.push(receipt);
         }
+        feedback.ci_checks = ci_checks;
+        feedback.failed_tests = failed_tests;
+        feedback.outside_paths = outside_paths;
+        feedback.outside_paths_total = outside_paths_total;
         Ok(Some(self.priority_reserve(snapshot, event)?))
     }
 

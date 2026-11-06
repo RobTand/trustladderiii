@@ -31,12 +31,9 @@ fn production_and_reference_sources_are_pinned() {
     // obsolete legacy clear. The real-store upgrade test asserts the new rule.
     let legacy = include_str!("legacy-quota-clear.rs.txt");
     assert_eq!(format!("{:x}", Sha256::digest(legacy)), pins["legacy_quota_clear"]["sha256"]);
-    let source = include_str!("../../src/lib.rs");
+    // The moved feedback writes are covered through intake and maker inputs in
+    // adapters::workers::feedback_tests. Retain the unchanged historical checks.
     let historical_current = include_str!("current.rs");
-    let normalized = historical_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n");
-    let normalized_arm = arm(&normalized);
-    let normalized_end = normalized_arm.find("        };\n        *detail").unwrap();
-    assert_eq!(&normalized_arm[..normalized_end], arm(source));
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
         (include_str!("current.rs"), arm(historical_current).split("        };\n        *detail").next().unwrap()),

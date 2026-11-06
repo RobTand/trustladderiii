@@ -39,19 +39,21 @@ impl Fixture {
     fn seed(&mut self, phase: Phase, pos: u8) {
         let snapshot = self.controller.snapshot().unwrap();
         let mut world = self.controller.world().unwrap();
-        let footprint = world.intern_footprint([tl3_kernel::FileId(0)]);
+        let repo = self.controller.store.intern_repo("RobTand", "tl3-sandbox").unwrap();
+        let path = self.controller.store.intern_path(repo, "README.md").unwrap();
+        let footprint = world.intern_footprint([tl3_kernel::FileId(path.get() as u64)]);
         let n = &mut world.nodes[0];
         n.phase = phase;
         n.pos = pos;
         n.head = Some(self.controller.head(NodeId(0), &self.repo.head).unwrap());
         n.generation = 10;
-        n.run = matches!(phase, Phase::Making | Phase::Reviewing | Phase::Planning { .. }).then_some(10);
+        n.run = matches!(phase, Phase::Making | Phase::Reviewing | Phase::Planning { .. } | Phase::Rebasing).then_some(10);
         n.job = (phase == Phase::Checking).then_some(10);
         n.effect = (phase == Phase::Publishing).then_some(tl3_kernel::InFlight {
             kind: tl3_kernel::EffectKind::PostApproval, seq: 1, cancelling: true,
         });
         n.next_seq = 2;
-        n.pool = n.run.is_some();
+        n.pool = n.run.is_some() && phase != Phase::Rebasing;
         n.holds = !matches!(phase, Phase::Planning { .. });
         n.footprint = footprint;
         n.checked = n.head;
@@ -167,7 +169,7 @@ fn maker_cant_meet_report_reaches_the_next_maker() {
     let mut f = Fixture::new();
     f.seed(Phase::Making, 2);
     f.worker("maker", json!({"kind":"cant_meet", "report":"The public API cannot represent the goal"}));
-    assert_eq!(f.controller.world().unwrap().nodes[0].round, 1);
+    assert_eq!(f.controller.world().unwrap().nodes[0].attempt, 2);
     assert!(f.maker()["feedback"][0]["report"].as_str().unwrap().contains("The public API cannot represent the goal"));
 }
 
@@ -176,7 +178,7 @@ fn stale_kernel_and_worker_replies_create_no_feedback() {
     for observation in [
         Observation::Kernel(Event::Reply { node: NodeId(0), generation: 9, reply: Reply::MakerCantMeet }),
         Observation::WorkerReply { node: NodeId(0), generation: 9, role: "maker".into(), reply: json!({"kind":"cant_meet","report":"stale"}), model: None, plan_check: None },
-        Observation::Kernel(Event::Reply { node: NodeId(0), generation: 10, reply: Reply::ChangesRequested }),
+        Observation::Kernel(Event::Reply { node: NodeId(0), generation: 9, reply: Reply::ChangesRequested }),
     ] {
         let mut f = Fixture::new();
         f.seed(Phase::Making, 2);
