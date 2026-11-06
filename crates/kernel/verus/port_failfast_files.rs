@@ -2,8 +2,9 @@
 use super::*;
 
 verus! {
-/// Q54 funded file extension: both flags take the same paid union.
-pub(super) proof fn joined_funded(before: World, fast: World, off: World, on: World, generation: u64,
+/// Q54 MakerNeedsFiles fitting extension: funded unions agree; an unfunded union
+/// asks for maker credit under fail_fast while the ordinary branch asks to split.
+pub(super) proof fn joined(before: World, fast: World, off: World, on: World, generation: u64,
     files: Footprint, fits: bool, initial: Outbox, off_out: Outbox, on_out: Outbox)
     requires retirement::domain(before), retirement::accepted(before), !before.fail_fast,
         fast.fail_fast, port_failfast_admission::same_world(before, fast),
@@ -17,7 +18,6 @@ pub(super) proof fn joined_funded(before: World, fast: World, off: World, on: Wo
         port_review_reply::reply_post(fast, on,
             0, generation, Reply::MakerNeedsFiles { files, fits }, initial, on_out),
         fits, !footprint::footprint_empty(files),
-        port_review_retry::funded(port_review_reply::ended(before.nodes@[0])),
     ensures port_failfast_replies::diverted(before, off, on, Reply::MakerNeedsFiles { files, fits }, on_out),
 {
     let reply = Reply::MakerNeedsFiles { files, fits };
@@ -27,53 +27,21 @@ pub(super) proof fn joined_funded(before: World, fast: World, off: World, on: Wo
     port_failfast_replies::admitted(before, off, generation, reply, initial, off_out);
     port_failfast_replies::admitted(fast, on, generation, reply, initial, on_out);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
-    reveal(port_review_reply::reply_post);
-    reveal(port_replies_maker::union_post);
+    reveal(port_review_reply::reply_post); reveal(port_replies_maker::union_post);
     reveal(retirement::accepted); reveal(retirement::node_rules);
     let left = choose|bits: u64| source.footprint == footprint::inline_footprint(bits);
     let right = choose|bits: u64| files == footprint::inline_footprint(bits);
     assert(on.nodes@[0].footprint == footprint::inline_footprint(left | right));
-    assert(off.nodes@[0].footprint == on.nodes@[0].footprint);
-    assert(off.nodes@ =~= on.nodes@);
-    assert(port_failfast_admission::same_world(off, on));
-}
-
-/// Q54 unfunded file extension: fail_fast asks for maker credit; the ordinary
-/// branch asks to split, which the original check counts as a retry.
-pub(super) proof fn joined_unfunded(before: World, fast: World, off: World, on: World, generation: u64,
-    files: Footprint, fits: bool, initial: Outbox, off_out: Outbox, on_out: Outbox)
-    requires retirement::domain(before), retirement::accepted(before), !before.fail_fast,
-        fast.fail_fast, port_failfast_admission::same_world(before, fast),
-        before.file_sets@.len() == 0, before.next_question < u64::MAX,
-        before.nodes@[0].phase == Phase::Making, node_headroom(before.nodes@[0]), initial.len == 0,
-        port_review_reply::active(before.nodes@[0], generation),
-        footprint::valid_footprint(before, files),
-        port_replies_maker_admission::inline_input(before, Reply::MakerNeedsFiles { files, fits }),
-        port_review_reply::reply_post(before, off, 0, generation,
-            Reply::MakerNeedsFiles { files, fits }, initial, off_out),
-        port_review_reply::reply_post(fast, on,
-            0, generation, Reply::MakerNeedsFiles { files, fits }, initial, on_out),
-        fits, !footprint::footprint_empty(files),
-        !port_review_retry::funded(port_review_reply::ended(before.nodes@[0])),
-    ensures port_failfast_replies::diverted(before, off, on, Reply::MakerNeedsFiles { files, fits }, on_out),
-{
-    let reply = Reply::MakerNeedsFiles { files, fits };
-    let source = port_review_reply::ended(before.nodes@[0]);
-    reveal(port_review_reply::accepted_reply);
-    footprint::storage_frame(before, fast, files, files);
-    port_failfast_replies::admitted(before, off, generation, reply, initial, off_out);
-    port_failfast_replies::admitted(fast, on, generation, reply, initial, on_out);
-    reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
-    reveal(port_review_reply::reply_post);
-    reveal(port_replies_maker::union_post);
-    reveal(retirement::accepted); reveal(retirement::node_rules);
-    let left = choose|bits: u64| source.footprint == footprint::inline_footprint(bits);
-    let right = choose|bits: u64| files == footprint::inline_footprint(bits);
-    assert(on.nodes@[0].footprint == footprint::inline_footprint(left | right));
-    port_failfast_pair::funding(source, on.nodes@[0].footprint, before.next_question);
-    reveal(port_review_retry::room);
-    assert(on.nodes@[0].credit == before.nodes@[0].credit);
-    assert(port_failfast_pair::retried(before.nodes@[0], off.nodes@[0]));
+    if port_review_retry::funded(source) {
+        assert(off.nodes@[0].footprint == on.nodes@[0].footprint);
+        assert(off.nodes@ =~= on.nodes@);
+        assert(port_failfast_admission::same_world(off, on));
+    } else {
+        port_failfast_pair::funding(source, on.nodes@[0].footprint, before.next_question);
+        reveal(port_review_retry::room);
+        assert(on.nodes@[0].credit == before.nodes@[0].credit);
+        assert(port_failfast_pair::retried(before.nodes@[0], off.nodes@[0]));
+    }
 }
 
 /// Q54 MakerNeedsFiles non-fitting or empty input: one world's real reply
@@ -137,11 +105,7 @@ pub(super) proof fn compare(before: World, fast: World, off: World, on: World, g
     ensures port_failfast_replies::diverted(before, off, on, Reply::MakerNeedsFiles { files, fits }, on_out),
 {
     if fits && !footprint::footprint_empty(files) {
-        if port_review_retry::funded(port_review_reply::ended(before.nodes@[0])) {
-            joined_funded(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
-        } else {
-            joined_unfunded(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
-        }
+        joined(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
     } else {
         exhausted(before, fast, off, on, generation, files, fits, initial, off_out, on_out);
     }
