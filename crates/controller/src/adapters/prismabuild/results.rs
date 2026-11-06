@@ -494,33 +494,6 @@ fn parse(raw: &[u8], job: &Job) -> serde_json::Result<Option<Report>> {
             {
                 return Ok(None);
             }
-            if identity.red_classes.as_ref().is_some_and(|classes| {
-                classes.iter().any(|(node, class)| {
-                    result
-                        .tests
-                        .iter()
-                        .find(|test| test.test.as_str() == node)
-                        .is_none_or(|test| {
-                            !test.passed
-                                || match class {
-                                    RedClass::Assertion => {
-                                        check.declared_symptom.is_some()
-                                            || !matches!(test.base, Outcome::Assertion)
-                                    }
-                                    RedClass::AddedName => {
-                                        check.declared_symptom.is_some()
-                                            || !matches!(test.base, Outcome::AddedName)
-                                    }
-                                    RedClass::Symptom => {
-                                        check.declared_symptom.is_none()
-                                            || !matches!(test.base, Outcome::Error)
-                                    }
-                                }
-                        })
-                })
-            }) {
-                return Ok(None);
-            }
             if let Some(declaration) = &check.proof {
                 let subjects = &declaration.subjects;
                 let support = &declaration.observer_support;
@@ -625,6 +598,22 @@ fn rejudged(report: &Report, job: &Job) -> bool {
                     .iter()
                     .any(|test| test.passed && !matches!(test.head_forced, Some(Outcome::Passed)))
         {
+            return false;
+        }
+        if result.proof.as_ref().and_then(|proof| proof.red_classes.as_ref()).is_some_and(|classes| {
+            classes.iter().any(|(node, class)| {
+                result.tests.iter().find(|test| test.test.as_str() == node).is_none_or(|test| {
+                    !test.passed || match class {
+                        RedClass::Assertion => result.declared_symptom.is_some()
+                            || !matches!(test.base, Outcome::Assertion),
+                        RedClass::AddedName => result.declared_symptom.is_some()
+                            || !matches!(test.base, Outcome::AddedName),
+                        RedClass::Symptom => result.declared_symptom.is_none()
+                            || !matches!(test.base, Outcome::Error),
+                    }
+                })
+            })
+        }) {
             return false;
         }
         if result.declared_symptom.is_some() {
