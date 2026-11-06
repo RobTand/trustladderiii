@@ -61,7 +61,10 @@ impl Wakes {
         self.0.lock().unwrap().sleeping.contains(key)
     }
     fn sleep(&self, key: &str) {
-        self.0.lock().unwrap().sleeping.insert(key.to_owned());
+        let mut state = self.0.lock().unwrap();
+        state.sleeping.insert(key.to_owned());
+        // Events preceding this attempt cannot authorize a later retry.
+        state.events.remove(key);
     }
     fn wake(&self, key: &str) {
         let mut state = self.0.lock().unwrap();
@@ -705,6 +708,13 @@ impl Executor for Adapter {
     }
     fn retire_delivery(&mut self, d: &Delivery) -> Result<()> {
         let snapshot = self.snapshot()?;
+        // Retirement stores the original effect payload, before PR hydration.
+        // Recover its binding from the same durable snapshot as terminal evidence.
+        let mut hydrated = d.clone();
+        hydrated.pull_request = hydrated.pull_request.or_else(|| snapshot.rows.iter()
+            .find(|r| r.table == "pull_requests" && r.id == d.node().0.to_string())
+            .and_then(|r| r.value["number"].as_u64()));
+        let d = &hydrated;
         let world = crate::snapshot::decode(&snapshot)?;
         let n = world.nodes.get(d.node().0 as usize).ok_or(Error::Invalid("missing retired direct node"))?;
         // The controller invokes this hook after the terminal effect's dispatch/watch

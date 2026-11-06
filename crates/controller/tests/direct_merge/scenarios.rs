@@ -31,6 +31,9 @@ impl Respond for DirectApi {
             state.pull_reads += 1;
             return ResponseTemplate::new(200).set_body_json(state.pull.clone());
         }
+        if method == "GET" && path.ends_with("/annotations") {
+            return ResponseTemplate::new(200).set_body_json(self.base.0.lock().unwrap().annotations.clone());
+        }
         if method == "PUT" && path == "/repos/owner/sandbox/pulls/100/merge" {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
             let mut direct = self.direct.lock().unwrap();
@@ -330,7 +333,7 @@ fn restart_at_every_direct_write_converges() {
         assert_eq!(fixture.direct.lock().unwrap().successes, 1);
     }
     for write in [direct_merge::Write::Fence, direct_merge::Write::Intent,
-        direct_merge::Write::Annotation, direct_merge::Write::Merge, direct_merge::Write::Receipt] {
+        direct_merge::Write::Annotation, direct_merge::Write::Merge, direct_merge::Write::History, direct_merge::Write::Receipt] {
         for after in [false, true] {
             assert!(boundaries.contains(&direct_merge::WriteBoundary { write, after }), "unreached {write:?}/{after}");
         }
@@ -467,10 +470,17 @@ fn r1_unlanded_put_silence_timer_cannot_retry_without_event() {
     controller.look_due().unwrap();
     drain(&mut controller);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "a silence timer cannot authorize a retry PUT");
+    let reads = fixture.direct.lock().unwrap().reads;
+    fixture.check(None);
+    fixture.check_event(&settings);
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "retry event must reverify pending protection");
+    fixture.check(Some("success"));
     fixture.check_event(&settings);
     drain(&mut controller);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    assert!(fixture.direct.lock().unwrap().reads > reads);
 }
 
 #[test]
@@ -540,4 +550,57 @@ fn r1_board_retains_actual_delivery_mode_after_configuration_change() {
     let mut tx = reader.transaction().unwrap();
     let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
     assert!(rows.requests[0].direct_delivery, "switching config must not erase completed direct delivery history");
+}
+
+
+#[test]
+fn r1_restart_reconciles_unlanded_put_before_exactly_one_retry() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_uncertain_restart");
+    let fixture = DirectFixture::new();
+    fixture.direct.lock().unwrap().status = Some(503);
+    let (controller, delivery) = fixture.start(&settings);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+    drop(controller);
+    fixture.direct.lock().unwrap().status = None;
+    let reads = fixture.direct.lock().unwrap().reads;
+    let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
+        &fixture.root.path().join("direct"), settings.clone()).unwrap();
+    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+    assert!(fixture.direct.lock().unwrap().reads >= reads + 2);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
+}
+
+#[test]
+fn r1_actions_runner_annotations_keep_infrastructure_evidence() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_runner_annotations");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("failure"));
+    {
+        let mut state = fixture.api.state.lock().unwrap();
+        state.head_checks.iter_mut().find(|c|c["id"] == 1100).unwrap()["app"]["slug"] = json!("github-actions");
+        state.annotations = json!([{"annotation_level":"failure","message":"The runner has lost communication with the server. Please retry."}]);
+    }
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    assert!(controller.snapshot().unwrap().rows.iter().any(|r|r.table == "queue_facts" && r.value["evidence"]["CiFailed"]["infra"] == true));
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+#[test]
+fn r1_unknown_merge_history_is_not_relabelled_as_direct() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_external_history");
+    let fixture = DirectFixture::new();
+    fixture.direct.lock().unwrap().already_merged = true;
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let mut reader = Store::open(&settings).unwrap().reader().unwrap();
+    let mut tx = reader.transaction().unwrap();
+    let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
+    assert!(!rows.requests[0].direct_delivery, "config alone cannot attribute an old merge to direct delivery");
 }
