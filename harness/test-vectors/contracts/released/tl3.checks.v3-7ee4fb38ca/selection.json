@@ -1,0 +1,130 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::selection",
+ "request": {
+  "base": "2b5cab9169359364bc008937958395a7bd9e9f3c",
+  "effect_key": "checks:selection",
+  "head": "fa07130201d940521ed49b023ff27ec41782a5ac",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "kind": "regression",
+    "name": "other stays green",
+    "tests": [
+     "tests/test_other.py::test_other"
+    ]
+   }
+  ],
+  "reviewed": null,
+  "selected_tests": 50
+ },
+ "results": [
+  {
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "other stays green",
+   "tests": [
+    {
+     "base": "passed",
+     "head": "passed",
+     "message": "",
+     "passed": true,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_other.py::test_other"
+      },
+      "head": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_other.py::test_other"
+      }
+     },
+     "pre_existing": false,
+     "test": "tests/test_other.py::test_other"
+    }
+   ],
+   "verdict": "pass"
+  },
+  {
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "Existing tests that import the change",
+   "tests": [
+    {
+     "base": "passed",
+     "head": "passed",
+     "message": "Complete execution group ('tests/test_core.py',); identical base/head collection 1 tests, sha256 dfb91624729e87a9b05d1a2fce60f85346645ac30cadcc2538891d1300f40d05; retry unit: not retried.",
+     "passed": true,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_core.py::test_core"
+      },
+      "head": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_core.py::test_core"
+      }
+     },
+     "pre_existing": false,
+     "test": "tests/test_core.py"
+    }
+   ],
+   "verdict": "pass"
+  }
+ ]
+}

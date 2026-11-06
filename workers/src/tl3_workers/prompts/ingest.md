@@ -27,12 +27,14 @@ Use the supplied effective protected_paths. Check the declared footprint and the
 
 ## Evidence contract
 
+Keep instructions about runners, test routing, priority, resource admission and receipts verbatim as context in the brief. Do not make them goals or evidence requirements. Keep statements of what must be verified as requirements. These include named test outcomes, failure on base, GPU or serving validation, and performance thresholds. Keep unknown or mixed verification obligations.
+
 When tool_capabilities is supplied, return evidence_contract. It is an empty list when the request requires no execution evidence.
 
-- Include only evidence that the request requires. A tool named as history, context, a non-goal or an example creates no requirement. "The earlier BuildBuddy run showed a failure" is context. "Run it on BuildBuddy" is a requirement.
+- Include only evidence that the request requires. A tool named as history, context, a non-goal or an example creates no requirement. "The earlier BuildBuddy run showed a failure" is context. "Run it on BuildBuddy" is route context.
 - Name each requirement's source requirement, tool, executor, runner_features, artifacts, methods and protected_files. Use empty lists for dimensions that it does not constrain. protected_files lists necessary edits, such as runner or wrapper configuration, not reads.
 - Compare the requirements with tool_capabilities. A capability that is not listed is unsupported. Keep an unrecognized requirement's exact name and meaning. Do not replace a mandatory run with a review goal, drop a requirement, or substitute another executor's proof.
-- Keep a required native-thread bound in runner_features, and require the run artifacts.
+- Keep verification requirements that constrain native-thread behavior and their required run artifacts.
 - The run_tests receipt shows the action key, exit status and receipt and log digests only. If the request needs the command, the measured affinity or resource details, name that exact capability gap. Never call them observed.
 - Record provenance for each requirement: {"kind":"source","source":"issue.body or the source comment","quote":"exact source wording"} for an explicit source requirement, or {"kind":"method"} for a method that you chose. A method choice never adds a source obligation or a goal. Keep a method that the source requires, with its provenance.
 

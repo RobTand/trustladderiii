@@ -41,6 +41,8 @@ pub enum BudgetExhaustionLastProgressKindValue {
     Write,
     #[serde(rename = "edit")]
     Edit,
+    #[serde(rename = "delete")]
+    Delete,
     #[serde(rename = "run_tests")]
     RunTests,
 }
@@ -927,6 +929,8 @@ pub enum MakerReplyBlockedEvidenceValue2Tool {
     Write,
     #[serde(rename = "edit")]
     Edit,
+    #[serde(rename = "delete")]
+    Delete,
     #[serde(rename = "run_tests")]
     RunTests,
     #[serde(rename = "run_generator")]

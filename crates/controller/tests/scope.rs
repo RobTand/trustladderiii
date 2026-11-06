@@ -134,9 +134,10 @@ impl Executor for Capture {
             if let Observation::Plan { paths, .. } = o {
                 // The planner's code has added configured output to the effective files.
                 *paths = vec![
-                    "shared.txt".into(),
+                    "./shared.txt".into(),
+                    "shared.txt/".into(),
                     "pyproject.toml".into(),
-                    "tests/BUILD.bazel".into(),
+                    "tests//BUILD.bazel".into(),
                 ];
             }
         }

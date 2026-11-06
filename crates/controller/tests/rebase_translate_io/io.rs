@@ -449,3 +449,18 @@ pub(super) fn compare(s: &Schedule) -> Run {
     }
     old
 }
+
+pub(super) fn historical(s: &Schedule) -> Run {
+    run(s, false, None)
+}
+
+pub(super) fn current(s: &Schedule) -> Run {
+    let result = run(s, true, None);
+    for write in 0..result.writes {
+        for after in [false, true] {
+            let crashed = run(s, true, Some(Cut { write, after }));
+            assert_eq!(crashed.results.last().unwrap(), &json!({"crash":true}));
+        }
+    }
+    result
+}

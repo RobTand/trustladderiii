@@ -19,6 +19,13 @@ def main():
     # Keep #828's separately pinned historical clear in this extraction comparison.
     arm = arm.replace(quota_comment, (HERE / 'legacy-quota-clear.rs.txt').read_text())
     current = (HERE / 'current.rs').read_text()
+    helper = source[source.index('    fn footprint('):source.index('    fn operations_comment(')]
+    if '    fn footprint(' in current:
+        first = current.index('    fn footprint(')
+        last = current.index('    fn translate(', first)
+        current = current[:first] + helper + current[last:]
+    else:
+        current = current.replace('impl Shell<\'_> {\n', 'impl Shell<\'_> {\n' + helper, 1)
     first = current.index('            Observation::WorkerFailed {')
     last = current.index('        };\n        *detail', first)
     (HERE / 'current.rs').write_text(current[:first] + arm + current[last:])
@@ -29,7 +36,13 @@ def main():
     last = frozen.index('pub(crate) fn relative_file(', first)
     start = production.index('pub(crate) fn map_reply(')
     end = production.index('pub(crate) fn relative_file(', start)
-    (HERE / 'protocol-current.rs').write_text(frozen[:first] + production[start:end] + frozen[last:])
+    current = frozen[:first] + production[start:end] + frozen[last:]
+    first = current.index('pub(crate) fn relative_file(')
+    last = current.index('fn validators()', first)
+    start = production.index('pub(crate) fn relative_file(')
+    end = production.index('\n#[cfg(test)]', start)
+    current = current[:first] + production[start:end] + '\n' + current[last:]
+    (HERE / 'protocol-current.rs').write_text(current)
 
 
 if __name__ == '__main__':

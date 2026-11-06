@@ -66,5 +66,13 @@
   {
     "path": "x.py",
     "canonical": "x.py"
+  },
+  {
+    "path": "x\n.py",
+    "canonical": null
+  },
+  {
+    "path": "x\r.py",
+    "canonical": null
   }
 ]

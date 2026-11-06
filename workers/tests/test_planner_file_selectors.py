@@ -73,7 +73,8 @@ def test_whole_file_gets_exact_tool_free_correction(planner_request, file_plan, 
     assert len(model.calls) == 2, 'whole-file syntax must reach the existing correction boundary'
     history, tools = model.calls[-1]
     assert not tools and isinstance(history[-1], HumanMessage)
-    assert f'Replace `{FILE}` with the exact test definitions this check needs.' in history[-1].text
+    assert 'check.selector_inexact:' in history[-1].text and FILE in history[-1].text
+    assert 'Allowed: enum []' in history[-1].text and 'cant_meet' in history[-1].text
     assert 'Tools are unavailable' in history[-1].text
     assert not any(node in history[-1].text for node in NODES)
     result = events[-1]['reply']

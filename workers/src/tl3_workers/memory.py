@@ -82,7 +82,7 @@ class Summary:
         with self.lock:
             activity = self.value["activity"]
             changed = False
-            if name in {"read", "write", "edit"} and not error:
+            if name in {"read", "write", "edit", "delete"} and not error:
                 field = "files_read" if name == "read" else "files_changed"
                 path = args.get("path")
                 if isinstance(path, str):

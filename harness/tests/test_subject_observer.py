@@ -266,7 +266,7 @@ def test_new_fixture_support_cannot_call_a_base_constructor(repository):
         {'tests/test_queue.py': HEAD + support + observer}, Check('fixture observer', Kind.DEMONSTRATING, (NODE,), proof=proof))
     # #842 r2: the imported/base constructor is outside the support call allowlist.
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
 
 
@@ -304,7 +304,7 @@ def test_new_observer_context_cannot_smuggle_a_declared_subject(repository, cont
     results, _, _ = round_result(repository, before, after,
         Check('smuggled context', Kind.DEMONSTRATING, (observer,), proof=proof))
     assert results[0].verdict == Verdict.FAIL
-    assert 'subject onto base' in results[0].tests[0].message
+    assert f'proof.observer.subject_{container}:' in results[0].tests[0].message
 
 
 def test_new_observer_class_carries_its_needed_decorator_import(repository):
@@ -319,19 +319,19 @@ def test_new_observer_class_carries_its_needed_decorator_import(repository):
     assert results[0].verdict == Verdict.PASS, results
 
 
-@pytest.mark.parametrize('support', [
-    'TOKEN = helper = lambda: ("new", VERSION)',
-    'TOKEN = "context"; helper = lambda: ("new", VERSION)',
-    '(TOKEN, helper) = ("context", lambda: ("new", VERSION))',
-    'TOKEN = "context"; globals()["helper"] = lambda: ("new", VERSION)',
-    'TOKEN = "context"; globals().update(helper=lambda: ("new", VERSION))',
-    'TOKEN = "context"; helper += ("new", VERSION)',
-    'TOKEN = "context"; import builtins as helper',
-    'TOKEN = "context"; globals().update(**{"helper": lambda: ("new", VERSION)})',
-    'def TOKEN():\n    global helper\n    def helper(): return ("new", VERSION)',
-    'class TOKEN:\n    global helper\n    class helper: pass',
+@pytest.mark.parametrize('support,rule', [
+    ('TOKEN = helper = lambda: ("new", VERSION)', 'proof.support.literal_initializer'),
+    ('TOKEN = "context"; helper = lambda: ("new", VERSION)', 'proof.support.literal_assignment'),
+    ('(TOKEN, helper) = ("context", lambda: ("new", VERSION))', 'proof.support.literal_initializer'),
+    ('TOKEN = "context"; globals()["helper"] = lambda: ("new", VERSION)', 'proof.support.namespace_api'),
+    ('TOKEN = "context"; globals().update(helper=lambda: ("new", VERSION))', 'proof.support.namespace_api'),
+    ('TOKEN = "context"; helper += ("new", VERSION)', 'proof.support.literal_assignment'),
+    ('TOKEN = "context"; import builtins as helper', 'proof.support.namespace_api'),
+    ('TOKEN = "context"; globals().update(**{"helper": lambda: ("new", VERSION)})', 'proof.support.namespace_api'),
+    ('def TOKEN():\n    global helper\n    def helper(): return ("new", VERSION)', 'proof.support.graft_binding'),
+    ('class TOKEN:\n    global helper\n    class helper: pass', 'proof.support.graft_binding'),
 ])
-def test_review662_support_cannot_rebind_base_subject(repository, support):
+def test_review662_support_cannot_rebind_base_subject(repository, support, rule):
     path = 'tests/test_subject.py'
     before = 'VERSION = 0\ndef helper(): return ("old", VERSION)\n'
     after = ('VERSION = 1\n' + support + '\n'
@@ -340,7 +340,7 @@ def test_review662_support_cannot_rebind_base_subject(repository, support):
     results, _, _ = round_result(repository, {path: before}, {path: after},
         Check('support rebind', Kind.DEMONSTRATING, (path + '::test_observer',), proof=proof))
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'bind' in results[0].tests[0].message, results
+    assert rule + ':' in results[0].tests[0].message, results
 
 
 def test_review662_inferred_proof_cannot_skip_assertion_reason(repository):
@@ -377,7 +377,7 @@ def test_rereview662_support_refuses_dynamic_namespace_apis(repository, support)
     results, _, _ = round_result(repository, {path: before}, {path: after},
         Check('namespace escape', Kind.DEMONSTRATING, (path + '::test_observer',), proof=proof))
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'dynamic namespace' in results[0].tests[0].message, results
+    assert 'proof.support.namespace_api:' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message, results
 
 
@@ -466,7 +466,7 @@ def test_review662_base_subject_can_update_state_during_import(repository, suppo
     if support:
         # #842 r2: a support initializer cannot call into the base subject.
         assert results[0].verdict == Verdict.FAIL, results
-        assert 'Proof assembly refused' in results[0].tests[0].message
+        assert 'proof.' in results[0].tests[0].message
         assert results[0].tests[0].base == Outcome.UNCOLLECTED
     else:
         assert results[0].verdict == Verdict.PASS, results
@@ -493,7 +493,7 @@ def test_final662_support_cannot_assign_or_delete_members(repository, support):
                   proof=model.Proof((path + '::World::helper',), (path + '::TOKEN',), 'declared result'))
     results, _, _ = round_result(repository, {path: before}, {path: after}, check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'plain names' in results[0].tests[0].message, results
+    assert 'proof.support.member_write:' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message and 'World' in results[0].tests[0].message, results
 
 
@@ -543,7 +543,7 @@ def test_final662_support_wildcard_import_cannot_replace_base_helper(repository)
     results, _, _ = round_result(repository, {path: before},
                                 {path: after, 'support_fix.py': 'def helper(): return "new"\n'}, check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'wildcard import' in results[0].tests[0].message, results
+    assert 'proof.support.wildcard_import:' in results[0].tests[0].message, results
     assert path in results[0].tests[0].message and 'support_fix' in results[0].tests[0].message, results
 
 
@@ -594,12 +594,12 @@ def test_t842_real_ops_proof_shapes(repository, case):
         # Its mutable dictionary escapes into production code. Partial inference
         # cannot prove identical data; planner preflight must request a factory.
         assert results[0].verdict == Verdict.FAIL, results
-        assert 'immutable and bound exactly once' in results[0].tests[0].message
+        assert 'proof.support.literal_binding:' in results[0].tests[0].message
         assert results[0].tests[0].base == Outcome.UNCOLLECTED
         return
     # #842 r2: replacing submit.PBRUN is runtime mutation of a loaded subject.
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
 
 
@@ -654,33 +654,35 @@ def t842_cases():
     'PATCH = mock.patch.object(sys, "argv", [])',
     'with mock.patch.object(sys, "modules", {}): pass',
 ])
-def test_t842_new_loader_context_keeps_namespace_and_write_refusals(tmp_path, t842_cases, extra):
+def test_t842_new_loader_context_keeps_namespace_and_write_refusals(request, tmp_path, t842_cases, extra):
     # Q27/#645: admitting the real loader must not admit arbitrary support writes.
-    case = t842_cases[1]
-    case['after']['tests/test_pb_duplicate_arms.py'] += '\n' + extra + '\n'
-    with pytest.raises(model.ProofRefusal):
+    case = t842_safe_loader_case()
+    case['after']['tests/test_observer.py'] += '\n' + extra + '\n'
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('old,new', [
-    ('experiments/graph_attest_702/submit.py', '../head/experiments/graph_attest_702/submit.py'),
+    ('app.py', '../head/app.py'),
     ('spec.loader.exec_module(module)', 'spec.loader.exec_module(sys)'),
     ('module = importlib.util.module_from_spec(spec)', 'module = sys.modules["subject"]'),
     ('    return module', '    module.parse_plan = lambda path: []\n    return module'),
     ('    return module', '    del module.parse_plan\n    return module'),
-    ('spec_from_file_location("graph_attest_submit", path)',
-     'spec_from_file_location("graph_attest_submit", path, submodule_search_locations=[])'),
+    ('spec_from_file_location("subject", path)',
+     'spec_from_file_location("subject", path, submodule_search_locations=[])'),
     ('from pathlib import Path', 'from pathlib import Path\nPath = lambda _: None'),
     ('from pathlib import Path', 'from .pathlib import Path'),
 ])
-def test_t842_loader_must_execute_a_fresh_module_from_the_declared_subject(tmp_path, t842_cases, old, new):
+def test_t842_loader_must_execute_a_fresh_module_from_the_declared_subject(request, tmp_path, t842_cases, old, new):
     # #842: no head-only path, existing module, replacement loader or subject mutation.
-    case = t842_cases[1]
-    path = 'tests/test_pb_duplicate_arms.py'
+    case = t842_safe_loader_case()
+    path = 'tests/test_observer.py'
     assert old in case['after'][path]
     case['after'][path] = case['after'][path].replace(old, new, 1)
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('binding', [
@@ -692,22 +694,24 @@ def test_t842_loader_must_execute_a_fresh_module_from_the_declared_subject(tmp_p
     '_X86_CONFIG = {}; del pbtest_capabilities.classify_files',
     '_X86_CONFIG = {}; from support_fix import *',
 ])
-def test_t842_inferred_support_is_only_a_single_plain_literal_binding(tmp_path, t842_cases, binding):
+def test_t842_inferred_support_is_only_a_single_plain_literal_binding(request, tmp_path, t842_cases, binding):
     case = t842_cases[0]
     path = 'tests/test_pbtest_capability_cohorts.py'
     source = case['after'][path]
     start = source.index('_X86_CONFIG =')
     end = source.index('@pytest.mark.parametrize', start)
     case['after'][path] = source[:start] + binding + '\n\n' + source[end:]
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
-def test_t842_inference_cannot_graft_a_declared_constant_subject(tmp_path, t842_cases):
+def test_t842_inference_cannot_graft_a_declared_constant_subject(request, tmp_path, t842_cases):
     case = t842_cases[0]
     case['proof']['subjects'].append('tests/test_pbtest_capability_cohorts.py::_X86_CONFIG')
-    with pytest.raises(model.ProofRefusal, match='rebind a base or subject'):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 def test_t842_inference_preserves_an_existing_constant_subject(tmp_path, t842_cases):
@@ -737,13 +741,14 @@ def test_t842_inferred_literal_support_is_bound_in_the_receipt(tmp_path):
     assert receipt['declaration'] == case['proof']
 
 
-def test_t842_literal_inference_cannot_shadow_a_base_wildcard(tmp_path, t842_cases):
+def test_t842_literal_inference_cannot_shadow_a_base_wildcard(request, tmp_path, t842_cases):
     case = t842_cases[0]
     case['before']['tests/test_pbtest_capability_cohorts.py'] += (
         '\nfrom old_support import *\n'
         'def test_an_unreadable_assigned_file_is_refused_by_name(): pass\n')
-    with pytest.raises(model.ProofRefusal, match='wildcard'):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('extra', [
@@ -751,11 +756,12 @@ def test_t842_literal_inference_cannot_shadow_a_base_wildcard(tmp_path, t842_cas
     'del __file__',
     'from somewhere import location as __file__',
 ])
-def test_t842_loader_cannot_replace_its_repository_anchor(tmp_path, t842_cases, extra):
-    case = t842_cases[1]
-    case['after']['tests/test_pb_duplicate_arms.py'] += '\n' + extra + '\n'
-    with pytest.raises(model.ProofRefusal, match='dynamic namespace'):
+def test_t842_loader_cannot_replace_its_repository_anchor(request, tmp_path, t842_cases, extra):
+    case = t842_safe_loader_case()
+    case['after']['tests/test_observer.py'] += '\n' + extra + '\n'
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('source', [
@@ -763,25 +769,27 @@ def test_t842_loader_cannot_replace_its_repository_anchor(tmp_path, t842_cases, 
     'from sys import executable\n',
     'import importlib.util\n',
 ])
-def test_t842_loader_exceptions_do_not_apply_to_unrelated_support(source):
+def test_t842_loader_exceptions_do_not_apply_to_unrelated_support(request, source):
     from tl3_harness.proof import validate_support
 
-    with pytest.raises(model.ProofRefusal, match='dynamic namespace'):
+    with pytest.raises(model.ProofRefusal) as caught:
         validate_support(source, 'support.py')
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('case', json.loads(
     (Path(__file__).parent / 'fixtures/subject_observer/review_842.json').read_text()),
     ids=lambda case: case['finding'])
-def test_t842_review_counterexamples_refuse_before_execution(repository, tmp_path, case):
+def test_t842_review_counterexamples_refuse_before_execution(request, repository, tmp_path, case):
     # #842 review / #645: assembly must refuse even when a forged proof would pass.
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, {**case, 'case': case['finding']})
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
     check = Check(case['finding'], Kind.DEMONSTRATING, tuple(case['tests']),
                   proof=model.Proof.parse(case['proof']))
     results, _, _ = round_result(repository, case['before'], case['after'], check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message, results
+    assert 'proof.' in results[0].tests[0].message, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
 
 
@@ -823,15 +831,16 @@ T842_BINDING_FORMS = [
 
 @pytest.mark.parametrize('name', ['__file__', 'Path', 'sys', 'mock', 'unittest'])
 @pytest.mark.parametrize('form', T842_BINDING_FORMS)
-def test_t842_loader_inputs_cannot_be_bound_by_any_python_form(tmp_path, t842_cases, name, form):
-    case = t842_cases[1]
-    path = 'tests/test_pb_duplicate_arms.py'
+def test_t842_loader_inputs_cannot_be_bound_by_any_python_form(request, tmp_path, t842_cases, name, form):
+    case = t842_safe_loader_case()
+    path = 'tests/test_observer.py'
     if name == 'unittest':
         case['after'][path] = case['after'][path].replace('from unittest import mock', 'import unittest.mock').replace(
             'mock.patch.object', 'unittest.mock.patch.object')
     case['after'][path] += '\n' + form.format(name=name) + '\n'
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('form', [
@@ -853,7 +862,7 @@ def test_t842_loader_inputs_cannot_be_bound_by_any_python_form(tmp_path, t842_ca
     'match {{}}:\n    case {{**{name}}}: pass',
     'del {name}',
 ])
-def test_t842_support_binding_forms_cannot_rebind_subjects(tmp_path, form):
+def test_t842_support_binding_forms_cannot_rebind_subjects(request, tmp_path, form):
     from textwrap import indent
 
     before = 'def helper(): return 0\n'
@@ -865,8 +874,9 @@ def test_t842_support_binding_forms_cannot_rebind_subjects(tmp_path, form):
             'after': {'tests/test_subject.py': source}, 'tests': ['tests/test_subject.py::test_observer'],
             'proof': {'subjects': ['tests/test_subject.py::helper'],
                       'observer_support': ['tests/test_subject.py::TOKEN'], 'red_message': 'bug'}}
-    with pytest.raises(model.ProofRefusal, match='rebind|ambiguous'):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('binding', [
@@ -882,7 +892,7 @@ def test_t842_support_binding_forms_cannot_rebind_subjects(tmp_path, form):
     '_DATA = 0\nexec("_DATA = 1")',
 ])
 @pytest.mark.parametrize('explicit', [False, True], ids=['inferred', 'declared'])
-def test_t842_partial_literal_support_refuses_omitted_context(tmp_path, binding, explicit):
+def test_t842_partial_literal_support_refuses_omitted_context(request, tmp_path, binding, explicit):
     path = 'tests/test_subject.py'
     before = 'def helper(): return 0\n'
     case = {'case': 'literal siblings', 'before': {path: before},
@@ -891,8 +901,9 @@ def test_t842_partial_literal_support_refuses_omitted_context(tmp_path, binding,
             'tests': [path + '::test_observer'],
             'proof': {'subjects': [path + '::helper'],
                       'observer_support': [path + '::_DATA'] if explicit else [], 'red_message': 'bug'}}
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('extra', [
@@ -907,11 +918,12 @@ def test_t842_partial_literal_support_refuses_omitted_context(tmp_path, binding,
     'import unittest.mock as replacement\nwith replacement.patch("unittest.mock.patch.object", callback): pass',
     'with mock.patch.object(factory(), "__enter__", callback): pass',
 ])
-def test_t842_indirect_namespace_and_mock_siblings_are_refused(tmp_path, t842_cases, extra):
-    case = t842_cases[1]
-    case['after']['tests/test_pb_duplicate_arms.py'] += '\n' + extra + '\n'
-    with pytest.raises(model.ProofRefusal):
+def test_t842_indirect_namespace_and_mock_siblings_are_refused(request, tmp_path, t842_cases, extra):
+    case = t842_safe_loader_case()
+    case['after']['tests/test_observer.py'] += '\n' + extra + '\n'
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 def t842_immutable_case(binding='_DATA = 1', expected='_DATA'):
@@ -967,12 +979,13 @@ def test_t842_real_pb_data_can_be_repaired_with_a_new_support_factory(repository
 
 
 @pytest.mark.parametrize('shadow', ['unittest.py', 'src/unittest/mock.py', 'tests/pathlib.py', 'importlib/util.py'])
-def test_t842_loader_trust_rejects_repository_stdlib_shadows(tmp_path, t842_cases, shadow):
+def test_t842_loader_trust_rejects_repository_stdlib_shadows(request, tmp_path, t842_cases, shadow):
     case = t842_cases[1]
     case['after'][shadow] = 'TOKEN = 1\n'
     case['proof']['observer_support'].append(shadow)
-    with pytest.raises(model.ProofRefusal, match='could shadow the standard-library module'):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 T876_PACKAGE_MEMBERS = [
@@ -1022,14 +1035,15 @@ def test_t876_top_level_stdlib_shadow_is_refused_with_an_actionable_repair(tmp_p
     assert 'already exists on the base commit' in message
 
 
-def test_t876_red_tree_is_checked_where_the_package_marker_is_head_only(tmp_path):
+def test_t876_red_tree_is_checked_where_the_package_marker_is_head_only(request, tmp_path):
     # Review S1 (found by: review): RED is base plus the copied observers, so a
     # head-only tests/__init__.py leaves the declared tests/importlib.py top-level there.
     case = t842_safe_loader_case()
     case['after'].update({'tests/__init__.py': '', 'tests/importlib.py': 'TOKEN = 1\n'})
     case['proof']['observer_support'].append('tests/importlib.py')
-    with pytest.raises(model.ProofRefusal, match='tests/importlib.py could shadow the standard-library module'):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('binding', [
@@ -1050,12 +1064,12 @@ def test_t842_declared_literal_cannot_hide_a_second_binding_in_its_source_line(r
                   proof=model.Proof.parse(case['proof']))
     results, _, _ = round_result(repository, case['before'], case['after'], check)
     assert results[0].verdict == Verdict.FAIL, results
-    assert 'Proof assembly refused' in results[0].tests[0].message, results
+    assert 'proof.' in results[0].tests[0].message, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
 
 
 @pytest.mark.parametrize('write', ['match 1:\n    case TOKEN: pass', 'TOKEN += 1', '(TOKEN := 1)'])
-def test_t842_class_literal_support_cannot_hide_writes_in_one_compound_statement(tmp_path, write):
+def test_t842_class_literal_support_cannot_hide_writes_in_one_compound_statement(request, tmp_path, write):
     from textwrap import indent
 
     path = 'tests/test_subject.py'
@@ -1066,8 +1080,9 @@ def test_t842_class_literal_support_cannot_hide_writes_in_one_compound_statement
             'tests': [path + '::test_observer'],
             'proof': {'subjects': [path + '::helper'], 'observer_support': [path + '::Context::TOKEN'],
                       'red_message': 'bug'}}
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 def test_t842_r2_review_probes(repository):
@@ -1137,7 +1152,7 @@ def load_subject():
         else:
             assert results[0].verdict == Verdict.FAIL, results
             assert results[0].tests[0].base == Outcome.UNCOLLECTED, results
-            assert 'Proof assembly refused' in results[0].tests[0].message, results
+            assert 'proof.' in results[0].tests[0].message, results
     assert not accepted, 'Forged proofs accepted for unchanged subject behavior: ' + ', '.join(accepted)
 @pytest.mark.parametrize('shape', ['partial-constructor', 'formatter-without-loader'])
 def test_t842_r2_main_siblings(repository, shape):
@@ -1171,7 +1186,7 @@ def test_observer():
         assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
     assert results[0].verdict == Verdict.FAIL, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
 
 
 def t842_safe_loader_case():
@@ -1228,20 +1243,22 @@ def test_t842_r2_safe_loader_and_cli_setup_still_demonstrate(repository):
     'import app\nclass Support(app.ReplacingBase): pass',
     'import app\nwith app.replacing_context: pass',
 ])
-def test_t842_r2_call_and_reflection_siblings_refuse(tmp_path, extra):
+def test_t842_r2_call_and_reflection_siblings_refuse(request, tmp_path, extra):
     case = t842_safe_loader_case()
     case['after']['tests/test_observer.py'] += '\n' + extra + '\n'
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('initializer', ['dict(expected=0)', 'list((0,))', 'set((0,))',
                                         'tuple((0,))', 'frozenset((0,))', 'int(0)', 'factory()'])
-def test_t842_r2_partial_call_initializers_refuse(tmp_path, initializer):
+def test_t842_r2_partial_call_initializers_refuse(request, tmp_path, initializer):
     case = t842_immutable_case('_DATA = ' + initializer)
     case['proof']['observer_support'] = ['tests/test_observer.py::_DATA']
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 def test_t842_r2_pure_support_functions_and_builtins_are_supported(repository):
@@ -1254,21 +1271,23 @@ def test_t842_r2_pure_support_functions_and_builtins_are_supported(repository):
 
 
 @pytest.mark.parametrize('shadow', ['len = lambda value: 1', 'from app import mutate as len'])
-def test_t842_r2_partial_support_cannot_trust_a_shadowed_builtin(tmp_path, shadow):
+def test_t842_r2_partial_support_cannot_trust_a_shadowed_builtin(request, tmp_path, shadow):
     case = t842_immutable_case('def data():\n    return len(())', 'data()')
     case['after']['tests/test_observer.py'] = shadow + '\n' + case['after']['tests/test_observer.py']
     case['proof']['observer_support'] = ['tests/test_observer.py::data']
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('rebinding', ['data = lambda: 1', 'match 1:\n    case data: pass',
                                      'def replace():\n    global data\n    data = lambda: 1'])
-def test_t842_r2_partial_function_cannot_omit_rebinding(tmp_path, rebinding):
+def test_t842_r2_partial_function_cannot_omit_rebinding(request, tmp_path, rebinding):
     case = t842_immutable_case('def data():\n    return 0\n' + rebinding, 'data()')
     case['proof']['observer_support'] = ['tests/test_observer.py::data']
-    with pytest.raises(model.ProofRefusal):
+    with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
+    assert caught.value.rule == recorded_rule(request.node.nodeid)
 
 
 @pytest.mark.parametrize('mutation', [
@@ -1289,39 +1308,36 @@ def test_t842_r2_partial_factory_cannot_omit_function_object_mutation(repository
         assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
     assert results[0].verdict == Verdict.FAIL, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
-    assert 'Proof assembly refused' in results[0].tests[0].message
+    assert 'proof.' in results[0].tests[0].message
 
 
 # #867 (found by: live probe, tessera #1455): a refusal must tell the maker what
 # is allowed and how to repair, or the one repair turn repeats the same code.
 T867_CASES = [
-    ('hasattr', 'def helper(value):\n    return hasattr(value, "decoded")\n', ['hasattr', 'is not one of the allowed builtins']),
-    ('isinstance', 'def helper(value):\n    return isinstance(value, int)\n', ['isinstance', 'is not one of the allowed builtins']),
-    ('non-literal pure builtin', 'def helper(value):\n    return sorted(value)\n', ['sorted', 'is allowed only with literal arguments']),
-    ('shadowed builtin', 'len = 3\ndef helper():\n    return len("x")\n', ['len', 'is shadowed']),
-    ('imported callable', 'from json import loads\ndef helper():\n    return loads("1")\n', ['loads', 'top-level support function']),
-    ('method call', 'def helper(value):\n    return value.decode()\n', ['value.decode', 'calls a method']),
-    ('called expression', 'def helper(table):\n    return table[0]()\n', ['table[0]', 'calls the result of another expression']),
-    ('decorator', 'import pytest\n\n@pytest.fixture\ndef data():\n    return 1\n', ['pytest.fixture', 'decorator']),
-    ('class bases', 'class Box(dict):\n    pass\n', ['Box', 'base class']),
-    ('context manager', 'def helper():\n    with open("x") as handle:\n        return handle\n', ['with', 'sys.argv']),
-    ('percent template', 'def helper(value):\n    return "%s" % value\n', ['%', 'f-string']),
-    ('reflective call', 'TEMPLATE = "{0}"\ndef helper():\n    return TEMPLATE.format(1)\n', ['TEMPLATE.format', 'f-string']),
-    ('reflective attribute load', 'TEMPLATE = "{0}"\nFORMAT = TEMPLATE.format\n', ['reflective or imported attribute access', 'f-string']),
-    ('member store', 'def helper(box):\n    box["k"] = 1\n', ['never members or subscripts', 'new name']),
-    ('namespace api', 'def helper(value):\n    return getattr(value, "x")\n', ['getattr', 'observer test body']),
+    ('hasattr', 'def helper(value):\n    return hasattr(value, "decoded")\n', 'proof.support.call_allowlist'),
+    ('isinstance', 'def helper(value):\n    return isinstance(value, int)\n', 'proof.support.call_allowlist'),
+    ('non-literal pure builtin', 'def helper(value):\n    return sorted(value)\n', 'proof.support.call_allowlist'),
+    ('shadowed builtin', 'len = 3\ndef helper():\n    return len("x")\n', 'proof.support.call_allowlist'),
+    ('imported callable', 'from json import loads\ndef helper():\n    return loads("1")\n', 'proof.support.call_allowlist'),
+    ('method call', 'def helper(value):\n    return value.decode()\n', 'proof.support.call_allowlist'),
+    ('called expression', 'def helper(table):\n    return table[0]()\n', 'proof.support.call_allowlist'),
+    ('decorator', 'import pytest\n\n@pytest.fixture\ndef data():\n    return 1\n', 'proof.support.decorator'),
+    ('class bases', 'class Box(dict):\n    pass\n', 'proof.support.class_bases'),
+    ('context manager', 'def helper():\n    with open("x") as handle:\n        return handle\n', 'proof.support.context_manager'),
+    ('percent template', 'def helper(value):\n    return "%s" % value\n', 'proof.support.percent_format'),
+    ('reflective call', 'TEMPLATE = "{0}"\ndef helper():\n    return TEMPLATE.format(1)\n', 'proof.support.call_allowlist'),
+    ('reflective attribute load', 'TEMPLATE = "{0}"\nFORMAT = TEMPLATE.format\n', 'proof.support.reflective_attribute'),
+    ('member store', 'def helper(box):\n    box["k"] = 1\n', 'proof.support.member_write'),
+    ('namespace api', 'def helper(value):\n    return getattr(value, "x")\n', 'proof.support.namespace_api'),
 ]
 
-
-@pytest.mark.parametrize('name,source,expected', T867_CASES, ids=[case[0] for case in T867_CASES])
-def test_t867_support_refusals_say_what_is_allowed_and_how_to_repair(name, source, expected):
+@pytest.mark.parametrize('name,source,rule', T867_CASES, ids=[case[0] for case in T867_CASES])
+def test_t867_support_refusals_say_what_is_allowed_and_how_to_repair(name, source, rule):
     from tl3_harness import proof
     with pytest.raises(model.ProofRefusal) as refused:
         proof.validate_support(source, 'tests/test_cached_producer.py')
-    message = str(refused.value)
-    for text in expected:
-        assert text in message, (name, message)
-    assert 'observer test body' in message, (name, message)
+    assert refused.value.rule == rule
+    assert 'observer test body' in str(refused.value)
 
 
 def test_t867_call_refusal_lists_the_allowlist_generated_from_the_rule():
@@ -1333,7 +1349,187 @@ def test_t867_call_refusal_lists_the_allowlist_generated_from_the_rule():
         proof.validate_support('def helper(value):\n    return hasattr(value, "decoded")\n',
                                'tests/test_cached_producer.py')
     message = str(refused.value)
-    assert message.startswith('Proof assembly refused tests/test_cached_producer.py::hasattr: '), message
+    assert refused.value.rule == 'proof.support.call_allowlist'
+    assert 'hasattr' in message
     for builtin in sorted(allowed):
         assert builtin in message, (builtin, message)
     assert 'hasattr' not in allowed
+
+
+@pytest.mark.parametrize('source,expected,witness', [
+    ('from other import *', 'wildcard_import', 'from other import value'),
+    ('TOKEN = globals()', 'namespace_api', 'TOKEN = 1'),
+    ('import pytest\n@pytest.fixture\ndef data(): return 1', 'decorator', 'def data(): return 1'),
+    ('class Box(dict): pass', 'class_bases', 'class Box: pass'),
+    ('with open("x"): pass', 'context_manager', 'TOKEN = 1'),
+    ('def helper(value): return sorted(value)', 'call_allowlist', 'def helper(): return sorted((2, 1))'),
+    ('def helper(value): return "%s" % value', 'percent_format', 'def helper(): return "%s" % "ok"'),
+    ('FORMAT = "{}".format', 'reflective_attribute', 'TOKEN = "ok"'),
+    ('def helper(box): box["key"] = 1', 'member_write', 'def helper(): value = 1'),
+])
+def test_r1_support_rows_name_the_rule_and_repair(source, expected, witness):
+    from tl3_harness import proof
+    from tl3_harness.rules import render_all
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.validate_support(source, 'tests/test_observer.py')
+    error = caught.value
+    assert getattr(error, 'rule', None) == 'proof.support.' + expected
+    assert error.violations
+    assert error.reason == render_all(error.violations, role='maker')
+    assert str(error) == error.reason
+    for violation in error.violations:
+        text = violation.render(role='maker')
+        assert 'tests/test_observer.py' in text and 'Allowed:' in text
+        assert violation.repair is not None
+    proof.validate_support(witness, 'tests/test_observer.py')
+
+
+def test_r1_reports_independent_support_violations_together():
+    from tl3_harness import proof
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.validate_support('def first(value): return sorted(value)\n'
+                               'def second(box): box["x"] = 1\n', 'tests/test_observer.py')
+    assert {v.rule.id for v in getattr(caught.value, 'violations', ())} == {
+        'proof.support.call_allowlist', 'proof.support.member_write'}
+
+
+def test_r1_destination_gates_source_checks(tmp_path):
+    from tl3_harness import proof
+    base, head, destination = (tmp_path / name for name in ('base', 'head', 'destination'))
+    for path in (base, head, destination):
+        path.mkdir()
+    (head / 'tests').mkdir()
+    (head / 'tests/test_observer.py').write_text('this is not Python !')
+    check = Check('gate', Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',))
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(base, head, destination, check, {'test-files': ['tests/*.py']})
+    assert getattr(caught.value, 'rule', None) == 'proof.tree.destination_fresh'
+    assert len(caught.value.violations) == 1
+    assert caught.value.violations[0].rule.gating
+    assert 'Further checks were not run.' in str(caught.value)
+
+
+def test_r1_nonlocal_support_is_a_source_row():
+    from tl3_harness import proof
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.validate_support('def outer():\n    value = 1\n    def inner():\n        nonlocal value\n',
+                               'tests/test_observer.py')
+    assert getattr(caught.value, 'rule', None) == 'proof.source.unparsable'
+
+
+def test_r1_forcing_classes_come_from_the_actual_predicate():
+    import builtins
+    from tl3_harness.rules import Edit
+    with pytest.raises(model.HarnessInputError) as caught:
+        Forcing.parse({'symptom': 'flake', 'patches': [{'target': 'app.value', 'raises': 'AssertionError'}]})
+    violations = getattr(caught.value, 'violations', ())
+    assert len(violations) == 1
+    violation = violations[0]
+    assert violation.rule.id == 'forcing.raise_class'
+    assert model.contextual(caught.value, check=0).rule == 'forcing.raise_class'
+    expected = sorted(name for name in dir(builtins) if model.forced_exception(name))
+    assert violation.allowed.value == expected
+    assert isinstance(violation.repair, Edit)
+    for name in expected:
+        assert name in str(caught.value)
+        Forcing.parse({'symptom': 'flake', 'patches': [{'target': 'app.value', 'raises': name}]})
+
+
+def test_r1_symbol_names_have_one_shared_grammar():
+    from tl3_harness import proof
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.source_unit('class Outer: pass', 'tests/test_observer.py::Outer::missing')
+    assert getattr(caught.value, 'rule', None) == 'proof.source.definition'
+    symbols = [name.value for name in caught.value.violations[0].rule.names(caught.value.violations[0].facts)
+               if name.kind == 'symbol']
+    assert symbols == ['tests/test_observer.py::Outer.missing']
+
+
+def test_r1_preflight_export_matches_the_rows():
+    import importlib.util
+    assert importlib.util.find_spec('tl3_harness.proof_rules') is not None, 'proof rows are missing'
+    from tl3_harness.proof_rules import export_rows
+    artifact = Path(__file__).parents[1] / 'proof-rules.json'
+    assert artifact.is_file(), 'preflight export is missing'
+    exported = json.loads(artifact.read_text())
+    assert exported == export_rows(), 'Regenerate with: PYTHONPATH=harness/src python -m tl3_harness.proof_rules --output harness/proof-rules.json'
+    assert exported and all(row['id'].startswith(('proof.loader.', 'proof.support.')) for row in exported)
+    assert all({'id', 'names', 'allowed', 'repair'} <= row.keys() for row in exported)
+
+
+
+def test_r1_execution_maps_a_raw_assembly_syntax_error(repository, monkeypatch):
+    def unparsable(*args, **kwargs):
+        raise SyntaxError('scope is invalid')
+    monkeypatch.setattr(execution, 'assemble_proof', unparsable)
+    case = t842_safe_loader_case()
+    check = Check(case['case'], Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    assert results[0].verdict == Verdict.FAIL
+    assert 'proof.source.unparsable' in results[0].tests[0].message
+    assert 'Further checks were not run.' in results[0].tests[0].message
+
+
+def test_r1_configuration_maps_a_raw_syntax_error_without_changing_the_guard(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(execution, 'own_base', lambda *args: 'base')
+    monkeypatch.setattr(execution, 'changed_protected', lambda *args: [])
+    def unparsable(*args):
+        raise SyntaxError('scope is invalid', ('tests/nested/conftest.py', 3, 1, 'bad'))
+    monkeypatch.setattr(execution, 'conftest_subjects', unparsable)
+    tool = SimpleNamespace(changed_configuration=lambda *args: ['tests/conftest.py'])
+    text = execution.configuration_changes(tmp_path, tmp_path, 'base', tmp_path, 'head', tmp_path, tool, ())
+    assert 'proof.source.unparsable' in text
+    assert 'tests/nested/conftest.py' in text
+    assert 'Restore the changed test configuration' in text
+    tool.changed_configuration = lambda *args: []
+    assert execution.configuration_changes(tmp_path, tmp_path, 'base', tmp_path, 'head', tmp_path, tool, ()) is None
+
+
+
+def test_r1_report_all_keeps_each_support_declaration_pointer(tmp_path):
+    case = t842_immutable_case('def first(value): return sorted(value)\n'
+                               'def second(box): box["x"] = 1', '1')
+    case['proof']['observer_support'] = ['tests/test_observer.py::first', 'tests/test_observer.py::second']
+    with pytest.raises(model.ProofRefusal) as caught:
+        assemble_t842_case(tmp_path, case)
+    assert {violation.rule.id for violation in caught.value.violations} == {
+        'proof.support.call_allowlist', 'proof.support.member_write'}
+    assert {name.value for violation in caught.value.violations for name in violation.rule.names(violation.facts)
+            if name.kind == 'field'} == {'/checks/0/proof/observer_support/0', '/checks/0/proof/observer_support/1'}
+
+
+def test_r1_report_all_includes_independent_inferred_support(tmp_path):
+    case = t842_immutable_case('_FIRST = {}\n_SECOND = {}', '_FIRST or _SECOND')
+    with pytest.raises(model.ProofRefusal) as caught:
+        assemble_t842_case(tmp_path, case)
+    literals = [violation for violation in caught.value.violations
+                if violation.rule.id == 'proof.support.literal_binding']
+    assert {violation.facts['symbol'] for violation in literals} == {'_FIRST', '_SECOND'}
+
+
+@pytest.mark.parametrize('loader', [False, True])
+def test_review_report_all_and_loader_repairs_survive_run_checks(repository, loader):
+    from proof_row_cases import partitions
+    case = partitions()['proof.loader.stdlib_shadow']['bad'] if loader else t842_immutable_case(
+        'def first(value): return sorted(value)\ndef second(box): box["x"] = 1', '1')
+    if not loader:
+        case['proof']['observer_support'] = ['tests/test_observer.py::first', 'tests/test_observer.py::second']
+    check = Check('unclipped rows', Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    message = results[0].tests[0].message
+    encoded = json.loads(execution.result_json(results))[0]['tests'][0]['proof_refusal']
+    for text in (message, encoded):
+        if loader:
+            assert 'proof.loader.stdlib_shadow' in text
+            assert 'test module that already exists on the base commit' in text
+        else:
+            assert 'proof.support.call_allowlist' in text
+            assert 'proof.support.member_write' in text
+            assert 'For string formatting use an f-string over local values there.' in text
+            assert 'move this into the observer test body.' in text
+
+
+def recorded_rule(nodeid):
+    table = json.loads((Path(__file__).parent / 'fixtures/subject_observer/proof_verdicts.json').read_text())
+    return table['cases'][nodeid + '#1']['expected']['rule']
