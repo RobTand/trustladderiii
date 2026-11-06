@@ -11,10 +11,8 @@ from .model import NATIVE_THREAD_ENVIRONMENT
 
 
 def launch_context():
-    # FX1 supplies the generated contract and validated consumer operation.
-    # Refuse Flux until that interface is connected, never fall through to PB.
-    if os.environ.get('FLUX_JOB_ID'):
-        raise RuntimeError('Flux requires the Rust-validated launch context')
+    # PB stays the backward-compatible default. FX1's generated bootstrap will
+    # select Flux explicitly; ambient native IDs never select or attest a backend.
     return None
 
 

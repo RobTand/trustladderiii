@@ -98,7 +98,7 @@ def test_flux_command_at_launcher_boundary(launcher):
     arguments = json.loads(calls.read_text().splitlines()[0])
     for flag in ('--cgroups=disabled', '--network=none', '--read-only', '--init', '--userns=keep-id',
                  '--pull=never', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private',
-                 '--read-only-tmpfs=false'):
+                 '--read-only-tmpfs=false', '--pid=private'):
         assert flag in arguments
     mounts = [arguments[i + 1] for i, flag in enumerate(arguments) if flag == '--mount']
     assert len(mounts) == 3
@@ -161,14 +161,17 @@ def test_runtime_evidence_is_retained_outside_report(launcher, monkeypatch, evid
                 assert process.stderr_diagnostic == ''
             assert (executable.parent / 'payload').read_bytes() == b'[\"test_private.py::test_case\"]'
         else:
-            with pytest.raises(ExecutionFailure, match='missing_runtime_evidence'):
+            with pytest.raises(ExecutionFailure, match='container_cleanup_unconfirmed'):
                 with Supervised([str(executable), 'run', 'immutable-fixture'], selection, ()) as process:
                     list(process.records())
     records = [json.loads(line) for line in next(output.iterdir()).read_text().splitlines()]
     assert records[0] == {'event': 'host', **facts}
-    assert records[-1] == {'event': 'cleanup', 'confirmed': True}
+    assert records[-1] == {'event': 'cleanup', 'confirmed': evidence_present}
     assert [record['event'] for record in records] == (
-        ['host', 'container', 'container_processes', 'cleanup'] if evidence_present else ['host', 'cleanup'])
+        ['host', 'container', 'container_processes', 'cleanup'] if evidence_present
+        else ['host', 'execution_failure', 'cleanup'])
+    if not evidence_present:
+        assert records[1]['termination_reason'] == 'missing_runtime_evidence'
 
 
 def test_unqualified_binding_never_opens_payload_gate(launcher, monkeypatch):

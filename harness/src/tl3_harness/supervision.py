@@ -297,6 +297,8 @@ class Supervised:
             if self.cleanup_confirmed:
                 runtime.container_stopped(self.container, self.command)
             if self.evidence is not None:
+                if len(args) > 1 and isinstance(args[1], ExecutionFailure):
+                    self.evidence.record('execution_failure', args[1].as_json())
                 self.evidence.record('cleanup', {'confirmed': self.cleanup_confirmed})
             if Path(self.runtime).name == 'podman' and not self.cleanup_confirmed:
                 raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'cleanup',
