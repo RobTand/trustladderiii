@@ -154,39 +154,28 @@ pub(super) proof fn counted_failure_legacy(b: Node, a: Node, bo: Outbox, ao: Out
 }
 
 pub(super) open spec fn raised_incident(b: Node, a: Node, needs_rob: bool) -> bool {
-    a.run == ((b.run, b.job, b.pool, match b.effect {
+    a.run == b.run && a.job == b.job && a.pool == b.pool
+    && a.effect == match b.effect {
         Some(e) => Some(InFlight { cancelling: e.cancelling || holding(b.phase), ..e }),
         None => None,
-    })).0 && a.job == ((b.run, b.job, b.pool, match b.effect {
-        Some(e) => Some(InFlight { cancelling: e.cancelling || holding(b.phase), ..e }),
-        None => None,
-    })).1 && a.pool == ((b.run, b.job, b.pool, match b.effect {
-        Some(e) => Some(InFlight { cancelling: e.cancelling || holding(b.phase), ..e }),
-        None => None,
-    })).2 && a.effect == ((b.run, b.job, b.pool, match b.effect {
-        Some(e) => Some(InFlight { cancelling: e.cancelling || holding(b.phase), ..e }),
-        None => None,
-    })).3
-    && a.phase == ((incident_resume(b.phase),
-        if holding(b.phase) { 0u8 } else { b.pos },
-        (b.generation + if holding(b.phase) { 1int } else { 0int }) as u64,
-        None, !holding(b.phase) && b.holds)).0 && a.pos == ((incident_resume(b.phase),
-        if holding(b.phase) { 0u8 } else { b.pos },
-        (b.generation + if holding(b.phase) { 1int } else { 0int }) as u64,
-        None, !holding(b.phase) && b.holds)).1 && a.generation == ((incident_resume(b.phase),
-        if holding(b.phase) { 0u8 } else { b.pos },
-        (b.generation + if holding(b.phase) { 1int } else { 0int }) as u64,
-        None, !holding(b.phase) && b.holds)).2 && a.ticket == ((incident_resume(b.phase),
-        if holding(b.phase) { 0u8 } else { b.pos },
-        (b.generation + if holding(b.phase) { 1int } else { 0int }) as u64,
-        None, !holding(b.phase) && b.holds)).3 && a.holds == ((incident_resume(b.phase),
-        if holding(b.phase) { 0u8 } else { b.pos },
-        (b.generation + if holding(b.phase) { 1int } else { 0int }) as u64,
-        None, !holding(b.phase) && b.holds)).4
-    && a.run_failures == b.run_failures && a.run_incidents == b.run_incidents && a.fx_failures == b.fx_failures && a.fx_incidents == b.fx_incidents
-    && a.waiting_incident == ((true, needs_rob)).0 && a.incident_needs_rob == ((true, needs_rob)).1
-    && a.proposed == b.proposed && a.head == b.head && a.checked == b.checked && a.approved == b.approved && a.merged == b.merged && a.adopted == b.adopted && a.pr_open == b.pr_open && a.had_pr == b.had_pr && a.worktree == b.worktree && a.attempt == b.attempt && a.round == b.round && a.plan_retries == b.plan_retries && a.audit_rounds == b.audit_rounds && a.rechecks == b.rechecks && a.replanned == b.replanned && a.review_restarted == b.review_restarted && a.planning_started == b.planning_started && a.early_end == b.early_end && a.review_stop == b.review_stop
-    && a.credit == b.credit && a.repo == b.repo && a.footprint == b.footprint && a.next_seq == b.next_seq && a.paused == b.paused && a.last_cmd == b.last_cmd && a.question == b.question && a.priority == b.priority && a.waiting_prerequisite == b.waiting_prerequisite
+    }
+    && a.phase == incident_resume(b.phase)
+    && a.pos == (if holding(b.phase) { 0u8 } else { b.pos })
+    && a.generation == (b.generation + if holding(b.phase) { 1int } else { 0int }) as u64
+    && a.ticket.is_none() && a.holds == (!holding(b.phase) && b.holds)
+    && a.run_failures == b.run_failures && a.run_incidents == b.run_incidents
+    && a.fx_failures == b.fx_failures && a.fx_incidents == b.fx_incidents
+    && a.waiting_incident && a.incident_needs_rob == needs_rob
+    && a.proposed == b.proposed && a.head == b.head && a.checked == b.checked
+    && a.approved == b.approved && a.merged == b.merged && a.adopted == b.adopted
+    && a.pr_open == b.pr_open && a.had_pr == b.had_pr && a.worktree == b.worktree
+    && a.attempt == b.attempt && a.round == b.round && a.plan_retries == b.plan_retries
+    && a.audit_rounds == b.audit_rounds && a.rechecks == b.rechecks && a.replanned == b.replanned
+    && a.review_restarted == b.review_restarted && a.planning_started == b.planning_started
+    && a.early_end == b.early_end && a.review_stop == b.review_stop
+    && a.credit == b.credit && a.repo == b.repo && a.footprint == b.footprint
+    && a.next_seq == b.next_seq && a.paused == b.paused && a.last_cmd == b.last_cmd
+    && a.question == b.question && a.priority == b.priority && a.waiting_prerequisite == b.waiting_prerequisite
 }
 
 /// Project an existing exact incident result once, outside its consumers.
@@ -199,27 +188,27 @@ pub(super) proof fn incident_views(b: Node, a: Node, needs_rob: bool)
 
 
 pub(super) open spec fn abandoned_fields(b: Node, a: Node) -> bool {
-    a.run == ((None, None, false, match b.effect {
+    a.run.is_none() && a.job.is_none() && !a.pool
+    && a.effect == match b.effect {
         Some(e) => Some(InFlight { cancelling: e.cancelling
             || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
         None => None,
-    })).0 && a.job == ((None, None, false, match b.effect {
-        Some(e) => Some(InFlight { cancelling: e.cancelling
-            || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
-        None => None,
-    })).1 && a.pool == ((None, None, false, match b.effect {
-        Some(e) => Some(InFlight { cancelling: e.cancelling
-            || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
-        None => None,
-    })).2 && a.effect == ((None, None, false, match b.effect {
-        Some(e) => Some(InFlight { cancelling: e.cancelling
-            || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
-        None => None,
-    })).3
-    && a.phase == b.phase && a.pos == b.pos && a.generation == b.generation && a.ticket == b.ticket && a.holds == b.holds && a.run_failures == b.run_failures && a.run_incidents == b.run_incidents && a.fx_failures == b.fx_failures && a.fx_incidents == b.fx_incidents
+    }
+    && a.phase == b.phase && a.pos == b.pos && a.generation == b.generation
+    && a.ticket == b.ticket && a.holds == b.holds
+    && a.run_failures == b.run_failures && a.run_incidents == b.run_incidents
+    && a.fx_failures == b.fx_failures && a.fx_incidents == b.fx_incidents
     && a.waiting_incident == b.waiting_incident && a.incident_needs_rob == b.incident_needs_rob
-    && a.proposed == b.proposed && a.head == b.head && a.checked == b.checked && a.approved == b.approved && a.merged == b.merged && a.adopted == b.adopted && a.pr_open == b.pr_open && a.had_pr == b.had_pr && a.worktree == b.worktree && a.attempt == b.attempt && a.round == b.round && a.plan_retries == b.plan_retries && a.audit_rounds == b.audit_rounds && a.rechecks == b.rechecks && a.replanned == b.replanned && a.review_restarted == b.review_restarted && a.planning_started == b.planning_started && a.early_end == b.early_end && a.review_stop == b.review_stop
-    && a.credit == b.credit && a.repo == b.repo && a.footprint == b.footprint && a.next_seq == b.next_seq && a.paused == b.paused && a.last_cmd == b.last_cmd && a.question == b.question && a.priority == b.priority && a.waiting_prerequisite == b.waiting_prerequisite
+    && a.proposed == b.proposed && a.head == b.head && a.checked == b.checked
+    && a.approved == b.approved && a.merged == b.merged && a.adopted == b.adopted
+    && a.pr_open == b.pr_open && a.had_pr == b.had_pr && a.worktree == b.worktree
+    && a.attempt == b.attempt && a.round == b.round && a.plan_retries == b.plan_retries
+    && a.audit_rounds == b.audit_rounds && a.rechecks == b.rechecks && a.replanned == b.replanned
+    && a.review_restarted == b.review_restarted && a.planning_started == b.planning_started
+    && a.early_end == b.early_end && a.review_stop == b.review_stop
+    && a.credit == b.credit && a.repo == b.repo && a.footprint == b.footprint
+    && a.next_seq == b.next_seq && a.paused == b.paused && a.last_cmd == b.last_cmd
+    && a.question == b.question && a.priority == b.priority && a.waiting_prerequisite == b.waiting_prerequisite
 }
 
 #[verifier::opaque]
