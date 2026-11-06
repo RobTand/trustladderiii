@@ -763,7 +763,7 @@ def verus_proofs():
             "progress": ("kernel::progress", 12),
             "dependencies_empty_delivered": ("kernel::dependencies#empty_delivered", 1),
             "dependencies_delivered_definition": ("kernel::dependencies#delivered_definition", 1),
-            "scheduler": ("kernel::scheduler", 13),
+            "scheduler": ("kernel::scheduler#advance", 1),
             "steps": ("kernel::steps", 2),
             "settling": ("kernel::settling", 3),
             "progress_theorem": ("kernel::progress_theorem", 2),
@@ -896,6 +896,13 @@ def verus_proofs():
             "port_advance_world_prepared": ("kernel::port_advance_world#prepared", 1),
             "port_advance_gate_prefix_step": ("kernel::port_advance_gate#gate_prefix_step", 1),
             "port_advance_gate_ready_projection": ("kernel::port_advance_gate#gate_ready_projection", 1),
+            "port_advance_gate_grant_frame": ("kernel::port_advance_gate#gate_grant_frame", 1),
+            "scheduler_pool_free": ("kernel::scheduler#pool_free", 2),
+            "scheduler_admits": ("kernel::scheduler#admits", 2),
+            "scheduler_slot_free": ("kernel::scheduler#slot_free", 2),
+            "scheduler_earlier_in_pool": ("kernel::scheduler#earlier_in_pool", 1),
+            "scheduler_older_overlap": ("kernel::scheduler#older_overlap", 2),
+            "scheduler_first_in_line": ("kernel::scheduler#first_in_line", 3),
         }
         for name, (module, count) in groups.items():
             verus_test(

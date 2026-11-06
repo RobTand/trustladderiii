@@ -129,12 +129,10 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
             && before_advance@.nodes@[i as int].pos == 0
             && !before_advance@.nodes@[i as int].waiting_incident
             && before_advance@.nodes@[i as int].effect.is_none() {
-            assert(port_advance_gate::gate_ready_post(before_advance@.nodes@[i as int], w.nodes@[i as int],
-                before_advance@.next_ticket, w.next_ticket,
+            port_advance_gate::gate_grant_frame(before_advance@.nodes@[i as int], w.nodes@[i as int],
+                before_advance@.next_ticket, w.next_ticket, context.slot,
                 port_advance_gate::gate_slot(before_advance@, i as int)
-                    && port_advance_gate::gate_line(before_advance@, i as int), changed, before_out@, *out)) by {
-                reveal(port_advance_gate::gate_slot_node);
-            }
+                    && port_advance_gate::gate_line(before_advance@, i as int), changed, before_out@, *out);
         }
     }
     changed
@@ -227,7 +225,7 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
         ==> result,
         result && !w.nodes@[i as int].holds ==> port_advance_contracts::slot_safe(*w, i as int),
     result == port_advance_gate::gate_slot(*w, i as int),
-] {
+] proof [reveal(port_advance_gate::gate_slot);] {
     let me = &w.nodes[i];
     let _gate_count = w.gates.len();
     let Some(repo) = me.repo.index() else { return false; };
@@ -287,7 +285,7 @@ kernel_fn! {
 pub(super) fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
     ensures result == port_advance_gate::gate_overlap(*w, i as int, ticket),
-] {
+] proof [reveal(port_advance_gate::gate_overlap);] {
     let waiter = &w.nodes[i];
     let mut index = 0usize;
     kernel_while! { (index < w.nodes.len()) [
@@ -321,7 +319,7 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
     ensures oldest_waiter(*w, i as int) ==> result,
         !(w.nodes@[i as int].phase is Ready) ==> result == oldest_waiter(*w, i as int),
         w.nodes@[i as int].phase is Ready ==> result == port_advance_gate::gate_line(*w, i as int),
-] proof [reveal(oldest_waiter);] {
+] proof [reveal(oldest_waiter); reveal(port_advance_gate::gate_line);] {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     if !matches!(me.phase, Phase::Ready(_)) {
