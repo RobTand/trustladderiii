@@ -576,6 +576,7 @@ pub enum SelectedExecution<'a> {
 pub struct Flux {
     pub instance_generation: String,
     pub executable: PathBuf,
+    pub backend_cli: PathBuf,
     pub uri: String,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
@@ -589,6 +590,7 @@ impl std::fmt::Debug for Flux {
         formatter.debug_struct("Flux")
             .field("instance_generation", &self.instance_generation)
             .field("executable", &self.executable)
+            .field("backend_cli", &self.backend_cli)
             .field("environment", &"[redacted]")
             .field("staging_root", &self.staging_root)
             .field("output_root", &self.output_root)
@@ -608,6 +610,10 @@ impl Flux {
             return Err(invalid("flux.instance_generation", "use an operator-assigned generation or run-name/32-lowercase-hex-InvocationID; it is an identity, never a filesystem path"));
         }
         absolute("flux.executable", &self.executable)?;
+        absolute("flux.backend_cli", &self.backend_cli)?;
+        if self.backend_cli.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+            return Err(invalid("flux.backend_cli", "use an absolute provisioned executable without parent traversal"));
+        }
         nonempty("flux.uri", &self.uri)?;
         let uri = Url::parse(&self.uri).map_err(|_| invalid("flux.uri", "use an explicit local:/// absolute Flux socket path"))?;
         if !self.uri.starts_with("local:///") || uri.scheme() != "local" || uri.host_str().is_some() || !uri.path().starts_with('/')

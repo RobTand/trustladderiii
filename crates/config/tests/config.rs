@@ -23,6 +23,7 @@ fn flux_document() -> Value {
     document.as_table_mut().unwrap().insert("flux".into(), toml::toml! {
         instance_generation = "disposable-test-generation"
         executable = "/opt/flux/bin/flux"
+        backend_cli = "/opt/tl3/bin/tl3-run-backend"
         uri = "local:///run/flux/local-0"
         environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib" }
         staging_root = "/mnt/shared/tl3-inputs"
@@ -71,6 +72,8 @@ fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
         ("instance_generation", "fv1-model/not-an-invocation"),
         ("instance_generation", "fv1-model/61f47a7f95af46d794ca89c3a71f0654/extra"),
         ("executable", "flux"),
+        ("backend_cli", "tl3-run-backend"),
+        ("backend_cli", "/opt/tl3/../unprovisioned"),
         ("uri", "local:///"),
         ("uri", "local:/run/flux/local-0"),
         ("uri", "ssh://remote/instance"),

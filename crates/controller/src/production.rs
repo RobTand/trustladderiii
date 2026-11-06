@@ -1,6 +1,9 @@
 use crate::{Result, adapters, executor::Registry, ingress::Webhooks};
 use tl3_worktrees::{CommitId, Worktrees};
 
+mod flux_options;
+pub use flux_options::{flux_options, provision_flux_options};
+
 pub struct Registration {
     pub adapters: Registry,
     pub ownership: crate::Ownership,

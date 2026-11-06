@@ -70,6 +70,7 @@ fn flux_selection_holds_legacy_pb_bindings_without_reinterpreting_them() {
             config.flux = Some(tl3_config::Flux {
                 instance_generation: "disposable-generation".into(),
                 executable: "/opt/flux/bin/flux".into(),
+                backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
                 uri: "local:///run/flux/local-0".into(),
                 environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
                 staging_root: "/mnt/shared/tl3-inputs".into(),
