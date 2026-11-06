@@ -7,6 +7,7 @@ fn flux(root: &Path) -> tl3_config::Flux {
         instance_generation: "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into(),
         executable: "/opt/flux/bin/flux".into(),
         backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
+        container_mode: tl3_config::ContainerMode::OwnScope,
         uri: "local:///run/flux/local-0".into(),
         environment: BTreeMap::from([("PATH".into(), "/opt/flux/bin:/usr/bin:/bin".into())]),
         staging_root: root.join("inputs"),

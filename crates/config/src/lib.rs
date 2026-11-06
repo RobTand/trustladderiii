@@ -570,6 +570,13 @@ pub enum SelectedExecution<'a> {
     Flux(&'a Flux),
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMode {
+    InJob,
+    OwnScope,
+}
+
 /// Provisioned access to one Flux instance. A URI is not an instance generation.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -577,6 +584,7 @@ pub struct Flux {
     pub instance_generation: String,
     pub executable: PathBuf,
     pub backend_cli: PathBuf,
+    pub container_mode: ContainerMode,
     pub uri: String,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
@@ -591,6 +599,7 @@ impl std::fmt::Debug for Flux {
             .field("instance_generation", &self.instance_generation)
             .field("executable", &self.executable)
             .field("backend_cli", &self.backend_cli)
+            .field("container_mode", &self.container_mode)
             .field("environment", &"[redacted]")
             .field("staging_root", &self.staging_root)
             .field("output_root", &self.output_root)

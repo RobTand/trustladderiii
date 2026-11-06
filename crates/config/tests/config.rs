@@ -24,6 +24,7 @@ fn flux_document() -> Value {
         instance_generation = "disposable-test-generation"
         executable = "/opt/flux/bin/flux"
         backend_cli = "/opt/tl3/bin/tl3-run-backend"
+        container_mode = "own_scope"
         uri = "local:///run/flux/local-0"
         environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib" }
         staging_root = "/mnt/shared/tl3-inputs"
