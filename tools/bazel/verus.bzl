@@ -650,6 +650,9 @@ def verus_proofs():
             "kernel::port_advance_gate::gate_slot_ticket": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_advance_gate::gate_slot_changed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_advance_gate::gate_ready_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_witness::small_head": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_witness::small": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_witness::original_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -918,6 +921,8 @@ def verus_proofs():
             "scheduler_first_in_line": ("kernel::scheduler#first_in_line", 3),
             "port_advance_gate_slot_count": ("kernel::port_advance_gate#gate_slot_count", 1),
             "port_advance_phase": ("kernel::port_advance_phase", 1),
+            "port_advance_witness_world": ("kernel::port_advance_witness#phase_world", 1),
+            "port_advance_witness_cover": ("kernel::port_advance_witness#phase_cover", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
