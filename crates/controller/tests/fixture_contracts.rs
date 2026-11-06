@@ -89,6 +89,17 @@ impl Executor for Spy {
             format!("{}/{}#{number}:{kind:?}", repository.owner, repository.name),
         )
     }
+    fn prerequisite_detail(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_controller::merge_dependencies::ExternalFact> {
+        self.hit(
+            "prerequisite_detail",
+            format!("{}/{}#{number}:{kind:?}", repository.owner, repository.name),
+        )
+    }
     fn implementation(&self) -> &'static str {
         let _: Result<()> = self.hit("implementation", String::new());
         self.name
@@ -246,6 +257,11 @@ fn delivery_router_forwards_every_method_without_changing_results() {
                 .prerequisite(&d.repository, tl3_kernel::PrerequisiteKind::Issue, 17)
                 .is_err()
         );
+        assert!(
+            router
+                .prerequisite_detail(&d.repository, tl3_kernel::PrerequisiteKind::Issue, 17)
+                .is_err()
+        );
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.probe_memory().is_err());
@@ -253,7 +269,7 @@ fn delivery_router_forwards_every_method_without_changing_results() {
         assert!(router.configured_model("configured"));
         assert!(router.quota_model_eligible(&d, "configured").is_err());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 13);
+        assert_eq!(calls.len(), 14);
         for (selected, method, argument) in calls.iter() {
             let expected = if matches!(
                 *method,
@@ -261,6 +277,7 @@ fn delivery_router_forwards_every_method_without_changing_results() {
                     | "issue"
                     | "reconcile_message"
                     | "prerequisite"
+                    | "prerequisite_detail"
                     | "quota_model_eligible"
             ) {
                 mode
@@ -373,6 +390,15 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 )
                 .is_err()
         );
+        assert!(
+            router
+                .prerequisite_detail(
+                    &question.repository,
+                    tl3_kernel::PrerequisiteKind::Issue,
+                    17
+                )
+                .is_err()
+        );
         assert!(router.probe_memory().is_err());
         assert!(router.retire(&mut store).is_err());
         assert_eq!(
@@ -409,6 +435,14 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 (
                     primary,
                     "prerequisite",
+                    format!(
+                        "{}/{}#17:Issue",
+                        question.repository.owner, question.repository.name
+                    )
+                ),
+                (
+                    primary,
+                    "prerequisite_detail",
                     format!(
                         "{}/{}#17:Issue",
                         question.repository.owner, question.repository.name

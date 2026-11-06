@@ -34,6 +34,11 @@ pub enum Event {
         pull_request: PullRequest,
         actor: Actor,
     },
+    PullRequestReopened {
+        context: Context,
+        pull_request: PullRequest,
+        actor: Actor,
+    },
     PullRequestMerged {
         context: Context,
         pull_request: PullRequest,
@@ -233,6 +238,11 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
             context,
             issue: field(&value, "issue")?,
             comment: field(&value, "comment")?,
+            actor: field(&value, "sender")?,
+        },
+        ("pull_request", "reopened") => Event::PullRequestReopened {
+            context,
+            pull_request: field(&value, "pull_request")?,
             actor: field(&value, "sender")?,
         },
         ("pull_request", "closed") => {
