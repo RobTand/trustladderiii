@@ -2,14 +2,16 @@
 use super::*;
 
 verus! {
-/// Q54: share the real retry callees' exact contracts across diversion events.
-/// kind 0 is ladder, 1 exhaustion, 2 planner retry, and 3 failed round.
-pub(super) open spec fn retry(n: Node, fast: bool, id: u64, kind: u8, step: ReviewStop) -> (Node, u64) {
-    if kind == 0 { port_review_retry::rung(n, fast, id, step) }
-    else if kind == 1 { port_review_retry::room(n, fast, id, step) }
-    else if kind == 2 { (port_failfast_diversion::plan_node(n, fast, true, id),
-        if fast || n.plan_retries == 0 { id } else { (id + 1) as u64 }) }
-    else { port_review_retry::round(n, fast, id, step) }
+/// Q54: consume the real retry contracts. Planner ordinary branches need only
+/// their asserted retry outcome; all other shared retries forward exact results.
+pub(super) open spec fn retry_post(n: Node, after: (Node, u64), fast: bool,
+    id: u64, kind: u8, step: ReviewStop) -> bool {
+    if kind == 2 {
+        port_failfast_diversion::plan_fields(n, after.0, fast, true, id)
+            && after.1 == if fast || n.plan_retries == 0 { id } else { (id + 1) as u64 }
+    } else if kind == 0 { after == port_review_retry::rung(n, fast, id, step) }
+    else if kind == 1 { after == port_review_retry::room(n, fast, id, step) }
+    else { after == port_review_retry::round(n, fast, id, step) }
 }
 
 /// Q54: the original diversion check's definition of a work retry.
@@ -20,13 +22,14 @@ pub(super) open spec fn retried(before: Node, after: Node) -> bool {
 
 /// Q54 / #440: one parametric comparison covers all shared work-retry diversions.
 /// A free fix round is identical for both flag values and therefore does not divert.
-pub(super) proof fn diversion(n: Node, id: u64, kind: u8, step: ReviewStop)
+pub(super) proof fn diversion(n: Node, off: (Node, u64), on: (Node, u64),
+    id: u64, kind: u8, step: ReviewStop)
     requires kind < 4, n.generation < u64::MAX, id < u64::MAX,
         !(n.phase is Stopping || n.phase is Closed),
         kind == 2 ==> n.phase is Planning && step == ReviewStop::PlanCantMeet,
+        retry_post(n, off, false, id, kind, step),
+        retry_post(n, on, true, id, kind, step),
     ensures {
-        let off = retry(n, false, id, kind, step);
-        let on = retry(n, true, id, kind, step);
         on != off ==> on.0.phase == Phase::Stopping(Outcome::Stopped)
             && on.0.review_stop == Some(step) && on.0.credit == n.credit
             && on.0.question.is_none() && on.1 == id
@@ -34,7 +37,32 @@ pub(super) proof fn diversion(n: Node, id: u64, kind: u8, step: ReviewStop)
             && retried(n, off.0)
     },
 {
-    reveal(port_failfast_diversion::plan_node);
+    reveal(port_failfast_diversion::plan_fields);
+    reveal(port_review_retry::rung);
+    reveal(port_review_retry::room);
+    reveal(port_review_retry::round);
     reveal(retirement::stopped);
 }
+
+/// Q54 / #440 maker-files funding exception: an unfunded fitting extension asks
+/// for maker credit under fail_fast; the ordinary exhaustion branch asks to split.
+pub(super) proof fn funding(n: Node, joined: Footprint, id: u64)
+    requires n.phase == Phase::Making, !port_review_retry::funded(n),
+        n.review_stop.is_none(), n.generation < u64::MAX, id < u64::MAX,
+    ensures {
+        let on = port_review_retry::asked(Node { footprint: joined, ..n }, id,
+            QKind::OutOfCredit, Cont::Ready(Resume::Making));
+        let off = port_review_retry::room(n, false, id, ReviewStop::MakerNeedsFiles);
+        on.phase == Phase::AwaitingRob && on.credit == n.credit && on.review_stop.is_none()
+            && on.question == Some(Question { id, kind: QKind::OutOfCredit,
+                cont: Cont::Ready(Resume::Making), cost: 1, clarified: false })
+            && off.0.question == Some(Question { id, kind: QKind::OutOfCredit,
+                cont: Cont::Planning { must_split: true }, cost: 1, clarified: false })
+            && off.1 as int == id as int + 1 && retried(n, off.0)
+            && on.attempt == n.attempt && on.replanned == n.replanned
+    },
+{
+    reveal(port_review_retry::room);
+}
+
 }

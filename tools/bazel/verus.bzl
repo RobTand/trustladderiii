@@ -636,12 +636,13 @@ def verus_proofs():
             "kernel::port_review_reply::transition": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_reply::transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_reply::reply_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_diversion::plan_fields": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_diversion::plan_count": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::port_failfast_diversion::plan_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_diversion::plan_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_diversion::plan_retry_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::port_failfast_pair::retry": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_pair::retry_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_pair::retried": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_admission::same_world": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -883,11 +884,9 @@ def verus_proofs():
             "port_failfast_stop_completed_node": ("kernel::port_failfast_stop#preserves_completed_node", 1),
             "port_failfast_frame": ("kernel::port_failfast_frame#completed_stop", 1),
             "port_failfast_plan_stop": ("kernel::port_failfast_diversion#verify_plan_stop", 1),
-            "port_failfast_plan_composition": ("kernel::port_failfast_diversion#compose_plan", 1),
-            "port_failfast_pair": ("kernel::port_failfast_pair", 1),
-            "port_failfast_plan_stop_result": ("kernel::port_failfast_diversion#plan_stop_result", 1),
-            "port_failfast_plan_rerun_result": ("kernel::port_failfast_diversion#plan_rerun_result", 1),
-            "port_failfast_plan_ask_result": ("kernel::port_failfast_diversion#plan_ask_result", 1),
+            "port_failfast_pair": ("kernel::port_failfast_pair#diversion", 1),
+            "port_failfast_admission": ("kernel::port_failfast_admission", 1),
+            "port_failfast_funding": ("kernel::port_failfast_pair#funding", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
