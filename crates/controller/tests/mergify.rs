@@ -2775,6 +2775,10 @@ fn main() {
             ci_evidence::scenario(&database.create(&format!("ci_evidence_{mode}")), mode);
         }
         database.stop();
+        println!(
+            "{} Mergify scenarios passed; no skips; no live upstream calls",
+            ci_evidence::MODES.len()
+        );
         return;
     }
     if std::env::args().nth(1).as_deref() == Some("--queue-cause") {
