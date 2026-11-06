@@ -88,11 +88,16 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int] == port_review_retry::round(old(w).nodes@[i as int],
+            old(w).fail_fast, old(w).next_question, step).0,
+        final(w).next_question == port_review_retry::round(old(w).nodes@[i as int],
+            old(w).fail_fast, old(w).next_question, step).1,
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+] proof [reveal(port_review_retry::round); reveal(port_review_retry::rung_post); reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
@@ -124,16 +129,27 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
                 None => false,
             }),
         (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        port_review_retry::rung_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).fail_fast, old(w).next_question, final(w).next_question, step),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
-    kernel_snapshot! { minimum_outputs = *out }
+] hide [settle_shape] proof [
+    reveal(retry_bounds);
+] {
+    kernel_snapshot! { rung_question = w.next_question }
+    kernel_snapshot! { rung_outputs = *out }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
+    kernel_snapshot! { rung_node = *m }
     if fail_fast {
         stop_for_review(m, step);
+        kernel_proof! {
+            assert(port_review_retry::rung_post(rung_node@, *m, fail_fast, rung_question@, w.next_question, step)) by {
+                port_review_retry_lemmas::rung_stop(rung_node@, *m, step, rung_question@, w.next_question);
+            }
+        }
     } else if m.attempt < 3 {
         m.attempt += 1;
         m.review_restarted = false;
@@ -141,6 +157,12 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         if m.credit.can_spend(1) {
             m.credit.spend(1);
             set_phase(m, Phase::Making);
+            kernel_proof! {
+                assert(port_review_retry::rung_post(rung_node@, *m, fail_fast, rung_question@, w.next_question, step)) by {
+                    reveal(port_review_retry_lemmas::rung_attempt_paid_frame);
+                    port_review_retry_lemmas::rung_attempt_paid(rung_node@, *m, step, rung_question@, w.next_question);
+                }
+            }
         } else {
             ask_rob(
                 w,
@@ -150,6 +172,12 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
                 1,
                 out,
             );
+            kernel_proof! {
+                assert(port_review_retry::rung_post(rung_node@, w.nodes@[i as int], fail_fast, rung_question@, w.next_question, step)) by {
+                    reveal(port_review_retry_lemmas::rung_attempt_question_frame);
+                    port_review_retry_lemmas::rung_attempt_question(rung_node@, w.nodes@[i as int], step, rung_question@, w.next_question);
+                }
+            }
         }
     } else if !m.replanned {
         m.replanned = true;
@@ -160,7 +188,13 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
             set_phase(m, Phase::Planning { must_split: false });
             notice(out, i, Notice::Note(NoteKind::Replanned));
             kernel_proof! {
-                port_review_output::notice_append(minimum_outputs@, *out, i, Notice::Note(NoteKind::Replanned));
+                port_review_output::notice_append(rung_outputs@, *out, i, Notice::Note(NoteKind::Replanned));
+            }
+            kernel_proof! {
+                assert(port_review_retry::rung_post(rung_node@, *m, fail_fast, rung_question@, w.next_question, step)) by {
+                    reveal(port_review_retry_lemmas::rung_replan_paid_frame);
+                    port_review_retry_lemmas::rung_replan_paid(rung_node@, *m, step, rung_question@, w.next_question);
+                }
             }
         } else {
             ask_rob(
@@ -171,10 +205,27 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
                 1,
                 out,
             );
+            kernel_proof! {
+                assert(port_review_retry::rung_post(rung_node@, w.nodes@[i as int], fail_fast, rung_question@, w.next_question, step)) by {
+                    reveal(port_review_retry_lemmas::rung_replan_question_frame);
+                    port_review_retry_lemmas::rung_replan_question(rung_node@, w.nodes@[i as int], step, rung_question@, w.next_question);
+                }
+            }
         }
     } else {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
+        kernel_proof! {
+            assert(port_review_retry::rung_post(rung_node@, w.nodes@[i as int], fail_fast, rung_question@, w.next_question, step)) by {
+                reveal(port_review_retry_lemmas::rung_question_frame);
+                port_review_retry_lemmas::rung_question(rung_node@, w.nodes@[i as int], step, rung_question@, w.next_question);
+            }
+        }
     }
+
+    kernel_proof! {
+        port_review_retry_lemmas::rung_shape(rung_node@, w.nodes@[i as int], fail_fast, rung_question@, w.next_question, step);
+    }
+
 }
 }
 
@@ -304,16 +355,22 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Rebasing
+    ensures port_review_retry::recheck_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            target, old(w).next_question, final(w).next_question),
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        (ordinary_await(old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase == Phase::Rebasing
             && target == Phase::Checking
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
-    kernel_snapshot! { before_recheck = *w }
+] hide [ordinary_await, current_item, items, settle_shape] proof [
+    reveal(retry_bounds);
+] {
+    kernel_snapshot! { recheck_question = w.next_question }
     let m = &mut w.nodes[i];
+    kernel_snapshot! { recheck_node = *m }
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
     if free || m.credit.can_spend(1) {
@@ -323,7 +380,14 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         if !target.holding() {
             m.holds = false;
         }
+        kernel_snapshot! { recheck_ready = *m }
         set_phase(m, target);
+        kernel_proof! {
+            assert(port_review_retry::recheck_post(recheck_node@, *m, target, recheck_question@, w.next_question)) by {
+                port_review_retry_lemmas::recheck_resumed(recheck_node@, recheck_ready@, *m,
+                    target, recheck_question@, w.next_question, free);
+            }
+        }
     } else {
         ask_rob(
             w,
@@ -337,17 +401,18 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
             1,
             out,
         );
+        kernel_proof! {
+            assert(port_review_retry::recheck_post(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question)) by {
+                reveal(port_review_retry_lemmas::recheck_question_frame);
+                port_review_retry_lemmas::recheck_question(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question);
+            }
+        }
     }
     kernel_proof! {
-        assert(w.nodes@.len() == before_recheck@.nodes@.len());
-        assert forall|j: int| 0 <= j < before_recheck@.nodes@.len() && j != i implies
-            w.nodes@[j] == before_recheck@.nodes@[j] by {}
-        assert(w.nodes@[i as int].generation as int
-            <= before_recheck@.nodes@[i as int].generation as int + 1);
-        assert(w.nodes@[i as int].credit.spent as int
-            <= before_recheck@.nodes@[i as int].credit.spent as int + 1);
-        assert(w.next_question as int <= before_recheck@.next_question as int + 1);
+        port_review_retry_lemmas::recheck_shape(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question);
+        port_review_retry_lemmas::recheck_progress(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question);
     }
+
 
 }
 }
