@@ -292,12 +292,14 @@ pub enum Action<'a> {
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Disposition { Continue, ContinueProgress, ReturnProgress, AmbiguityProgress }
+pub enum Disposition { AwaitInput, Continue, ContinueProgress, ReturnProgress, AmbiguityProgress }
 
 impl Action<'_> {
     /// AmbiguityProgress uses the actual ambiguity transaction's changed result.
     pub fn disposition(&self) -> Disposition {
         match self {
+            Action::ReadHistory(_) | Action::CommitSent { .. } | Action::Observe(_)
+            | Action::Execute(_) | Action::Reconcile(_) => Disposition::AwaitInput,
             Action::Wait => Disposition::Continue,
             Action::Transition(State::Intended) | Action::RecordUnanswered => Disposition::ContinueProgress,
             Action::RecordAmbiguity { stop: false } => Disposition::AmbiguityProgress,

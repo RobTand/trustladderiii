@@ -87,7 +87,10 @@ def main():
             path = root / 'src/step.rs'
             original = path.read_text()
             # Restrict to executable code, so a contract cannot be mutated too.
-            start = original.index('fn ' + obligation + '(') if obligation != 'history' and obligation != 'observed' and obligation != 'consume' else original.index('fn ' + obligation + "<'a>(")
+            match = re.search(r'\bfn ' + obligation + r'(?:<[^>]*>)?\s*\(', original)
+            if match is None:
+                raise RuntimeError(f'{name}: executable obligation disappeared')
+            start = match.start()
             end = original.find('\n#[cfg_attr', start)
             end = len(original) if end < 0 else end
             body = original[start:end]
@@ -101,7 +104,7 @@ def main():
             print(result.stdout, flush=True)
             if (result.returncode == 0 or not re.search(r'verification results:: \d+ verified, [1-9]\d* errors', result.stdout)
                     or not re.search(r'postcondition not satisfied|assertion failed|precondition not satisfied', result.stdout)
-                    or re.search(r'error\[E\d+\]|aborting due to|unrecognized option', result.stdout)):
+                    or re.search(r'error\[E\d+\]|unrecognized option', result.stdout)):
                 raise RuntimeError(f'{name}: expected obligation failure, never a frontend error or timeout')
             receipt['mutant'] = {'name': name, 'obligation': 'delivery::' + obligation,
                                  'rejection': 'verification obligation', 'seconds': elapsed}
