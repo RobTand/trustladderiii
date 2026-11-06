@@ -129,6 +129,14 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("advance_ready", "port_advance_phase"),
     ("advance_making", "port_advance_phase"),
     ("advance_checking", "port_advance_phase"),
+    // #806: W6 slice two retains every terminal outcome and non-moving phase.
+    ("advance_reviewing", "port_advance_phase"),
+    ("advance_publishing", "port_advance_phase"),
+    ("advance_queued", "port_advance_phase"),
+    ("advance_rebasing", "port_advance_phase"),
+    ("advance_awaiting_rob", "port_advance_phase"),
+    ("advance_stopping", "port_advance_phase"),
+    ("advance_closed", "port_advance_phase"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

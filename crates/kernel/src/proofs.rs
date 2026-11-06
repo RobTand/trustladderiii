@@ -544,30 +544,6 @@ fn check_fail_fast_diverts(phase: Phase, event: Event) {
     }
 }
 
-/// One internal transition of request 0 keeps the world consistent, changes
-/// only that request, and keeps every rule. It also lowers the request's
-/// settle rank, so settle ends, and it never raises the progress measure.
-fn check_advance(phase: Phase, moves: bool) {
-    let before = any_world(Some(phase));
-    let rank = before.nodes[0].settle_rank();
-    let mut after = before.clone();
-    let mut out = Outbox::new();
-    let changed = advance(&mut after, 0, &mut out);
-    // Not vacuous: settle takes a transition from this phase, or, for a phase
-    // that only waits on outside events, a world in it exists. One cover per
-    // harness, so every cover a proof contains is one it can reach.
-    kani::cover!(changed == moves, "the phase moves under settle, or waits");
-    require_consistent(&after);
-    if changed {
-        assert!(after.nodes[0].settle_rank() < rank);
-        assert!(after.nodes[1] == before.nodes[1]);
-        check_nodes(&before, &after);
-        check_outputs(&before, &after, &out, None);
-    } else {
-        assert!(after == before && out.is_empty());
-    }
-}
-
 fn reply(reply: Reply) -> Event {
     match &reply {
         Reply::MakerDone { head } | Reply::Approved { head } | Reply::RebaseClean { head } => {
@@ -1175,24 +1151,6 @@ proof!(apply_answer_retry, check_apply(answer(Answer::Retry)));
 proof!(
     apply_answer_mark_handled,
     check_apply(answer(Answer::MarkHandled))
-);
-
-// Settle's internal transitions, one phase at a time.
-proof!(advance_reviewing, check_advance(Phase::Reviewing, true));
-proof!(advance_publishing, check_advance(Phase::Publishing, true));
-proof!(advance_queued, check_advance(Phase::Queued, false));
-proof!(advance_rebasing, check_advance(Phase::Rebasing, true));
-proof!(
-    advance_awaiting_rob,
-    check_advance(Phase::AwaitingRob, false)
-);
-proof!(
-    advance_stopping,
-    check_advance(Phase::Stopping(kani::any()), true)
-);
-proof!(
-    advance_closed,
-    check_advance(Phase::Closed(kani::any()), false)
 );
 
 // No dead states, one phase at a time.
