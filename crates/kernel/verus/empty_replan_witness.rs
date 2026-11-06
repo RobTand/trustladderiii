@@ -7,7 +7,7 @@ kernel_fn! {
 /// reply_empty_replan's quantified contract has no node-count bound.
 fn check_empty_allowed_replan(fail_fast: bool) -> (result: ()) []
 proof [reveal(initial_node); reveal(node_headroom); reveal(arithmetic_consistent);
-    reveal(footprint::ordered_table); reveal(retirement::phased);] {
+    reveal(reply_bounds); reveal(retirement::phased);] {
     let mut n = Node::new(RepoId(0));
     n.phase = Phase::Planning { must_split: false };
     n.credit.ready = true;

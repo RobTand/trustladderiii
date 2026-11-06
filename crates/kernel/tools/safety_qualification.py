@@ -21,6 +21,11 @@ CASES = {
         'if !m.empty_allowed_replanned {',
         'if true {',
         '//crates/kernel:verus_empty_replan'),
+    'empty_allowed_extra_spend': (
+        'crates/kernel/src/empty_replan.rs',
+        '        m.empty_allowed_replanned = true;',
+        '        m.empty_allowed_replanned = true;\n        if m.credit.can_spend(1) { m.credit.spend(1); }',
+        '//crates/kernel:verus_empty_replan'),
     'empty_allowed_asks': (
         'crates/kernel/src/empty_replan.rs',
         '        set_phase(m, phase);',

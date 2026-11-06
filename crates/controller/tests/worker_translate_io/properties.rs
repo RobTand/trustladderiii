@@ -36,7 +36,11 @@ fn production_and_reference_sources_are_pinned() {
     let normalized = historical_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n");
     let normalized_arm = arm(&normalized);
     let normalized_end = normalized_arm.find("        };\n        *detail").unwrap();
-    assert_eq!(&normalized_arm[..normalized_end], arm(source));
+    let rp_current = include_str!("rp-current.rs");
+    let rp_arm = arm(rp_current);
+    let rp_end = rp_arm.find("        };\n        *detail").unwrap();
+    assert_eq!(&rp_arm[..rp_end], arm(source));
+    assert!(!normalized_arm[..normalized_end].contains("empty_allowed_replanned"));
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
         (include_str!("current.rs"), arm(historical_current).split("        };\n        *detail").next().unwrap()),
@@ -67,8 +71,9 @@ fn production_and_reference_sources_are_pinned() {
         // A leaf whose production body changed after the freeze has a separate
         // current copy: the frozen parts then pin only the reference copy, and
         // the current copy must equal the production body before its tests.
+        let suffix = if name == "protocol" { "rp" } else { "current" };
         let current = root.join(format!(
-            "crates/controller/tests/worker_translate_io/{name}-current.rs"
+            "crates/controller/tests/worker_translate_io/{name}-{suffix}.rs"
         ));
         let changed = current.exists();
         if changed {
@@ -84,6 +89,8 @@ fn production_and_reference_sources_are_pinned() {
                     mapping(&production),
                     "current mapping drift"
                 );
+                let helper = |source: &str| source[source.find("pub(crate) fn after_empty_allowed_replan(").unwrap()..].split("#[cfg(test)]").next().unwrap().trim();
+                assert_eq!(helper(&copy), helper(&production));
                 for part in pin["parts"].as_array().unwrap().iter().skip(1) {
                     let part = part.as_str().unwrap();
                     assert!(production.contains(part), "production leaf drift: {name}");

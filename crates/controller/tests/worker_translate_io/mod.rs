@@ -17,6 +17,7 @@ enum RowChange {
     },
 }
 use io::{Commit, Controller, World, check_run, put};
+#[path = "rp-current.rs"]
 mod current;
 mod evidence;
 mod findings;

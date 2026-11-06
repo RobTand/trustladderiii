@@ -29,7 +29,7 @@ pub(super) fn reply_empty_replan(w: &mut World, i: usize, _out: &mut Outbox)
         final(w).nodes@[i as int].replanned == old(w).nodes@[i as int].replanned,
         final(w).next_question == old(w).next_question,
         *final(_out) == *old(_out),
-] proof [reveal(reply_bounds); reveal(retry_bounds); reveal(retirement::phased);] {
+] proof [reveal(reply_bounds); reveal(retirement::phased); reveal(retirement::stopped);] {
     let m = &mut w.nodes[i];
     m.question = None;
     if !m.empty_allowed_replanned {

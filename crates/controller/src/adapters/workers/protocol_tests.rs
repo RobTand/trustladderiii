@@ -699,7 +699,7 @@ fn empty_allowed_replan_terminal_mapping_preserves_pre_replan_legacy_endings() {
         Reply::PlanCantMeet,
         Reply::PlanSplit,
         Reply::PlanLeaf {
-            footprint: Footprint::inline(1),
+            footprint: World::new(&[1], 1).intern_footprint([FileId(0)]),
             fits: false,
         },
     ] {
@@ -741,7 +741,7 @@ fn empty_allowed_replan_terminal_mapping_preserves_pre_replan_legacy_endings() {
         Reply::ProtectedPaths,
         Reply::RunFailed,
         Reply::PlanLeaf {
-            footprint: Footprint::inline(1),
+            footprint: World::new(&[1], 1).intern_footprint([FileId(0)]),
             fits: true,
         },
     ] {

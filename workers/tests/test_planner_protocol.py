@@ -875,3 +875,28 @@ def test_r1_p2a_live_python_replay():
             assert 'error' in case['outcome'] and str(error) == case['outcome']['error']['message'], case['id']
         else:
             assert 'return' in case['outcome'] and result == decode(case['outcome']['return']), case['id']
+
+
+@pytest.mark.parametrize('rule', ['proof.omitted', 'split.forecast_fits'])
+def test_rp_2648_serializes_empty_allowed_from_resolved_a1_rows(rule):
+    from tl3_workers.roles.planner import PlanConsistencyError, terminal
+    facts, _ = _row_case(rule)
+    if rule == 'proof.omitted':
+        del facts['inputs']['ingest']['goals'][0]['proof_obligation']
+    else:
+        facts['inputs']['must_split'] = False
+    error = PlanConsistencyError(facts['draft'], {**facts['draft'], **facts['completed']}, facts['diagnostics'], facts['inputs'])
+    assert error.rule_violations
+    _, provenance = terminal(error, error, {**facts['draft'], **facts['completed']}, facts['draft'], attempted=True, unavailable=None)
+    objections = [item for item in provenance['objections'] if item['rule'] == rule]
+    assert objections and all(item['allowed_empty'] for item in objections)
+    assert provenance['repair'] == {'status': 'attempted'}
+
+
+def test_rp_nonempty_and_unresolved_rows_remain_dormant():
+    from tl3_workers.roles.planner import PlanConsistencyError, terminal, wire
+    facts, _ = _row_case('proof.omitted')
+    error = PlanConsistencyError(facts['draft'], {**facts['draft'], **facts['completed']}, facts['diagnostics'], facts['inputs'])
+    _, provenance = terminal(error, error, {**facts['draft'], **facts['completed']}, facts['draft'], attempted=True, unavailable=None)
+    assert all(not item['allowed_empty'] for item in provenance['objections'])
+    assert not wire(facts['diagnostics'][0])['allowed_empty']
