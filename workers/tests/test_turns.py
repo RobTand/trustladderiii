@@ -760,3 +760,28 @@ def test_composite_schema_row_preserves_reference_context():
     violation, = schema_violations(Draft202012Validator(proposal).iter_errors(bad))
     register(violation.rule, {**violation.facts, 'reply': bad}, {'kind': 'x', 'item': 'ok'})
     assert 'oneOf' in violation.render() and 'replace' in violation.render()
+
+
+def test_pilot_repair_rejects_changes_outside_its_row():
+    from tl3_workers.turns import InvalidReply, RepairScopeError, TurnControl, repaired
+    original = {**test_workers.EARLY}
+    corrected = {**original, 'evidence_contract': [], 'outcome': 'already_done'}
+    replies = iter([original, corrected])
+    control, history = TurnControl(), []
+    with pytest.raises(InvalidReply) as caught:
+        repaired(control, history, lambda: next(replies), lambda value: runtime._checked(
+            runtime.ROLES['ingest'], {'tool_capabilities': []}, value))
+    assert isinstance(caught.value.errors[1], RepairScopeError)
+    from tl3_workers.tracing import failure_tags
+    assert 'repair_scope' in failure_tags(caught.value.errors[1])['failure_message']
+    assert control.repair_attempts == 1 and len(history) == 1
+
+
+def test_worker_rule_adapter_reuses_the_harness_core():
+    from tl3_harness import rules as core
+    from tl3_workers import rules as adapter
+    assert adapter.Rule is core.Rule and adapter.Violation is core.Violation
+    assert adapter.permits is core.permits and adapter.register is core.register
+    assert isinstance(adapter.Allowed('type', 'array'), core.Allowed)
+    assert adapter.Allowed('type', 'array').accepts([])
+    assert not adapter.Allowed('type', 'array').accepts('not an array')

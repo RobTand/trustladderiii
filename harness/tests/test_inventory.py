@@ -92,3 +92,51 @@ class OtherHelper(Helper):
         'test_policy.py::Intermediate::test_admission',
         'test_policy.py::Policy::test_admission',
         'test_policy.py::Policy::test_refusal']
+
+
+def test_rule_core_loads_standalone_and_repairs_its_table():
+    import ast
+    from dataclasses import replace
+    path = Path(__file__).parents[1] / 'src/tl3_harness/rules.py'
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert all(alias.name.split('.')[0] in sys.stdlib_module_names for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0 and node.module.split('.')[0] in sys.stdlib_module_names
+    spec = importlib.util.spec_from_file_location('staged_rules', path)
+    core = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = core
+    try:
+        spec.loader.exec_module(core)
+        field = core.Name('field', '/observer')
+        allowed = core.Allowed('enum', ['assertion', 'exception'])
+        row = core.Rule('proof.observer',
+            lambda facts: () if allowed.accepts(facts['reply']['observer']) else (
+                {'bad_value': facts['reply']['observer']},),
+            lambda facts: (field, core.Name('path', 'tests/test_x.py'),
+                           core.Name('symbol', 'tests/test_x.py::test_x')),
+            lambda facts: allowed, lambda facts: core.Edit(field, 'replace', allowed))
+        before = {'observer': 'guess', 'untouched': True}
+        core.register(row, {'reply': before}, 'assertion')
+        violation, = core.evaluate((row,), {'reply': before})
+        rendered = violation.render()
+        assert all(item in rendered for item in ('/observer', 'source path', 'symbol', 'guess',
+                                                 'assertion', 'exception', 'replace'))
+        after = core.apply_edit(before, row.repair(violation.facts), 'assertion')
+        assert core.permits(before, after, (violation,))
+        assert not core.permits(before, {**after, 'untouched': 1}, (violation,))
+        assert not core.Allowed('enum', [1]).accepts(True)
+        with pytest.raises(ValueError, match='renderable repair'):
+            core.register(replace(row, repair=lambda facts: None), {'reply': before}, 'assertion')
+        with pytest.raises(ValueError, match='own witness'):
+            core.register(replace(row, check=lambda facts: ({},)), {'reply': before}, 'assertion')
+        with pytest.raises(ValueError, match='own witness'):
+            core.register(replace(row, check=lambda facts: () if facts['reply']['observer'] == 'assertion'
+                                  else ({'bad_value': facts['reply']['observer']},)),
+                          {'reply': before}, 'assertion')
+        gate = replace(row, gating=True, repair=lambda facts: core.CantMeet('identity differs'))
+        core.register(gate, {'reply': before})
+        assert 'Further checks were not run' in core.render_all(core.evaluate((gate, row), {'reply': before}))
+    finally:
+        del sys.modules[spec.name]

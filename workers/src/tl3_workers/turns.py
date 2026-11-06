@@ -48,6 +48,14 @@ class InvalidReply(ValueError):
         self.errors = (first, second)
 
 
+class RepairScopeError(ValidationError):
+    """The single correction changed data outside its row permissions."""
+
+    def __init__(self):
+        super().__init__('repaired reply changed fields outside the permitted edits',
+                         validator='repair_scope')
+
+
 class Unrepairable(ValueError):
     """A check failed for a reason the model cannot fix, such as missing tokenizer data."""
 
@@ -121,6 +129,7 @@ class TurnControl(AgentMiddleware):
 def repaired(control, history, ask, check):
     """Return check(ask()), giving an invalid reply one repair turn in the same run."""
     text = ask()
+    original = text
     try:
         return check(text)
     except Unrepairable:
@@ -135,6 +144,14 @@ def repaired(control, history, ask, check):
             control.repair_unavailable = 'input_allowance'
             raise first from None
         try:
+            violations = getattr(first, 'rule_violations', ())
+            if violations:
+                from tl3_workers.contracts import read_reply
+                from tl3_workers.rules import permits
+                before = read_reply(original) if isinstance(original, str) else original
+                after = read_reply(text) if isinstance(text, str) else text
+                if not permits(before, after, violations):
+                    raise RepairScopeError()
             return check(text)
         except (ValueError, ValidationError) as second:
             raise InvalidReply(first, second) from second

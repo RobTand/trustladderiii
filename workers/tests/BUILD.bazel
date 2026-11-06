@@ -326,6 +326,7 @@ tl3_py_test(
         ":test_prompt_cache",
         ":test_reviewer",
         ":test_workers",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
