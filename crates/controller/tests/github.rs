@@ -616,11 +616,13 @@ fn main() {
         markers.extend([1; 118]);
         markers
     } else {
-        [
+        let mut markers = [
             6, 11, 6, 1, 1, 1, 1, 1, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         ]
-        .to_vec()
+        .to_vec();
+        markers[18] = 3;
+        markers
     };
     // Main and completed sharded solo receipts, rounded up to keep slow groups apart.
     // Intake regressions share the vocabulary group and emit status lines, not
@@ -847,6 +849,8 @@ fn main() {
     });
     case!({
         steering::answers(&database.create("steering_answers"));
+        steering::legacy_audit_stop(&database.create("legacy_audit_stop"));
+        steering::audit_disagreement_stop(&database.create("audit_disagreement_stop"));
     });
     case!({
         steering::replacement(&database.create("steering_replacement"));
@@ -949,7 +953,7 @@ fn main() {
         shard.finish("GitHub integration");
         return;
     }
-    let scenario_count = 201;
+    let scenario_count = 203;
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );
@@ -2526,12 +2530,12 @@ fn worker_daemon_config(
     fs::write(&config_path, config).unwrap();
     // These workers implement delivery only. Quota on a separate postmortem
     // model leaves delivery models available without a daily-limit switch.
-    let mut controller = Controller::open(
-        Store::open(settings).unwrap(),
-        adapters::simulation(&root.join("fakes")).unwrap(),
-        bootstrap(),
-    )
-    .unwrap();
+    let mut registry = adapters::simulation(&root.join("fakes")).unwrap();
+    if mode == "steering-answers" {
+        registry.register(Upstream::Workers, steering::LegacyIntake);
+    }
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller
         .observe(
             "postmortem-fixture-quota",
@@ -2542,6 +2546,9 @@ fn worker_daemon_config(
             },
         )
         .unwrap();
+    if mode == "steering-answers" {
+        steering::seed_legacy_audit_question(&mut controller, settings);
+    }
     drop(controller);
     let mut connection = postgres::Config::new()
         .host(&settings.host)

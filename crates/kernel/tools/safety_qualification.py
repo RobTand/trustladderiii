@@ -16,6 +16,11 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'audit_disagreement_asks': (
+        'crates/kernel/src/ingest.rs',
+        'stop_for_review(m, ReviewStop::AuditDisagreement);',
+        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out);',
+        '//crates/kernel:verus_ingest_reply_ingest'),
     'plan_check_rejected_asks': (
         'crates/kernel/src/plan_check.rs',
         'Reply::PlanCheckRejected => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',

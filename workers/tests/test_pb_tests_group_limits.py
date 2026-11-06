@@ -6,7 +6,7 @@ import hashlib
 import json
 
 import pytest
-from tl3_harness.selector_identity import selection_matches
+from tl3_harness.selector_identity import selector_identity
 from tl3_harness.test_tool import SUMMARY_BYTES
 from tl3_workers.pb_tests import TestSettings, bounded, make_test_tool
 from tl3_workers.tools import Worktree
@@ -86,9 +86,9 @@ def test_nested_summary_bounds_presentation_without_changing_identity(status):
     assert observed['status'] == status, observed
     assert 'groups' in observed, observed
     [actual] = observed['groups']
-    assert selection_matches(actual['selectors'], selected)
-    assert not selection_matches(actual['selectors'], selected[:-1])
-    assert not selection_matches(actual['selectors'], list(reversed(selected)))
+    assert actual['selectors'] == selector_identity(selected)
+    assert actual['selectors'] != selector_identity(selected[:-1])
+    assert actual['selectors'] != selector_identity(reversed(selected))
     assert actual['proof'] == group['proof']
     assert actual['execution'] == group['execution']
     assert actual['totals'] == group['totals']

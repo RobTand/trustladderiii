@@ -2,13 +2,19 @@
 
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight
+from tl3_workers.ingest_retention import preserve_verbatim
 from tl3_workers.generated_scope import audit_generation_scope
 from tl3_workers.exploration import ExplorationBudget
 
 
 def check_reply(inputs, reply):
     preflight(inputs, reply)
+    if ("tool_capabilities" in inputs and inputs["ingest"]["kind"] == "brief"
+            and reply["evidence_errors"]):
+        reply["verdict"] = "disagree"
+        reply["objections"] = list(dict.fromkeys([*reply["objections"], *reply["evidence_errors"]]))
     audit_generation_scope(inputs, reply)
+    preserve_verbatim('audit', inputs, reply)
 
 
 ROLE = Role(

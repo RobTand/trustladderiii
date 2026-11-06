@@ -213,6 +213,18 @@ fn source_pins_and_production_copies() {
         function(include_str!("../../src/looks.rs"), "incident_view", false),
         function(include_str!("current.rs"), "incident_view", false)
     );
+    for (name, copy) in [
+        ("look_state", include_str!("look-state-current.rs")),
+        (
+            "look_observations",
+            include_str!("look-observations-current.rs"),
+        ),
+    ] {
+        assert_eq!(
+            function(include_str!("../../src/looks.rs"), name, true).trim_end(),
+            copy.trim_end()
+        );
+    }
     for name in ["look_kind", "wait_status"] {
         assert_eq!(
             function(include_str!("../../src/looks.rs"), name, false),
