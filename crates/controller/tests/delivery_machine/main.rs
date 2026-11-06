@@ -118,7 +118,7 @@ fn completion_shell_keeps_every_other_statement_verbatim() {
             ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
             ".find(|e| e.key == key)",
         );
-    assert_eq!(restored, include_str!("base-completion.rs.txt"));
+    assert_eq!(restored, include_str!("base-integration-completion.rs.txt"));
     assert!(include_str!("reference-plan.rs").contains(include_str!("base-plan.rs.txt")));
 }
 
@@ -256,7 +256,7 @@ fn owned_controller_io_shell_remains_verbatim() {
             ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
             ".find(|e| e.key == key)",
         );
-    assert_eq!(restored, include_str!("base-owned-shell.rs.txt"));
+    assert_eq!(restored, include_str!("base-integration-shell.rs.txt"));
     let restored = include_str!("../../src/approval_delivery.rs")
         .replace(
             include_str!("new-authorization.rs.txt"),
@@ -271,5 +271,8 @@ fn owned_controller_io_shell_remains_verbatim() {
 
 mod full;
 mod executor {
+    use tl3_kernel::Ack;
     include!("conversions.rs");
 }
+
+use full::{Error, decode_stored};

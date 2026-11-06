@@ -1,3 +1,4 @@
+use approval_delivery::{AMBIGUOUS,AUTHORIZATIONS,LINEAGE_SAFE,UNRESOLVED,REPAIRS};
 use input_errors::{PendingKernelInput, PENDING_KERNEL};
 struct Controller {
     store:Store,
@@ -5,6 +6,12 @@ struct Controller {
     held_effects:BTreeMap<Upstream,BTreeMap<String,String>>,
 }
 impl Controller {
+    fn release_terminal_model_probes(&self,_s:&Snapshot,c:&mut Commit,node:Option<NodeId>)->Result<()> {
+        c.rows.push(put("released_probes","fixture".into(),json!(node)));Ok(())
+    }
+    fn retire_completed_model_attempts(&self,_s:&Snapshot,c:&mut Commit)->Result<()> {
+        c.rows.push(put("retired_model_attempts","fixture".into(),json!(true)));Ok(())
+    }
     fn observe(&mut self,key:&str,observation:Observation)->Result<()> {
         Recorded::write(&self.store.io,"observe",json!({"key":key,"observation":observation}),true);Ok(())
     }

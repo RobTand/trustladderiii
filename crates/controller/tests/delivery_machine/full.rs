@@ -15,7 +15,7 @@ use tl3_store::{Commit, NewEffect, RowChange, Snapshot, WorldRow};
 
 type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
-enum Error {
+pub(crate) enum Error {
     Invalid(&'static str),
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ impl Postmortem for Delivery {
         )
     }
 }
-fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+pub(crate) fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
     serde_json::from_value(value).map_err(|_| Error::Invalid("decode"))
 }
 fn put(table: &str, id: String, value: Value) -> RowChange {
@@ -161,7 +161,8 @@ fn queue_retirement(c: &mut Commit, d: &Delivery) {
     }
 }
 mod executor {
-    pub use tl3_controller::executor::upstream;
+    pub use tl3_controller::executor::{Upstream, upstream};
+    use tl3_kernel::Ack;
     include!("conversions.rs");
 }
 mod input_errors {
@@ -453,7 +454,7 @@ fn compiled_shells_and_boundary_conversions_are_verbatim() {
     let start = current.find("    fn retire_effect(").unwrap();
     let end = current[start..].find("    fn apply(").unwrap() + start;
     assert!(include_str!("current-shell.rs").contains(&current[start..end]));
-    let base = include_str!("base-owned-shell.rs.txt");
+    let base = include_str!("base-integration-shell.rs.txt");
     let end = base.find("    fn apply(").unwrap();
     assert!(include_str!("old-shell.rs").contains(&base[..end]));
     let production = include_str!("../../src/executor.rs");
