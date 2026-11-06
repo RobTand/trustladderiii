@@ -459,3 +459,34 @@ fn unanswered_and_ambiguous_execution_leave_sent_and_preserve_loop_disposition()
         assert_eq!(v.state, State::Sent);
     }
 }
+
+#[test]
+fn executed_ack_survives_an_intervening_commit() {
+    let (v, pending) = sent(view(State::Intended));
+    let Action::Observe(pending) = action(v, Input::SentCommitted(pending)) else {
+        panic!("observe after Sent commit")
+    };
+    let Action::Execute(pending) = action(
+        v,
+        Input::Observed {
+            pending,
+            revision_changed: false,
+        },
+    ) else {
+        panic!("execute after unchanged observation")
+    };
+    let reloaded = DeliveryView {
+        revision: v.revision + 1,
+        ..v
+    };
+    assert!(matches!(
+        action(
+            reloaded,
+            Input::Executed {
+                pending,
+                outcome: Outcome::Acknowledged(Ack::Confirmed),
+            }
+        ),
+        Action::EnqueueCompletion(Ack::Confirmed)
+    ));
+}
