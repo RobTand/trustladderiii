@@ -164,37 +164,37 @@ def test_map_preflight_never_transfers_a_missing_image(store, profile_map):
     assert calls[0][:2] == ['image', 'exists']
 
 
-def test_prepared_profile_contains_actual_map_store_and_both_executable_artifacts(store, profile_map, monkeypatch):
-    import hashlib
+def test_raw_profile_emits_exact_rust_prepare_command_without_final_schema(store, profile_map, monkeypatch):
     from tl3_harness import runtime_image
 
     root, executable = store
     path, entry, digest = profile_map
-    (root / 'present').write_text('yes')
     actual = {'Id': entry['config_digest'], 'Os': 'linux', 'Architecture': 'amd64', 'RepoDigests': [entry['registry_ref']]}
     monkeypatch.setattr(runtime_image, 'preflight_profile', lambda *args, **kwargs:
                         {'profile': entry, 'map': {'path': str(path), 'sha256': digest, 'bytes': path.stat().st_size}, 'store': actual})
+    prerequisites = {'no_cgroups_supported': False, 'init_available': False, 'user_scope_supported': False}
     config = runtime_image.prepare_runtime_profile(
-        root / 'prepared', host_interpreter=sys.executable, container_interpreter='/explicit/container/python',
-        podman=executable, systemctl='/explicit/systemctl', mode='own_scope', memory_limit_bytes=268435456,
-        producer_commit='a' * 40,
-        image_map=path, profile='sandbox', host='dl380g10', platform='linux/amd64',
-        environment={'HOME': str(root), 'XDG_RUNTIME_DIR': str(root)})
-    prepared = json.loads(config.read_text())
-    assert prepared['image_observations']['profile'] == entry
-    assert prepared['image_observations']['map']['sha256'] == digest
-    assert prepared['image_observations']['store'] == actual
-    assert prepared['container_mode'] == 'own_scope' and prepared['memory_limit_bytes'] == 268435456
-    assert prepared['podman'] == executable and prepared['host_interpreter'] == sys.executable
-    assert prepared['container_interpreter'] == '/explicit/container/python'
-    assert prepared['scratch_root'] == '/var/tmp/flux-vanilla'
-    for role in ('collector', 'cleanup', 'manifest'):
-        artifact = prepared['artifacts'][role]
-        data = (config.parent / artifact['path']).read_bytes()
-        assert artifact['sha256'] == hashlib.sha256(data).hexdigest() and artifact['bytes'] == len(data)
-    assert Path(prepared['artifacts']['cleanup']['path']).name == 'host-cleanup'
-    assert config.stat().st_mode & 0o222 == 0
-    assert prepared['mode_observations'] is None
+        root / 'prepared', host_interpreter=sys.executable, podman=executable, systemctl='/explicit/systemctl',
+        mode='own_scope', image_map=path, profile='sandbox', host='dl380g10', platform='linux/amd64',
+        environment={'HOME': str(root), 'XDG_RUNTIME_DIR': str(root)}, producer_commit='a' * 40,
+        prerequisites=prerequisites)
+    command = json.loads(config.read_text())
+    assert command['op'] == 'prepare_runtime_bundle'
+    inputs = command['input']
+    assert inputs['image_inventory'] == str(path)
+    assert json.loads(Path(inputs['image_inspect']).read_bytes()) == actual
+    assert inputs['prerequisites'] == prerequisites and inputs['mode'] == 'own_scope'
+    code_root = Path(inputs['source_root'])
+    inventory = json.loads((code_root / inputs['code_inventory']).read_bytes())
+    assert set(inventory) == {'interpreter', 'files'}
+    assert inventory['interpreter'] == sys.executable
+    listed = {entry['path'] for entry in inventory['files']}
+    listed.update({inputs['collector'], inputs['cleanup'], inputs['code_inventory']})
+    assert {str(item.relative_to(code_root)) for item in code_root.rglob('*') if item.is_file()} == listed
+    assert inputs['cleanup'] == 'host-cleanup'
+    assert (code_root / inputs['trusted_root'] / 'runner.py').is_file()
+    assert not list(config.parent.rglob('manifest.json'))
+    assert config.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize('mismatch', [False, True])
