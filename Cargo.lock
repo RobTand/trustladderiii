@@ -3008,6 +3008,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tl3-contracts"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
@@ -3035,9 +3044,11 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tl3-config",
+ "tl3-contracts",
  "tl3-controller-core",
  "tl3-delivery",
  "tl3-github",
+ "tl3-harness-core",
  "tl3-kernel",
  "tl3-mergify",
  "tl3-prismabuild",
@@ -3085,8 +3096,11 @@ dependencies = [
 name = "tl3-harness-core"
 version = "0.1.0"
 dependencies = [
+ "proptest",
+ "schemars",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3111,6 +3125,16 @@ dependencies = [
  "tl3-github",
  "tokio",
  "wiremock",
+]
+
+[[package]]
+name = "tl3-plan-check"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "tl3-contracts",
+ "tl3-harness-core",
 ]
 
 [[package]]

@@ -544,6 +544,21 @@ impl Supervisor {
             inputs["audit_objections"] = audit["objections"].clone();
         }
         if role == "ingest" {
+            if let Some(failure) = crate::input_resources::retry_feedback(
+                snapshot,
+                delivery.node(),
+                delivery.generation,
+            )? {
+                let objections = inputs
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("audit_objections")
+                    .or_insert_with(|| json!([]));
+                objections
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("invalid ingest feedback"))?
+                    .push(json!(failure.to_string()));
+            }
             inputs["forecast"] = forecast;
         }
         if matches!(role, "ingest" | "audit" | "planner" | "maker") {
@@ -635,6 +650,8 @@ impl Supervisor {
                 .unwrap_or(json!([]));
         }
         protocol::validate_inputs(role, &inputs)?;
+        #[cfg(test)]
+        input_contract_tests::assert_typed_input(role, &inputs);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -1070,6 +1087,14 @@ impl Supervisor {
         match result {
             Reconciliation::Found(completion) => {
                 if !resume_quota
+                    || snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "allowances" && row.id == delivery.key)
+                        .and_then(|row| row.value["last_quota_attempt"].as_i64())
+                        .is_some_and(|held| {
+                            previous.as_ref().is_some_and(|(number, _)| *number > held)
+                        })
                     || !matches!(
                         completion.observations.as_slice(),
                         [Observation::Quota { .. }]
@@ -1100,6 +1125,7 @@ impl Supervisor {
                     generation: delivery.generation,
                     role: role.into(),
                     reply,
+                    plan_check: None,
                     model: None,
                 }]),
             );
@@ -1107,6 +1133,45 @@ impl Supervisor {
 
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         request["prompt"] = crate::prompts::for_run(&mut store, &delivery.key, role)?;
+        // Q53 / #828: family belongs to this dispatched attempt, even if config
+        // changes before its completion arrives. Persist before launching it.
+        if let Some(name) = request["model"]["name"].as_str() {
+            let models = [
+                &self.models.ingest,
+                &self.models.audit,
+                &self.models.planner,
+                &self.models.maker,
+                &self.models.reviewer,
+                &self.models.rebaser,
+                &self.models.comment_classifier,
+                &self.models.writer,
+                &self.models.postmortem,
+            ];
+            let families: std::collections::BTreeMap<_, _> = models
+                .iter()
+                .flat_map(|models| models.iter())
+                .map(|model| (model.name.clone(), model.family.to_ascii_lowercase()))
+                .collect();
+            if let Some(model) = models
+                .into_iter()
+                .flatten()
+                .find(|model| model.name == name)
+            {
+                let snapshot = store.load()?;
+                let id = serde_json::to_string(&(&delivery.key, attempt_number))?;
+                let mut commit = tl3_store::Commit::new(
+                    format!("model-attempt:{id}"),
+                    json!({"model_attempt": id}),
+                    &snapshot,
+                );
+                commit.rows.push(crate::put(
+                    "model_attempts",
+                    id,
+                    json!({"model": name, "family": model.family.to_ascii_lowercase(), "families": families}),
+                ));
+                store.commit(&commit)?;
+            }
+        }
         store.claim_worker(
             &delivery.key,
             &delivery.node().0.to_string(),
@@ -1155,6 +1220,12 @@ impl Supervisor {
             }
             None => Command::new(&executable),
         };
+        // Use the same pinned interpreter sample; never resolve current again.
+        if let Some(binary) = release_prompt_binary(&python) {
+            command.env("TL3_RELEASE_BINARY", binary);
+        } else {
+            command.env_remove("TL3_RELEASE_BINARY");
+        }
         isolate_credentials(&attempt, &mut request, &mut command)?;
         write(&attempt.join("request.json"), &request)?;
         write(&attempt.join("command.json"), &self.settings.command)?;
@@ -1193,6 +1264,23 @@ impl Supervisor {
 }
 
 impl Executor for Supervisor {
+    fn configured_model(&self, model: &str) -> bool {
+        [
+            &self.models.ingest,
+            &self.models.audit,
+            &self.models.planner,
+            &self.models.maker,
+            &self.models.reviewer,
+            &self.models.rebaser,
+            &self.models.comment_classifier,
+            &self.models.writer,
+            &self.models.postmortem,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|configured| configured.name == model)
+    }
+
     fn probe_memory(&mut self) -> Result<()> {
         self.memory.retry()
     }
@@ -1217,6 +1305,28 @@ impl Executor for Supervisor {
         self.launch(delivery, true).map(Some)
     }
 
+    fn quota_candidates(&mut self, delivery: &Delivery) -> Result<Vec<crate::looks::QuotaModel>> {
+        let role =
+            protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        let candidates = self.candidates(delivery, role, &mut store, &snapshot)?;
+        Ok(candidates
+            .into_iter()
+            .map(|model| crate::looks::QuotaModel {
+                model: model.name.clone(),
+                family: model.family.to_ascii_lowercase(),
+            })
+            .collect())
+    }
+
+    fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
+        Ok(self
+            .quota_candidates(delivery)?
+            .iter()
+            .any(|candidate| candidate.model == model))
+    }
+
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
         let role =
             protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
@@ -1226,7 +1336,12 @@ impl Executor for Supervisor {
         // Waits recorded before Q53 name their model only in the attempt itself.
         // A recorded model whose reset covers the ending is the one it charged,
         // such as a postmortem's grade model (#759).
-        if !resets.values().any(|reset| *reset >= announced)
+        if snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "allowances" && row.id == delivery.key)
+            .is_none_or(|row| row.value["last_quota_model"].is_null())
+            && !resets.values().any(|reset| *reset >= announced)
             && let Some((_, attempt)) = latest(&self.root(&delivery.key))?
             && let Some(request) = read(&attempt.join("request.json"))?
             && let Some(model) = request["model"]["name"].as_str()
@@ -1391,6 +1506,14 @@ fn release_python(python: &Path) -> Result<PathBuf> {
         (Some(directory), Some(name)) => Ok(fs::canonicalize(directory)?.join(name)),
         _ => Err(Error::Invalid("workers.python must name a file")),
     }
+}
+
+fn release_prompt_binary(python: &Path) -> Option<PathBuf> {
+    python
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "workers"))
+        .and_then(Path::parent)
+        .map(|release| release.join("bin/tl3"))
 }
 
 fn supervisor_executable() -> Result<PathBuf> {
@@ -1679,6 +1802,62 @@ mod active_tests;
 mod release_tests {
     use super::release_python;
     use std::fs;
+
+    /// #819: before-pin switches choose B; after-pin switches cannot retarget Rust.
+    #[test]
+    fn prompt_binary_uses_the_same_release_sample_as_python() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        for release in ["one", "two"] {
+            fs::create_dir_all(root.path().join(release).join("workers/.venv/bin")).unwrap();
+            let bin = root.path().join(release).join("bin");
+            fs::create_dir_all(&bin).unwrap();
+            // Different immutable release resources, returned through the real
+            // worker transport. Renderer byte parity has its own real-Rust test.
+            fs::write(bin.join("tl3"), format!(
+                "#!/bin/sh\ncat >/dev/null\ncase \"$2\" in\nrole) printf '%s' '{{\"text\":\"{release} guidance\"}}';;\ncache) printf '%s' '{{\"identity\":\"{release} schema identity\"}}';;\nesac\n"
+            )).unwrap();
+            fs::set_permissions(bin.join("tl3"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let observed = |python: &std::path::Path, release: &str| {
+            let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let output = std::process::Command::new(checkout.join("workers/.venv/bin/python"))
+                .arg("-c")
+                .arg("from tl3_workers import runtime; import sys; assert runtime.role_prompt(runtime.ROLES['planner']) == sys.argv[1] + ' guidance'; assert runtime.prompt_cache_identity({'role': 'planner', 'inputs': {}}) == sys.argv[1] + ' schema identity'")
+                .arg(release)
+                .env("TL3_RELEASE_BINARY", super::release_prompt_binary(python).unwrap())
+                .env("TL3_BINARY", "/absent/controller/tl3")
+                .current_dir(checkout)
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        let current = root.path().join("current");
+        std::os::unix::fs::symlink(root.path().join("one"), &current).unwrap();
+        let configured = current.join("workers/.venv/bin/python");
+        let first = release_python(&configured).unwrap();
+        observed(&first, "one");
+        fs::remove_file(&current).unwrap();
+        std::os::unix::fs::symlink(root.path().join("two"), &current).unwrap();
+        let second = release_python(&configured).unwrap();
+        observed(&second, "two");
+        let expected = fs::canonicalize(root.path().join("two"))
+            .unwrap()
+            .join("bin/tl3");
+        assert_eq!(
+            super::release_prompt_binary(&second),
+            Some(expected.clone())
+        );
+        assert_ne!(super::release_prompt_binary(&first), Some(expected.clone()));
+        fs::remove_file(&current).unwrap();
+        std::os::unix::fs::symlink(root.path().join("one"), &current).unwrap();
+        observed(&second, "two");
+        assert_eq!(super::release_prompt_binary(&second), Some(expected));
+        assert!(super::release_prompt_binary(std::path::Path::new("/usr/bin/python3")).is_none());
+    }
 
     #[test]
     fn launch_pins_the_release_a_switched_link_names() {

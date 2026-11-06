@@ -4,6 +4,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use tl3_harness_core::node_id::{Mode, NodeId};
 
 pub(crate) struct Fixes {
     pub checks: Vec<Check>,
@@ -46,10 +47,9 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
                     let test = test
                         .as_str()
                         .ok_or(Error::Invalid("invalid reproducing test"))?;
-                    if !exact_pytest_node_id(test) {
-                        return Err(Error::Invalid("expected an exact pytest node id"));
-                    }
-                    Ok(test.to_owned())
+                    let test = NodeId::parse(test, Mode::Exact)
+                        .map_err(|_| Error::Invalid("expected an exact pytest node id"))?;
+                    Ok(test.as_str().to_owned())
                 })
                 .collect::<Result<Vec<_>>>()?;
             if tests.is_empty() || tests.iter().collect::<BTreeSet<_>>().len() != tests.len() {
@@ -84,19 +84,6 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
         checks,
         evidence: json!({"reviewed_sha": reviewed, "findings": evidence}),
     })
-}
-
-fn exact_pytest_node_id(test: &str) -> bool {
-    let mut parts = test.split("::");
-    let path = parts.next().unwrap_or_default();
-    let names = parts.collect::<Vec<_>>();
-    !names.is_empty()
-        && names.iter().all(|name| !name.is_empty())
-        && path.ends_with(".py")
-        && !path.starts_with(['/', '-'])
-        && !path.split('/').any(|part| part == "..")
-        && !path.contains('\\')
-        && !test.contains('\0')
 }
 
 #[cfg(test)]
@@ -161,7 +148,7 @@ mod reply_defects {
             }
             let node = case["input"]["node_id"].as_str().unwrap();
             assert_eq!(
-                exact_pytest_node_id(node),
+                NodeId::parse(node, Mode::Exact).is_ok(),
                 case["expected"]["exact"].as_bool().unwrap(),
                 "node-id/{}: {node:?}",
                 case["id"]
@@ -192,5 +179,42 @@ mod reply_defects {
             mismatches.is_empty(),
             "node-id disagreements: {mismatches:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod stored_evidence_tests {
+    use super::*;
+    use crate::findings::ReviewFixes;
+
+    /// #838: every producer branch survives the store boundary byte for byte.
+    #[test]
+    fn producer_evidence_round_trips_without_rewriting_bytes() {
+        let head = "a".repeat(40);
+        let proof = json!({"subjects":[], "observer_support":[], "red_message":"empty greeting"});
+        for mappings in [
+            json!([]),
+            json!([{"finding_id":"f", "reason":"文書の訂正"}]),
+            json!([{"finding_id":"f", "reason":null}]),
+            json!([{"finding_id":"f", "tests":["test_greeting.py::test_empty"], "proof":proof}]),
+            json!([{"finding_id":"f", "tests":["test_greeting.py::test_empty"], "proof":proof}, {"finding_id":"g", "reason":"documentation"}]),
+        ] {
+            let feedback = Value::Array(mappings.as_array().unwrap().iter().map(|m| {
+                json!({"kind":"review_finding", "id":m["finding_id"], "reviewed_sha":head, "report":"fix 🦀"})
+            }).collect());
+            let reply = json!({"reproductions":mappings});
+            let current = crate::findings::current_review(&feedback, 1, Some(&head));
+            let mut value = check(&reply, current).unwrap().evidence;
+            for stored in [false, true] {
+                if stored {
+                    value["head_sha"] = json!(head);
+                }
+                let typed = ReviewFixes::parse(value.clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&json!(typed)).unwrap(),
+                    serde_json::to_vec(&value).unwrap()
+                );
+            }
+        }
     }
 }

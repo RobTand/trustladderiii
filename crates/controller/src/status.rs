@@ -155,7 +155,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
     // Q53: models out of quota until their announced reset, or unavailable
     // until their probe (#745). The record doesn't say which (#759).
     let now = chrono::Utc::now().timestamp_millis();
-    let quota_models = tx
+    let mut quota_models: Vec<String> = tx
         .query(
             "SELECT row_id, value FROM tl3_world WHERE table_name = 'model_quotas' ORDER BY row_id",
             &[],
@@ -173,6 +173,16 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             ))
         })
         .collect();
+    for row in tx.query(
+        "SELECT row_id, value FROM tl3_world WHERE table_name = 'model_quota_clears' ORDER BY row_id",
+        &[],
+    ).map_err(tl3_store::Error::from)? {
+        let model: String = row.get(0);
+        let value: serde_json::Value = row.get(1);
+        if let Some(at) = value["cleared_ms"].as_i64().and_then(chrono::DateTime::from_timestamp_millis) {
+            quota_models.push(format!("quota for {model} cleared by operator at {}", at.format("%Y-%m-%d %H:%M:%S UTC")));
+        }
+    }
     let postmortem_counts = tx.query_one(
         "SELECT count(*) FILTER (WHERE status = 'running'), count(*) FILTER (WHERE status = 'owed') FROM tl3_postmortems", &[]
     ).map_err(tl3_store::Error::from)?;

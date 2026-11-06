@@ -1,0 +1,85 @@
+fn fields(value: &Value, names: &[&str]) -> Value {
+    let mut out = serde_json::Map::new();
+    for name in names {
+        if let Some(value) = value.get(name) {
+            out.insert((*name).into(), recorded_value(value, Some(name), 8));
+        }
+    }
+    Value::Object(out)
+}
+
+fn recorded_value(value: &Value, field: Option<&str>, depth: usize) -> Value {
+    if depth == 0 {
+        return json!("[nested value omitted]");
+    }
+    if field.is_some_and(crate::memory::sensitive_key) && !proof_hash(value, field) {
+        return json!("[redacted]");
+    }
+    match value {
+        Value::String(text) => {
+            // Test IDs may exceed a display line; preserve their context until redaction.
+            let limit = if field == Some("test") { 1024 } else { 512 };
+            if text.len() > limit {
+                json!("[long text omitted]")
+            } else {
+                json!(text.replace('\0', ""))
+            }
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .take(MAX_ITEMS)
+                .map(|value| recorded_value(value, None, depth - 1))
+                .collect(),
+        ),
+        Value::Object(values) => Value::Object(
+            values
+                .iter()
+                .take(MAX_ITEMS)
+                .map(|(key, value)| {
+                    let name = if key.len() > 512 {
+                        "[long key omitted]".into()
+                    } else {
+                        key.replace('\0', "")
+                    };
+                    (name, recorded_value(value, Some(key), depth - 1))
+                })
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+fn proof_hash(value: &Value, field: Option<&str>) -> bool {
+    if let (Some(field), Some(text)) = (field, value.as_str())
+        && matches!(
+            field,
+            "head_sha" | "base_sha" | "action_key" | "receipt_sha256" | "log_sha256" | "tree"
+        )
+        && matches!(text.len(), 40 | 64)
+        && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return true;
+    }
+    false
+}
+
+pub(crate) fn review_record(record: &Value) -> Value {
+    let mut out = fields(record, &["head_sha", "verdict", "url"]);
+    out["blocking_findings"] = Value::Array(
+        record["blocking_findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(MAX_ITEMS)
+            .map(|finding| {
+                let mut out = fields(finding, &["problem"]);
+                if let Some(citation) = finding.get("citation") {
+                    out["citation"] = fields(citation, &["kind", "id"]);
+                }
+                out
+            })
+            .collect(),
+    );
+    out
+}

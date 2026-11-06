@@ -276,6 +276,10 @@ Keep every run's report and receipt bound to the exact base, head, selectors, de
 - A leaf whose operation waits on an incident gives back its slot and files. It waits in Ready, and resumes at the same step.
 - When a model reports quota, the step moves at once to the next model in its role's ladder that hasn't reported quota since its announced reset. This spends no credit and counts no failure. Each model's quota-limited state is recorded with its reset time. The step waits only when every model in its ladder is out, and then for the earliest announced reset. A wait for a model no longer configured for that step ends when tl3d opens with the new config (Q53, approved by Rob, 2026-11-01).
 
+Q53 amended under Q27, approved by [Rob on #828](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499): A quota wait may end early on evidence that the same model is working again. A later successful call on the same model and family is a wake-up event, alongside the announced reset. When a reset hint is unusually far out, a bounded hourly probe replaces trusting the hint. The re-dispatch uses the attempt's idempotency key. Probes permit at most one in flight per model and family and at most one launch per hour, with the reservation surviving restart. The configured trusted horizon is `[limits] model_quota_horizon_secs`, default 21,600 seconds, so ordinary within-day resets remain trusted while multi-day hints receive an hourly check.
+
+- On the configured operations issue, only Rob can issue `clear quota <model>` after the provider resets that model. The command deletes its recorded quota hold and immediately schedules every quota-held allowance whose eligible ladder in the current worker configuration contains that model, even if another rung reported quota last. Allowances whose eligible ladders exclude the model stay asleep. Unknown or unconfigured models and models without a recorded hold receive a plain reply without changing quota waits. This is operator evidence under [Rob's #828 approval](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499), and adds no timer or polling.
+
 Code computes a signature for each failure from the upstream's error class, and uses it only to group incidents.
 
 **Environment blockers,** as Rob approved on 2026-11-01 (Q50):
@@ -313,6 +317,15 @@ slot is reserved or consumed (#642).
 **Fail fast,** from Rob's decision on 2026-11-02 (Q54; which steps count as retries is the coordinator's reading, flagged to Rob in #482): `[limits] fail_fast` is false by default, which keeps every rule as written. When it is true, each row below marked "`fail_fast`" stops the request for TL3 review instead of retrying the work. Infrastructure failures, Q50 blockers and Q53 quota fallback are not work retries and are unchanged. tl3d sets the flag on the stored world each time it opens, and the kernel reads it at the moment of the retry, so it applies to requests already open.
 
 **Stop for TL3 review:** go to Stopping(Stopped) and record the failing step on the node. Spend nothing and ask Rob nothing. The closing summary names the step and its evidence and, as for any stop, says to comment `restart` and leaves the issue open (Q49). A postmortem is owed as `needed_fix`, and one line goes to the operations issue for the coordinator.
+
+Under Rob's [#832 Q27 decision](https://github.com/RobTand/trustladderiii/issues/832),
+a completed, code-owned plan-check rejection stops for TL3 review under both
+`fail_fast` settings. A size or execution-fit result records that decomposition
+is required and uses the same question-free stop in part 1; no child executes.
+Both endings retain objection and repair-attempt evidence and spend no credit.
+The worker's one constrained correction remains in its existing run and
+format-repair allowance. Work-failure retries, genuine owner decisions,
+protected-path handling and Q50 infrastructure recovery retain their paths.
 
 The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
 `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
@@ -420,6 +433,16 @@ coverage, swap forced non-base selections for base nodes, or drop an uncovered
 unnecessary edit. An appended demonstrating check may carry no forcing or
 reuse a draft forcing unchanged. It may honestly return can't meet.
 
+Under [Rob's Q27/Q54 approval on #809, 2026-11-05](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239),
+missing citations of existing required maker or checking goals may also enter
+this correction. Review-verified goals still require check coverage. For this
+defect, the correction may only add the named uncovered goal ids to existing
+checks, preserving every existing citation and every other declaration.
+It shares the single correction allowance with format repair and the existing
+defects. The full uncovered goal ids and descriptions remain in stop evidence,
+with the correction attempt count. A bounded repair message may clip only
+descriptions. If even the ids and instructions do not fit, correction is terminal.
+
 Added files, a wider footprint, unrelated checks or edits, changed forcings
 and new goals remain plan violations and therefore PlanCantMeet. Substantive
 plan failures, unsupported requirements, protected-path conflicts, out-of-room
@@ -433,11 +456,19 @@ still judge actual Q55 proof.
 | Plan: can't meet, with required protected paths (Q57) | Controller verifies concrete paths against defaults plus global and repository lists | Stopping(NotActionable) | No retry, credit spent or Rob question, regardless of `fail_fast` |
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
 | Plan: split | Slice one | AwaitingRob(needs splitting) | Ask Rob to narrow the request, showing the proposed pieces |
+| Named plan-check objection remains, or correction exceeds its footprint (#832) | Code-owned provenance records another-class objection and the repair attempt or its unavailability; either `fail_fast` value | Stop for TL3 review | Record the objections and repair evidence. No question, ladder retry or credit charge. |
+| Only named size/execution-fit objections remain (#832 part 1) | Code-owned provenance records the repair attempt or its unavailability; either `fail_fast` value | Stop for TL3 review, with split required | Retain original obligations, forecasts and any proposed pieces. Record that decomposition is required; no child executes and no question is created. |
 | Plan: can't meet, with a report | `fail_fast` (Q54) | Stop for TL3 review | See "Failures". The planner worker reports a completed plan that breaks a rule as can't meet, so a rule-breaking completed plan arrives here and stops at once. Only the bounded draft correction described above may precede completion. |
 | Plan: can't meet, with a report | First time | Planning | Re-run with the next model on the planner's ladder, in a new generation |
 | Plan: can't meet, with a report | Second time | AwaitingRob(can't meet, continue to Planning) | |
 | Plan breaks a rule | First time | Planning | Re-run with the reason, in a new generation |
 | Plan breaks a rule | Second time | AwaitingRob(can't meet, continue to Planning) | |
+
+The #832 endings apply only to typed provenance emitted by worker code beside
+its reply. With no such provenance, the existing mapping of `violations` to
+PlanCantMeet and all ordinary rows above remain unchanged. Worker emission is
+part 2. The controller's separate late check-plan-size refusal remains an open
+lead decision and keeps its existing behavior for replies without provenance.
 
 Q57 closes with reason `protected_paths`. Its summary names those paths, says
 the work belongs outside TL3, leaves the issue open and offers `restart` after
@@ -789,7 +820,7 @@ The postmortem lane falls back down its ladder like any other role (Q53), amende
 From slice two on:
 
 - Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39). How rank combines with priority is decided when slice two starts.
-- A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it (Q53).
+- A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it. A later successful call on the same model and family also wakes the held attempt by its idempotency key; an unusually far reset uses the bounded hourly probe above (Q53, [approved Q27 amendment](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499)).
 
 ## Looks and stalls
 

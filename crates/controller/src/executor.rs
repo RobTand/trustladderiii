@@ -220,6 +220,9 @@ pub enum Observation {
         /// The model that ran, so review can stay a different family (Q53).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// #832: emitted by worker code beside the model's reply, never inside it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan_check: Option<crate::contracts::plan_check::PlanCheckProvenance>,
     },
     Kernel(Event),
     /// Commands carry intent; steering allocates their kernel command ID.
@@ -494,6 +497,14 @@ pub trait Executor {
     fn probe_memory(&mut self) -> Result<()> {
         Ok(())
     }
+    /// #828: whether an operator can name this configured model.
+    fn configured_model(&self, _model: &str) -> bool {
+        false
+    }
+    /// #828 / Q53: membership in this operation's currently eligible model ladder.
+    fn quota_model_eligible(&mut self, _delivery: &Delivery, _model: &str) -> Result<bool> {
+        Ok(false)
+    }
     /// Resume an owner-confirmed quota ending under the same operation key.
     fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {
         Ok(None)
@@ -502,6 +513,10 @@ pub trait Executor {
     /// another model left resumes it now; otherwise the announced reset stands.
     fn quota_resume_ms(&mut self, _delivery: &Delivery, announced: u64, _now: u64) -> Result<u64> {
         Ok(announced)
+    }
+    /// Q53 / #828: identity of the model a quota probe would actually launch.
+    fn quota_candidates(&mut self, _delivery: &Delivery) -> Result<Vec<crate::looks::QuotaModel>> {
+        Ok(vec![])
     }
     /// Success proves that the exact stalled attempt has ended.
     fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {
@@ -636,6 +651,7 @@ mod observation_shapes {
                 generation: 3,
                 role: "maker".into(),
                 reply: json!({"kind": "done"}),
+                plan_check: None,
                 model: None,
             }),
             json!({"WorkerReply": {"node": 0, "generation": 3, "role": "maker",

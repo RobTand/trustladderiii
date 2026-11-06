@@ -15,11 +15,12 @@ mod blocked;
 pub mod board;
 mod branches;
 pub mod budget;
+pub mod check_harness;
 pub mod classifier;
 pub mod cli;
 pub mod clock;
 pub mod console;
-pub mod contracts;
+pub use tl3_contracts as contracts;
 mod decisions;
 mod dispatch_liveness;
 pub mod evidence;
@@ -28,7 +29,9 @@ mod github_messages;
 mod goals;
 mod http;
 pub mod ingress;
+pub mod input_check;
 pub mod input_errors;
+pub mod input_resources;
 mod kernel_boundary;
 pub mod looks;
 #[cfg(all(test, loom))]
@@ -40,6 +43,8 @@ mod narrowing;
 mod notices;
 pub mod postmortem_reply;
 mod postmortems;
+pub mod quota;
+mod quota_wake;
 #[cfg(all(test, loom))]
 #[path = "../tests/support/ownership.rs"]
 mod startup_ownership;
@@ -47,6 +52,7 @@ pub use postmortems::PostmortemPace;
 pub mod pr_body;
 pub mod priority;
 pub mod production;
+pub mod prompt_render;
 pub mod prompts;
 mod protected_requests;
 pub mod publication_failure;
@@ -86,6 +92,8 @@ pub enum Error {
     Config(#[from] tl3_config::Error),
     #[error("invalid controller data: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("stored review_fixes must contain an array of finding objects")]
+    ReviewFixes,
     #[error("invalid stored controller data: {0}")]
     StoredJson(#[source] serde_json::Error),
     #[error("controller I/O failed")]
@@ -116,7 +124,7 @@ pub enum Error {
         name: String,
         installation: u64,
     },
-    #[error("upstream permanently failed: {class}")]
+    #[error("upstream permanently failed: {class}{diagnostic}", diagnostic = input_resources::catch_up_diagnostic(self))]
     Permanent {
         class: &'static str,
         #[source]
@@ -339,6 +347,7 @@ pub struct Controller {
     #[cfg(test)]
     refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
     allowances: tl3_config::Allowances,
+    quota_horizon_ms: u64,
     /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
     postmortems: Option<PostmortemPace>,
     /// The revision tl3d started at: failed postmortem runs before it never
@@ -438,6 +447,7 @@ impl Controller {
             #[cfg(test)]
             refusal_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
+            quota_horizon_ms: 6 * 3_600_000,
             postmortems: None,
             postmortem_since: 0,
             priority_reserve: BTreeMap::new(),
@@ -448,6 +458,7 @@ impl Controller {
         controller.cleanup_ended_looks()?;
         controller.recover_postmortems()?;
         controller.reconcile_worker_waits()?;
+        controller.migrate_model_quota_deadlines()?;
         Ok(controller)
     }
 
@@ -966,6 +977,7 @@ impl Controller {
             key.to_owned()
         };
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
+        self.model_success_evidence(&snapshot, &observation, &mut commit)?;
         commit
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
@@ -984,6 +996,20 @@ impl Controller {
         index: usize,
         observation: &Observation,
     ) -> Result<()> {
+        self.model_success_evidence(snapshot, observation, commit)?;
+        // Q53 / #828: two real quota attempts can announce exactly the same
+        // reset. Their durable attempt numbers distinguish endings from replays.
+        let quota_key = if let Observation::Quota {
+            key: held, model, ..
+        } = observation
+        {
+            self.store
+                .latest_worker_quota(held, model.as_deref())?
+                .map(|ending| format!("{key}:quota-attempt:{}", ending.attempt))
+        } else {
+            None
+        };
+        let key = quota_key.as_deref().unwrap_or(key);
         if let Observation::Queue(fact) = observation
             && fact.setup()
         {
@@ -1181,7 +1207,14 @@ impl Controller {
                         input_errors::observation_context(&snapshot, &observation)?;
                     self.input_failed(
                         &snapshot,
-                        &format!("observation:{}", crate::evidence_key(&observation)?),
+                        &if matches!(error, Error::ReviewFixes) {
+                            format!(
+                                "review_fixes:{}",
+                                node.ok_or(Error::Invalid("review fixes need a request"))?.0
+                            )
+                        } else {
+                            format!("observation:{}", crate::evidence_key(&observation)?)
+                        },
                         target,
                         &title,
                         node,
@@ -1299,8 +1332,55 @@ impl Controller {
                     }
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
+                    if let Err(error) = &result
+                        && let Some(failure) = input_resources::of(error)
+                    {
+                        let snapshot = self.store.load()?;
+                        let mut commit = Commit::new(
+                            format!("input-resource:{}:{}", effect.key, snapshot.revision.get()),
+                            json!({"input_resource_failure":effect.key}),
+                            &snapshot,
+                        );
+                        input_resources::record(
+                            &mut commit,
+                            delivery.node(),
+                            delivery.generation,
+                            failure,
+                        );
+                        self.store.commit(&commit)?;
+                    }
                     match result {
                         Ok(completion) => {
+                            if matches!(
+                                delivery.output,
+                                DeliveryOutput::Effect {
+                                    kind: tl3_kernel::EffectKind::StartRun(_),
+                                    ..
+                                }
+                            ) && current.rows.iter().any(|row| {
+                                row.table == "input_resource_contexts"
+                                    && row.id == delivery.node().0.to_string()
+                            }) && !input_resources::awaiting_correction(
+                                &current,
+                                delivery.node(),
+                            )? {
+                                // Input read errors retire here; rejected declarations need feedback until corrected.
+                                let snapshot = self.store.load()?;
+                                let mut commit = Commit::new(
+                                    format!(
+                                        "input-resource-ready:{}:{}",
+                                        effect.key,
+                                        snapshot.revision.get()
+                                    ),
+                                    json!({"input_resource_ready":effect.key}),
+                                    &snapshot,
+                                );
+                                commit.rows.push(RowChange::Delete {
+                                    table: "input_resource_contexts".into(),
+                                    id: delivery.node().0.to_string(),
+                                });
+                                self.store.commit(&commit)?;
+                            }
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
@@ -1732,6 +1812,16 @@ impl Controller {
             json!(&completion),
             snapshot,
         );
+        let stopped_node = match delivery.output {
+            executor::Output::Effect {
+                node,
+                kind: tl3_kernel::EffectKind::StopRun,
+                ..
+            } if completion.ack == Ack::Confirmed => Some(node),
+            _ => None,
+        };
+        self.release_terminal_model_probes(snapshot, &mut commit, stopped_node)?;
+        self.retire_completed_model_attempts(snapshot, &mut commit)?;
         if let Some(diagnostic) = &completion.diagnostic {
             eprintln!("{}", diagnostic.render());
             commit
@@ -2377,6 +2467,19 @@ impl Controller {
                     source = executor::Upstream::Workers;
                     class = blocked::CLASS.into();
                 }
+                let resource_failure = input_resources::current(snapshot, commit, node)?;
+                if let Some(failure) = &resource_failure {
+                    match failure.problem {
+                        input_resources::Problem::KindMismatch { .. } => {
+                            source = executor::Upstream::Workers;
+                            class = input_resources::MISMATCH.into();
+                        }
+                        input_resources::Problem::NotFound => {
+                            source = executor::Upstream::GitHub;
+                            class = "not_found".into();
+                        }
+                    }
+                }
                 let signature = looks::IncidentSignature {
                     upstream: source,
                     class: class.clone(),
@@ -2394,6 +2497,7 @@ impl Controller {
                     app_login.as_deref(),
                 );
                 worker_inputs::append(&mut summary, input_failure.as_ref());
+                worker_inputs::append(&mut summary, resource_failure.as_ref());
                 let occurrences = 1 + snapshot
                     .rows
                     .iter()
@@ -2478,7 +2582,18 @@ impl Controller {
                     json!(looks::Incident {
                         id: id.clone(),
                         node: Some(node),
-                        input_failure: None,
+                        input_failure: resource_failure.clone().map(|failure| {
+                            input_errors::InputFailure::resource(
+                                input_errors::IssueTarget {
+                                    repository: delivery.repository.clone(),
+                                    issue: request.issue,
+                                },
+                                &request.title,
+                                node,
+                                &class,
+                                failure,
+                            )
+                        }),
                         open: true,
                         needs_rob,
                         blocking: n.waiting_incident,
@@ -2497,7 +2612,7 @@ impl Controller {
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
                         delivery.repository.owner, delivery.repository.name, delivery.issue),
-                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences,"worker_input_failure":input_failure}));
+                    "signature":signature, "incident_id":id, "publication_diagnostic":diagnostic, "occurrences":occurrences,"worker_input_failure":input_failure,"input_resource_failure":resource_failure}));
                 if let Some(operations) = &self.bootstrap.operations {
                     delivery.repository = Repository {
                         owner: operations.owner.clone(),
@@ -2646,8 +2761,19 @@ impl Controller {
                 && o.installation_id == repository.installation
                 && o.number == issue
         });
-        let request_incident = if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
-        {
+        enum OperationsCommand<'a> {
+            ClearIncident(&'a str),
+            ClearQuota(&'a str),
+        }
+        let body = comment.body.trim();
+        let command = body
+            .strip_prefix("clear incident ")
+            .map(OperationsCommand::ClearIncident)
+            .or_else(|| {
+                body.strip_prefix("clear quota ")
+                    .map(OperationsCommand::ClearQuota)
+            });
+        let request_incident = if let Some(OperationsCommand::ClearIncident(id)) = command {
             snapshot
                 .rows
                 .iter()
@@ -2694,7 +2820,7 @@ impl Controller {
         {
             return Ok(true);
         }
-        if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+        if let Some(OperationsCommand::ClearIncident(id)) = command
             && let Some(row) = snapshot
                 .rows
                 .iter()
@@ -2706,6 +2832,37 @@ impl Controller {
                 format!("incident-clear:{}:{id}", comment.id),
                 commit,
             )?;
+        }
+        if operations && let Some(OperationsCommand::ClearQuota(model)) = command {
+            commit.event_key = format!("model-quota-clear:{model}:{}", comment.id);
+            let configured = self
+                .adapters
+                .get(executor::Upstream::Workers)?
+                .configured_model(model);
+            let line = if !configured {
+                format!("{model} is not a configured model; no quota hold changed.")
+            } else if !snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "model_quotas" && row.id == model)
+            {
+                format!("no quota hold recorded for {model}")
+            } else {
+                let now = self.now_ms();
+                self.operator_clear_quota(snapshot, model, now, commit)?;
+                commit.rows.push(put(
+                    "model_quota_clears",
+                    model.into(),
+                    json!({
+                        "cleared_ms": now, "comment_id": comment.id, "operator": comment.user.id
+                    }),
+                ));
+                let at = chrono::DateTime::from_timestamp_millis(now as i64)
+                    .map(|at| at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| now.to_string());
+                format!("quota for {model} cleared by operator at {at}")
+            };
+            self.quota_clear_reply(snapshot, repository, issue, comment.id, line, commit);
         }
         commit.rows.push(put(
             "operations_comments",
@@ -2836,14 +2993,19 @@ impl Controller {
             }
             Observation::Queue(mut fact) => {
                 let identity = fact.identity();
-                if fact.recorded(snapshot)? {
+                let Some(translation) =
+                    tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
+                else {
                     return Ok(None);
-                }
+                };
                 let Some(node) = fact.node(snapshot)? else {
                     return Ok(None);
                 };
                 use adapters::mergify::Evidence;
-                use tl3_mergify::decide::translate::{self as queue, KernelFact, Route};
+                use tl3_controller_core::translate::{
+                    self as core, Decision, IncidentAction, KernelKind as KernelFact,
+                };
+                use tl3_mergify::decide::translate as queue;
                 let current = &world.nodes[node.0 as usize];
                 let view = queue::NodeView {
                     phase: match current.phase {
@@ -2854,7 +3016,10 @@ impl Controller {
                     },
                     merged: current.merged.is_some(),
                     enqueue_pending: current.effect.is_some_and(|effect| {
-                        effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                        core::enqueue_pending(
+                            effect.kind == tl3_kernel::EffectKind::Enqueue,
+                            effect.cancelling,
+                        )
                     }),
                 };
                 // A closed node takes only a merge it has not recorded. A later
@@ -2877,16 +3042,17 @@ impl Controller {
                         details,
                         plan.as_ref(),
                     );
-                    let repeated = snapshot
+                    let previous: Vec<_> = snapshot
                         .rows
                         .iter()
                         .filter(|row| row.table == "queue_facts")
-                        .any(|row| {
-                            row.value["repository"] == json!(&fact.repository)
-                                && row.value["number"] == fact.number
-                                && row.value["evidence"]["CiFailed"]["head"] == *head
-                                && row.value["evidence"]["CiFailed"]["infra"] == true
-                                && row.value["evidence"]["CiFailed"]["details"]["failed_tests"]
+                        .map(|row| core::PriorFailure {
+                            same_repository: row.value["repository"] == json!(&fact.repository),
+                            same_number: row.value["number"] == fact.number,
+                            same_head: row.value["evidence"]["CiFailed"]["head"] == *head,
+                            infra: row.value["evidence"]["CiFailed"]["infra"] == true,
+                            overlapping_test:
+                                row.value["evidence"]["CiFailed"]["details"]["failed_tests"]
                                     .as_array()
                                     .is_some_and(|previous| {
                                         previous.iter().any(|previous| {
@@ -2895,8 +3061,10 @@ impl Controller {
                                                 .iter()
                                                 .any(|test| previous["test"] == test.test)
                                         })
-                                    })
-                        });
+                                    }),
+                        })
+                        .collect();
+                    let repeated = core::repeated(&previous);
                     let (classified, decision) = queue::classify_ci(*infra, outside, repeated);
                     *infra = classified;
                     details.decision = Some(decision.as_str().into());
@@ -2905,9 +3073,10 @@ impl Controller {
                 let head_current = match &fact.evidence {
                     Evidence::CiFailed { head, .. }
                     | Evidence::Conflict { head, .. }
-                    | Evidence::DequeuedByCommand { head, .. } => {
-                        Some(self.head(node, head)?) == world.nodes[node.0 as usize].head
-                    }
+                    | Evidence::DequeuedByCommand { head, .. } => core::head_current(
+                        self.head(node, head)?.0,
+                        world.nodes[node.0 as usize].head.map(|head| head.0),
+                    ),
                     _ => true,
                 };
                 let approved_head = match &fact.evidence {
@@ -2916,74 +3085,113 @@ impl Controller {
                     }
                     _ => false,
                 };
-                let kernel =
+                let route =
                     match queue::route(fact.evidence.kind(), view, head_current, approved_head) {
-                        Route::Record => {
-                            commit.rows.push(put("queue_facts", identity, value));
-                            return Ok(None);
-                        }
-                        Route::Skip => return Ok(None),
-                        Route::Kernel(kernel) => kernel,
-                        // Setup rows (Q52, #447): none reaches the kernel, so no
-                        // failure or credit is charged.
-                        Route::SetupIncident
-                        | Route::MissingIncident
-                        | Route::BlockedIncident
-                        | Route::ClearIncident => {
-                            match fact.evidence {
-                                Evidence::ChecksUnavailable { permissions } => {
-                                    self.check_setup_incident(
-                                        snapshot,
-                                        commit,
-                                        node,
-                                        &permissions,
-                                    )?;
-                                    commit.rows.push(put("queue_facts", identity, value));
-                                }
-                                Evidence::CheckMissing { head, required } => {
-                                    self.missing_check_incident(
-                                        snapshot, commit, node, &head, &required,
-                                    )?;
-                                    commit.rows.push(put("queue_facts", identity, value));
-                                }
+                        queue::Route::Record => core::Route::Record,
+                        queue::Route::Skip => core::Route::Skip,
+                        queue::Route::SetupIncident
+                        | queue::Route::MissingIncident
+                        | queue::Route::BlockedIncident
+                        | queue::Route::ClearIncident => core::Route::Incident,
+                        queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
+                            queue::KernelFact::PrMerged { checks_passed } => {
+                                KernelFact::PrMerged { checks_passed }
+                            }
+                            queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
+                            queue::KernelFact::Conflict => KernelFact::Conflict,
+                            queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
+                            queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
+                            queue::KernelFact::PushByOther => KernelFact::PushByOther,
+                        }),
+                    };
+                let kind = match &fact.evidence {
+                    Evidence::ChecksUnavailable { .. } => core::EvidenceKind::Setup,
+                    Evidence::CheckMissing { .. } => core::EvidenceKind::Missing,
+                    Evidence::QueueBlocked { .. } => core::EvidenceKind::Blocked,
+                    Evidence::CheckReported { .. } => core::EvidenceKind::Reported,
+                    Evidence::Merged { .. } => core::EvidenceKind::Merged,
+                    Evidence::PushByOther { .. } => core::EvidenceKind::PushByOther,
+                    _ => core::EvidenceKind::Other,
+                };
+                let kernel = match core::dispatch(translation, route, kind) {
+                    Decision::Record => {
+                        commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
+                    Decision::Skip => return Ok(None),
+                    Decision::Kernel(kernel) => kernel,
+                    // Setup rows (Q52, #447): none reaches the kernel, so no
+                    // failure or credit is charged.
+                    Decision::Incident(action) => {
+                        match (action, fact.evidence) {
+                            (
+                                IncidentAction::Setup,
+                                Evidence::ChecksUnavailable { permissions },
+                            ) => {
+                                self.check_setup_incident(snapshot, commit, node, &permissions)?;
+                                commit.rows.push(put("queue_facts", identity, value));
+                            }
+                            (
+                                IncidentAction::Missing,
+                                Evidence::CheckMissing { head, required },
+                            ) => {
+                                self.missing_check_incident(
+                                    snapshot, commit, node, &head, &required,
+                                )?;
+                                commit.rows.push(put("queue_facts", identity, value));
+                            }
+                            (
+                                IncidentAction::Blocked,
                                 Evidence::QueueBlocked {
                                     head,
                                     conditions,
                                     failed,
-                                } => {
-                                    self.queue_blocked_incident(
-                                        snapshot,
-                                        commit,
-                                        node,
-                                        &head,
-                                        &conditions,
-                                        &failed,
-                                    )?;
-                                    commit.rows.push(put("queue_facts", identity, value));
-                                }
-                                Evidence::CheckReported { head, required } => {
-                                    let id =
-                                        looks::missing_check_incident_id(node, &head, &required);
-                                    if let Some(row) = snapshot.rows.iter().find(|row| {
-                                        row.table == "incidents"
-                                            && row.id == id
-                                            && row.value["open"] == true
-                                    }) {
-                                        let mut incident: looks::Incident =
-                                            decode_stored(row.value.clone())?;
-                                        incident.open = false;
-                                        commit.rows.push(put("incidents", id, json!(incident)));
-                                    }
-                                }
-                                _ => {
-                                    return Err(Error::Invalid(
-                                        "only setup evidence routes to an incident",
-                                    ));
+                                },
+                            ) => {
+                                self.queue_blocked_incident(
+                                    snapshot,
+                                    commit,
+                                    node,
+                                    &head,
+                                    &conditions,
+                                    &failed,
+                                )?;
+                                commit.rows.push(put("queue_facts", identity, value));
+                            }
+                            (IncidentAction::Clear, Evidence::CheckReported { head, required }) => {
+                                let id = looks::missing_check_incident_id(node, &head, &required);
+                                let incidents: Vec<_> = snapshot
+                                    .rows
+                                    .iter()
+                                    .map(|row| core::IncidentRow {
+                                        own_incident: row.table == "incidents" && row.id == id,
+                                        open: row.value["open"] == true,
+                                    })
+                                    .collect();
+                                if let Some(index) = core::clear_reported(&incidents) {
+                                    let mut incident: looks::Incident =
+                                        decode_stored(snapshot.rows[index].value.clone())?;
+                                    incident.open = false;
+                                    commit.rows.push(put("incidents", id, json!(incident)));
                                 }
                             }
-                            return Ok(None);
+                            _ => {
+                                return Err(Error::Invalid(
+                                    "only setup evidence routes to an incident",
+                                ));
+                            }
                         }
-                    };
+                        return Ok(None);
+                    }
+                    Decision::InvalidIncident => {
+                        return Err(Error::Invalid("only setup evidence routes to an incident"));
+                    }
+                    Decision::InvalidKernel => {
+                        return Err(Error::Invalid(
+                            "queue evidence routed to another kernel fact",
+                        ));
+                    }
+                };
                 let fact = match (kernel, fact.evidence) {
                     (KernelFact::PrMerged { checks_passed }, Evidence::Merged { head, .. }) => {
                         Fact::PrMerged {
@@ -2996,20 +3204,27 @@ impl Controller {
                     (KernelFact::PrDequeuedByPerson, _) => Fact::PrDequeuedByPerson,
                     (KernelFact::PrClosedByPerson, _) => Fact::PrClosedByPerson,
                     (KernelFact::PushByOther, Evidence::PushByOther { head }) => {
-                        let previous_sha = current.head.and_then(|head| {
-                            snapshot
-                                .interned
-                                .iter()
-                                .find(|i| {
-                                    i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64
-                                })
-                                .map(|i| i.value.as_str())
-                        });
-                        if let Some(run) = check_run(snapshot, node, previous_sha)? {
+                        let commits: Vec<_> = snapshot
+                            .interned
+                            .iter()
+                            .map(|item| core::CommitRow {
+                                is_commit: item.kind == tl3_store::InternKind::Commit,
+                                id: item.id,
+                            })
+                            .collect();
+                        let previous_sha =
+                            core::previous_commit(&commits, current.head.map(|head| head.0 as i64))
+                                .map(|index| snapshot.interned[index].value.as_str());
+                        let carried = core::carry_plan(
+                            node.0,
+                            &head,
+                            check_run(snapshot, node, previous_sha)?,
+                        );
+                        if let Some(carried) = carried {
                             commit.rows.push(put(
                                 "check_plans",
-                                format!("{}:{head}", node.0),
-                                json!(run),
+                                format!("{}:{}", carried.node, carried.head),
+                                json!(carried.plan),
                             ));
                         }
                         Fact::PushByOther {
@@ -3030,9 +3245,11 @@ impl Controller {
                 issue,
                 comment,
             } => {
-                if comment.user.id == self.bootstrap.rob
-                    && self.bootstrap.repos.contains(&repository)
-                {
+                let author_matches = comment.user.id == self.bootstrap.rob;
+                if tl3_controller_core::translate_misc::admit_comment(
+                    author_matches,
+                    author_matches && self.bootstrap.repos.contains(&repository),
+                ) {
                     let id = format!(
                         "{}/{}/{}/{}",
                         repository.owner.to_ascii_lowercase(),
@@ -3040,12 +3257,15 @@ impl Controller {
                         repository.installation,
                         comment.id
                     );
-                    if !self.store.comment_retired(&id)?
-                        && !snapshot
-                            .rows
-                            .iter()
-                            .any(|row| row.table == "github_comments" && row.id == id)
-                    {
+                    let retired = self.store.comment_retired(&id)?;
+                    if tl3_controller_core::translate_misc::record_comment(
+                        retired,
+                        !retired
+                            && snapshot
+                                .rows
+                                .iter()
+                                .any(|row| row.table == "github_comments" && row.id == id),
+                    ) {
                         let value =
                             json!({"repository": repository, "issue": issue, "comment": comment});
                         commit
@@ -3075,7 +3295,12 @@ impl Controller {
                 let Some(n) = world.nodes.get(node.0 as usize) else {
                     return Ok(None);
                 };
-                if !n.adopted || commit_sha(snapshot, n.head) != Some(sha.as_str()) {
+                use tl3_controller_core::translate_checks::{Preparation, preparation};
+                if preparation(
+                    n.adopted,
+                    n.adopted && commit_sha(snapshot, n.head) == Some(sha.as_str()),
+                ) == Preparation::Ignore
+                {
                     return Ok(None);
                 }
                 let id = node.0.to_string();
@@ -3113,26 +3338,35 @@ impl Controller {
                 request(snapshot, node)?;
                 if let Some(n) = world.nodes.get(node.0 as usize)
                     && n.phase == tl3_kernel::Phase::Rebasing
-                    && let Some(mut fixes) = self
+                    && let Some(fixes) = self
                         .store
                         .worker_document(&node.0.to_string(), "review_fixes")?
-                    && fixes["head_sha"].as_str() == commit_sha(snapshot, n.head)
                 {
-                    fixes["head_sha"] = json!(sha);
-                    if let Some(reviewed) = &run.reviewed_sha {
-                        fixes["reviewed_sha"] = json!(reviewed);
-                    }
-                    if let Some(reason) = &run.reproducing_unavailable {
-                        for finding in fixes["findings"].as_array_mut().unwrap() {
-                            if finding.get("tests").is_some() {
-                                finding.as_object_mut().unwrap().remove("tests");
-                                finding["reason"] = json!(reason);
+                    let mut fixes = findings::ReviewFixes::parse(fixes)?;
+                    if let tl3_controller_core::translate_checks::PlanUpdate::Retarget {
+                        set_reviewed,
+                        replace_tests,
+                    } = tl3_controller_core::translate_checks::plan_update(
+                        fixes.fields.get("head_sha").and_then(Value::as_str)
+                            == commit_sha(snapshot, n.head),
+                        run.reviewed_sha.is_some(),
+                        run.reproducing_unavailable.is_some(),
+                    ) {
+                        fixes.fields.insert("head_sha".into(), json!(sha));
+                        if set_reviewed && let Some(reviewed) = &run.reviewed_sha {
+                            fixes.fields.insert("reviewed_sha".into(), json!(reviewed));
+                        }
+                        if replace_tests && let Some(reason) = &run.reproducing_unavailable {
+                            for finding in &mut fixes.findings {
+                                if finding.remove("tests").is_some() {
+                                    finding.insert("reason".into(), json!(reason));
+                                }
                             }
                         }
+                        commit
+                            .rows
+                            .push(put("review_fixes", node.0.to_string(), json!(fixes)));
                     }
-                    commit
-                        .rows
-                        .push(put("review_fixes", node.0.to_string(), fixes));
                 }
                 commit
                     .rows
@@ -3161,7 +3395,14 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
-                if n.job == Some(generation) && n.generation == generation && exact_head {
+                let decision = tl3_controller_core::translate_checks::checks_reply(
+                    n.job,
+                    n.generation,
+                    generation,
+                    exact_head,
+                    pass,
+                );
+                if decision.record {
                     let prefix = format!("{}:", node.0);
                     let earlier: Vec<_> = snapshot
                         .rows
@@ -3222,7 +3463,7 @@ impl Controller {
                     generation,
                     reply: Reply::ChecksDone {
                         report,
-                        pass: pass && exact_head,
+                        pass: decision.pass,
                         in_footprint,
                     },
                 }
@@ -3233,11 +3474,13 @@ impl Controller {
                 failure_class,
                 failure_message,
             } => {
+                use tl3_controller_core::translate_worker as worker;
                 let n = world
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if n.run != Some(generation) || n.generation != generation {
+                if worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                {
                     return Ok(None);
                 }
                 commit.rows.push(put(
@@ -3260,24 +3503,43 @@ impl Controller {
                 role,
                 mut reply,
                 model,
+                plan_check,
             } => {
+                use tl3_controller_core::translate_worker as worker;
                 let n = world
                     .nodes
                     .get(node.0 as usize)
                     .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if n.run != Some(generation) || n.generation != generation {
+                if worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                {
                     return Ok(None);
                 }
-                let valid_role = matches!(
-                    (n.phase, role.as_str()),
-                    (tl3_kernel::Phase::Ingesting, "ingest")
-                        | (tl3_kernel::Phase::Auditing, "audit")
-                        | (tl3_kernel::Phase::Making, "maker")
-                        | (tl3_kernel::Phase::Planning { .. }, "planner")
-                        | (tl3_kernel::Phase::Reviewing, "reviewer")
-                );
-                let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                let phase = match n.phase {
+                    tl3_kernel::Phase::Ingesting => worker::Phase::Ingesting,
+                    tl3_kernel::Phase::Auditing => worker::Phase::Auditing,
+                    tl3_kernel::Phase::Planning { .. } => worker::Phase::Planning,
+                    tl3_kernel::Phase::Making => worker::Phase::Making,
+                    tl3_kernel::Phase::Reviewing => worker::Phase::Reviewing,
+                    _ => worker::Phase::Other,
+                };
+                let worker_role = match role.as_str() {
+                    "ingest" => worker::Role::Ingest,
+                    "audit" => worker::Role::Audit,
+                    "planner" => worker::Role::Planner,
+                    "maker" => worker::Role::Maker,
+                    "reviewer" => worker::Role::Reviewer,
+                    "writer" => worker::Role::Writer,
+                    "classifier" => worker::Role::Classifier,
+                    "postmortem" => worker::Role::Postmortem,
+                    _ => worker::Role::Unknown,
+                };
+                let valid_role = worker::valid_role(phase, worker_role);
+                let mut mapped = match adapters::workers::protocol::map_reply_with_plan_check(
+                    &role,
+                    &reply,
+                    plan_check.as_ref(),
+                ) {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         return Ok(Some(Event::Reply {
@@ -3287,16 +3549,18 @@ impl Controller {
                         }));
                     }
                 };
-                self.clear_model_quota(snapshot, model.as_deref(), commit);
+                // Q53 / #828: unknown legacy identity/order is not success evidence.
+                // Only model_success_evidence can clear ordered quota; reset and
+                // operator clear remain available for pre-upgrade holds.
                 if let Some(protected) =
                     self.protected_reply(snapshot, commit, node, &role, &reply)?
                 {
                     mapped = adapters::workers::protocol::MappedReply::Kernel(protected);
                 }
-                if role == "planner" && reply["kind"] == "leaf" {
+                if role == "planner" && reply["kind"] == "leaf" && plan_check.is_none() {
                     let checks = reply["checks"]
                         .as_array()
-                        .unwrap()
+                        .ok_or(Error::Invalid("planner checks must be an array"))?
                         .iter()
                         .enumerate()
                         .map(|(index, check)| {
@@ -3320,7 +3584,7 @@ impl Controller {
                             Error::Invalid(message) => {
                                 reply["violations"]
                                     .as_array_mut()
-                                    .unwrap()
+                                    .ok_or(Error::Invalid("planner violations must be an array"))?
                                     .push(json!(message));
                                 mapped = adapters::workers::protocol::MappedReply::Kernel(
                                     Reply::PlanCantMeet,
@@ -3361,13 +3625,25 @@ impl Controller {
                             "blocking_findings":reply["blocking_findings"]}),
                         ),
                     ));
-                    if reply["verdict"] == "approve" {
-                        mapped =
-                            adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
-                                head: n.head.ok_or(Error::Invalid("review has no head"))?,
-                            });
+                    let verdict = match reply["verdict"].as_str() {
+                        Some("approve") => worker::ReviewVerdict::Approve,
+                        Some("changes") => worker::ReviewVerdict::Changes,
+                        _ => worker::ReviewVerdict::Other,
+                    };
+                    let route = worker::review_route(verdict, n.head.map(|head| head.0));
+                    match route {
+                        worker::ReviewRoute::Approve(head) => {
+                            mapped =
+                                adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
+                                    head: HeadId(head),
+                                });
+                        }
+                        worker::ReviewRoute::MissingHead => {
+                            return Err(Error::Invalid("review has no head"));
+                        }
+                        _ => {}
                     }
-                    if reply["verdict"] == "changes" {
+                    if route == worker::ReviewRoute::Changes {
                         let mut feedback = self
                             .store
                             .worker_document(&node.0.to_string(), "maker_findings")?
@@ -3375,22 +3651,35 @@ impl Controller {
                         let reports = feedback
                             .as_array_mut()
                             .ok_or(Error::Invalid("invalid maker findings"))?;
-                        let mut remaining = findings::MAX_REPORT_CHARS;
-                        for (index, finding) in blockers
+                        let formatted: Vec<_> = blockers
                             .iter()
                             .take(findings::MAX_REVIEW_FINDINGS)
-                            .enumerate()
+                            .map(|finding| {
+                                format!(
+                                    "{}: {}",
+                                    findings::clipped(
+                                        &finding.problem,
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                    findings::clipped(
+                                        &finding.evidence,
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                )
+                            })
+                            .collect();
+                        let lengths: Vec<_> = formatted
+                            .iter()
+                            .map(|report| report.chars().count())
+                            .collect();
+                        let count = worker::findings_prefix(
+                            &lengths,
+                            findings::MAX_REVIEW_FINDINGS,
+                            findings::MAX_REPORT_CHARS,
+                        );
+                        for (index, (finding, report)) in
+                            blockers.iter().zip(formatted).take(count).enumerate()
                         {
-                            let report = format!(
-                                "{}: {}",
-                                findings::clipped(&finding.problem, findings::MAX_MESSAGE_CHARS),
-                                findings::clipped(&finding.evidence, findings::MAX_MESSAGE_CHARS),
-                            );
-                            let length = report.chars().count();
-                            if length > remaining {
-                                break;
-                            }
-                            remaining -= length;
                             let goal_ids = if finding.citation.kind
                                 == adapters::workers::review::CitationKind::Goal
                             {
@@ -3423,13 +3712,12 @@ impl Controller {
                         detailed_review = true;
                     }
                 }
-                let document = match role.as_str() {
-                    "ingest" => Some("briefs"),
-                    "audit" => Some("audits"),
-                    "reviewer" => None,
-                    "maker" => Some("maker_replies"),
-                    _ => Some("plans"),
-                };
+                let document = worker::document(worker_role).map(|document| match document {
+                    worker::Document::Briefs => "briefs",
+                    worker::Document::Audits => "audits",
+                    worker::Document::MakerReplies => "maker_replies",
+                    worker::Document::Plans => "plans",
+                });
                 if role == "planner" {
                     let mut findings = self
                         .store
@@ -3468,15 +3756,47 @@ impl Controller {
                             });
                     }
                 }
+                let checkpoint = commit.rows.len();
                 if let Some(document) = document {
-                    commit
-                        .rows
-                        .push(put(document, node.0.to_string(), reply.clone()));
+                    let mut stored = reply.clone();
+                    if let Some(provenance) = plan_check {
+                        stored["plan_check"] = serde_json::to_value(provenance)?;
+                    }
+                    commit.rows.push(put(document, node.0.to_string(), stored));
                 }
-                if role == "ingest" && reply["kind"] == "brief" {
-                    self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)?;
+                if role == "ingest"
+                    && reply["kind"] == "brief"
+                    && let Err(error) =
+                        self.prepare_merge_dependencies(snapshot, world, node, &reply, commit)
+                {
+                    if let Some(failure) = input_resources::of(&error)
+                        && matches!(
+                            failure.problem,
+                            input_resources::Problem::KindMismatch { .. }
+                        )
+                    {
+                        // Q7/Q51: invalid ingest output uses the existing bounded run-failure path.
+                        // Discard partial declarations from this reply, atomically with its rejection.
+                        commit.rows.truncate(checkpoint);
+                        input_resources::record(commit, node, generation, failure);
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                    return Err(error);
                 }
                 if role == "ingest" {
+                    // Q7/#833: accepting the reply retires feedback atomically with its brief.
+                    if snapshot.rows.iter().any(|row| {
+                        row.table == "input_resource_contexts" && row.id == node.0.to_string()
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: "input_resource_contexts".into(),
+                            id: node.0.to_string(),
+                        });
+                    }
                     commit.rows.push(put(
                         "goals",
                         node.0.to_string(),
@@ -3511,13 +3831,16 @@ impl Controller {
                         let current = findings::current_review(&feedback, n.round, previous);
                         let reviewed = current.head;
                         let fixes = adapters::workers::reproducing::check(&reply, current);
-                        if expected != checked
-                            || checks.len() != goals.len()
-                            || crate::goals::handover(goals, &checks).is_err()
-                        {
+                        let same_goals = expected == checked;
+                        let same_count = checks.len() == goals.len();
+                        let handover_valid = same_goals
+                            && same_count
+                            && crate::goals::handover(goals, &checks).is_ok();
+                        if !worker::maker_self_check(same_goals, same_count, handover_valid) {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
-                            if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
+                            let mut evidence = findings::ReviewFixes::parse(fixes.evidence)?;
+                            if !evidence.findings.is_empty() {
                                 let mut run = check_run(snapshot, node, Some(&sha))?
                                     .or(check_run(snapshot, node, previous)?)
                                     .ok_or(Error::Invalid(
@@ -3542,11 +3865,12 @@ impl Controller {
                                     format!("{}:{sha}", node.0),
                                     json!(run),
                                 ));
-                                let mut evidence = fixes.evidence;
-                                evidence["head_sha"] = json!(sha);
-                                commit
-                                    .rows
-                                    .push(put("review_fixes", node.0.to_string(), evidence));
+                                evidence.fields.insert("head_sha".into(), json!(sha));
+                                commit.rows.push(put(
+                                    "review_fixes",
+                                    node.0.to_string(),
+                                    json!(evidence),
+                                ));
                             }
                             Reply::MakerDone {
                                 head: self.head(node, &sha)?,
@@ -3657,7 +3981,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
@@ -3681,7 +4013,15 @@ impl Controller {
                     .nodes
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("rebase observation has no request"))?;
-                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                use tl3_controller_core::translate_arms::{
+                    RebaseDisposition, RebasePhase, rebase_reply,
+                };
+                let phase = if current.phase == tl3_kernel::Phase::Rebasing {
+                    RebasePhase::Rebasing
+                } else {
+                    RebasePhase::Other
+                };
+                if rebase_reply(phase, current.generation, generation) == RebaseDisposition::Ignore
                 {
                     return Ok(None);
                 }
@@ -3734,51 +4074,69 @@ impl Controller {
                 return Ok(None);
             }
         };
-        let finding = match event {
-            Event::Reply {
-                node,
-                generation,
-                reply,
-            } if world.nodes.get(node.0 as usize).is_some_and(|n| {
-                (n.run == Some(generation) || n.job == Some(generation))
-                    && n.generation == generation
-            }) =>
-            {
-                let n = &world.nodes[node.0 as usize];
-                let report = match (n.phase, reply) {
-                    (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
-                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
-                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
-                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) if !detailed_review => Some((
-                        findings::Kind::ReviewFinding,
-                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
-                    )),
-                    (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
-                        findings::Kind::ReviewFinding,
-                        commit.rows.iter().find_map(|row| match row {
-                            RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
-                            _ => None,
-                        }).unwrap_or_else(|| "The maker could not meet the goals.".into()),
-                    )),
-                    _ => None,
-                };
-                report.map(|(kind, report)| (node, kind, report))
-            }
-            Event::Fact {
-                node,
-                fact: Fact::CiFailed { infra: false },
-            } if world
-                .nodes
-                .get(node.0 as usize)
-                .is_some_and(|n| n.phase == tl3_kernel::Phase::Queued) =>
-            {
-                Some((
+        let finding = {
+            use tl3_controller_core::translate_tail as tail;
+            let (node, input) = match event {
+                Event::Reply {
                     node,
-                    findings::Kind::FailedCheck,
-                    findings::ci_report(&ci_checks, &failed_tests),
-                ))
-            }
-            _ => None,
+                    generation,
+                    reply,
+                } => (
+                    Some(node),
+                    tail::Input::Reply {
+                        generation,
+                        reply: match reply {
+                            Reply::ChecksDone {
+                                report,
+                                pass,
+                                in_footprint,
+                            } => tail::Reply::ChecksDone {
+                                report,
+                                pass,
+                                in_footprint,
+                            },
+                            Reply::ChangesRequested => tail::Reply::ChangesRequested,
+                            Reply::MakerCantMeet => tail::Reply::MakerCantMeet,
+                            _ => tail::Reply::Other,
+                        },
+                    },
+                ),
+                Event::Fact {
+                    node,
+                    fact: Fact::CiFailed { infra },
+                } => (Some(node), tail::Input::CiFailed { infra }),
+                _ => (None, tail::Input::Other),
+            };
+            let current = node
+                .and_then(|node| world.nodes.get(node.0 as usize))
+                .map(|n| tail::Node {
+                    phase: match n.phase {
+                        tl3_kernel::Phase::Checking => tail::Phase::Checking,
+                        tl3_kernel::Phase::Reviewing => tail::Phase::Reviewing,
+                        tl3_kernel::Phase::Making => tail::Phase::Making,
+                        tl3_kernel::Phase::Queued => tail::Phase::Queued,
+                        _ => tail::Phase::Other,
+                    },
+                    generation: n.generation,
+                    run: n.run,
+                    job: n.job,
+                });
+            let report = match tail::finding(current, input, detailed_review) {
+                tail::Finding::Check { pass, in_footprint } => Some((findings::Kind::FailedCheck,
+                    findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
+                tail::Finding::Review => Some((findings::Kind::ReviewFinding,
+                    "The independent reviewer requested changes. No detailed review report was supplied.".into())),
+                tail::Finding::Maker => Some((findings::Kind::ReviewFinding,
+                    commit.rows.iter().find_map(|row| match row {
+                        RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
+                        _ => None,
+                    }).unwrap_or_else(|| "The maker could not meet the goals.".into()))),
+                tail::Finding::Ci => Some((findings::Kind::FailedCheck,
+                    findings::ci_report(&ci_checks, &failed_tests))),
+                tail::Finding::None => None,
+            };
+            node.zip(report)
+                .map(|(node, (kind, report))| (node, kind, report))
         };
         if let Some((node, kind, report)) = finding {
             let materials = self.store.worker_materials(&node.0.to_string())?;

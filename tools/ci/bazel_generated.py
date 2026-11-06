@@ -16,9 +16,9 @@ def commands(bazel='bazel'):
         [sys.executable, 'tools/bazel/requirements.py', '--check'],
         [sys.executable, 'tools/bazel/rust_builds.py', '--check'],
         [bazel, 'run', '//:gazelle', '--', '-mode=diff'],
-        # JSON Schemas rendered from the controller's Rust contract types (#741). Remote,
-        # so the controller compiles on BuildBuddy and its cache, not on the runner.
-        [bazel, 'run', '--config=remote', '//crates/controller:tl3-contracts-schemas', '--', '--check'],
+        # JSON Schemas rendered from the shared Rust contract types (#741, #819).
+        # Build remotely, without pulling the controller into the generator.
+        [bazel, 'run', '--config=remote', '//crates/contracts:tl3-contracts-schemas', '--', '--check'],
     ]
 
 
