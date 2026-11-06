@@ -493,6 +493,18 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
         }
 
+
+    kernel_proof! {
+        // #806: discharge the complete CI contract within this accepting path.
+        assert((retirement::fact_frame(ci_world@, *w, i, ci_out@, *out))
+            && (infra ==> w.nodes@[i as int] == retirement::fact_node(ci_world@.nodes@[i as int], Fact::CiFailed { infra }))
+            && (infra ==> w.next_question == ci_world@.next_question)
+            && (infra && retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
+            && (retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
+            && (retirement_runtime::ci_post(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
+            ci_world@.fail_fast, ci_world@.next_question, w.next_question))) by {};
+    }
+
         return;
     }
     kernel_proof! {
@@ -501,6 +513,17 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     ci_infrastructure(w, i, out);
     kernel_proof! {
         retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
+    }
+
+    kernel_proof! {
+        // #806: discharge the complete CI contract within this accepting path.
+        assert((retirement::fact_frame(ci_world@, *w, i, ci_out@, *out))
+            && (infra ==> w.nodes@[i as int] == retirement::fact_node(ci_world@.nodes@[i as int], Fact::CiFailed { infra }))
+            && (infra ==> w.next_question == ci_world@.next_question)
+            && (infra && retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
+            && (retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
+            && (retirement_runtime::ci_post(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
+            ci_world@.fail_fast, ci_world@.next_question, w.next_question))) by {};
     }
 
 }
