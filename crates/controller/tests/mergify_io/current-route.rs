@@ -3,6 +3,10 @@ use super::*;
 mod queue_entry {
     include!("queue-entry-current.rs");
 }
+// #854b: webhook/catch_up call the current passive cause-evidence boundary.
+mod queue_cause {
+    include!("queue-cause-current.rs");
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueueFact {
     pub repository: Repository,
@@ -90,6 +94,12 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::Gate(gate) => format!(
+                "gate:{}:{}:{}",
+                gate.context.base,
+                gate.context.batch.as_deref().unwrap_or("main"),
+                gate.at
+            ),
             Evidence::ChecksUnavailable { permissions } => {
                 let mut gaps = permissions.clone();
                 gaps.sort();
@@ -213,6 +223,7 @@ impl Translator {
         let mut wake = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
+                facts.extend(queue_cause::merge(repo, pull_request));
                 let binding = QueueFact {
                     repository: repo.clone(),
                     number: pull_request.number,
@@ -394,6 +405,10 @@ impl Translator {
             .get(&repo.installation)
             .ok_or(Error::Invalid("missing queue fact client"))?;
         let mut facts = Vec::new();
+        for pull in &changes.pull_requests {
+            facts.extend(queue_cause::merge(repo, pull));
+            facts.extend(queue_cause::batch(repo, pull, &changes.check_runs));
+        }
         let world: World = super::snapshot::decode(snapshot)?;
         for pull in changes.pull_requests.iter().filter(|pull| {
             route::projection::catch_merged(pull.merged_at.is_some(), is_merge_queue_pr(pull))

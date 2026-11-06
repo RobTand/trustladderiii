@@ -1,12 +1,16 @@
 """Shared first-request prefixes through the real model client, without credentials."""
 from copy import deepcopy
+from importlib.resources import files
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 import pytest
 
 from tl3_workers import runtime
+from tl3_workers.contracts import schema
 from tl3_workers.evidence import forcing_capabilities
 from worker_process import response_frames
 import worker_process as test_workers
@@ -156,3 +160,63 @@ def test_claude_shared_prefix_keeps_a_rolling_marker_on_every_transport_call(req
         prefixes.append(prefix)
         assert json.dumps(body).count('"cache_control"') == 2, "shared plus rolling stays below Claude's four-marker limit"
     assert prefixes == [prefixes[0]] * 3, "rolling markers must not mutate the shared prefix"
+
+
+# #863, found by live probe (PB #2710 r415): a sanitized projection of the one
+# #832-A repair ingest reply. Audit 2 demanded red_message and observer_support,
+# which the ingest proof_obligation cannot express, so the repair could not pass.
+R415_LITERAL = "_git must run every Git call with maintenance.auto=false and gc.auto=0"
+R415_ISSUE = {
+    "number": 2710, "title": "Run every _git call without Git maintenance", "author": "requester",
+    "comments": [],
+    "body": ("The red test must fail on base on the real `_git` helper path.\n"
+             f"Rob's answer to question 49: the plan must state `{R415_LITERAL}` "
+             "as the proof's red message."),
+}
+R415_REPAIR = {
+    "kind": "brief",
+    "brief": f"Make _git disable Git maintenance. The red message is exactly: {R415_LITERAL}",
+    "goals": [{
+        "description": f"{R415_LITERAL}. The new test observes the real _git helper.",
+        "verification": "test",
+        "proof_obligation": {
+            "kind": "assertion", "observer": "new",
+            "subjects": ["tests/test_checkout_recovery_1465.py::_git"],
+            "source": "issue.body",
+            "quote": "The red test must fail on base on the real `_git` helper path.",
+        },
+    }],
+    "memory_ids": [],
+}
+
+
+def test_r415_audit_objections_stay_within_the_ingest_reply_contract(request_doc):
+    # Drive the real audit prompt and input construction without a model run.
+    request = shared_request(request_doc, "audit")
+    request["prompt"]["text"] = files("tl3_workers").joinpath("prompts", "audit.md").read_text()
+    request["inputs"]["issue"] = deepcopy(R415_ISSUE)
+    request["inputs"]["ingest"] = deepcopy(R415_REPAIR)
+    role = runtime.ROLES["audit"]
+    model = runtime.create_model(request)
+    token = runtime.run_prompt.set(request["prompt"]["text"])
+    try:
+        with patch.object(runtime, "build_tools", return_value=[]), patch.object(
+                runtime, "create_deep_agent", side_effect=lambda **kwargs: kwargs["system_prompt"]):
+            system = runtime.build_agent(model, role, SimpleNamespace())
+    finally:
+        runtime.run_prompt.reset(token)
+    user = runtime.initial_message(request, {"forcing_capabilities": forcing_capabilities(),
+                                             **request["inputs"]})
+    inputs = json.loads("".join(block["text"] for block in user.content))
+    assert inputs["ingest"]["goals"][0]["proof_obligation"] == R415_REPAIR["goals"][0]["proof_obligation"]
+    prompt = " ".join(system.split())
+    definitions = schema("ingest-reply")["$defs"]
+    proof_fields = sorted(definitions["proof_obligation"]["properties"])
+    entry_fields = sorted(definitions["evidence_requirement"]["properties"])
+    assert "red_message" not in proof_fields and "observer_support" not in proof_fields
+    # The inventory is generated from the ingest reply contract, not hand-written.
+    assert "A proof_obligation has only these fields: " + ", ".join(proof_fields) + "." in prompt
+    assert "An evidence_contract entry has only these fields: " + ", ".join(entry_fields) + "." in prompt
+    assert "Object only to what an ingest reply can express." in prompt
+    assert ("At intake, check only that the brief or the obligation's quote carries "
+            "the exact source text verbatim.") in prompt
