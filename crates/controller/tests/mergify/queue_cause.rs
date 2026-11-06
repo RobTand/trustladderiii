@@ -263,7 +263,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         drop(controller);
         let mut registry = adapters::simulation(root.path()).unwrap();
         registry.register(
-            Upstream::Mergify,
+            Upstream::Delivery,
             api.adapter(&root.path().join("mergify"), 0)
                 .with_store(settings.clone())
                 .with_clock(clock.clone()),
@@ -790,7 +790,7 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
                     drop(controller);
                     let mut registry = adapters::simulation(root.path()).unwrap();
                     registry.register(
-                        Upstream::Mergify,
+                        Upstream::Delivery,
                         api.adapter(&root.path().join("mergify"), 0)
                             .with_store(settings.clone())
                             .with_clock(clock.clone()),

@@ -113,6 +113,7 @@ py_library(
         "tl3_workers/roles/postmortem.py",
         "tl3_workers/roles/reviewer.py",
         "tl3_workers/roles/writer.py",
+        "tl3_workers/rules.py",
         "tl3_workers/runtime.py",
         "tl3_workers/session.py",
         "tl3_workers/tools.py",

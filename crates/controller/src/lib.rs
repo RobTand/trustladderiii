@@ -9,6 +9,7 @@ extern crate self as tl3_controller;
 pub mod adoption;
 mod approval_delivery;
 pub mod findings;
+pub mod outcome;
 pub mod queue_cause;
 mod queue_cause_decide;
 
@@ -1268,7 +1269,7 @@ impl Controller {
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
             // ClosePr removes the queue label without waiting for Mergify admission reads.
-            let closing_queue = executor::upstream(delivery.output) == executor::Upstream::Mergify
+            let closing_queue = executor::upstream(delivery.output) == executor::Upstream::Delivery
                 && matches!(
                     world.nodes[delivery
                         .node()
@@ -1290,7 +1291,7 @@ impl Controller {
             if cancelling {
                 match effect.state {
                     EffectState::Intended => {
-                        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+                        if executor::upstream(delivery.output) == executor::Upstream::Delivery
                             && !closing_queue
                             && !matches!(
                                 self.adapters
@@ -1478,7 +1479,7 @@ impl Controller {
                         return Ok(true);
                     }
                     let local_cancellation = effect.state == EffectState::Cancelling
-                        && executor::upstream(delivery.output) == executor::Upstream::Mergify;
+                        && executor::upstream(delivery.output) == executor::Upstream::Delivery;
                     if !local_cancellation
                         && looks::quota_waiting(&snapshot, &effect.key, self.now_ms())?
                     {
@@ -1673,7 +1674,7 @@ impl Controller {
 
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
         let delivery: Delivery = decode_stored(row.value.clone())?;
-        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+        if executor::upstream(delivery.output) == executor::Upstream::Delivery
             || approval_delivery::is_approval(&delivery)
         {
             self.adapters
@@ -2703,6 +2704,10 @@ impl Controller {
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
                 && ((table == "queue_facts" && closed_fact(value)?)
+                    || (table == "delivery_outcomes"
+                        && value["node"]
+                            .as_u64()
+                            .is_some_and(|node| closed.contains(&NodeId(node))))
                     || (table == "queue_holds" && retired_hold(value)?))
             {
                 continue;
@@ -2733,6 +2738,10 @@ impl Controller {
                         node.merged.is_some() || matches!(node.phase, tl3_kernel::Phase::Closed(_))
                     });
             if discard_rebase_context
+                || (row.table == "delivery_outcomes"
+                    && row.value["node"]
+                        .as_u64()
+                        .is_some_and(|node| closed.contains(&NodeId(node))))
                 || (row.table == "queue_holds" && retired_hold(&row.value)?)
                 || row.table == "check_reports"
                     && row
@@ -2959,6 +2968,17 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        self.translate_with_receipt(snapshot, world, observation, commit, None)
+    }
+
+    fn translate_with_receipt(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        observation: Observation,
+        commit: &mut Commit,
+        queue_receipt: Option<(RowChange, findings::QueueCiEvidence)>,
+    ) -> Result<Option<Event>> {
         if let Observation::GitHubComment {
             repository,
             issue,
@@ -2969,16 +2989,71 @@ impl Controller {
             return Ok(None);
         }
 
-        let mut ci_details = match &observation {
-            Observation::CiFailed { checks, .. } => findings::QueueCiEvidence {
-                checks: checks.clone(),
-                ..Default::default()
+        let observation = match observation {
+            Observation::Merged {
+                node,
+                sha,
+                checks_passed,
+            } => Observation::Outcome {
+                node,
+                outcome: outcome::Outcome::Merged {
+                    head: sha,
+                    checks_passed,
+                },
+                receipt: None,
             },
-            Observation::Queue(adapters::mergify::QueueFact {
-                evidence: adapters::mergify::Evidence::CiFailed { details, .. },
-                ..
-            }) => details.clone(),
-            _ => Default::default(),
+            Observation::CiFailed {
+                node,
+                infra,
+                checks,
+            } => Observation::Outcome {
+                node,
+                outcome: outcome::Outcome::CiFailed {
+                    head: commit_sha(
+                        snapshot,
+                        world
+                            .nodes
+                            .get(node.0 as usize)
+                            .ok_or(Error::Invalid("delivery outcome node missing"))?
+                            .head,
+                    )
+                    .unwrap_or_default()
+                    .to_owned(),
+                    infra,
+                    failed_tests: vec![],
+                    evidence: findings::QueueCiEvidence {
+                        checks,
+                        ..Default::default()
+                    },
+                },
+                receipt: None,
+            },
+            other => other,
+        };
+
+        let mut ci_details = if let Some((_, details)) = &queue_receipt {
+            details.clone()
+        } else {
+            match &observation {
+                Observation::Outcome {
+                    outcome:
+                        outcome::Outcome::CiFailed {
+                            failed_tests,
+                            evidence,
+                            ..
+                        },
+                    ..
+                } => {
+                    let mut details = evidence.clone();
+                    details.failed_tests = failed_tests.clone();
+                    details
+                }
+                Observation::Queue(adapters::mergify::QueueFact {
+                    evidence: adapters::mergify::Evidence::CiFailed { details, .. },
+                    ..
+                }) => details.clone(),
+                _ => Default::default(),
+            }
         };
         ci_details = adapters::mergify::ci_evidence::bounded(ci_details);
         let ci_checks = ci_details.checks.clone();
@@ -3262,45 +3337,21 @@ impl Controller {
                         ));
                     }
                 };
-                let fact = match (kernel, fact.evidence) {
-                    (KernelFact::PrMerged { checks_passed }, Evidence::Merged { head, .. }) => {
-                        Fact::PrMerged {
-                            head: self.head(node, &head)?,
-                            checks_passed,
-                        }
-                    }
-                    (KernelFact::CiFailed { infra }, _) => Fact::CiFailed { infra },
-                    (KernelFact::Conflict, _) => Fact::Conflict,
-                    (KernelFact::PrDequeuedByPerson, _) => Fact::PrDequeuedByPerson,
-                    (KernelFact::PrClosedByPerson, _) => Fact::PrClosedByPerson,
-                    (KernelFact::PushByOther, Evidence::PushByOther { head }) => {
-                        let commits: Vec<_> = snapshot
-                            .interned
-                            .iter()
-                            .map(|item| core::CommitRow {
-                                is_commit: item.kind == tl3_store::InternKind::Commit,
-                                id: item.id,
-                            })
-                            .collect();
-                        let previous_sha =
-                            core::previous_commit(&commits, current.head.map(|head| head.0 as i64))
-                                .map(|index| snapshot.interned[index].value.as_str());
-                        let carried = core::carry_plan(
-                            node.0,
-                            &head,
-                            check_run(snapshot, node, previous_sha)?,
-                        );
-                        if let Some(carried) = carried {
-                            commit.rows.push(put(
-                                "check_plans",
-                                format!("{}:{}", carried.node, carried.head),
-                                json!(carried.plan),
-                            ));
-                        }
-                        Fact::PushByOther {
-                            head: self.head(node, &head)?,
-                        }
-                    }
+                if let Some(outcome) = fact.evidence.outcome() {
+                    return self.translate_with_receipt(
+                        snapshot,
+                        world,
+                        Observation::Outcome {
+                            node,
+                            outcome,
+                            receipt: None,
+                        },
+                        commit,
+                        Some((put("queue_facts", identity, value), ci_details)),
+                    );
+                }
+                let fact = match kernel {
+                    KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
                     _ => {
                         return Err(Error::Invalid(
                             "queue evidence routed to another kernel fact",
@@ -3352,10 +3403,110 @@ impl Controller {
             Observation::Kernel(event) => {
                 kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?
             }
-            Observation::CiFailed { node, infra, .. } => Event::Fact {
+            Observation::Merged { .. } | Observation::CiFailed { .. } => {
+                return Err(Error::Invalid("untranslated legacy delivery outcome"));
+            }
+            Observation::Outcome {
                 node,
-                fact: Fact::CiFailed { infra },
-            },
+                mut outcome,
+                receipt,
+            } => {
+                if receipt.as_ref().is_some_and(|id| {
+                    snapshot.rows.iter().any(|row| {
+                        matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts")
+                            && row.id == *id
+                    })
+                }) {
+                    return Ok(None);
+                }
+                use outcome::Outcome;
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("delivery outcome node missing"))?;
+                // A closed request accepts only its first observed merge.
+                if matches!(current.phase, tl3_kernel::Phase::Closed(_))
+                    && !matches!(outcome, Outcome::Conflict { .. })
+                    && (!matches!(outcome, Outcome::Merged { .. }) || current.merged.is_some())
+                {
+                    return Ok(None);
+                }
+                // Direct head checks retain the pre-S2 queued/enqueuing admission rule.
+                if receipt.is_some()
+                    && matches!(outcome, Outcome::CiFailed { .. })
+                    && !(current.phase == tl3_kernel::Phase::Queued
+                        || current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            }))
+                {
+                    return Ok(None);
+                }
+                if let Outcome::CiFailed { head, evidence, .. } = &mut outcome
+                    && queue_receipt.is_none()
+                    && Some(self.head(node, head)?) != current.head
+                {
+                    // Base records stale head evidence without attributing it or applying a fact.
+                    evidence.cause = None;
+                    if let Some(receipt) = receipt {
+                        commit.rows.push(put(
+                            "delivery_outcomes",
+                            receipt,
+                            json!({"node":node,"outcome":outcome}),
+                        ));
+                    }
+                    return Ok(None);
+                }
+                let recorded = json!({"node": node, "outcome": &outcome});
+                let fact = match outcome {
+                    Outcome::Merged {
+                        head,
+                        checks_passed,
+                    } => Fact::PrMerged {
+                        head: self.head(node, &head)?,
+                        checks_passed,
+                    },
+                    Outcome::CiFailed { infra, .. } => Fact::CiFailed { infra },
+                    Outcome::Conflict { .. } => Fact::Conflict,
+                    Outcome::ClosedByPerson => Fact::PrClosedByPerson,
+                    Outcome::PushByOther { head } => {
+                        let commits: Vec<_> = snapshot
+                            .interned
+                            .iter()
+                            .map(|item| tl3_controller_core::translate::CommitRow {
+                                is_commit: item.kind == tl3_store::InternKind::Commit,
+                                id: item.id,
+                            })
+                            .collect();
+                        let previous_sha = tl3_controller_core::translate::previous_commit(
+                            &commits,
+                            current.head.map(|head| head.0 as i64),
+                        )
+                        .map(|index| snapshot.interned[index].value.as_str());
+                        let carried = tl3_controller_core::translate::carry_plan(
+                            node.0,
+                            &head,
+                            check_run(snapshot, node, previous_sha)?,
+                        );
+                        if let Some(carried) = carried {
+                            commit.rows.push(put(
+                                "check_plans",
+                                format!("{}:{}", carried.node, carried.head),
+                                json!(carried.plan),
+                            ));
+                        }
+                        Fact::PushByOther {
+                            head: self.head(node, &head)?,
+                        }
+                    }
+                };
+                if let Some(receipt) = receipt {
+                    commit
+                        .rows
+                        .push(put("delivery_outcomes", receipt, recorded));
+                }
+                Event::Fact { node, fact }
+            }
             Observation::WorktreePrepared {
                 node,
                 repository,
@@ -4121,17 +4272,6 @@ impl Controller {
                     },
                 }
             }
-            Observation::Merged {
-                node,
-                sha,
-                checks_passed,
-            } => Event::Fact {
-                node,
-                fact: Fact::PrMerged {
-                    head: self.head(node, &sha)?,
-                    checks_passed,
-                },
-            },
             Observation::PullRequest { node, number } => {
                 if number == 0 {
                     return Err(Error::Invalid("pull request number must be positive"));
@@ -4158,6 +4298,9 @@ impl Controller {
                 return Ok(None);
             }
         };
+        if let Some((receipt, _)) = queue_receipt {
+            commit.rows.push(receipt);
+        }
         let finding = {
             use tl3_controller_core::translate_tail as tail;
             let (node, input) = match event {
@@ -4452,9 +4595,10 @@ fn observation_upstream(
         | Observation::WorktreePrepared { .. }
         | Observation::ScratchSaved { .. }
         | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
-        Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {
-            Some(Upstream::Mergify)
-        }
+        Observation::Outcome { .. }
+        | Observation::Merged { .. }
+        | Observation::Queue(_)
+        | Observation::CiFailed { .. } => Some(Upstream::Delivery),
         Observation::Kernel(Event::Reply {
             node, generation, ..
         }) => snapshot
@@ -4501,7 +4645,7 @@ fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
             });
         }
     }
-    if executor::upstream(delivery.output) == executor::Upstream::Mergify
+    if executor::upstream(delivery.output) == executor::Upstream::Delivery
         || approval_delivery::is_approval(delivery)
     {
         commit.rows.push(put(

@@ -91,7 +91,7 @@ impl Flow {
         let (mut registry, source, checks_source) = registry(&config, &root.join("fakes"), false);
         registry.register(Upstream::Worktrees, real);
         if hold_queue {
-            registry.register(Upstream::Mergify, HeldQueue);
+            registry.register(Upstream::Delivery, HeldQueue);
         }
         let controller = Controller::open(
             Store::open(settings).unwrap(),

@@ -554,6 +554,8 @@ def test_repair_is_one_tool_free_turn_within_the_writer_budget(contract_boundary
         assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == judges.MAX_TURNS
         assert "Your reply failed validation" in history[-1].text
         assert "went_wrong" in history[-1].text
+        assert 'reply field "/went_wrong"' in history[-1].text
+        assert '/postmortem/went_wrong' not in history[-1].text
         assert KEY not in json.dumps([item.text for item in history])
         return AIMessage(content=json.dumps(written(0)))
 

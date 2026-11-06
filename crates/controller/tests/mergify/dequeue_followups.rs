@@ -128,7 +128,7 @@ pub(super) fn source_loop(settings: &tl3_config::Store, timeout_delivery: bool) 
     let (done, received) = mpsc::channel();
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         AllowanceRecovery {
             inner: api
                 .adapter(&root.path().join("mergify"), 0)
@@ -193,7 +193,7 @@ pub(super) fn transient_bound(settings: &tl3_config::Store, quota: bool) {
         // A restart must not reset one delivery's retry allowance.
         let mut registry = adapters::simulation(root.path()).unwrap();
         registry.register(
-            Upstream::Mergify,
+            Upstream::Delivery,
             api.adapter(&root.path().join("mergify"), 0),
         );
         let mut c =

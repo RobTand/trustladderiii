@@ -319,7 +319,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     let (mut adapters, source, checks_source) = registry(&config, &root.path().join("fakes"), fail);
     if mode.starts_with("ci-") || mode == "fix-killed" {
         adapters.register(
-            Upstream::Mergify,
+            Upstream::Delivery,
             CiFailureOnce {
                 fake: adapters::mergify::Fake::new(&root.path().join("fakes")),
                 failed: false,

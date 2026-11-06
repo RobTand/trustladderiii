@@ -16,13 +16,34 @@ mod boundary {
     include!("queue-fact-current.rs");
 }
 use boundary::{QueueFact, Evidence};
-enum Observation { Queue(QueueFact) }
+impl Evidence {
+    pub(crate) fn outcome(&self) -> Option<tl3_controller::outcome::Outcome> {
+        use tl3_controller::outcome::Outcome;
+        Some(match self {
+            Self::Merged { head, checks_passed } => Outcome::Merged { head: head.clone(), checks_passed: *checks_passed },
+            Self::CiFailed { head, infra, details, .. } => Outcome::CiFailed {
+                head: head.clone(), infra: *infra, failed_tests: details.failed_tests.clone(), evidence: details.clone(),
+            },
+            Self::Conflict { head, .. } => Outcome::Conflict { head: head.clone() },
+            Self::PushByOther { head } => Outcome::PushByOther { head: head.clone() },
+            Self::ClosedByPerson { .. } => Outcome::ClosedByPerson,
+            _ => return None,
+        })
+    }
+}
+
+enum Observation { Queue(QueueFact), GitHubComment {}, Outcome { node: NodeId, outcome: tl3_controller::outcome::Outcome, receipt: Option<String> } }
+mod outcome { pub use tl3_controller::outcome::*; }
 
 struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> {type Target=Controller;fn deref(&self)->&Controller { self.0 }}
 impl std::ops::DerefMut for Shell<'_> {fn deref_mut(&mut self)->&mut Controller { self.0 }}
 impl Shell<'_> {
     fn translate(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit) -> Result<Option<Event>> {
+        self.translate_with_receipt(snapshot, world, observation, commit, None)
+    }
+    fn translate_with_receipt(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit, queue_receipt: Option<(Value, crate::findings::QueueCiEvidence)>) -> Result<Option<Event>> {
+        let ci_details = crate::findings::QueueCiEvidence::default();
         let event = match observation {
             Observation::Queue(mut fact) => {
                 if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
@@ -243,30 +264,109 @@ impl Shell<'_> {
                         ));
                     }
                 };
-                let fact = match (kernel, fact.evidence) {
-                    (KernelFact::PrMerged { checks_passed }, Evidence::Merged { head, .. }) => {
-                        Fact::PrMerged {
-                            head: self.head(node, &head)?,
-                            checks_passed,
-                        }
+                if let Some(outcome) = fact.evidence.outcome() {
+                    return self.translate_with_receipt(
+                        snapshot,
+                        world,
+                        Observation::Outcome {
+                            node,
+                            outcome,
+                            receipt: None,
+                        },
+                        commit,
+                        Some((put("queue_facts", identity, value), ci_details)),
+                    );
+                }
+                let fact = match kernel {
+                    KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
+                    _ => {
+                        return Err(Error::Invalid(
+                            "queue evidence routed to another kernel fact",
+                        ));
                     }
-                    (KernelFact::CiFailed { infra }, _) => Fact::CiFailed { infra },
-                    (KernelFact::Conflict, _) => Fact::Conflict,
-                    (KernelFact::PrDequeuedByPerson, _) => Fact::PrDequeuedByPerson,
-                    (KernelFact::PrClosedByPerson, _) => Fact::PrClosedByPerson,
-                    (KernelFact::PushByOther, Evidence::PushByOther { head }) => {
+                };
+                commit.rows.push(put("queue_facts", identity, value));
+                Event::Fact { node, fact }
+            }
+            Observation::GitHubComment { .. } => unreachable!(),
+            Observation::Outcome {
+                node,
+                mut outcome,
+                receipt,
+            } => {
+                if receipt.as_ref().is_some_and(|id| {
+                    snapshot.rows.iter().any(|row| {
+                        matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts")
+                            && row.id == *id
+                    })
+                }) {
+                    return Ok(None);
+                }
+                use outcome::Outcome;
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("delivery outcome node missing"))?;
+                // A closed request accepts only its first observed merge.
+                if matches!(current.phase, tl3_kernel::Phase::Closed(_))
+                    && !matches!(outcome, Outcome::Conflict { .. })
+                    && (!matches!(outcome, Outcome::Merged { .. }) || current.merged.is_some())
+                {
+                    return Ok(None);
+                }
+                // Direct head checks retain the pre-S2 queued/enqueuing admission rule.
+                if receipt.is_some()
+                    && matches!(outcome, Outcome::CiFailed { .. })
+                    && !(current.phase == tl3_kernel::Phase::Queued
+                        || current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            }))
+                {
+                    return Ok(None);
+                }
+                if let Outcome::CiFailed { head, evidence, .. } = &mut outcome
+                    && queue_receipt.is_none()
+                    && Some(self.head(node, head)?) != current.head
+                {
+                    // Base records stale head evidence without attributing it or applying a fact.
+                    evidence.cause = None;
+                    if let Some(receipt) = receipt {
+                        commit.rows.push(put(
+                            "delivery_outcomes",
+                            receipt,
+                            json!({"node":node,"outcome":outcome}),
+                        ));
+                    }
+                    return Ok(None);
+                }
+                let recorded = json!({"node": node, "outcome": &outcome});
+                let fact = match outcome {
+                    Outcome::Merged {
+                        head,
+                        checks_passed,
+                    } => Fact::PrMerged {
+                        head: self.head(node, &head)?,
+                        checks_passed,
+                    },
+                    Outcome::CiFailed { infra, .. } => Fact::CiFailed { infra },
+                    Outcome::Conflict { .. } => Fact::Conflict,
+                    Outcome::ClosedByPerson => Fact::PrClosedByPerson,
+                    Outcome::PushByOther { head } => {
                         let commits: Vec<_> = snapshot
                             .interned
                             .iter()
-                            .map(|item| core::CommitRow {
+                            .map(|item| tl3_controller_core::translate::CommitRow {
                                 is_commit: item.kind == tl3_store::InternKind::Commit,
                                 id: item.id,
                             })
                             .collect();
-                        let previous_sha =
-                            core::previous_commit(&commits, current.head.map(|head| head.0 as i64))
-                                .map(|index| snapshot.interned[index].value.as_str());
-                        let carried = core::carry_plan(
+                        let previous_sha = tl3_controller_core::translate::previous_commit(
+                            &commits,
+                            current.head.map(|head| head.0 as i64),
+                        )
+                        .map(|index| snapshot.interned[index].value.as_str());
+                        let carried = tl3_controller_core::translate::carry_plan(
                             node.0,
                             &head,
                             check_run(snapshot, node, previous_sha)?,
@@ -282,16 +382,17 @@ impl Shell<'_> {
                             head: self.head(node, &head)?,
                         }
                     }
-                    _ => {
-                        return Err(Error::Invalid(
-                            "queue evidence routed to another kernel fact",
-                        ));
-                    }
                 };
-                commit.rows.push(put("queue_facts", identity, value));
+                if let Some(receipt) = receipt {
+                    commit
+                        .rows
+                        .push(put("delivery_outcomes", receipt, recorded));
+                }
                 Event::Fact { node, fact }
             }
+
         };
+        if let Some((receipt, _)) = queue_receipt { commit.rows.push(receipt); }
         Ok(Some(event))
     }
 }
