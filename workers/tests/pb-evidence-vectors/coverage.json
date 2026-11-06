@@ -1072,7 +1072,7 @@
         "ending-summary/action-summary-bytes-above"
       ]
     },
-    "pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 512)": {
+    "pb_tests._summary: bounded(model_result(result), limit=SUMMARY_BYTES - 512)": {
       "values": [
         15872
       ],
