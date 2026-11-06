@@ -27,21 +27,34 @@ impl Shell<'_> {
             .filter(|row| row.table == "queue_holds")
         {
             let mut hold: Hold = decode_stored(row.value.clone())?;
+            self.queue_hold_witness(snapshot, &fact.repository, &mut hold, gate, commit);
+        }
+        Ok(())
+    }
+
+    fn queue_hold_witness(
+        &self,
+        snapshot: &Snapshot,
+        repository: &Repository,
+        hold: &mut Hold,
+        gate: &GateEvidence,
+        commit: &mut Commit,
+    ) -> bool {
             if !gate.healthy_for(&hold.reporters)
-                || hold.repository != fact.repository
+                || hold.repository != *repository
                 || hold.context.branch != gate.context.branch
                 || hold.context.base == gate.context.base
                 || decision::hold(true, hold.witness.is_some(), false)
                     != decision::HoldAction::Requeue
                 || !hold.failed_at.is_some_and(|failed| gate.at > failed)
             {
-                continue;
+                return false;
             }
             hold.witness = Some(gate.clone());
             hold.witnessed_ms = Some(self.now_ms());
             commit
                 .rows
-                .push(put("queue_holds", row.id.clone(), json!(hold)));
+                .push(put("queue_holds", key(hold.node, &hold.head), json!(hold)));
             // Wake an existing allowance, without creating a second timer.
             for allowance in snapshot.rows.iter().filter(|row| {
                 row.table == "allowances"
@@ -55,8 +68,7 @@ impl Shell<'_> {
                     .rows
                     .push(put("allowances", allowance.id.clone(), value));
             }
-        }
-        Ok(())
+        true
     }
 
     /// Return true when the failure was journaled as a hold, without a kernel
@@ -176,7 +188,7 @@ impl Shell<'_> {
             else {
                 unreachable!()
             };
-            let hold = Hold {
+            let mut hold = Hold {
                 repository: fact.repository.clone(),
                 number: fact.number,
                 node,
@@ -195,9 +207,19 @@ impl Shell<'_> {
                     _ => vec![],
                 },
             };
-            commit
-                .rows
-                .push(put("queue_holds", key(node, head), json!(hold)));
+            // Catch-up can deliver T2 health before the delayed T1 failure.
+            // Reconcile the journal, without another upstream read.
+            for row in snapshot.rows.iter().filter(|row| row.table == "queue_gates") {
+                let gate_fact: QueueFact = decode_stored(row.value.clone())?;
+                if let Evidence::Gate(gate) = &gate_fact.evidence
+                    && self.queue_hold_witness(snapshot, &gate_fact.repository, &mut hold, gate, commit)
+                {
+                    break;
+                }
+            }
+            if hold.witness.is_none() {
+                commit.rows.push(put("queue_holds", key(node, head), json!(hold)));
+            }
         }
         commit
             .rows
