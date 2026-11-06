@@ -183,7 +183,7 @@ def test_non_regular_and_hardlinked_files_are_rejected(tree, name, kind):
     assert (outside / "secret.txt").read_text() == "external fixture\n"
 
 
-@pytest.mark.parametrize("name", ["execute", "task", "fetch", "read_file", "delete"])
+@pytest.mark.parametrize("name", ["execute", "task", "fetch", "read_file"])
 def test_only_tl3_file_tools_can_be_declared(tree, name):
     root, _ = tree
     with Worktree(root) as worktree:
@@ -878,7 +878,7 @@ def test_constructor_footprint_limits_writes_and_supplies_generator_files(tree):
         assert invoke(tools["write"], "./src/code.py").text == "File written."
         refused = invoke(tools["write"], "tests/test_zz_diag.py")
         assert refused.status == "error"
-        assert refused.text.startswith("tests/test_zz_diag.py is not a declared file")
+        assert "tests/test_zz_diag.py is not a declared file" in refused.text
     assert not (root / "tests/test_zz_diag.py").exists()
 
 
@@ -900,3 +900,289 @@ def test_shared_footprint_path_vectors():
                 _parts(case["path"])
         else:
             assert "/".join(_parts(case["path"])) == case["canonical"], case
+
+
+@pytest.mark.parametrize("op", ["write", "edit", "delete"])
+@pytest.mark.parametrize("case,path,refusal", [
+    ("inside", "src/code.py", None),
+    ("inside", "./src/code.py", None),
+    ("outside", "src/cod.py", "footprint"),
+    ("outside", "./src/cod.py", "footprint"),
+    ("protected", "src/code.py", "protected"),
+    ("protected_outside", "src/cod.py", "protected"),
+    ("generated", "src/code.py", "generated"),
+    ("generated_outside", "src/cod.py", "footprint"),
+    ("reserved", ".tl3-generator-import", "reserved"),
+])
+def test_change_tool_table(tree, op, case, path, refusal):
+    """#895: every mutation shares reserved/protected/footprint/generated precedence."""
+    from tl3_harness.rules import CantMeet, Name
+
+    root, _ = tree
+    (root / "src/cod.py").write_text("hello\n")
+    (root / ".tl3-generator-import").write_text("hello\n")
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        worktree.protected_paths = ("**",) if case.startswith("protected") or case == "reserved" else ()
+        worktree.generated_files = ("**",) if case.startswith("generated") or case == "reserved" else ()
+        tools = tools_for(worktree, {op})
+        args = {"path": path}
+        if op == "write":
+            args["content"] = "changed"
+        elif op == "edit":
+            args.update(old="hello", new="changed", replace_all=True)
+        if refusal:
+            with pytest.raises(ValueError) as caught:
+                with worktree.check_change(path, op):
+                    pytest.fail("change gate admitted the path")
+            violation, = caught.value.violations
+            assert violation.rule.id == f"worktree.change.{refusal}"
+            assert violation.rule.roles == frozenset({"maker"})
+            assert Name("path", path.removeprefix("./")) in violation.rule.names(violation.facts)
+            assert isinstance(violation.repair, CantMeet)
+            assert "src/code.py" in str(caught.value)
+            if refusal == "footprint":
+                assert "nearest declared path" in str(caught.value)
+                for advice in ("not a declared file", "needs_files", "run_tests", "grep", "read"):
+                    assert advice in str(caught.value)
+            if refusal == "generated":
+                assert "run_generator" in str(caught.value)
+        result = tools[op].invoke({"name": op, "args": args, "id": "change", "type": "tool_call"})
+        assert result.status == ("error" if refusal else "success")
+        canonical = root / path
+        if refusal:
+            assert canonical.read_text().startswith("hello")
+        elif op == "delete":
+            assert not canonical.exists()
+        else:
+            assert canonical.read_text().startswith("changed")
+
+
+@pytest.mark.parametrize("kind", ["directory", "symlink", "fifo", "hardlink"])
+def test_delete_refuses_nonfiles_without_changing_them(tree, kind):
+    root, outside = tree
+    target = root / "target"
+    if kind == "directory":
+        target.mkdir()
+    elif kind == "symlink":
+        target.symlink_to(outside / "secret.txt")
+    elif kind == "fifo":
+        os.mkfifo(target)
+    elif kind == "hardlink":
+        os.link(outside / "secret.txt", target)
+    with Worktree(root, footprint=["target"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "target")
+    assert result.status == "error"
+    assert "worktree.change.delete_target" in result.text
+    assert (outside / "secret.txt").read_text() == "external fixture\n"
+    assert target.exists() == (kind != "missing")
+
+
+def test_delete_requires_a_footprint(tree):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/code.py")
+    assert result.status == "error"
+    assert "footprint" in result.text.lower()
+    assert (root / "src/code.py").exists()
+
+
+@pytest.mark.parametrize("path", ["src/code.py", "missing/parent/file.py"])
+def test_delete_already_absent_is_idempotent(tree, path):
+    root, _ = tree
+    with Worktree(root, footprint=[path]) as worktree:
+        tool = tools_for(worktree, {"delete"})["delete"]
+        assert invoke(tool, path).status == "success"
+        again = invoke(tool, path)
+    assert again.status == "success"
+    assert "already absent" in again.text.lower()
+
+
+def test_delete_keeps_the_checked_parent_when_its_name_is_swapped(tree, monkeypatch):
+    root, outside = tree
+    (outside / "code.py").write_text("outside\n")
+    real_stat, real_unlink = os.stat, os.unlink
+    checked = []
+    unlinked = []
+
+    def swap(path, *args, **kwargs):
+        info = real_stat(path, *args, **kwargs)
+        if path == "code.py" and kwargs.get("follow_symlinks") is False and not checked:
+            checked.append(kwargs["dir_fd"])
+            (root / "src").rename(root / "old-src")
+            (root / "src").symlink_to(outside)
+        return info
+
+    def unlink(path, *args, **kwargs):
+        if path == "code.py":
+            unlinked.append(kwargs.get("dir_fd"))
+        return real_unlink(path, *args, **kwargs)
+
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        monkeypatch.setattr(os, "stat", swap)
+        monkeypatch.setattr(os, "unlink", unlink)
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/code.py")
+    assert result.status == "success", result.text
+    assert checked == unlinked
+    assert not (root / "old-src/code.py").exists()
+    assert (outside / "code.py").read_text() == "outside\n"
+
+
+@pytest.mark.parametrize("path", ["src/code.py\n", "src/code.py\r", "src/Code.py", "src/e\u0301.py"])
+def test_delete_refuses_line_break_case_and_unicode_aliases(tree, path):
+    root, _ = tree
+    (root / "src/é.py").write_text("composed\n")
+    with Worktree(root, footprint=["src/code.py", "src/é.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], path)
+    assert result.status == "error"
+    if "\n" in path or "\r" in path:
+        assert "single-line" in result.text
+    else:
+        assert "worktree.change.footprint" in result.text
+    assert (root / "src/code.py").exists()
+    assert (root / "src/é.py").exists()
+
+
+def test_nearest_path_search_is_bounded_and_prefers_basename(tree, monkeypatch):
+    from tl3_workers import tools
+
+    root, _ = tree
+    path = "/".join(["a" * 200] * 3 + ["target.py"])
+    footprint = [f"a/{i:04d}.py" for i in range(400)] + ["z/target.py"]
+    calls = []
+    original = tools.get_close_matches
+
+    def bounded(query, candidates, **kwargs):
+        candidates = list(candidates)
+        calls.append((query, candidates))
+        assert len(query.encode("utf-8")) <= 512
+        assert len(candidates) <= 200
+        assert candidates[0] == "z/target.py"
+        return original(query, candidates, **kwargs)
+
+    monkeypatch.setattr(tools, "get_close_matches", bounded)
+    with Worktree(root, footprint=footprint) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], path)
+    assert result.status == "error"
+    assert calls
+
+
+def test_nearest_path_prefers_matching_basename_over_parent_similarity(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["z/target.py", "long/exact/path/targets.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "long/exact/path/target.py")
+    assert result.status == "error"
+    assert 'The nearest declared path is "z/target.py".' in result.text
+
+
+def test_delete_waits_for_the_mutation_lock(tree):
+    from threading import Event
+
+    root, _ = tree
+    entered = Event()
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        tool = tools_for(worktree, {"delete"})["delete"]
+
+        def remove():
+            entered.set()
+            return invoke(tool, "src/code.py")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with worktree._mutation_lock:
+                future = pool.submit(remove)
+                assert entered.wait(5)
+                assert not future.done()
+                assert (root / "src/code.py").exists()
+            assert future.result(timeout=5).status == "success"
+
+
+def test_protected_precedes_generated_for_delete(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"], generated_files=["src/*"]) as worktree:
+        worktree.protected_paths = ("src/*",)
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/code.py")
+    assert result.status == "error"
+    assert "worktree.change.protected" in result.text
+
+
+def test_undeclared_change_explains_the_needs_files_reply(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/new.py")
+    assert 'reply kind needs_files with files ["src/new.py"]' in result.text
+
+
+def test_tool_refusal_has_no_terminal_reply_phrase(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/new.py")
+    assert result.status == "error"
+    assert "cant_meet" not in result.text
+
+
+@pytest.mark.parametrize("op", ["write", "edit", "delete"])
+def test_change_gate_is_used_before_any_mutation(tree, op, monkeypatch):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        def refuse(path, operation):
+            assert (path, operation) == ("./src/code.py", op)
+            raise ValueError("gate fixture refusal")
+
+        monkeypatch.setattr(worktree, "check_change", refuse)
+        result = invoke(tools_for(worktree, {op})[op], "./src/code.py")
+        assert result.status == "error"
+        assert result.text == "gate fixture refusal"
+    assert (root / "src/code.py").read_text() == "hello\nhello again\n"
+
+
+def test_change_refusal_keeps_a_long_first_declared_path(tree):
+    root, _ = tree
+    declared = '/'.join(['a' * 180] * 6) + '/file.py'
+    with Worktree(root, footprint=[declared]) as worktree:
+        with pytest.raises(ValueError) as caught:
+            with worktree.check_change('other.py', 'write'):
+                pytest.fail('change gate admitted an undeclared path')
+    assert f'Allowed: enum {json.dumps([declared])}' in str(caught.value)
+
+
+def test_change_refusal_bounds_the_visible_footprint(tree):
+    root, _ = tree
+    footprint = [f"tests/test_{index:04d}.py" for index in range(1000)]
+    with Worktree(root, footprint=footprint) as worktree:
+        with pytest.raises(ValueError) as caught:
+            with worktree.check_change("tests/test_0000.p", "write"):
+                pytest.fail("change gate admitted the path")
+    text = str(caught.value)
+    assert len(text) < 2200
+    assert "more" in text
+    assert "nearest declared path" in text and "tests/test_0000.py" in text
+
+
+@pytest.mark.parametrize("operation", ["list", "glob", "grep"])
+def test_enumeration_skips_a_file_deleted_before_stat(tree, monkeypatch, operation):
+    """#895: read-only tools tolerate a concurrent declared deletion."""
+    root, _ = tree
+    original = os.stat
+
+    def remove(path, *args, **kwargs):
+        if path == "code.py" and kwargs.get("dir_fd") is not None:
+            (root / "src/code.py").unlink(missing_ok=True)
+        return original(path, *args, **kwargs)
+
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        monkeypatch.setattr(os, "stat", remove)
+        result = invoke(tools_for(worktree, {operation})[operation], "src")
+        assert result.status == "success", result.text
+
+
+def test_grep_skips_a_file_deleted_after_enumeration(tree, monkeypatch):
+    root, _ = tree
+    original = os.open
+
+    def remove(path, flags, *args, **kwargs):
+        if path == "code.py" and kwargs.get("dir_fd") is not None:
+            (root / "src/code.py").unlink(missing_ok=True)
+        return original(path, flags, *args, **kwargs)
+
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        monkeypatch.setattr(os, "open", remove)
+        assert worktree.grep("hello")["matches"] == []

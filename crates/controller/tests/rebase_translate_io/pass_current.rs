@@ -84,15 +84,34 @@ impl Shell<'_> {
         paths: &[String],
     ) -> Result<tl3_kernel::Footprint> {
         let request = request(snapshot, node)?;
+        let paths = tl3_contracts::footprint::Footprint::new(paths.to_vec()).map_err(|reason| {
+            let n = &world.nodes[node.0 as usize];
+            Error::FootprintInvariant {
+                path: paths
+                    .iter()
+                    .find(|path| {
+                        tl3_contracts::footprint::Footprint::new(vec![(*path).clone()]).is_err()
+                    })
+                    .expect("Footprint rejects an invalid individual path")
+                    .clone(),
+                request: format!(
+                    "{}/{}#{}",
+                    request.repo.owner, request.repo.name, request.issue
+                ),
+                node: node.0,
+                attempt: n.attempt,
+                run: n
+                    .run
+                    .map_or_else(|| "<absent>".into(), |run| run.to_string()),
+                reason,
+            }
+        })?;
         let repo = self
             .store
             .intern_repo(&request.repo.owner, &request.repo.name)?;
         let files = paths
             .iter()
             .map(|p| {
-                if p.is_empty() {
-                    return Err(Error::Invalid("footprint path must be nonempty"));
-                }
                 self.store
                     .intern_path(repo, p)
                     .map_err(Error::from)

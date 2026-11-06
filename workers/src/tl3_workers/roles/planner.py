@@ -1000,7 +1000,7 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                 if check["kind"] != "demonstrating":
                     violations.append(named('check.forcing_kind', "Only a demonstrating check can carry a forcing.", dict(check=index, kind=check["kind"], forcing=check["forcing"])))
                 try:
-                    forcings[index] = Forcing.parse(check["forcing"])
+                    forcings[index] = Forcing.parse(check["forcing"], check_index=index, role='planner')
                 except HarnessInputError as error:
                     cause = contextual(error, check=index, declaration=check["forcing"])
                     violations.append(named(cause.rule, f"Invalid forcing: {error}", cause.items))

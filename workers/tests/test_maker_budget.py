@@ -166,9 +166,12 @@ def test_exploration_without_implementation_warns_halfway_and_keeps_the_reserve(
     assert Path(maker_request["worktree"], "greeting.py").read_text().startswith("def greet")
 
 
-def test_implementation_progress_suppresses_the_halfway_warning_and_survives_restore(maker_request, monkeypatch):
+@pytest.mark.parametrize("operation", ["write", "delete"])
+def test_implementation_progress_suppresses_the_halfway_warning_and_survives_restore(maker_request, monkeypatch, operation):
+    arguments = ({"path": "greeting.py", "content": "def greet(): return 'hello'\n"}
+                 if operation == "write" else {"path": "greeting.py"})
     model = install(monkeypatch, maker_request, turns=8, reserve=2, actions=[
-        ("write", {"path": "greeting.py", "content": "def greet(): return 'hello'\n"})])
+        (operation, arguments)])
     budgets = []
     original = runtime.ExplorationMiddleware
 
@@ -184,6 +187,9 @@ def test_implementation_progress_suppresses_the_halfway_warning_and_survives_res
     restored = original(budgets[0].budget, "maker")
     restored.restore(budgets[0].state())
     assert restored.remaining()["implementation_started"] is True
+    if operation == "delete":
+        assert not Path(maker_request["worktree"], "greeting.py").exists()
+        assert snapshots(model)[1]["last_progress_kind"] == "delete"
 
 
 def test_cap_with_unfinished_work_produces_typed_preserved_diagnostic(maker_request, monkeypatch):

@@ -56,6 +56,7 @@ tl3_py_test(
     srcs = ["test_file_tools.py"],
     deps = [
         ":conftest",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
     ],
@@ -618,6 +619,7 @@ tl3_py_test(
         ":conftest",
         ":planner_fixtures",
         ":worker_process",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//jsonschema",
         "@tl3_pip//pytest",

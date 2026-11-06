@@ -1,0 +1,75 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::head-failure",
+ "request": {
+  "base": "75d791f4d1184173c29e34c9ee5020deaf87b76b",
+  "effect_key": "checks:head-failure",
+  "head": "f029295aa442b703790eccf1ada7aa8b06a0cc79",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "kind": "regression",
+    "name": "value stays one",
+    "tests": [
+     "tests/test_value.py::test_value"
+    ]
+   }
+  ],
+  "reviewed": null
+ },
+ "results": [
+  {
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "value stays one",
+   "tests": [
+    {
+     "base": "passed",
+     "head": "assertion",
+     "message": "def test_value():\n        value = product.value()\n>       assert value == 1, \"value too small\"\nE       AssertionError: value too small\nE       assert 0 == 1\n\ntests/test_value.py:5: AssertionError",
+     "passed": false,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      },
+      "head": {
+       "call": {
+        "assertion": true,
+        "exception": "builtins.AssertionError",
+        "outcome": "failed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      }
+     },
+     "pre_existing": false,
+     "test": "tests/test_value.py::test_value"
+    }
+   ],
+   "verdict": "fail"
+  }
+ ]
+}
