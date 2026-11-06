@@ -743,38 +743,43 @@ impl World {
             final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] {
+    ] proof [reveal(prerequisites_delivered); reveal(delivered);] {
         kernel_snapshot! { before_removal = *self }
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
-            kernel_proof! { reveal(port_deps_apply_specs::removed); reveal(port_deps_specs::unchanged); reveal(dependency_frame); }
+            kernel_proof! {
+                assert(port_deps_apply_specs::removed(before_removal@, *self, i as int, kind, number)) by {
+                    reveal(port_deps_apply_specs::removed); reveal(port_deps_specs::unchanged); reveal(dependency_frame);
+                }
+            }
             return;
         }
         let node = NodeId(i as u64);
-        kernel_proof! { port_deps_apply_specs::kept_empty(before_removal@.dependencies@, node, kind, number); }
+        kernel_proof! { port_deps_apply_specs::compact_start(self.dependencies@, node, kind, number); }
         let mut read = 0usize;
         let mut write = 0usize;
         kernel_while! { (read < self.dependencies.len()) [
             invariant write <= read <= self.dependencies.len(),
-                self.dependencies.len() == before_removal@.dependencies@.len(),
-                self.dependencies@.subrange(0, write as int) == port_deps_apply_specs::kept(
-                    before_removal@.dependencies@, node, kind, number, read as nat),
-                forall|k: int| read <= k < self.dependencies@.len()
-                    ==> self.dependencies@[k] == before_removal@.dependencies@[k],
+                port_deps_apply_specs::compacted(self.dependencies@, before_removal@.dependencies@,
+                    node, kind, number, read as int, write as int),
             decreases self.dependencies.len() - read,
         ] {
             let d = self.dependencies[read];
-            kernel_proof! { port_deps_apply_specs::compact_copy(self.dependencies@, before_removal@.dependencies@, node, kind, number, read as int, write as int); }
+            kernel_proof! { port_deps_apply_specs::compact_step(self.dependencies@, before_removal@.dependencies@, node, kind, number, read as int, write as int); }
             if d.node != node || d.target.kind != kind || d.target.number != number {
                 self.dependencies[write] = d;
                 write += 1;
             }
             read += 1;
         } }
+        kernel_proof! { port_deps_apply_specs::compact_finish(self.dependencies@, before_removal@.dependencies@, node, kind, number, read as int, write as int); }
         self.dependencies.truncate(write);
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
         self.nodes[i].credit.withheld =
             !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
-        kernel_proof! { reveal(port_deps_apply_specs::removed); reveal(port_deps_specs::unchanged); reveal(dependency_frame); }
+        kernel_proof! {
+            assert(dependency_frame(before_removal@, *self, i as int)) by { reveal(dependency_frame); }
+            port_deps_apply_specs::removal_result(before_removal@, *self, i as int, kind, number);
+        }
     }
     }
 

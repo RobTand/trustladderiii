@@ -101,19 +101,58 @@ pub(super) proof fn compact_copy(edges: Seq<Dependency>, original: Seq<Dependenc
     requires 0 <= write <= read < edges.len(), edges.len() == original.len(),
         edges.subrange(0, write) == kept(original, node, kind, number, read as nat),
         forall|k: int| read <= k < edges.len() ==> edges[k] == original[k],
-    ensures ({ let d = edges[read];
-        let keep = d.node != node || d.target.kind != kind || d.target.number != number;
-        let next = if keep { edges.update(write, d) } else { edges };
-        let count = write + if keep { 1int } else { 0int };
-        next.subrange(0, count) == kept(original, node, kind, number, (read + 1) as nat)
-            && forall|k: int| read < k < next.len() ==> next[k] == original[k]
-    }),
+    ensures (edges[read].node != node || edges[read].target.kind != kind || edges[read].target.number != number)
+        ==> edges.update(write, edges[read]).subrange(0, write + 1)
+            == kept(original, node, kind, number, (read + 1) as nat),
+        (edges[read].node == node && edges[read].target.kind == kind && edges[read].target.number == number)
+        ==> edges.subrange(0, write) == kept(original, node, kind, number, (read + 1) as nat),
 {
     kept_step(original, node, kind, number, read as nat);
     let d = edges[read];
     if d.node != node || d.target.kind != kind || d.target.number != number {
         assert(edges.update(write, d).subrange(0, write + 1) =~= edges.subrange(0, write).push(d));
     }
+}
+
+/// #806 stable removal: hide the retained prefix and unread suffix from the exec loop.
+#[verifier::opaque]
+pub(super) open spec fn compacted(edges: Seq<Dependency>, original: Seq<Dependency>, node: NodeId,
+    kind: PrerequisiteKind, number: u64, read: int, write: int) -> bool {
+    0 <= write <= read <= edges.len() && edges.len() == original.len()
+        && edges.subrange(0, write) == kept(original, node, kind, number, read as nat)
+        && forall|k: int| read <= k < edges.len() ==> edges[k] == original[k]
+}
+
+/// #806 stable removal: the real loop starts with an empty retained prefix.
+pub(super) proof fn compact_start(edges: Seq<Dependency>, node: NodeId,
+    kind: PrerequisiteKind, number: u64)
+    ensures compacted(edges, edges, node, kind, number, 0, 0),
+{
+    reveal(compacted); kept_empty(edges, node, kind, number);
+    assert(edges.subrange(0, 0) =~= Seq::<Dependency>::empty());
+}
+
+/// #806 stable removal: one real copy or skipped row advances the opaque loop frame.
+pub(super) proof fn compact_step(edges: Seq<Dependency>, original: Seq<Dependency>, node: NodeId,
+    kind: PrerequisiteKind, number: u64, read: int, write: int)
+    requires compacted(edges, original, node, kind, number, read, write), read < edges.len(),
+    ensures if edges[read].node != node || edges[read].target.kind != kind || edges[read].target.number != number {
+        compacted(edges.update(write, edges[read]), original, node, kind, number, read + 1, write + 1)
+    } else { compacted(edges, original, node, kind, number, read + 1, write) },
+{
+    reveal(compacted);
+    compact_copy(edges, original, node, kind, number, read, write);
+    assert forall|k: int| read < k < edges.len()
+        implies edges.update(write, edges[read])[k] == original[k] by {}
+}
+
+/// #806 stable removal: loop exhaustion exposes the exact prefix before real truncate.
+pub(super) proof fn compact_finish(edges: Seq<Dependency>, original: Seq<Dependency>, node: NodeId,
+    kind: PrerequisiteKind, number: u64, read: int, write: int)
+    requires compacted(edges, original, node, kind, number, read, write), read == edges.len(),
+    ensures edges.subrange(0, write) == kept(original, node, kind, number, original.len()),
+{
+    reveal(compacted);
 }
 
 /// #806 removal: exact stable table and wait/credit reconciliation, with no count bound.
@@ -130,4 +169,16 @@ pub(super) open spec fn removed(w: World, v: World, i: int,
                     && w.nodes@[i].credit.ready)
         }
 }
+
+/// #806 stable removal: fold the already-proved table, wait and node frames locally.
+pub(super) proof fn removal_result(w: World, v: World, i: int,
+    kind: PrerequisiteKind, number: u64)
+    requires 0 <= i < w.nodes@.len(), dependencies::dependency_frame(w, v, i),
+        w.nodes@[i].phase == Phase::Ingesting, !w.nodes@[i].planning_started,
+        v.dependencies@ == kept(w.dependencies@, NodeId(i as u64), kind, number, w.dependencies@.len()),
+        v.nodes@[i].waiting_prerequisite.is_none() == dependencies::prerequisites_delivered(v, NodeId(i as u64)),
+        v.nodes@[i].credit.withheld == (!dependencies::prerequisites_delivered(v, NodeId(i as u64))
+            && w.nodes@[i].credit.ready),
+    ensures removed(w, v, i, kind, number),
+{ reveal(removed); }
 }

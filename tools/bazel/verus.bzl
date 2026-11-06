@@ -719,6 +719,7 @@ def verus_proofs():
             "kernel::port_deps_apply_specs::prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_apply_specs::external_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_apply_specs::removed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_deps_apply_specs::compacted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_single::row_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_single::domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_single::dependencies_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -1059,6 +1060,10 @@ def verus_proofs():
             "port_deps_s2_removal_cover": ("kernel::port_deps_remove#removal_cover", 1),
             "port_deps_s2_registration_world": ("kernel::port_deps_apply_witness#registration_world", 1),
             "port_deps_s2_registration_cover": ("kernel::port_deps_apply_witness#registration_cover", 1),
+            "port_deps_s2_compact_start": ("kernel::port_deps_apply_specs#compact_start", 1),
+            "port_deps_s2_compact_step": ("kernel::port_deps_apply_specs#compact_step", 1),
+            "port_deps_s2_compact_finish": ("kernel::port_deps_apply_specs#compact_finish", 1),
+            "port_deps_s2_removal_result": ("kernel::port_deps_apply_specs#removal_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
