@@ -12,6 +12,13 @@ pub trait Preparation {
     fn capacity(&self, delivery: &Delivery) -> Result<(backend::Reservation, backend::Placement)>;
 }
 
+/// Worker-owned wait routing composes with daytime execution through the same backend.
+/// Implementations must bind subscriptions to the exact worker attempt and checkout.
+pub trait WorkerWaits {
+    fn watch_wait(&mut self, delivery: &Delivery, wait: Option<&tl3_store::ExternalWait>) -> Result<()>;
+    fn wait_record(&mut self, key: &str, checkout: &Path) -> Result<crate::executor::WaitRecord>;
+}
+
 pub struct PreparedCheck {
     pub request: backend::Request,
     pub run: CheckRun,
@@ -167,6 +174,7 @@ impl Shared {
 pub struct Adapter {
     shared: Arc<Shared>,
     preparation: Box<dyn Preparation>,
+    worker_waits: Option<Box<dyn WorkerWaits>>,
     handle: backend_watch::Handle,
     source: Option<backend_watch::Source>,
 }
@@ -182,7 +190,11 @@ impl Adapter {
         let finishing = shared.clone();
         let (handle, source) = backend_watch::Source::new(shared.backend.clone(), recovered,
             Arc::new(move |owner, observation| finishing.observe(owner, observation)));
-        Ok(Self { shared, preparation: Box::new(preparation), handle, source: Some(source) })
+        Ok(Self { shared, preparation: Box::new(preparation), worker_waits: None, handle, source: Some(source) })
+    }
+    pub fn with_worker_waits(mut self, waits: impl WorkerWaits + 'static) -> Self {
+        self.worker_waits = Some(Box::new(waits));
+        self
     }
     pub fn source(&mut self) -> Result<backend_watch::Source> {
         self.source.take().ok_or(Error::Invalid("check source already taken"))
@@ -194,6 +206,17 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn watch_wait(&mut self, delivery: &Delivery, wait: Option<&tl3_store::ExternalWait>) -> Result<()> {
+        match &mut self.worker_waits {
+            Some(waits) => waits.watch_wait(delivery, wait),
+            None if wait.is_none() => Ok(()),
+            None => Err(Error::Invalid("Flux worker wait routing is not registered")),
+        }
+    }
+    fn wait_record(&mut self, key: &str, checkout: &Path) -> Result<crate::executor::WaitRecord> {
+        self.worker_waits.as_mut().ok_or(Error::Invalid("Flux worker wait routing is not registered"))?
+            .wait_record(key, checkout)
+    }
     fn contract_evidence(&mut self, delivery: &Delivery) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
         use crate::dispatch_liveness::decision::ContractEvidence;
         Ok(match self.shared.transaction(|| self.shared.load(&correlation(delivery)))? {
