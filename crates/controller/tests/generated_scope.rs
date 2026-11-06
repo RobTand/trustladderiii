@@ -204,8 +204,7 @@ impl Fixture {
             .pending_effects
             .iter()
             .filter_map(|e| serde_json::from_value::<Delivery>(e.payload.clone()).ok())
-            .filter(|d| d.node() == NodeId(index as u64))
-            .last()
+            .rfind(|d| d.node() == NodeId(index as u64))
             .expect("kernel delivery")
     }
 }
