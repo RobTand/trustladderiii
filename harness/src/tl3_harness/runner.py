@@ -730,7 +730,7 @@ def main():
             reporter.pytest_sessionfinish(0)
             return 0
         worker_plugin = []
-        if declared_symptom is not None:
+        if declared_symptom is not None or proof_subjects:
             harness = Path(__file__).resolve().parent
             sys.path.insert(0, str(harness.parent))
             # Pytest owns the short plugin name "runner". Use the mounted package's name.
