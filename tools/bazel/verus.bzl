@@ -636,6 +636,7 @@ def verus_proofs():
             "kernel::port_review_reply::transition": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_reply::transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_reply::reply_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_gate::gate_slot_count": "Logical recursive count; termination and scan use are checked with every selected gate proof, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
