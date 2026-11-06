@@ -1294,6 +1294,60 @@ exit "$status"
         ));
     }
 
+    /// #817 review 2 (Flux / M1): pbd writes the v1 claim lease once at claim
+    /// and never renews it, and writes no heartbeat stamps. A queue that is not
+    /// the production PrismaBuild queue gives no lease verdict, so a declared
+    /// wait on a long Flux action stays alive however old its lease is.
+    #[test]
+    fn flux_queue_lease_written_once_keeps_wait_alive() {
+        let f = Repo::new();
+        let queue = f.root.path().join("pbflux-m1").join("pb-queue");
+        for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
+            fs::create_dir_all(queue.join(state)).unwrap();
+        }
+        let key = "a".repeat(64);
+        fs::write(
+            queue.join("claimed").join(format!("{key}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema":"prismaquant.prismabuild.pool_item.v1", "action_key":key,
+                "published_unix":100,"attempt_history":[],"checkout_snapshot":{"parent":f.head}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        fs::write(
+            queue.join("claimed").join(format!("{key}.lease")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": key,
+                "heartbeat_unix": now - 3_600.0, "owner": "pbd:1:flux", "host": "dl380g10"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let client = tl3_prismabuild::PrismaBuild::new(tl3_prismabuild::Options {
+            queue_root: queue,
+            bell_url: "http://127.0.0.1:1/".into(),
+            tool: tl3_prismabuild::Tool {
+                program: "false".into(),
+                args: vec![],
+            },
+        })
+        .unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let record = read_wait(&client, runtime, &key, &f.path);
+        assert!(
+            matches!(record, Ok(crate::executor::WaitRecord::Alive)),
+            "a lease written once in a non-production queue ended the wait: {:?}",
+            record
+                .as_ref()
+                .map(|r| matches!(r, crate::executor::WaitRecord::Alive))
+        );
+    }
+
     #[test]
     fn hostile_read_wait() {
         crate::git_tests::hostile(
