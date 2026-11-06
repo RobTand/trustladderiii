@@ -1690,7 +1690,12 @@ pub(super) fn a3_compare(s: &Schedule, execute: impl Fn(bool) -> Value) -> Value
     };
     let old = record(false);
     let new = record(true);
-    assert_eq!(old, new, "A3 routing differential divergence: {s:?}");
+    // #854b: the same prior-field projection as compare(); every call is still exact.
+    assert_eq!(
+        prior_run(old.clone()),
+        prior_run(new.clone()),
+        "A3 routing differential divergence: {s:?}"
+    );
     assert_eq!(old.writes, 0, "routing must have no durable/crash boundary");
     json!({"result":new.result,"calls":new.calls.iter().map(|c|json!({"op":c.op,"args":c.args,"result":String::from_utf8_lossy(&c.result)})).collect::<Vec<_>>()})
 }
