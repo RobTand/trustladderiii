@@ -880,6 +880,7 @@ def verus_proofs():
             "review_retry_room": ("kernel::retries#out_of_room", 1),
             "review_retry_plan": ("kernel::retries#plan_retry", 1),
             "review_retry_recheck": ("kernel::retries#recheck", 1),
+            "review_output_notice_append": ("kernel::port_review_output#notice_append", 1),
 
             "port_failfast_diversion": ("kernel::port_failfast_diversion#verify_stop", 1),
             "port_failfast_stop_diversion": ("kernel::port_failfast_stop#diversion", 1),

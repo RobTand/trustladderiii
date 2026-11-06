@@ -113,11 +113,23 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures (old(w).fail_fast ==> final(w).nodes@[i as int]
+            == port_review_retry::review_stopped(old(w).nodes@[i as int], step)
+            && final(w).next_question == old(w).next_question
+            && final(out).len == old(out).len),
+        (!old(w).fail_fast ==> final(w).nodes@[i as int].attempt > old(w).nodes@[i as int].attempt
+            || final(w).nodes@[i as int].phase is Planning
+            || match final(w).nodes@[i as int].question {
+                Some(q) => q.kind == QKind::CantMeet || q.kind == QKind::OutOfCredit,
+                None => false,
+            }),
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { minimum_outputs = *out }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
@@ -147,6 +159,9 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
             m.plan_retries = 0;
             set_phase(m, Phase::Planning { must_split: false });
             notice(out, i, Notice::Note(NoteKind::Replanned));
+            kernel_proof! {
+                port_review_output::notice_append(minimum_outputs@, *out, i, Notice::Note(NoteKind::Replanned));
+            }
         } else {
             ask_rob(
                 w,
@@ -170,7 +185,8 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int] == port_review_retry::room(old(w).nodes@[i as int],
+    ensures (old(w).fail_fast ==> final(out).len == old(out).len),
+        final(w).nodes@[i as int] == port_review_retry::room(old(w).nodes@[i as int],
             old(w).fail_fast, old(w).next_question, step).0,
         final(w).next_question == port_review_retry::room(old(w).nodes@[i as int],
             old(w).fail_fast, old(w).next_question, step).1,
