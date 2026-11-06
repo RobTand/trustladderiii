@@ -17,6 +17,7 @@ pub struct Record {
     pub terminal: Option<Terminal>,
 }
 
+#[derive(Clone)]
 pub struct Journal {
     root: PathBuf,
 }

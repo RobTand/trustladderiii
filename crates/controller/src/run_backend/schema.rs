@@ -1,6 +1,24 @@
-use schemars::schema_for;
-use super::LaunchContext;
+use schemars::{schema_for, JsonSchema};
+use super::*;
 
-pub fn launch_context() -> Result<String, serde_json::Error> {
+pub fn launch_context() -> std::result::Result<String, serde_json::Error> {
     serde_json::to_string_pretty(&schema_for!(LaunchContext)).map(|text| text + "\n")
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+struct WireSchema {
+    command: cli::Command,
+    frame: cli::Frame,
+    options: Options,
+    launch_context: LaunchContext,
+    report: RunnerReport,
+    input_manifest: InputManifest,
+    membership: Membership,
+    topology: TopologyMapping,
+    receipt: Receipt,
+}
+
+pub fn cli() -> std::result::Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&schema_for!(WireSchema)).map(|text| text + "\n")
 }

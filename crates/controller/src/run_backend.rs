@@ -50,6 +50,9 @@ pub fn token(value: &str) -> bool {
 pub fn hex(value: &str, length: usize) -> bool {
     value.len() == length && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
+pub fn generation(value: &str) -> bool {
+    token(value) || value.split_once('/').is_some_and(|(run, invocation)| token(run) && hex(invocation, 32))
+}
 pub fn f58(value: &str) -> bool {
     let rest = value.strip_prefix('f').or_else(|| value.strip_prefix('ƒ'));
     rest.is_some_and(|s| !s.is_empty() && s.len() <= 16
@@ -62,7 +65,7 @@ pub fn absolute(path: &std::path::Path) -> bool {
 
 impl BackendId {
     pub fn validate(&self) -> Result<()> {
-        if !token(&self.instance) || !f58(&self.job) {
+        if !generation(&self.instance) || !self.uri.starts_with("local:///") || self.uri.len() > 4096 || self.uri.chars().any(char::is_control) || !f58(&self.job) {
             return Err(BackendError::invalid("expected Flux instance generation and f58 job ID; PB keys are unsupported"));
         }
         Ok(())
@@ -323,7 +326,20 @@ pub struct RunnerReport {
     pub cases: Vec<CaseFact>,
     pub payload: Option<BlobRef>,
     pub runtime_binding: Option<RuntimeBindingInput>,
+    pub cleanup: Option<BlobRef>,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InputManifest {
+    pub schema: String,
+    pub head: String,
+    pub tree: String,
+    pub files: Vec<InputFile>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InputFile { pub path: PathBuf, pub sha256: String }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
