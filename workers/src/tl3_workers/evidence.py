@@ -91,7 +91,11 @@ _ROUTE_CLAUSES = {
 }
 
 
-def _route_dimension(dimension, value, *, context=False, categories=None):
+def _route_dimension(dimension, value, *, context=False, categories=None, unknown_clauses=()):
+    keywords = {word.rstrip('s') for word in re.findall(r'[a-z]+', value.lower())}
+    if any(keywords & {word.rstrip('s') for word in re.findall(r'[a-z]+', clause)}
+           for clause in unknown_clauses):
+        return False
     return any(re.fullmatch(pattern, value.lower()) for name, category in _ROUTE_CLAUSES.items()
                if categories is None or name in categories
                for pattern in (*category.get(dimension, ()),
@@ -413,7 +417,11 @@ def preflight(inputs, reply, *, planning=False, objections=None):
                               f'(removed proof encoding {method}; source obligation retained).', dict(requirement=requirement, method=method)))
         # A familiar field name alone cannot turn an unknown substantive duty into
         # reporting context. Only categories present in complete known clauses apply.
-        administrative = set().union(*(part for part in _route_categories(requirement['requirement']) if part))
+        clauses = [clause.strip() for clause in re.split(r'[.;]\s*', requirement['requirement'].lower())
+                   if clause.strip()]
+        classified = _route_categories(requirement['requirement'])
+        administrative = set().union(*(part for part in classified if part))
+        unknown = [clause for clause, category in zip(clauses, classified) if not category]
         candidates = []
         for capability in inputs['tool_capabilities']:
             missing = [f'{key}={requirement[key]}' for key in ('tool', 'executor')
@@ -424,7 +432,7 @@ def preflight(inputs, reply, *, planning=False, objections=None):
                 missing.extend(f'{key}={value}' for value in requirement[key]
                                if value not in capability[key]
                                and not (not requirement['methods'] and not requirement['protected_files']
-                                        and _route_dimension(key, value, categories=administrative)))
+                                        and _route_dimension(key, value, categories=administrative, unknown_clauses=unknown)))
             candidates.append(missing)
         if not candidates or all(candidates):
             missing = min(candidates, key=len) if candidates else [
