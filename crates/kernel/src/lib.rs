@@ -81,6 +81,9 @@ mod port_failfast_pair;
 #[path = "../verus/port_failfast_admission.rs"]
 mod port_failfast_admission;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_funding.rs"]
+mod port_failfast_funding;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }

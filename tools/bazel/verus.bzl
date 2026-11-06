@@ -885,8 +885,13 @@ def verus_proofs():
             "port_failfast_frame": ("kernel::port_failfast_frame#completed_stop", 1),
             "port_failfast_plan_stop": ("kernel::port_failfast_diversion#verify_plan_stop", 1),
             "port_failfast_pair": ("kernel::port_failfast_pair#diversion", 1),
-            "port_failfast_admission": ("kernel::port_failfast_admission", 1),
+            "port_failfast_admission": ("kernel::port_failfast_admission#inactive_pair", 1),
             "port_failfast_funding": ("kernel::port_failfast_pair#funding", 1),
+            "port_failfast_question_frame": ("kernel::port_failfast_funding#question_frame", 1),
+            "port_failfast_extension_node": ("kernel::port_failfast_funding#extension_node", 1),
+            "port_failfast_extension_world": ("kernel::port_failfast_funding#extension_world", 1),
+            "port_failfast_failure_node": ("kernel::port_failfast_admission#failure_node", 1),
+            "port_failfast_failure_world": ("kernel::port_failfast_admission#failure_world", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

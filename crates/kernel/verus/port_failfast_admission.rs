@@ -37,4 +37,57 @@ pub(super) proof fn inactive_pair(before: World, off: World, on: World,
         == port_review_reply::accepted_reply(World { fail_fast: true, ..before }, before.nodes@[0], reply));
     assert(off.nodes@ =~= on.nodes@);
 }
+
+/// Q54 / #440 rejected maker-file replies: infrastructure recovery preserves
+/// every complete node rule and never changes the work-retry ladder or credit.
+pub(super) proof fn failure_node(w: World, n: Node)
+    requires retirement::node_rules(w, n), node_headroom(n),
+        n.phase == Phase::Making || n.phase is Planning,
+        current_item(n) == Some(Item::Await),
+    ensures retirement::node_rules(w, port_review_retry::failed_run(n)),
+        port_review_retry::failed_run(n).credit == n.credit,
+        port_review_retry::failed_run(n).review_stop.is_none(),
+        port_review_retry::failed_run(n).attempt == n.attempt,
+        port_review_retry::failed_run(n).replanned == n.replanned,
+        port_review_retry::failed_run(n).question.is_none(),
+        port_review_retry::failed_run(n).proposed == n.proposed,
+        port_review_retry::failed_run(n).adopted == n.adopted,
+        port_review_retry::failed_run(n).next_seq == n.next_seq,
+{
+    reveal(retirement::node_rules);
+    reveal(port_review_retry::failed_run);
+    reveal(retirement::incident);
+}
+
+/// Q54 rejected maker-file reply: compose the real failed-run result with
+/// retirement's complete world predicate and its unchanged-storage frames.
+pub(super) proof fn failure_world(before: World, after: World)
+    requires retirement::domain(before), retirement::accepted(before),
+        node_headroom(before.nodes@[0]),
+        before.nodes@[0].phase == Phase::Making || before.nodes@[0].phase is Planning,
+        current_item(before.nodes@[0]) == Some(Item::Await),
+        after.nodes@.len() == 2, after.nodes@[1] == before.nodes@[1],
+        after.nodes@[0] == port_review_retry::failed_run(before.nodes@[0]),
+        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@, after.pool_capacity == before.pool_capacity,
+        after.next_ticket == before.next_ticket, after.next_question == before.next_question,
+    ensures retirement::domain(after), retirement::accepted(after),
+        after.nodes@[0].credit == before.nodes@[0].credit,
+        after.nodes@[0].review_stop.is_none(), after.nodes@[0].question.is_none(),
+        after.nodes@[0].attempt == before.nodes@[0].attempt,
+        after.nodes@[0].replanned == before.nodes@[0].replanned,
+        after.nodes@[0].proposed == before.nodes@[0].proposed,
+        after.nodes@[0].adopted == before.nodes@[0].adopted,
+        after.nodes@[0].next_seq == before.nodes@[0].next_seq,
+{
+    reveal(retirement::accepted);
+    failure_node(before, before.nodes@[0]);
+    retirement::node_frame(before, after, after.nodes@[0]);
+    retirement::node_frame(before, after, after.nodes@[1]);
+    reveal(port_review_retry::failed_run);
+    reveal(retirement::incident);
+    reveal(retirement::node_rules);
+    footprint::storage_frame(before, after, before.nodes@[0].footprint, before.nodes@[1].footprint);
+}
+
 }
