@@ -1,6 +1,7 @@
 """Host-side runtime I/O for the pytest edge; Rust owns the launch contract."""
 import json
 import os
+import stat
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -149,6 +150,7 @@ def journal_path(path):
 
 
 def command(tree, scratch):
+    check_rootless_directory(os.environ)
     context = launch_context()
     configured = context['runtime']
     return podman_command(tree, configured['image'], scratch, context['native_threads'],
@@ -157,6 +159,7 @@ def command(tree, scratch):
 
 
 def prepare_scratch():
+    check_rootless_directory(os.environ)
     root = temporary_root()
     root.mkdir(mode=0o700, exist_ok=True)
     # private_directory checks current ownership/mode before making any working leaf.
@@ -224,3 +227,14 @@ def processes_stopped(handles, timeout):
             for key, _ in ready.select(remaining):
                 ready.unregister(key.fd)
     return True
+
+
+def check_rootless_directory(environment):
+    if os.geteuid() == 0:
+        raise RuntimeError('Flux test containers require rootless Podman')
+    if not environment.get('HOME') or not environment.get('XDG_RUNTIME_DIR'):
+        raise RuntimeError('rootless Podman requires explicitly provisioned HOME and XDG_RUNTIME_DIR')
+    info = Path(environment['XDG_RUNTIME_DIR']).lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_mode & 0o777 != 0o700):
+        raise RuntimeError('rootless runtime directory must be owned by the job UID with mode 0700')
