@@ -651,6 +651,7 @@ tl3_py_test(
 tl3_py_test(
     name = "test_planner_protocol",
     srcs = ["test_planner_protocol.py"],
+    data = ["//crates/plan-check:tests/fixtures/p2a.json"],  # keep: replay the live Python oracles read-only
     deps = [
         ":conftest",
         ":planner_fixtures",

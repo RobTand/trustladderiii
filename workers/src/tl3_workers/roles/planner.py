@@ -25,7 +25,7 @@ from tl3_harness.trees import git, test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
-from tl3_workers.turns import InvalidReply, Unrepairable
+from tl3_workers.turns import InvalidReply, REPAIR_MESSAGE_BYTES, Unrepairable
 from tl3_workers.rules import Allowed as WorkerAllowed, CantMeet, Edit, Name, Rule, at, evaluate, register
 
 
@@ -40,10 +40,46 @@ def strict_enum(validator, expected, value, schema):
         yield ValidationError('value is outside the captured JSON alternatives')
 
 
-StrictValidator = extend(Draft202012Validator, {'const': strict_constant, 'enum': strict_enum})
+def memory_flags(validator, facts, value, schema):
+    """Ordered flags with named deletion and exact supplied-passage replacement."""
+    if not isinstance(value, list):
+        yield ValidationError('memory flags must be an array')
+        return
+    position = 0
+    for index, old in enumerate(facts['before']):
+        if position < len(value) and MembershipAllowed('const', old).accepts(value[position]):
+            position += 1
+            continue
+        if index in facts['claims'] and position < len(value) and isinstance(value[position], dict):
+            new = value[position]
+            claim = new.get('claim')
+            if (MembershipAllowed('const', {k: v for k, v in old.items() if k != 'claim'}).accepts(
+                    {k: v for k, v in new.items() if k != 'claim'})
+                    and isinstance(claim, str) and claim and claim in facts['passages'].get(old['id'], '')):
+                position += 1
+                continue
+        if old['id'] not in facts['drop'] and index not in facts['claims']:
+            yield ValidationError('only named flags or their exact supplied claims may change')
+            return
+    if position != len(value):
+        yield ValidationError('flags must retain their captured order and frozen fields')
+
+
+StrictValidator = extend(Draft202012Validator, {
+    'const': strict_constant, 'enum': strict_enum, 'x-memory-flags': memory_flags})
 
 
 class Allowed(WorkerAllowed):
+    def render(self):
+        def compact(value):
+            if isinstance(value, dict):
+                return {key: compact(child) for key, child in value.items()}
+            if isinstance(value, list):
+                preview = [compact(child) for child in value[:8]]
+                return preview + ([f'and {len(value) - 8} more (total {len(value)})'] if len(value) > 8 else [])
+            return value
+        return f'{self.keyword} {json.dumps(compact(self.value), ensure_ascii=False, sort_keys=True)}'
+
     def accepts(self, value):
         constraint = self.value if self.keyword == 'schema' else {self.keyword: self.value}
         return StrictValidator(constraint).is_valid(value)
@@ -421,7 +457,8 @@ def deduplicate(f):
 
 
 def drop_edits(f):
-    nodes = [f['items'].get('node')] if 'node' in f['items'] else f['items'].get('nodes', [])
+    nodes = unique(node for item in f['diagnostics'] if inventory()[item.rule]['footprint'] == 'EDIT_DROP'
+                   for node in ([item.items['node']] if 'node' in item.items else item.items.get('nodes', [])))
     covered = {node for check in f['draft'].get('checks', []) if check['kind'] == 'demonstrating' for node in check['node_ids']}
     if not set(nodes) <= covered:
         return cannot_repair(f)
@@ -449,11 +486,20 @@ def edit_coverage(f):
                     repair.allowed.value if repair.allowed.keyword == 'schema' else {repair.allowed.keyword: repair.allowed.value})
     for index, check in enumerate(draft.get('checks', [])):
         if check['kind'] == 'demonstrating':
-            changes[f'/checks/{index}/node_ids'] = append_constraint(check['node_ids'], nodes)
+            pointer = f'/checks/{index}/node_ids'
+            slots = [changes.get(pointer + f'/{slot}', {'const': node}) for slot, node in enumerate(check['node_ids'])]
+            if any(pointer + f'/{slot}' in changes for slot in range(len(slots))):
+                changes[pointer] = {'type': 'array', 'prefixItems': slots, 'minItems': len(slots),
+                                    'maxItems': len(slots) + len(nodes), 'items': {'enum': nodes}, 'uniqueItems': True}
+            else:
+                retained = changes.get(pointer, {}).get('const', check['node_ids'])
+                changes[pointer] = append_constraint(retained, nodes)
 
     def bounded(value, pointer=''):
         if pointer in changes:
             return changes[pointer]
+        if pointer != '/checks' and not any(path.startswith(pointer + '/') for path in changes):
+            return {'const': value}
         if isinstance(value, dict):
             properties = {key: bounded(child, pointer + '/' + key) for key, child in value.items()}
             prefix = pointer + '/'
@@ -490,26 +536,27 @@ def edit_coverage(f):
 
 
 def frozen_nodes(f):
-    node = f['items'].get('node')
+    nodes = {item.items.get('node') for item in f['diagnostics'] if inventory()[item.rule]['footprint'] == 'FROZEN'}
     repairs = []
     for index, check in enumerate(f['draft'].get('checks', [])):
-        remaining = [value for value in check['node_ids'] if value != node]
+        remaining = [value for value in check['node_ids'] if value not in nodes]
         if check['kind'] in {'regression', 'behavior-preserving'} and remaining and remaining != check['node_ids']:
             repairs.append(edit(f, f'/checks/{index}/node_ids', fixed(remaining)))
     return repairs or cannot_repair(f)
 
 
 def memory(f):
-    draft, item = f['draft'], f['items']
+    draft = f['draft']
+    local = [(inventory()[item.rule]['footprint'], item.items) for item in f['diagnostics']]
     if f['footprint'] == 'MEMORY_DROP':
-        return [edit(f, '/memory_ids', fixed([value for value in draft.get('memory_ids', []) if value not in item.get('ids', [])]))]
-    flags = draft.get('memory_flags', [])
-    if f['footprint'] == 'FLAG_DROP':
-        result = [flag for flag in flags if flag['id'] not in item.get('ids', [])]
-    else:
-        # Dropping the named flag is always bounded and avoids inventing a passage.
-        result = [flag for index, flag in enumerate(flags) if index != item.get('flag')]
-    return [edit(f, '/memory_flags', fixed(result))]
+        removed = {value for operation, item in local if operation == 'MEMORY_DROP' for value in item.get('ids', [])}
+        return [edit(f, '/memory_ids', fixed([value for value in draft.get('memory_ids', []) if value not in removed]))]
+    constraint = {'x-memory-flags': {
+        'before': draft.get('memory_flags', []),
+        'drop': unique(value for operation, item in local if operation == 'FLAG_DROP' for value in item.get('ids', [])),
+        'claims': unique(item['flag'] for operation, item in local if operation == 'FLAG_CLAIM'),
+        'passages': {item['id']: item['content'] for item in f['inputs'].get('memories', [])}}}
+    return [edit(f, '/memory_flags', Allowed('schema', constraint))]
 
 
 def sanitize(f):
@@ -525,9 +572,10 @@ def sanitize(f):
     else:
         field = 'forcing'
         result = deepcopy(check.get(field, {}))
-        if f['footprint'] == 'FORCING_KEYS':
+        local = {inventory()[item.rule]['footprint'] for item in f['diagnostics'] if item.items.get('check') == index}
+        if 'FORCING_KEYS' in local:
             result = {key: value for key, value in result.items() if key in {'symptom', 'environment', 'patches'}}
-        else:
+        if 'PATCH_MODE' in local:
             for patch in result.get('patches', []):
                 modes = patch.keys() & {'value', 'returns', 'raises', 'delay_seconds'}
                 if len(modes) == 1:
@@ -672,7 +720,8 @@ class PlanConsistencyError(ValueError):
             'reply': raw, 'draft': raw, 'completed': completed, 'diagnostics': diagnostics,
             'inputs': inputs, 'base_nodes': base_nodes, 'base_sources': base_sources or {}})
         self.repair_text = render_all(self.rule_violations, role='planner')
-        self.unavailable_reason = None if inputs.get('repair_plan_consistency', False) else 'disabled'
+        self.unavailable_reason = ('disabled' if not inputs.get('repair_plan_consistency', False) else
+                                   'message_limit' if len(self.repair_text.encode()) > REPAIR_MESSAGE_BYTES else None)
         self.contract = self
         super().__init__(self.repair_text)
 
@@ -681,7 +730,13 @@ class PlanConsistencyError(ValueError):
 
         # An honest terminal reply is available after any bounded edit. CantMeet
         # rows select that same registered terminal predicate in permits.
-        if PLANNER.predicate(candidate) or permits(self.rule_violations, self.raw_draft, candidate, role='planner'):
+        if PLANNER.predicate(candidate):
+            original = self.raw_draft
+            paths = original.get('files', [path for piece in original.get('pieces', []) for path in piece['files']])
+            if set(candidate.get('files', [])) - set(paths):
+                return [named('guard.fields_changed', 'Terminal correction adds files outside the draft footprint.', {'paths': ['/files']})]
+            return []
+        if permits(self.rule_violations, self.raw_draft, candidate, role='planner'):
             if candidate.get('kind') == 'split' and self.raw_draft.get('kind') == 'leaf':
                 original = self.raw_draft
                 self.manifest = {
