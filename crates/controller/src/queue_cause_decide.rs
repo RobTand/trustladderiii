@@ -52,7 +52,7 @@ pub enum HoldAction {
         (!witness && expired) ==> (out == HoldAction::Incident),
 ))]
 pub fn hold(witness: bool, spent: bool, expired: bool) -> HoldAction {
-    if witness && !spent {
+    if witness {
         HoldAction::Requeue
     } else if expired {
         HoldAction::Incident
