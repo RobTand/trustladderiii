@@ -6,6 +6,7 @@ struct DirectState {
     successes: usize,
     status: Option<u16>,
     lost_reply: bool,
+    fail_read_after_put: bool,
     moved: bool,
     already_merged: bool,
     reads: usize,
@@ -25,6 +26,7 @@ impl Respond for DirectApi {
         if method == "GET" && path == "/repos/owner/sandbox/pulls/100" {
             let mut direct = self.direct.lock().unwrap();
             direct.reads += 1;
+            if direct.fail_read_after_put && !direct.puts.is_empty() { return ResponseTemplate::new(503); }
             let mut state = self.base.0.lock().unwrap();
             if direct.moved { state.pull["head"]["sha"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"); }
             if direct.already_merged { state.merged(false); }
@@ -722,4 +724,35 @@ fn r1_unknown_merge_history_is_not_relabelled_as_direct() {
     let mut tx = reader.transaction().unwrap();
     let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
     assert!(!rows.requests[0].direct_delivery, "config alone cannot attribute an old merge to direct delivery");
+}
+
+#[test]
+fn r2_b_webhook_merge_retires_without_stale_history_commit() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_r2_terminal_webhook");
+    let fixture = DirectFixture::new();
+    {
+        let mut direct = fixture.direct.lock().unwrap();
+        direct.lost_reply = true;
+        direct.fail_read_after_put = true;
+    }
+    let (mut controller, _) = fixture.start(&settings);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    assert!(!controller.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history"));
+    let mut body = webhook_fixture();
+    body["action"] = json!("closed");
+    body["repository"]["owner"]["login"] = json!("owner");
+    body["repository"]["name"] = json!("sandbox");
+    body["installation"] = json!({"id":3});
+    body["pull_request"] = fixture.api.state.lock().unwrap().pull.clone();
+    assert!(body["pull_request"]["merged_at"].is_string());
+    assert!(Store::open(&settings).unwrap().receive_ingress("github-webhook", "terminal-merged", "pull_request", &serde_json::to_vec(&body).unwrap()).unwrap());
+    drain(&mut controller);
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+    let snapshot = controller.snapshot().unwrap();
+    assert!(snapshot.rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
+    assert!(!snapshot.rows.iter().any(|r|r.table == "retiring_effects"));
+    assert!(!std::fs::read_dir(fixture.root.path().join("direct")).unwrap().any(|e|e.unwrap().path().extension().is_some_and(|ext|ext=="intent"||ext=="merged")));
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
