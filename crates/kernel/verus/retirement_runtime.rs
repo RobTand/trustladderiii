@@ -24,14 +24,16 @@ pub(super) proof fn retry_noop(n: Node, fact: Fact, fast: bool, id: u64)
         _ => false,
     },
     ensures retirement_retry::fact_result(n, fact, fast, id) == (n, false),
-{ reveal(retirement_retry::fact_result); }
+        match fact { Fact::CiFailed { infra } => ci_post(n, n, infra, fast, id, id), _ => true },
+{ reveal(retirement_retry::fact_result); reveal(ci_post); }
 /// Q50 / #806: infrastructure forwarding does not unfold the paid retry ladder.
 pub(super) proof fn ci_infra(n: Node, fast: bool, id: u64)
     requires n.phase == Phase::Queued || (n.phase == Phase::Publishing
         && current_item(n) == Some(Item::Do(EffectKind::Enqueue))),
     ensures retirement_retry::fact_result(n, Fact::CiFailed { infra: true }, fast, id)
         == (retirement::fact_node(n, Fact::CiFailed { infra: true }), false),
-{ reveal(retirement_retry::fact_result); }
+        ci_post(n, retirement::fact_node(n, Fact::CiFailed { infra: true }), true, fast, id, id),
+{ reveal(retirement_retry::fact_result); reveal(ci_post); }
 /// Q50 / #806: cancellation precedes the actual failed-round call.
 #[verifier::opaque]
 pub(super) open spec fn ci_prepared(n: Node) -> Node {
@@ -49,7 +51,9 @@ pub(super) proof fn ci_retry(n: Node, fast: bool, id: u64, after: Node, next: u6
     ensures after == retirement_retry::fact_result(n, Fact::CiFailed { infra: false }, fast, id).0,
         next as int == id as int + if retirement_retry::fact_result(n,
             Fact::CiFailed { infra: false }, fast, id).1 { 1int } else { 0int },
+        ci_post(n, after, false, fast, id, next),
 {
+    reveal(ci_post);
     reveal(ci_prepared);
     retirement_retry_bridge::round(ci_prepared(n), fast, id, ReviewStop::CiFailed);
     reveal(retirement_retry::fact_result);
@@ -96,22 +100,6 @@ pub(super) open spec fn ci_post(n: Node, after: Node, infra: bool, fast: bool,
         else { (after, next) == port_review_retry::round(ci_prepared(n), fast, id, ReviewStop::CiFailed) }
     } else { after == n && next == id }
 }
-/// Q50 / Q54 / #806: expose the shared tuple from the complete retirement result.
-pub(super) proof fn ci_forward(n: Node, after: Node, infra: bool, fast: bool, id: u64, next: u64)
-    requires id < u64::MAX,
-        after == retirement_retry::fact_result(n, Fact::CiFailed { infra }, fast, id).0,
-        next as int == id as int + if retirement_retry::fact_result(n,
-            Fact::CiFailed { infra }, fast, id).1 { 1int } else { 0int },
-    ensures ci_post(n, after, infra, fast, id, next),
-{
-    reveal(ci_post); reveal(retirement_retry::fact_result);
-    if !infra && (n.phase == Phase::Queued || (n.phase == Phase::Publishing
-        && current_item(n) == Some(Item::Do(EffectKind::Enqueue)))) {
-        reveal(ci_prepared);
-    retirement_retry_bridge::round(ci_prepared(n), fast, id, ReviewStop::CiFailed);
-    }
-}
-
 /// Q50 / #806: cancellation preserves the source agenda and every callee premise.
 pub(super) proof fn ci_inputs(n: Node)
     ensures current_item(ci_prepared(n)) == current_item(n),

@@ -403,8 +403,6 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             }
             retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
             reveal(retirement::fact_frame);
-            retirement_runtime::ci_forward(ci_world@.nodes@[i as int], *m, infra,
-                ci_world@.fail_fast, ci_world@.next_question, w.next_question);
         }
 
         return;
@@ -429,8 +427,6 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
             retirement_runtime::ci_retry(ci_world@.nodes@[i as int], ci_world@.fail_fast,
                 ci_world@.next_question, w.nodes@[i as int], w.next_question);
-            retirement_runtime::ci_forward(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
-                ci_world@.fail_fast, ci_world@.next_question, w.next_question);
         }
 
         return;
@@ -442,8 +438,6 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     kernel_proof! {
         retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
         retirement_runtime::ci_infra(ci_world@.nodes@[i as int], ci_world@.fail_fast, ci_world@.next_question);
-        retirement_runtime::ci_forward(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
-            ci_world@.fail_fast, ci_world@.next_question, w.next_question);
     }
 
 }
