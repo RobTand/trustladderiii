@@ -26,7 +26,6 @@ reports/findings, every optional field, all gate outcomes, errors, bounds and
 Unicode. Persisted regressions live beside the test. A read tape advances on
 every read, never by key, so caching/duplicating a read changes the trace.
 
-Two pre-existing behaviors remain: a nonempty fallback adoption plan contains
-goal_ids from maker_inputs and fails Check's deny_unknown_fields decode; a
-matching CheckPlan with a replacement reason and malformed findings panics.
-Both have deterministic shell witnesses, and are not repaired by this extraction.
+One unrelated pre-existing behavior remains: a nonempty fallback adoption plan contains
+goal_ids from maker_inputs and fails Check's deny_unknown_fields decode.
+The fallback retains its deterministic shell witness. #838 separately checks the old malformed-findings panic and the new boundary error; only structurally valid records participate in equality schedules. The new property runs 256 changing-read schedules with every write crash point and compares serialized record bytes.

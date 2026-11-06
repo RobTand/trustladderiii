@@ -323,7 +323,9 @@ def verus_proofs():
             "claim_decision": ("worker_events#claim_decision", 1),
             "refresh_gate": ("worker_events#refresh_gate", 1),
             "end_decision": ("worker_events#end_decision", 1),
-            "witnesses": ("worker_events_witnesses", 4),
+            "witnesses": ("worker_events_witnesses", 5),
+            "quota_probe": ("worker_events#probe", 1),
+            "quota_reset": ("worker_events#announced", 1),
         }
         for name, (module, count) in worker_event_groups.items():
             verus_test(
