@@ -65,6 +65,8 @@ pub mod executor {
     use ::tl3_store;
     pub use tl3_controller::executor::{Delivery, Output};
     #[derive(Clone, Debug, Serialize, Deserialize)]
+    // The harness records real QueueFact values with the production call shape.
+    #[allow(clippy::large_enum_variant)]
     pub enum Observation {
         Queue(QueueFact),
         Kernel(tl3_kernel::Event),

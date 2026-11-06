@@ -354,7 +354,7 @@ pub(super) fn compare(s: &Schedule) -> Run {
         let Evidence::CiFailed { head, head_check, completed_at, details, .. } = &s.fact.evidence else { panic!("hold without failure") };
         assert!(!head_check && details.failed_tests.is_empty());
         assert_eq!(head, OLD_HEAD);
-        assert!(!s.snapshot.rows.iter().any(|row| row.table == "queue_facts" && row.value["evidence"]["CiFailed"]["infra"] == true && row.value["repository"] == json!(s.fact.repository) && row.value["number"] == s.fact.number && row.value["evidence"]["CiFailed"]["head"] == *head));
+        assert!(!s.snapshot.rows.iter().any(|row| row.table == "queue_facts" && row.value["evidence"]["CiFailed"]["infra"] == true && row.value["evidence"]["CiFailed"]["details"]["decision"] == "outside_change" && row.value["repository"] == json!(s.fact.repository) && row.value["number"] == s.fact.number && row.value["evidence"]["CiFailed"]["head"] == *head));
         let hold = put("queue_holds", format!("0:{head}"), json!({
             "repository":s.fact.repository,"number":s.fact.number,"node":0,
             "head":head,"identity":s.fact.identity(),
