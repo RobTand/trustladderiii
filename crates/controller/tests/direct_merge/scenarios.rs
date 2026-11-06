@@ -913,8 +913,11 @@ fn fake_and_production_merge_outcomes_have_identical_receipts() {
             drain(&mut controller);
         } else {
             api.state.lock().unwrap().merged(false);
+            api.state.lock().unwrap().checks = fixture("merged", "checks");
             catch_up(&settings, &api, &mut controller);
+            drain(&mut controller);
             catch_up(&settings, &api, &mut controller);
+            drain(&mut controller);
             // A late check still comes through the production queue adapter vocabulary.
             controller.observe("late-ci", Observation::Queue(adapters::mergify::QueueFact {
                 repository: bootstrap().repos[0].clone(), number: 100,
