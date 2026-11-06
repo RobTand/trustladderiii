@@ -513,6 +513,10 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
                 _generation, _reply, before_outputs@, *out);
         }
         kernel_proof! {
+            // #806 / #860: W2's exact failed run is #860's failed node in this domain.
+            retirement_retry_bridge::failed_node(before_reply@.nodes@[i as int]);
+            assert(port_t860_contracts::failed_post(before_reply@.nodes@[i as int], w.nodes@[i as int],
+                before_outputs@, *out)) by { reveal(port_t860_contracts::failed_post); }
             port_t860_link::rejected(before_reply@, *w, i as int, _generation, _reply, before_outputs@, *out);
         }
         kernel_proof! {
