@@ -212,3 +212,53 @@ pub fn issue_http(before: Issuer) -> Issuer {
         ..before
     }
 }
+
+/// lib.rs:1282/1287: approval history has a durable Sent before its outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistoryPath {
+    pub sent: State,
+    pub outcome: Action,
+}
+pub fn approval_history(
+    prior: bool,
+    predecessor: bool,
+    authorized: bool,
+    read: Read,
+) -> HistoryPath {
+    HistoryPath {
+        sent: State::Intended,
+        outcome: approval_dispatch(prior, predecessor, authorized, read),
+    }
+}
+
+/// lib.rs:1842-1875: kernel retries retire the old sequence atomically.
+pub fn consumed_completion(state: State, ack: Ack, kernel_effect: bool) -> State {
+    let _ = kernel_effect;
+    completion(state, ack).to
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grant {
+    None,
+    HumanClear,
+    RetryableReplacement,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Approval {
+    pub state: State,
+    pub grant: Grant,
+    pub lineage_safe: bool,
+    pub unresolved: bool,
+    pub incident_open: bool,
+    pub repair: bool,
+}
+pub fn clear_approval(before: Approval) -> Approval {
+    let _ = before;
+    before
+}
+pub fn send_approval(before: Approval) -> Approval {
+    Approval {
+        state: State::Sent,
+        ..before
+    }
+}

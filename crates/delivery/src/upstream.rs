@@ -162,3 +162,53 @@ pub fn never_lands(before: Upstream) -> Upstream {
         ..before
     }
 }
+
+/// Stable upstream object identity, separate from volatile list accounting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CopyState {
+    pub id: u64,
+    pub exists: bool,
+    pub conclusion: u64,
+    pub output: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepairKind {
+    Delete,
+    Patch,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RepairRequest {
+    pub target: u64,
+    pub kind: RepairKind,
+    pub conclusion: u64,
+    pub output: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RepairFlight {
+    pub request: RepairRequest,
+    pub issued: bool,
+    pub cursor: bool,
+}
+pub fn restart_repair(before: RepairFlight) -> RepairFlight {
+    RepairFlight {
+        issued: false,
+        cursor: false,
+        ..before
+    }
+}
+pub fn apply_repair(copy: CopyState, flight: RepairFlight) -> CopyState {
+    if !flight.issued || copy.id != flight.request.target {
+        return copy;
+    }
+    match flight.request.kind {
+        RepairKind::Delete => CopyState {
+            exists: false,
+            ..copy
+        },
+        RepairKind::Patch => CopyState {
+            conclusion: flight.request.conclusion,
+            output: flight.request.output,
+            ..copy
+        },
+    }
+}
