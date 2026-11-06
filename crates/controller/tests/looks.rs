@@ -986,7 +986,7 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
         settings,
         root.path(),
         &clock,
-        Upstream::Mergify,
+        Upstream::Delivery,
         TokenQueue {
             token: token.clone(),
             terminal: terminal.clone(),
@@ -1029,7 +1029,7 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
     drop(c);
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         TokenQueue {
             token: token.clone(),
             terminal: terminal.clone(),
@@ -2158,7 +2158,7 @@ fn main() {
     }
     owner_progress_contract(&db.create("pb_owner"), Upstream::PrismaBuild);
     println!("test pb_owns_progress_failure ... ok");
-    owner_progress_contract(&db.create("queue_stall"), Upstream::Mergify);
+    owner_progress_contract(&db.create("queue_stall"), Upstream::Delivery);
     println!("test queue_stall_incident ... ok");
     stopped_worktree_saves_scratch(&db.create("dirty_worktree"), "saved");
     stopped_worktree_saves_scratch(&db.create("scratch_once"), "write-once");

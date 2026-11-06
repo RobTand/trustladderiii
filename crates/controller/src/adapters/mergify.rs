@@ -165,6 +165,33 @@ pub enum Evidence {
     },
 }
 impl Evidence {
+    pub(crate) fn outcome(&self) -> Option<crate::outcome::Outcome> {
+        use crate::outcome::Outcome;
+        Some(match self {
+            Self::Merged {
+                head,
+                checks_passed,
+            } => Outcome::Merged {
+                head: head.clone(),
+                checks_passed: *checks_passed,
+            },
+            Self::CiFailed {
+                head,
+                infra,
+                details,
+                ..
+            } => Outcome::CiFailed {
+                head: head.clone(),
+                infra: *infra,
+                failed_tests: details.failed_tests.clone(),
+                evidence: details.clone(),
+            },
+            Self::Conflict { head, .. } => Outcome::Conflict { head: head.clone() },
+            Self::PushByOther { head } => Outcome::PushByOther { head: head.clone() },
+            Self::ClosedByPerson { .. } => Outcome::ClosedByPerson,
+            _ => return None,
+        })
+    }
     /// The evidence without its payload, as the core decides on it.
     pub(crate) fn kind(&self) -> Option<Kind> {
         Some(match self {

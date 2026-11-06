@@ -110,6 +110,7 @@ fn completion_shell_keeps_every_other_statement_verbatim() {
     let start = source.find("    fn prepare_completion(").unwrap();
     let end = source[start..].find("\n    fn apply(").unwrap() + start;
     let restored = source[start..end]
+        .replace("Upstream::Delivery", "Upstream::Mergify")
         .replace(
             include_str!("current-plan.rs.txt"),
             include_str!("base-plan.rs.txt"),
@@ -248,6 +249,7 @@ fn owned_controller_io_shell_remains_verbatim() {
         .unwrap()
         + start;
     let restored = source[start..end]
+        .replace("Upstream::Delivery", "Upstream::Mergify")
         .replace(
             include_str!("current-plan.rs.txt"),
             include_str!("base-plan.rs.txt"),

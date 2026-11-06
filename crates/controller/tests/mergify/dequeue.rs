@@ -234,7 +234,7 @@ fn open(
 ) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.join("mergify"), 0)
             .with_store(settings.clone())
             .with_clock(clock.clone()),
