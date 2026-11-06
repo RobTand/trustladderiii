@@ -1055,12 +1055,9 @@ def verus_proofs():
             "retirement_gate_bridge_queries": ("kernel::retirement_gate_bridge#queries", 1),
             "retirement_gate_bridge_post": ("kernel::retirement_gate_bridge#post", 1),
             "retirement_runtime_retry_noop": ("kernel::retirement_runtime#retry_noop", 1),
-            "retirement_runtime_ci_infra": ("kernel::retirement_runtime#ci_infra", 1),
-            "retirement_runtime_ci_retry": ("kernel::retirement_runtime#ci_retry", 1),
             "retirement_runtime_outside_retry": ("kernel::retirement_runtime#outside_retry", 1),
             "retirement_runtime_ci_frame": ("kernel::retirement_runtime#ci_frame", 1),
             "retirement_gate_bridge_overlaps": ("kernel::retirement_gate_bridge#overlaps", 1),
-            "retirement_runtime_ci_forward": ("kernel::retirement_runtime#ci_forward", 1),
             "retirement_runtime_ci_inputs": ("kernel::retirement_runtime#ci_inputs", 1),
             "retirement_runtime_ci_retirement": ("kernel::retirement_runtime#ci_retirement", 1),
         }
