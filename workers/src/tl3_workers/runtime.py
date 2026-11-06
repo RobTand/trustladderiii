@@ -16,6 +16,7 @@ from deepagents.profiles import (
     HarnessProfile,
     register_harness_profile,
 )
+from jsonschema import ValidationError
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGenerationChunk
