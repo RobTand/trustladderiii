@@ -14,7 +14,7 @@ TEST = "tests/test_value.py::test_value"
 PLAN = [{"name": "value", "kind": "regression", "tests": [TEST]}]
 
 
-def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, link=False, protected=None):
+def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, link=False, protected=None, observer=None, footprint=(), generated=()):
     """Stage the real action and trusted harness for a head that sets conftest.py."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
@@ -35,6 +35,8 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, lin
     base = git(repo, "rev-parse", "HEAD")
     (repo / "tests/conftest.py").write_text(conftest)
     (repo / "README.md").write_text("maker\n")
+    if observer is not None:
+        (repo / "tests/test_value.py").write_text(observer)
     if link:
         (repo / "secret").symlink_to("/host-sentinel")
     git(repo, "add", ".")
@@ -50,7 +52,7 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, lin
                     ignore=shutil.ignore_patterns("__pycache__"))
     (staged / "request.json").write_text(json.dumps({
         "effect_key": "effect:89:7", "base": base, "head": head, "reviewed": None,
-        "plan": plan, "image": "sha256:" + "1" * 64,
+        "plan": plan, "image": "sha256:" + "1" * 64, "footprint": list(footprint), "generated_paths": list(generated),
         **({} if protected is None else {"protected_paths": protected})}))
 
     # Admission is a PrismaBuild contract; a refusal must return before any container runs.
@@ -76,6 +78,30 @@ def act(staged, env):
 
 
 class ActionRefusalTests(unittest.TestCase):
+    def test_checking_supplies_the_maker_footprint_to_real_run_checks(self):
+        observer = ("def first(value): return sorted(value)\n"
+                    "def second(box): box['x'] = 1\n"
+                    "def test_value(): assert True\n")
+        plan = [{"name": "proof", "kind": "demonstrating", "tests": [TEST],
+                 "proof": {"subjects": [], "observer_support": ["tests/test_value.py::first", "tests/test_value.py::second"],
+                           "red_message": "regression"}}]
+        for owned, generated in [(False, ()), (True, ()), (True, ("tests/*.py",))]:
+            with self.subTest(owned=owned, generated=generated), tempfile.TemporaryDirectory() as directory:
+                staged, env = stage(Path(directory), plan=plan, observer=observer,
+                                    footprint=("tests/test_value.py",) if owned else (), generated=generated)
+                result = act(staged, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = lines(result.stdout, "TL3_CHECKS ")[0]
+                message = report["results"][0]["tests"][0].get("proof_refusal", report["results"][0]["tests"][0]["message"])
+                self.assertIn("proof.support.call_allowlist", message)
+                self.assertIn("proof.support.member_write", message)
+                if owned and not generated:
+                    self.assertIn("Change `tests/test_value.py`", message)
+                    self.assertNotIn("cant_meet", message)
+                else:
+                    self.assertIn("cant_meet", message)
+                    self.assertNotIn("Change `", message)
+
     def test_symlink_in_the_head_is_a_failing_check_naming_it(self):
         # The maker's head is the maker's change: refuse it as a check, not an action error.
         with tempfile.TemporaryDirectory() as directory:

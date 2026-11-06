@@ -189,6 +189,10 @@ def test_recorded_staging_verdict_and_repair(submission, tmp_path, count):
             with pytest.raises(ProofRefusal) as caught:
                 _stage(tree, stage, base, checks=record['input']['checks'])
             assert caught.value.rule == 'proof.staging.single_check'
+            from tl3_harness.rules import CantMeet
+            assert isinstance(caught.value.violations[0].repair, CantMeet)
+            assert 'stage one check at a time' in str(caught.value).lower()
+            assert caught.value.as_json()[0]['bad_value'] == count
             assert caught.value.rule == record['expected']['rule']
         else:
             _stage(tree, stage, base, checks=record['input']['checks'])

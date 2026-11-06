@@ -244,3 +244,125 @@ def test_syntax_repairs_respect_role_and_footprint(tmp_path, role, editable, rep
         assert 'cant_meet' not in str(caught.value)
     else:
         assert 'cant_meet' in str(caught.value)
+
+
+
+def planner_refusal(case, root, *, monkeypatch=None, probes=None):
+    for side in ('before', 'after'):
+        for name, source in case[side].items():
+            path = root / side / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source)
+    check = model.Check('selection', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    if probes is not None:
+        original = proof._assemble_proof
+        def counted(*args, **kwargs):
+            probes.append(args[3])
+            return original(*args, **kwargs)
+        monkeypatch.setattr(proof, '_assemble_proof', counted)
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(root / 'before', root / 'after', root / 'stage', check, case['config'], role='planner', check_index=3)
+    return caught.value
+
+
+def test_planner_support_replacements_skip_duplicates_and_keep_the_list(tmp_path):
+    from tl3_harness.rules import Edit
+    case = partitions()['proof.support.call_allowlist']['bad']
+    module = 'tests/test_observer.py'
+    case['after'][module] = ('def test_control(): pass\ndef helper_bad(value=1): return sorted(value)\n'
+                            'def helper_ok(): return 1\ndef helper_new(): return 2\ndef test_observer(): assert True\n')
+    case['proof']['observer_support'] = [module + '::helper_bad', module + '::helper_ok']
+    error = planner_refusal(case, tmp_path)
+    assert error.rule == 'proof.support.call_allowlist'
+    repair = error.violations[0].repair
+    assert isinstance(repair, Edit)
+    assert repair.pointer.value == '/checks/3/proof/observer_support/0'
+    assert module + '::helper_ok' not in repair.allowed.value
+    assert all(isinstance(item, str) for item in repair.allowed.value)
+
+
+def test_planner_subject_replacements_do_not_remove_obligation_subjects(tmp_path):
+    from tl3_harness.rules import Edit
+    case = partitions()['proof.subject.changed']['bad']
+    case['after']['changed.py'] = 'def changed(): return 2\n'
+    case['before']['changed.py'] = 'def changed(): return 1\n'
+    repair = planner_refusal(case, tmp_path).violations[0].repair
+    assert isinstance(repair, Edit)
+    assert repair.pointer.value == '/checks/3/proof/subjects/0'
+    assert all(isinstance(value, str) and value for value in repair.allowed.value)
+
+
+def test_planner_node_candidates_are_collectable_and_never_empty(tmp_path):
+    from tl3_harness.rules import Edit
+    case = partitions()['proof.source.definition']['bad']
+    case['after']['tests/test_observer.py'] += ('def helper(): pass\nclass Helper:\n    def test_hidden(self): pass\n'
+                                               'class TestReal:\n    def helper(self): pass\n    def test_method(self): pass\n')
+    repair = planner_refusal(case, tmp_path).violations[0].repair
+    assert isinstance(repair, Edit)
+    assert repair.pointer.value == '/checks/3/node_ids/0'
+    assert all(isinstance(value, str) and value for value in repair.allowed.value)
+    assert all('helper' not in value and 'Helper' not in value for value in repair.allowed.value)
+    assert 'tests/test_observer.py::TestReal::test_method' in repair.allowed.value
+
+
+def test_planner_probe_budget_and_changed_modules_first(tmp_path, monkeypatch):
+    case = partitions()['proof.source.definition']['bad']
+    for index in range(40):
+        case['before'][f'tests/test_a{index:02}.py'] = 'def test_old(): pass\n'
+        case['after'][f'tests/test_a{index:02}.py'] = 'def test_old(): pass\n'
+    case['after']['tests/test_zchanged.py'] = 'def test_new(): assert True\n'
+    probes = []
+    error = planner_refusal(case, tmp_path, monkeypatch=monkeypatch, probes=probes)
+    assert error.rule == 'proof.source.definition'
+    assert len(probes) - 1 <= 25
+    selections = error.violations[0].repair.allowed.value
+    assert len(selections) <= 10
+    assert 'tests/test_zchanged.py::test_new' in selections
+
+
+@pytest.mark.parametrize('row_id', ['proof.source.definition', 'proof.observer.module_missing',
+                                   'proof.observer.unresolved_symbol', 'proof.support.decorator', 'proof.loader.stdlib_shadow'])
+def test_maker_repairs_use_editable_observer_source(tmp_path, row_id):
+    from tl3_harness.rules import SourceEdit
+    case = partitions()[row_id]['bad']
+    for side in ('before', 'after'):
+        for name, text in case[side].items():
+            path = tmp_path / side / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+    check = model.Check('source repair', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'], footprint=('tests/test_observer.py',))
+    assert caught.value.rule == row_id
+    repair = caught.value.violations[0].repair
+    assert isinstance(repair, SourceEdit)
+    assert repair.path == 'tests/test_observer.py'
+    expected = {'proof.source.definition': 'define', 'proof.observer.module_missing': 'create',
+                'proof.observer.unresolved_symbol': 'define', 'proof.support.decorator': 'fixture body',
+                'proof.loader.stdlib_shadow': 'existing test body'}[row_id]
+    assert expected in repair.instruction.lower()
+
+
+@pytest.mark.parametrize('protection', ['protected', 'generated'])
+def test_source_repairs_respect_protected_and_generated_patterns(tmp_path, protection):
+    from tl3_harness.rules import CantMeet
+    case = partitions()['proof.support.call_allowlist']['bad']
+    for side in ('before', 'after'):
+        for name, text in case[side].items():
+            path = tmp_path / side / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+    check = model.Check('source repair', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'],
+                             footprint=('tests/test_observer.py',), **{protection: ('tests/*.py',)})
+    assert caught.value.rule == 'proof.support.call_allowlist'
+    assert isinstance(caught.value.violations[0].repair, CantMeet)
+
+
+def test_planner_names_keep_the_editable_field_when_maker_would_edit_source(tmp_path):
+    from tl3_harness.rules import evaluate
+    row = ROWS['proof.support.call_allowlist']
+    violation, = evaluate((row,), {'module': 'tests/test_observer.py', 'footprint': ('tests/test_observer.py',),
+        'field': '/checks/3/proof/observer_support/0', 'role': 'planner'}, role='planner')
+    assert any(name.kind == 'field' for name in row.names(violation.facts))
