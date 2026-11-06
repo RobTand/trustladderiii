@@ -196,3 +196,12 @@ fn unicode_source_identifiers_reject_backend_ids_and_invalid_starts() {
         }
     }
 }
+
+#[test]
+fn mixed_source_and_reply_repairs_require_null_witness_and_recheck_reply_only() {
+    fn mixed() -> Rule<Value> {
+        Rule {id:"mixed.repair",check:|facts| {let mut source=facts.clone();source["subject"]=json!("source");let mut rows=vec![source];if !facts["reply"].is_null() {let mut edit=facts.clone();edit["subject"]=json!("reply");rows.push(edit);}rows},names:|facts|if facts["subject"]=="source" {vec![Name {kind:NameKind::Path,value:"src/lib.rs".into()}]}else{vec![Name {kind:NameKind::Field,value:String::new()}]},bad_value:|facts|facts["reply"].clone(),allowed:Callback::Static(Allowed::Schema {keyword:SchemaKeyword::Const,value:Value::Null}),repair:Callback::Facts(|facts|if facts["subject"]=="source" {Repair::SourceEdit {path:"src/lib.rs".into(),instruction:"Fix source".into()}}else{Repair::Edit {pointer:String::new().try_into().unwrap(),op:EditOp::Replace,allowed:Allowed::Schema {keyword:SchemaKeyword::Const,value:Value::Null}}}),gating:false,roles:vec![Role::Maker]}
+    }
+    let fixture=Registration {example:json!({"reply":{"broken":true}}),reply:json!({"broken":true}),with_reply:|facts,reply| {let mut facts=facts.clone();facts["reply"]=reply.clone();facts},witness:Witness::Shared(Value::Null)};
+    mixed().register(&fixture,&policy()).unwrap();
+}
