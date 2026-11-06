@@ -1,0 +1,1027 @@
+[
+  {
+    "path": "crates/controller/src/adapters/prismabuild/results/tests/evidence-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/src/adapters/prismabuild/results/tests/mod.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/src/dispatch_recovery_tests.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/src/executor.rs",
+    "detector": "source-include",
+    "owner": "#878"
+  },
+  {
+    "path": "crates/controller/src/prompt_render/tests.rs",
+    "detector": "source-include",
+    "owner": "#890"
+  },
+  {
+    "path": "crates/controller/tests/budget_parity/exploration.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/budget_parity/forecast.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/budget_parity/maker.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/budget_parity/session.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/checks-base.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/checks_current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/checks_reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/evidence_helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/goals_helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/memory_helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/plan_current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/prepared-base.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/prepared_current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/prepared_reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/production_helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/request_type.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/check_translate_io/selected_helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/base-approval.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/base-completion.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/base-integration-completion.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/base-integration-shell.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/base-owned-shell.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/conversions.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/current-plan.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/current-shell.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/fixture.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/full.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/mod.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_machine/old-shell.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/delivery_schedule/base-record.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/fixture_contracts.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/fixtures/dispatch_recovery_original.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/harness_limits.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/harness_limits.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/base-looks.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/look-observations-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/look-state-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/sync.py",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/looks_io/types.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/memory_retain_io/base-memory.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/memory_retain_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/memory_retain_io/helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/memory_retain_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/memory_retain_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/memory_retain_io/sync.py",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/a1.rs",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/a1_r1.rs",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/a3.rs",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/base-adapter.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/base-ci-evidence.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/base-client.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/base-github-client.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/base-head.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/base-records.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/base-waiting.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/client.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current-ci.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current-comments.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current-head.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current-projections.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current-route.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current-waiting.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/current.rs",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/mod.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/mod.rs",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/projection-support.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/queue-cause-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/queue-entry-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/records.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/recovery_projections.rs",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference-ci.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference-comments.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference-evidence.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference-head.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference-projection-support.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference-route.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference-waiting.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/route-current-head.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/route-reference-head.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/route-support.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/router-executor-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/router_current_executor.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/router_executor.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/mergify_io/sync_router.py",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/prismabuild_schedule/extracted.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/prismabuild_schedule/main.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/prismabuild_schedule/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/prismabuild_schedule/replay.py",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/base-client.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/base-github.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/base-publishing.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/base-records.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/comments.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/current-publishing.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/evidence.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/failure.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/goals.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/message.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/pr_body.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/records-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/records.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/reference-publishing.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/sync.py",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/publication_io/worker_inputs.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/base-adapter.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/base-ci.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/base-looks.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/base-queue.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/cause-methods-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/cause-types-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/ci-evidence-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/ci-evidence.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/incident-helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/mod.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/queue-fact-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/queue-fact.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/reference_core.rs",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/queue_translate_io/sync_sonce.py",
+    "detector": "source-include",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/controller/tests/rebase_translate_io/conflict_current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/rebase_translate_io/pass_current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/rebase_translate_io/pass_properties.rs",
+    "detector": "source-include",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/rebase_translate_io/pass_reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/rebase_translate_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/rebase_translate_io/rebased_current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/base-review.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/criteria.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/failure.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/goals.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/sync.py",
+    "detector": "source-include",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/review_inputs_io/validation.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/translate_misc_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/translate_misc_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#923"
+  },
+  {
+    "path": "crates/controller/tests/translate_tail_io/base-tail.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#921"
+  },
+  {
+    "path": "crates/controller/tests/translate_tail_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#921"
+  },
+  {
+    "path": "crates/controller/tests/translate_tail_io/findings-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#921"
+  },
+  {
+    "path": "crates/controller/tests/translate_tail_io/findings.rs",
+    "detector": "frozen-copy",
+    "owner": "#921"
+  },
+  {
+    "path": "crates/controller/tests/translate_tail_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#921"
+  },
+  {
+    "path": "crates/controller/tests/translate_tail_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#921"
+  },
+  {
+    "path": "crates/controller/tests/worker_events_io/base-source.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/worker_events_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/worker_events_io/mod.rs",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/worker_events_io/pre_fix.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/worker_events_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/worker_events_io/sync.py",
+    "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-arms.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-evidence.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-goals.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-helpers.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-memory.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-protocol.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-reproducing.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-review.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/base-reviewer.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/current.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/evidence.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/findings.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/goals.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/helpers.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/memory.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/plan-size-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/properties.rs",
+    "detector": "source-include",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/protocol-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/protocol.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/reference-reproducing.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/reference.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/reproducing-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/reproducing.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/review.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/reviewer.rs",
+    "detector": "frozen-copy",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/sync.py",
+    "detector": "source-include",
+    "owner": "#922"
+  },
+  {
+    "path": "crates/delivery/src/mirror.rs",
+    "detector": "self-declared",
+    "owner": "#925"
+  },
+  {
+    "path": "crates/kernel/tests/proof_map.rs",
+    "detector": "source-include",
+    "owner": "#912"
+  },
+  {
+    "path": "crates/mergify/tests/enqueue_base.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "crates/mergify/tests/enqueue_reference.rs.txt",
+    "detector": "frozen-copy",
+    "owner": "#915"
+  },
+  {
+    "path": "tools/ci/test_bazel_workspace.py",
+    "detector": "source-include",
+    "owner": "#878"
+  },
+  {
+    "path": "tools/ci/test_graph_impact.py",
+    "detector": "source-include",
+    "owner": "#878"
+  },
+  {
+    "path": "workers/src/tl3_workers/schemas/audit-reply.json",
+    "detector": "ungenerated-schema",
+    "owner": "#884"
+  },
+  {
+    "path": "workers/src/tl3_workers/schemas/budget-wire.json",
+    "detector": "ungenerated-schema",
+    "owner": "#884"
+  },
+  {
+    "path": "workers/src/tl3_workers/schemas/harness-wire.json",
+    "detector": "ungenerated-schema",
+    "owner": "#884"
+  },
+  {
+    "path": "workers/src/tl3_workers/schemas/planner-reply.json",
+    "detector": "ungenerated-schema",
+    "owner": "#884"
+  },
+  {
+    "path": "workers/src/tl3_workers/schemas/postmortem-reply.json",
+    "detector": "ungenerated-schema",
+    "owner": "#884"
+  },
+  {
+    "path": "workers/src/tl3_workers/schemas/quota-event.json",
+    "detector": "ungenerated-schema",
+    "owner": "#884"
+  },
+  {
+    "path": "workers/src/tl3_workers/schemas/reviewer-reply.json",
+    "detector": "ungenerated-schema",
+    "owner": "#884"
+  },
+  {
+    "path": "workers/tests/fixtures/stderr-redactor-before.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "workers/tests/p5/main_reference.py",
+    "detector": "frozen-copy",
+    "owner": "#891"
+  },
+  {
+    "path": "workers/tests/p5/remote.py",
+    "detector": "source-include",
+    "owner": "#891"
+  }
+]
