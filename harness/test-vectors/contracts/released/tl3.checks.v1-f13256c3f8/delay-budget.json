@@ -1,0 +1,162 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::delay-budget",
+ "request": {
+  "base": "e540c3b317b544278f09805eee0aa1fe11c309d0",
+  "effect_key": "checks:delay-budget",
+  "head": "3aee22dcc30088112e5bb7fd514b1ac1a712b430",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "forcing": {
+     "environment": {},
+     "patches": [
+      {
+       "delay_seconds": 0.01,
+       "target": "product.target"
+      }
+     ],
+     "symptom": "The target is slow."
+    },
+    "kind": "demonstrating",
+    "name": "slow target keeps the value",
+    "proof": {
+     "observer_support": [],
+     "red_message": "value too small",
+     "subjects": [
+      "product.py::value"
+     ]
+    },
+    "tests": [
+     "tests/test_value.py::test_value"
+    ]
+   }
+  ],
+  "reviewed": null
+ },
+ "results": [
+  {
+   "custody": "in-process",
+   "forcing": {
+    "environment": {},
+    "patches": [
+     {
+      "delay_seconds": 0.01,
+      "target": "product.target"
+     }
+    ],
+    "symptom": "The target is slow."
+   },
+   "kind": "demonstrating",
+   "name": "slow target keeps the value",
+   "proof": {
+    "base_tree_sha256": "20faf4931e463db01ce0b692945ff0ac2cf10559f0f9cb3eed1e07e24ffc4073",
+    "declaration": {
+     "observer_support": [],
+     "red_message": "value too small",
+     "subjects": [
+      "product.py::value"
+     ]
+    },
+    "delay_budget": {
+     "base": {
+      "tests/test_value.py::test_value": {
+       "applied_seconds": 0.009999999999999787,
+       "exhausted": false
+      }
+     },
+     "head_forced": {
+      "tests/test_value.py::test_value": {
+       "applied_seconds": 0.009999999999999787,
+       "exhausted": false
+      }
+     }
+    },
+    "head_tree_sha256": "228834036f4013404b19d1665abe1b59f7c1262208b919bfbf33893ba6750802",
+    "mode": "head-observer",
+    "observer_sha256": {
+     "tests/test_value.py::test_value": "8c2389248ab5a41cab61f4b032a63d681419a9eee2800e4466811f31d562350c"
+    },
+    "red_message_matches": {
+     "tests/test_value.py::test_value": "message"
+    },
+    "rule": "subject-observer-v1",
+    "source_base_tree_sha256": "20faf4931e463db01ce0b692945ff0ac2cf10559f0f9cb3eed1e07e24ffc4073",
+    "subjects": {
+     "product.py::value": {
+      "base": "4480052910accecafe6f206dbd8be95b8447320ff6d2332761858fd6399c1255",
+      "head": "5d080563b57287276f589c2b2714ef499269efe7405a288b3c1474f5a92bf271"
+     }
+    },
+    "support_sha256": {}
+   },
+   "tests": [
+    {
+     "base": "assertion",
+     "head": "passed",
+     "head_forced": "passed",
+     "message": "",
+     "passed": true,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": true,
+        "exception": "builtins.AssertionError",
+        "outcome": "failed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      },
+      "head": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      },
+      "head_forced": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      }
+     },
+     "pre_existing": false,
+     "test": "tests/test_value.py::test_value"
+    }
+   ],
+   "verdict": "pass"
+  }
+ ]
+}

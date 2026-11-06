@@ -20,6 +20,10 @@ pub enum Input {
         proposed: crate::adoption::ProposedPullRequest,
     },
     AdoptionClarification(crate::adoption::Clarification),
+    Completion {
+        key: String,
+        completion: Box<crate::executor::Completion>,
+    },
     Observation {
         key: String,
         observation: Observation,
