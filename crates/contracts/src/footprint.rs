@@ -93,6 +93,23 @@ impl JsonSchema for Footprint {
 mod tests {
     use super::*;
 
+    /// #894 SF8: shared examples pin spelling, safety, Unicode and case at the language seam.
+    #[test]
+    fn shared_python_path_vectors() {
+        let cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../../workers/tests/fixtures/footprint-paths.json"
+        ))
+        .unwrap();
+        for case in cases {
+            let result = Footprint::new(vec![case["path"].as_str().unwrap().into()]);
+            if let Some(expected) = case["canonical"].as_str() {
+                assert_eq!(result.unwrap().as_slice(), [expected], "{case}");
+            } else {
+                assert!(result.is_err(), "{case}");
+            }
+        }
+    }
+
     #[test]
     fn canonicalises_and_deduplicates_declared_paths() {
         let footprint = Footprint::new(

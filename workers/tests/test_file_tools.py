@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import errno
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -887,3 +888,15 @@ def test_empty_constructor_footprint_allows_no_writes(tree):
         refused = invoke(tools_for(worktree)["write"], "src/code.py")
     assert refused.status == "error"
     assert (root / "src/code.py").read_text() == "hello\nhello again\n"
+
+
+def test_shared_footprint_path_vectors():
+    from tl3_workers.tools import _parts
+
+    cases = json.loads(Path(__file__).with_name("fixtures").joinpath("footprint-paths.json").read_text())
+    for case in cases:
+        if case["canonical"] is None:
+            with pytest.raises(ValueError):
+                _parts(case["path"])
+        else:
+            assert "/".join(_parts(case["path"])) == case["canonical"], case

@@ -334,3 +334,38 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
         {"event": "reply", "role": "maker", "reply": response},
     ]
     assert not (Path(maker_request["worktree"]) / "forbidden").exists()
+
+
+@pytest.mark.parametrize("footprint", [None, ["other.py"]])
+def test_maker_refuses_a_worktree_with_missing_or_mismatched_footprint(maker_request, footprint):
+    from tl3_workers.tracing import failure_tags
+    from tl3_workers.turns import Unrepairable
+
+    model = ToolModel(responses=[AIMessage(**turn({"kind": "cant_meet", "report": "Unused."}))])
+    with Worktree(maker_request["worktree"], footprint=footprint) as worktree:
+        with pytest.raises(Unrepairable, match="worktree footprint") as caught:
+            maker.run(model, maker_request, worktree, lambda event: None)
+    assert "worktree footprint" in failure_tags(caught.value)["failure_message"]
+
+
+def test_runtime_constructs_a_maker_worktree_that_refuses_undeclared_writes(maker_request, monkeypatch):
+    root = Path(maker_request["worktree"])
+    (root / "tests").mkdir()
+    observed = []
+
+    class ObservedModel(ToolModel):
+        def _generate(self, messages, **kwargs):
+            observed.extend(message for message in messages if isinstance(message, ToolMessage))
+            return super()._generate(messages, **kwargs)
+
+    response = {"kind": "cant_meet", "report": "The diagnostic file is outside the plan."}
+    model = ObservedModel(responses=[AIMessage(**write_turn("tests/test_zz_diag.py", PQ3312_DIAG)),
+                                     AIMessage(**turn(response))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: model)
+    events = []
+    runtime.run(maker_request, events.append)
+    refusal = next(message for message in observed if message.name == "write")
+    assert refusal.status == "error"
+    assert "not a declared file" in refusal.content
+    assert not (root / "tests/test_zz_diag.py").exists()
+    assert events[-1]["reply"] == response
