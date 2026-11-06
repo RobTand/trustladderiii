@@ -277,9 +277,9 @@ pub struct RepairResult {
         out.copy.exists == (copy.exists && !(flight.issued && copy.id == flight.request.target && flight.request.kind == RepairKind::Delete)),
         out.copy.conclusion == if flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Patch {flight.request.conclusion} else {copy.conclusion},
         out.copy.output == if flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Patch {flight.request.output} else {copy.output},
-        out.upstream.copies == if copy.exists && !out.copy.exists {before.copies - 1} else {before.copies},
+        out.upstream.copies == if copy.exists && !out.copy.exists {(before.copies as int) - 1} else {before.copies as int},
         out.upstream.incorrect == if flight.issued && copy.exists && copy.id == flight.request.target && flight.request.kind == RepairKind::Patch &&
-            (copy.conclusion != flight.request.conclusion || copy.output != flight.request.output) {before.incorrect - 1} else {before.incorrect},
+            (copy.conclusion != flight.request.conclusion || copy.output != flight.request.output) {(before.incorrect as int) - 1} else {before.incorrect as int},
         out.upstream.repair_debt == before.repair_debt,
         out.upstream.found == before.found, out.upstream.outstanding == before.outstanding,
 ))]
