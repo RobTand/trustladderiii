@@ -735,3 +735,23 @@ def test_new_stderr_secret_after_context_eviction(context_kind, monkeypatch, cap
     assert secret not in json.dumps(diagnostic), 'operator JSON leaked a new secret after context eviction'
     assert secret not in Redactor(None).text(json.dumps(diagnostic))
     assert diagnostic['stderr_tail'] == 'stderr withheld: redaction context lost'
+
+
+@pytest.mark.parametrize('role', ['planner', 'maker'])
+def test_proof_refusal_keeps_shared_rule_data(submission, monkeypatch, role):
+    from tl3_harness.model import ProofRefusal
+    from tl3_workers import pb_tests
+    root, scripts = submission
+    def refused(*args, **kwargs):
+        assert kwargs['role'] == role
+        raise ProofRefusal('proof.observer.module_missing', module='tests/test_missing.py', role=role, field='/checks/0/tests/0')
+    monkeypatch.setattr(pb_tests, '_stage', refused)
+    with Worktree(root) as tree:
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts), role=role)(['tests/test_missing.py::test_value'])
+    data = result['proof_refusal']
+    assert result['status'] == 'not_available'
+    assert data['rule'] == 'proof.observer.module_missing'
+    assert data['violations'][0]['id'] == data['rule']
+    assert data['violations'][0]['gating'] is True
+    assert {'kind': 'field', 'value': '/checks/0/tests/0'} in data['violations'][0]['names']
+    assert data['reason'] in result['message']

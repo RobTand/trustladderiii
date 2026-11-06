@@ -167,3 +167,35 @@ def test_request_2709_legacy_plan_extends_before_final_head(
     tree = subprocess.check_output(["git", "rev-parse", result["head"] + "^{tree}"], cwd=generator_repo).decode().strip()
     assert result["generation_evidence"]["output_tree"] == tree
     subprocess.run(["python3", "generate.py", "--check"], cwd=generator_repo, check=True)
+
+
+@pytest.mark.parametrize('count', [1, 2])
+def test_recorded_staging_verdict_and_repair(submission, tmp_path, count):
+    import hashlib
+    from pathlib import Path
+    from tl3_harness.model import ProofRefusal
+    from tl3_harness.proof import tree_sha256
+    from tl3_workers.pb_tests import _stage
+    table = json.loads((Path(__file__).parents[2] / 'harness/tests/fixtures/subject_observer/proof_verdicts.json').read_text())
+    key = f'tests/test_pb_tests_base.py::test_review_recorded_staging[{count}]#1'
+    record = table['cases'][key]
+    root, _ = submission
+    base, _, _, _ = prepare_base_submission(submission)
+    stage = tmp_path / 'stage'
+    stage.mkdir()
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        if count == 2:
+            with pytest.raises(ProofRefusal) as caught:
+                _stage(tree, stage, base, checks=record['input']['checks'])
+            assert caught.value.rule == 'proof.staging.single_check'
+            from tl3_harness.rules import CantMeet
+            assert isinstance(caught.value.violations[0].repair, CantMeet)
+            assert 'stage one check at a time' in str(caught.value).lower()
+            assert caught.value.as_json()[0]['bad_value'] == count
+            assert caught.value.rule == record['expected']['rule']
+        else:
+            _stage(tree, stage, base, checks=record['input']['checks'])
+            receipt = json.loads((stage / 'proof.json').read_text())
+            assert hashlib.sha256(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode()).hexdigest() == record['expected']['accepted']['receipt_sha256']
+            assert tree_sha256(stage / 'checkout') == record['expected']['accepted']['staged_tree_sha256']
