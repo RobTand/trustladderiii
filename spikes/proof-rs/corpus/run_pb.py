@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
@@ -23,9 +24,10 @@ def run(argv, name, *, stdin=None):
         print((out / (name + '.log')).read_text()[-24000:], flush=True)
     return info
 
-summary = {'platform': platform.platform(), 'machine': platform.machine(), 'steps': []}
+summary = {'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'affinity': sorted(os.sched_getaffinity(0)), 'steps': []}
+summary['steps'].append(run(['cargo', 'clippy', '--fix', '--allow-dirty', '--allow-staged', '--all-targets', '--locked', '-j', '4', '--', '-D', 'warnings'], 'clippy-fix'))
 summary['steps'].append(run(['cargo', 'fmt'], 'fmt'))
-summary['steps'].append(run(['cargo', 'build', '--release', '-j', '4'], 'build'))
+summary['steps'].append(run(['cargo', 'build', '--release', '--locked', '-j', '4'], 'build'))
 if summary['steps'][-1]['returncode'] == 0:
     summary['steps'].append(run(['cargo', 'clippy', '--all-targets', '--locked', '-j', '4', '--', '-D', 'warnings'], 'clippy'))
     # Cargo metadata is used for dependency count and SPDX license inventory.
@@ -48,4 +50,4 @@ with tarfile.open(fileobj=archive, mode='w:gz') as tar:
     for path in sorted(out.iterdir()):
         tar.add(path, arcname=path.name)
 print('SPIKE902_ARCHIVE ' + base64.b64encode(archive.getvalue()).decode(), flush=True)
-raise SystemExit(summary['steps'][1]['returncode'])
+raise SystemExit(any(step['returncode'] for step in summary['steps']))
