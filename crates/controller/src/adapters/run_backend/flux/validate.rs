@@ -54,7 +54,7 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
             if !hex(membership_digest, 64) { return Err(BackendError::invalid("membership digest required")); }
         }
         Suite::DaytimeChecks { plan_digest, base, reviewed } => {
-            if !hex(plan_digest, 64) || !hex(base, 40) || !hex(reviewed, 40) { return Err(BackendError::invalid("daytime plan/base/reviewed identity required")); }
+            if !hex(plan_digest, 64) || !hex(base, 40) || reviewed.as_ref().is_some_and(|reviewed| !hex(reviewed, 40)) { return Err(BackendError::invalid("daytime plan/base and optional reviewed identity required")); }
         }
     }
     if request.environment.len() > 64 || !request.environment.contains_key("PATH") || request.runner.arguments.len() > 128 {
@@ -83,6 +83,10 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
                 || !request.environment.contains_key("HOME") || !request.environment.contains_key("XDG_RUNTIME_DIR") {
                 return Err(BackendError::invalid("rootless Podman requires pinned image, explicit executable/interpreter and shared trusted inputs"));
             }
+            let Some(host) = &request.runtime.host_dependency else { return Err(BackendError::invalid("rootless image/architecture availability requires a justified eligible host")); };
+            if !token(&host.host) || host.reason.is_empty() || host.reason.len() > 4096 || safe(&host.reason)? != host.reason {
+                return Err(BackendError::invalid("invalid image/runtime host dependency"));
+            }
         }
     }
     Ok(())
@@ -98,7 +102,12 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
     if !matches!(request.runtime.architecture.as_str(), "x86_64" | "aarch64") {
         return Err(BackendError::invalid("explicit supported runtime architecture required"));
     }
-    checked_blob(&request.runtime.preflight, Path::new("/mnt/shared"))?;
+    let preflight: RuntimePreflight = serde_json::from_slice(&checked_blob(&request.runtime.preflight, Path::new("/mnt/shared"))?)?;
+    if preflight.schema != "tl3.runtime_preflight.v1" || preflight.architecture != request.runtime.architecture
+        || preflight.image_identity != request.runtime.expected_image || !preflight.identity_verified
+        || (matches!(request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) && !preflight.image_present) {
+        return Err(BackendError::invalid("runtime/image identity or architecture is missing or unqualified"));
+    }
     if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime {
         if !trusted_root.join("runner.py").is_file() { return Err(BackendError::invalid("trusted_root must directly contain runner.py")); }
     }

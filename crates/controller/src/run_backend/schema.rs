@@ -17,6 +17,7 @@ struct WireSchema {
     membership: Membership,
     topology: TopologyMapping,
     receipt: Receipt,
+    runtime_preflight: RuntimePreflight,
 }
 
 pub fn cli() -> std::result::Result<String, serde_json::Error> {

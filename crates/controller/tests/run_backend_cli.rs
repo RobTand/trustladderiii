@@ -79,7 +79,7 @@ impl Fixture {
         immutable(&p.join("runner"), b"#!/bin/sh\nexit 0\n", true);
         immutable(&p.join("runner.json"), b"{\"runner\":1}", false);
         immutable(&p.join("runtime.json"), b"{\"runtime\":1}", false);
-        immutable(&p.join("preflight.json"), b"{\"architecture\":\"x86_64\",\"qualified\":false}", false);
+        immutable(&p.join("preflight.json"), &serde_json::to_vec(&RuntimePreflight { schema: "tl3.runtime_preflight.v1".into(), architecture: "x86_64".into(), image_identity: None, image_present: false, identity_verified: true }).unwrap(), false);
         let preflight = fs::read(p.join("preflight.json")).unwrap();
         let membership = serde_json::to_vec(&Membership { schema: "tl3.membership.v1".into(), cases: vec![CaseIdentity { target: "unit".into(), name: "case".into() }] }).unwrap();
         let request = Request {
@@ -93,7 +93,7 @@ impl Fixture {
             environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
             runtime: RuntimeIdentity { manifest: p.join("runtime.json"), manifest_digest: digest(b"{\"runtime\":1}"),
                 runtime: ExecutionRuntime::Native { interpreter: "/usr/bin/python3".into() }, architecture: "x86_64".into(), expected_image: None,
-                preflight: BlobRef { sha256: digest(&preflight), bytes: preflight.len() as u64, path: p.join("preflight.json") } },
+                preflight: BlobRef { sha256: digest(&preflight), bytes: preflight.len() as u64, path: p.join("preflight.json") }, host_dependency: None },
             scratch_root: "/var/tmp/flux-vanilla".into(), no_progress_seconds: None, walltime_seconds: 60.try_into().unwrap(),
         };
         let intent = SubmissionIntent { backend: BackendTag::Flux, instance: "fixture-generation".into(), uri: "local:///fixture".into(), owner: "fixture-owner".into(),
@@ -378,4 +378,19 @@ fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
     assert_eq!(state["events"].as_array().unwrap().len(), 3);
     let second = f.attach();
     assert_eq!(second.last().unwrap()["result"]["observation"]["terminal"]["receipt"], receipt);
+}
+
+#[test]
+fn optional_reviewed_sha_remains_distinct_in_wire_and_request_digest() {
+    let f = Fixture::new();
+    let absent = Suite::DaytimeChecks { plan_digest: "a".repeat(64), base: "b".repeat(40), reviewed: None };
+    let present = Suite::DaytimeChecks { plan_digest: "a".repeat(64), base: "b".repeat(40), reviewed: Some("c".repeat(40)) };
+    let absent_json = serde_json::to_value(&absent).unwrap();
+    let present_json = serde_json::to_value(&present).unwrap();
+    assert_eq!(absent_json["reviewed"], Value::Null);
+    assert_eq!(present_json["reviewed"], "c".repeat(40));
+    assert_ne!(digest(&serde_json::to_vec(&absent).unwrap()), digest(&serde_json::to_vec(&present).unwrap()));
+    let mut request = f.request.clone(); request.suite = absent;
+    let restored: Request = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+    assert_eq!(restored.suite, request.suite);
 }

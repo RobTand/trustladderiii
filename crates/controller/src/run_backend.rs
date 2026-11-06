@@ -170,6 +170,21 @@ pub struct RuntimeIdentity {
     pub architecture: String,
     pub expected_image: Option<String>,
     pub preflight: BlobRef,
+    pub host_dependency: Option<HostDependency>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostDependency { pub host: String, pub reason: String }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimePreflight {
+    pub schema: String,
+    pub architecture: String,
+    pub image_identity: Option<String>,
+    pub image_present: bool,
+    pub identity_verified: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -192,7 +207,7 @@ pub enum MemoryGuarantee { DeclaredOnly, RequireAdmission }
 pub enum Suite {
     Full { membership_digest: String },
     SelectedCases { membership_digest: String },
-    DaytimeChecks { plan_digest: String, base: String, reviewed: String },
+    DaytimeChecks { plan_digest: String, base: String, reviewed: Option<String> },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -466,7 +481,7 @@ impl WatchStop {
 
 pub(crate) fn kill_group(group: u32) {
     if let Ok(group) = i32::try_from(group) && let Some(group) = rustix::process::Pid::from_raw(group) {
-        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::Kill);
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
     }
 }
 

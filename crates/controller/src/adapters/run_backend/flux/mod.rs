@@ -6,7 +6,7 @@ mod validate;
 
 use crate::run_backend::{durable::*, *};
 use std::io::{BufRead, BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 #[derive(Clone)]

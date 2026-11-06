@@ -94,6 +94,7 @@ impl Flux {
             format!("--setattr=user.memory_bytes={}", request.reservation.memory_bytes),
         ];
         if request.reservation.gpus > 0 { args.extend(["-g".into(), request.reservation.gpus.to_string()]); }
+        if let Some(dependency) = &request.runtime.host_dependency { args.push(format!("--requires=host:{}", dependency.host)); }
         for (key, value) in self.job_environment(record)? { args.push(format!("--env={key}={value}")); }
         args.push(request.runner.executable.to_string_lossy().into_owned());
         args.extend(request.runner.arguments.clone());
