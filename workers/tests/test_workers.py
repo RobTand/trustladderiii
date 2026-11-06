@@ -680,7 +680,14 @@ def test_generated_scope_keeps_protected_paths_excluded():
     assert configured_outputs(None, forecast, ["tests/**"]) == ["src/BUILD.bazel"]
 
 
-@pytest.mark.parametrize("issue", [2713, 2815, 2817])
+@pytest.mark.parametrize("issue", [
+    pytest.param(2713, marks=pytest.mark.xfail(
+        strict=True,
+        reason="PB #2713: prose-only runner capability gap; pending lead decision on the #841 prompt change",
+    )),
+    2815,
+    2817,
+])
 def test_audit_objects_to_real_unavailable_executor_obligations(issue):
     fixture = Path(__file__).with_name("fixtures") / "intake-executor-capability" / f"prismabuild-{issue}.json"
     case = json.loads(fixture.read_text())
