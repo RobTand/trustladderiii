@@ -1066,6 +1066,14 @@ def test_nearest_path_search_is_bounded_and_prefers_basename(tree, monkeypatch):
     assert calls
 
 
+def test_nearest_path_prefers_matching_basename_over_parent_similarity(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["z/target.py", "long/exact/path/targets.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "long/exact/path/target.py")
+    assert result.status == "error"
+    assert 'The nearest declared path is "z/target.py".' in result.text
+
+
 def test_delete_waits_for_the_mutation_lock(tree):
     from threading import Event
 
