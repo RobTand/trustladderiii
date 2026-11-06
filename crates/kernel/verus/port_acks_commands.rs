@@ -4,6 +4,42 @@ use super::retirement::{accepted, bounded, domain, holders, node_rules};
 use super::*;
 
 verus! {
+/// #805 / #806: compose only the command arm without exporting node-checker facts.
+pub(super) proof fn compose_apply(b: World, a: World, node: NodeId, i: usize,
+    id: u64, c: Command, ob: Outbox, oa: Outbox)
+    requires i < b.nodes@.len(), node.0 == i, a.nodes@.len() == b.nodes@.len(),
+        dependencies::edges_indexable(b),
+        forall|j: int| 0 <= j < b.nodes@.len() && j != i ==> a.nodes@[j] == b.nodes@[j],
+        a.next_ticket == b.next_ticket, a.gates@ == b.gates@,
+        a.file_sets@ == b.file_sets@, a.dependencies@ == b.dependencies@,
+        a.pool_capacity == b.pool_capacity, a.fail_fast == b.fail_fast,
+        (b.nodes@[i as int].phase is Closed ==> a.nodes@[i as int].phase is Closed),
+        (node_checked(b, b.nodes@[i as int]) && id > b.nodes@[i as int].last_cmd
+            && command_progress_input(b.nodes@[i as int], c)
+            ==> distance(a.nodes@[i as int]) < distance(b.nodes@[i as int])),
+        command_result(b.nodes@[i as int], a.nodes@[i as int], id, c),
+        command_io(b.next_question, a.next_question, ob, oa, c),
+        progress_gate_apply::resume_post(b.nodes@[i as int], a.nodes@[i as int], id, c),
+        c == Command::Resume ==> a.next_question == b.next_question,
+    ensures owner_command(c) ==> command_post(b, a, i, id, c, ob, oa),
+        c == Command::Resume ==> progress_gate_apply::resume_apply_post(b, a,
+            Event::Command { node, id, command: c }),
+        progress_input(b, Event::Command { node, id, command: c })
+            ==> progress_measure(a) < progress_measure(b) && dependencies::edges_indexable(a),
+{
+    hide(node_checked);
+    if owner_command(c) { finish_command(b, a, i, id, c, ob, oa); }
+    if c == Command::Resume {
+        progress_gate_apply_resume_frame::compose(b, a, node, id);
+    }
+    events_lemmas::selected_input(b, Event::Command { node, id, command: c });
+    if progress_input(b, Event::Command { node, id, command: c }) {
+        assert(a.nodes@ =~= b.nodes@.update(i as int, a.nodes@[i as int]));
+        progress::lift_node_progress(b, a, i as int);
+        dependencies::indexability_frame(b, a);
+    }
+}
+
 /// State-table duplicate command: the real early return retains every field.
 pub(super) proof fn duplicate_result(n: Node, id: u64, c: Command)
     requires id <= n.last_cmd,

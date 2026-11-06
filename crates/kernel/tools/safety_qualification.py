@@ -400,6 +400,11 @@ CASES = {
         '            let _ = (question, answer);',
         '//crates/kernel:verus_commands'),
 
+    'events_command_skipped': ('crates/kernel/src/events.rs',
+        '                on_command(w, i, id, command, out);',
+        '                let _ = (i, id, command);',
+        '//crates/kernel:verus_events'),
+
 }
 
 

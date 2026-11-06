@@ -1076,6 +1076,7 @@ def verus_proofs():
             "port_acks_confirmed_progress_from_local": ("kernel::port_acks_frames#confirmed_progress_from_local", 1),
             "port_acks_ack_node_bounds": ("kernel::port_acks_frames#ack_node_bounds", 1),
             "port_acks_lift_live_local": ("kernel::port_acks_frames#lift_live_local", 1),
+            "port_acks_command_compose_apply": ("kernel::port_acks_commands#compose_apply", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
