@@ -1,0 +1,676 @@
+{
+  "repo": "RobTand/prismaquant",
+  "issue": 3315,
+  "found_by": "live probe",
+  "trace_ids": {
+    "planner": "tr-2124b7c972a86130fa6aab0e3c4edfa2",
+    "audit": "tr-f5156134560dfc61314e63abf6eef57e",
+    "ingest": "tr-bccaffd8ff949ffa26d1f6c44e2db3b3"
+  },
+  "tool_capabilities": [
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "sha",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [
+        "red_green",
+        "declared_symptom",
+        "head",
+        "base_head",
+        "subject_observer",
+        "forced_reproduction.environment",
+        "forced_reproduction.patches"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "base_head",
+        "repeat",
+        "parallel",
+        "always_tests",
+        "native_threads_2"
+      ],
+      "tool": "run_tests"
+    },
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "input_tree",
+        "output_tree",
+        "artifact_sha256",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_generator",
+      "methods": [
+        "configured_generation"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "git_index",
+        "scoped_outputs",
+        "idempotent_import"
+      ],
+      "tool": "run_generator"
+    }
+  ],
+  "ingest": {
+    "kind": "brief",
+    "evidence_contract": [
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "base_head"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green",
+          "subject_observer"
+        ],
+        "protected_files": [],
+        "requirement": "Retain assertion RED on base and GREEN on final head for the new routing observer. Use the real digest owner as the recording wrapper delegate. Read terminal verdicts and logs. The supplied remote pytest capability supports this proof. No proof result is available.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "3. Make the smallest owner-routing change. The same routing assertions pass on head, and the spy delegates to the real owner. Do not replace the production predicate or digest with a fake. Retain the failing-base assertion and final-head results."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "base_head"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "requirement": "Run the behavior-preserving controls on base with test-only changes and on final head. Use remote pytest execution. Read terminal verdicts and logs. The supplied capability supports these runs. No control result is available.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Require these behavior-preserving controls to pass on base with test-only changes and on the final head."
+        }
+      },
+      {
+        "tool": "Bazel",
+        "executor": "authorized remote Bazel executor",
+        "runner_features": [],
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. Remote pytest support does not fill this gap.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "4. Run the existing consumer target and preserve `test_a_declared_implementation_switch_is_recorded_outside_the_header`. The existing Bazel label is `//tests:test_stage_a_chain_resume`. Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip."
+        }
+      },
+      {
+        "tool": "Bazel",
+        "executor": "authorized remote Bazel executor",
+        "runner_features": [],
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run //tests:test_duplication_baseline remotely without edits to its test or scanner. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. No target result is available.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip."
+        }
+      },
+      {
+        "tool": "run_generator",
+        "executor": "prismabuild_generator",
+        "runner_features": [
+          "git_index",
+          "scoped_outputs",
+          "idempotent_import"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "input_tree",
+          "output_tree",
+          "artifact_sha256",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "configured_generation"
+        ],
+        "protected_files": [],
+        "requirement": "Run the configured python3 tools/bazel/build_files.py generator before checks. Check its result for required BUILD changes. Do not hand-edit generated outputs. Report any required generated BUILD edit under Q57. The supplied generator capability supports this action. No generator result is available.",
+        "provenance": {
+          "kind": "method"
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. Remote pytest support does not fill this gap. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: Run //tests:test_duplication_baseline remotely without edits to its test or scanner. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. No target result is available. (tool=Bazel, executor=authorized remote Bazel executor)."
+    ]
+  },
+  "audit": {
+    "verdict": "agree",
+    "objections": [],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green",
+          "subject_observer"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "3. Make the smallest owner-routing change. The same routing assertions pass on head, and the spy delegates to the real owner. Do not replace the production predicate or digest with a fake. Retain the failing-base assertion and final-head results.",
+          "source": "issue.body"
+        },
+        "requirement": "Retain assertion RED on base and GREEN on final head for the new routing observer. Use the real digest owner as the recording wrapper delegate. Read terminal verdicts and logs. The supplied remote pytest capability supports this proof. No proof result is available.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Require these behavior-preserving controls to pass on base with test-only changes and on the final head.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the behavior-preserving controls on base with test-only changes and on final head. Use remote pytest execution. Read terminal verdicts and logs. The supplied capability supports these runs. No control result is available.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "authorized remote Bazel executor",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "4. Run the existing consumer target and preserve `test_a_declared_implementation_switch_is_recorded_outside_the_header`. The existing Bazel label is `//tests:test_stage_a_chain_resume`. Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip.",
+          "source": "issue.body"
+        },
+        "requirement": "Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. Remote pytest support does not fill this gap.",
+        "runner_features": [],
+        "tool": "Bazel"
+      },
+      {
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "authorized remote Bazel executor",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip.",
+          "source": "issue.body"
+        },
+        "requirement": "Run //tests:test_duplication_baseline remotely without edits to its test or scanner. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. No target result is available.",
+        "runner_features": [],
+        "tool": "Bazel"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "base_head"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green",
+          "subject_observer"
+        ],
+        "protected_files": [],
+        "requirement": "Independent Checking must prove the routing change. Use the new test against base parse_declaration for RED. Keep all other existing definitions on base. Declare the exact call-assertion message before execution. Require the recorded-owner-calls assertion to fail. Run the same observer against head for GREEN. The wrapper must call the real owner. Retain both results. No supplied run result establishes this proof.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "3. Make the smallest owner-routing change. The same routing assertions pass on head, and the spy delegates to the real owner. Do not replace the production predicate or digest with a fake. Retain the failing-base assertion and final-head results."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "base_head"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "requirement": "The maker must run the fixed compatibility controls on base with test-only changes. The maker must run the same controls on final head. Use remote execution. Read the logs and terminal verdicts. Retain the results. No supplied run result establishes that these controls pass.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Require these behavior-preserving controls to pass on base with test-only changes and on the final head."
+        }
+      },
+      {
+        "tool": "Bazel",
+        "executor": "authorized remote Bazel executor",
+        "runner_features": [],
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "The maker must run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. A pytest result does not establish a Bazel target result.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "4. Run the existing consumer target and preserve `test_a_declared_implementation_switch_is_recorded_outside_the_header`. The existing Bazel label is `//tests:test_stage_a_chain_resume`. Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip."
+        }
+      },
+      {
+        "tool": "Bazel",
+        "executor": "authorized remote Bazel executor",
+        "runner_features": [],
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "The maker must run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. No supplied target result establishes a pass.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip."
+        }
+      },
+      {
+        "tool": "run_generator",
+        "executor": "prismabuild_generator",
+        "runner_features": [
+          "git_index",
+          "scoped_outputs",
+          "idempotent_import"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "input_tree",
+          "output_tree",
+          "artifact_sha256",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "configured_generation"
+        ],
+        "protected_files": [],
+        "requirement": "Run the configured generator before checks. Do not edit generated outputs by hand. Inspect the result for required BUILD changes. Report any required generated BUILD edit under Q57. No supplied generator result establishes that the graph stays unchanged.",
+        "provenance": {
+          "kind": "method"
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. Remote pytest support does not fill this gap. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: Run //tests:test_duplication_baseline remotely without edits to its test or scanner. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. No target result is available. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: The maker must run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. A pytest result does not establish a Bazel target result. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: The maker must run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. No supplied target result establishes a pass. (tool=Bazel, executor=authorized remote Bazel executor)."
+    ]
+  },
+  "planner": {
+    "kind": "cant_meet",
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green",
+          "subject_observer"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "3. Make the smallest owner-routing change. The same routing assertions pass on head, and the spy delegates to the real owner. Do not replace the production predicate or digest with a fake. Retain the failing-base assertion and final-head results.",
+          "source": "issue.body"
+        },
+        "requirement": "Retain assertion RED on base and GREEN on final head for the new routing observer. Use the real digest owner as the recording wrapper delegate. Read terminal verdicts and logs. The supplied remote pytest capability supports this proof. No proof result is available.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Require these behavior-preserving controls to pass on base with test-only changes and on the final head.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the behavior-preserving controls on base with test-only changes and on final head. Use remote pytest execution. Read terminal verdicts and logs. The supplied capability supports these runs. No control result is available.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "authorized remote Bazel executor",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "4. Run the existing consumer target and preserve `test_a_declared_implementation_switch_is_recorded_outside_the_header`. The existing Bazel label is `//tests:test_stage_a_chain_resume`. Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip.",
+          "source": "issue.body"
+        },
+        "requirement": "Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. Remote pytest support does not fill this gap.",
+        "runner_features": [],
+        "tool": "Bazel"
+      },
+      {
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "authorized remote Bazel executor",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip.",
+          "source": "issue.body"
+        },
+        "requirement": "Run //tests:test_duplication_baseline remotely without edits to its test or scanner. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. No target result is available.",
+        "runner_features": [],
+        "tool": "Bazel"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green",
+          "subject_observer"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "3. Make the smallest owner-routing change. The same routing assertions pass on head, and the spy delegates to the real owner. Do not replace the production predicate or digest with a fake. Retain the failing-base assertion and final-head results.",
+          "source": "issue.body"
+        },
+        "requirement": "Independent Checking must prove the routing change. Use the new test against base parse_declaration for RED. Keep all other existing definitions on base. Declare the exact call-assertion message before execution. Require the recorded-owner-calls assertion to fail. Run the same observer against head for GREEN. The wrapper must call the real owner. Retain both results. No supplied run result establishes this proof.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Require these behavior-preserving controls to pass on base with test-only changes and on the final head.",
+          "source": "issue.body"
+        },
+        "requirement": "The maker must run the fixed compatibility controls on base with test-only changes. The maker must run the same controls on final head. Use remote execution. Read the logs and terminal verdicts. Retain the results. No supplied run result establishes that these controls pass.",
+        "runner_features": [
+          "base_head"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "authorized remote Bazel executor",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "4. Run the existing consumer target and preserve `test_a_declared_implementation_switch_is_recorded_outside_the_header`. The existing Bazel label is `//tests:test_stage_a_chain_resume`. Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip.",
+          "source": "issue.body"
+        },
+        "requirement": "The maker must run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. A pytest result does not establish a Bazel target result.",
+        "runner_features": [],
+        "tool": "Bazel"
+      },
+      {
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "authorized remote Bazel executor",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip.",
+          "source": "issue.body"
+        },
+        "requirement": "The maker must run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. No supplied target result establishes a pass.",
+        "runner_features": [],
+        "tool": "Bazel"
+      },
+      {
+        "requirement": "Retain assertion RED on base and GREEN on final head for the new routing observer. Run the observer against base parse_declaration with all other existing definitions on base. Declare the exact call-assertion message before execution. Require the recorded-owner-calls assertion to fail. Use a recording wrapper that calls the real digest owner. Read the logs and terminal verdicts. Retain both results for Independent Checking.",
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "base_head",
+          "native_threads_2"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green",
+          "subject_observer"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "3. Make the smallest owner-routing change. The same routing assertions pass on head, and the spy delegates to the real owner. Do not replace the production predicate or digest with a fake. Retain the failing-base assertion and final-head results."
+        }
+      },
+      {
+        "requirement": "Run the fixed compatibility controls on base with test-only changes. Run the same controls on final head. Use the remote pytest executor. Read the logs and terminal verdicts. Retain both results.",
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "base_head",
+          "native_threads_2"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Require these behavior-preserving controls to pass on base with test-only changes and on the final head."
+        }
+      },
+      {
+        "requirement": "Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. No supplied capability supports this required Bazel target run. This obligation remains unfinished.",
+        "tool": "Bazel",
+        "executor": "authorized remote Bazel executor",
+        "runner_features": [],
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "4. Run the existing consumer target and preserve `test_a_declared_implementation_switch_is_recorded_outside_the_header`. The existing Bazel label is `//tests:test_stage_a_chain_resume`. Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip."
+        }
+      },
+      {
+        "requirement": "Run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. No supplied capability supports this required Bazel target run. This obligation remains unfinished.",
+        "tool": "Bazel",
+        "executor": "authorized remote Bazel executor",
+        "runner_features": [],
+        "artifacts": [
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Also run the existing `//tests:test_duplication_baseline` as a regression check without editing its test or scanner. Confirm nonzero test execution and record every skip."
+        }
+      },
+      {
+        "requirement": "Run the configured generator before checks. Do not edit generated outputs by hand. Inspect the result for required BUILD changes. Report any required generated BUILD edit to the ops lead under Q57. No generator result is available.",
+        "tool": "run_generator",
+        "executor": "prismabuild_generator",
+        "runner_features": [
+          "git_index",
+          "scoped_outputs",
+          "idempotent_import"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "input_tree",
+          "output_tree",
+          "artifact_sha256",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "configured_generation"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "method"
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. Remote pytest support does not fill this gap. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: Run //tests:test_duplication_baseline remotely without edits to its test or scanner. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. No target result is available. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: The maker must run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. A pytest result does not establish a Bazel target result. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: The maker must run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. No supplied target result establishes a pass. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. No supplied capability supports this required Bazel target run. This obligation remains unfinished. (tool=Bazel, executor=authorized remote Bazel executor).",
+      "Unsupported evidence requirement: Run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. No supplied capability supports this required Bazel target run. This obligation remains unfinished. (tool=Bazel, executor=authorized remote Bazel executor)."
+    ],
+    "violations": [],
+    "report": "Unsupported evidence requirement: Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. Remote pytest support does not fill this gap. (tool=Bazel, executor=authorized remote Bazel executor).\nUnsupported evidence requirement: Run //tests:test_duplication_baseline remotely without edits to its test or scanner. Confirm nonzero execution and record every skip. Capability gap: no supplied executor supports this Bazel target run. The maker must report this self-check as unfinished. No target result is available. (tool=Bazel, executor=authorized remote Bazel executor).\nUnsupported evidence requirement: The maker must run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. A pytest result does not establish a Bazel target result. (tool=Bazel, executor=authorized remote Bazel executor).\nUnsupported evidence requirement: The maker must run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. The supplied capabilities do not support this Bazel target run. This obligation remains unfinished. No supplied target result establishes a pass. (tool=Bazel, executor=authorized remote Bazel executor).\nUnsupported evidence requirement: Run //tests:test_stage_a_chain_resume remotely. Preserve test_a_declared_implementation_switch_is_recorded_outside_the_header. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. No supplied capability supports this required Bazel target run. This obligation remains unfinished. (tool=Bazel, executor=authorized remote Bazel executor).\nUnsupported evidence requirement: Run //tests:test_duplication_baseline remotely. Do not edit its test or scanner. Confirm nonzero test execution. Record every skip. Read the logs and terminal verdict. No supplied capability supports this required Bazel target run. This obligation remains unfinished. (tool=Bazel, executor=authorized remote Bazel executor)."
+  }
+}

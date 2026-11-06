@@ -711,6 +711,32 @@ def test_audit_objects_to_real_unavailable_executor_obligations(issue):
     assert blocker in "\n".join(reply["objections"])
 
 
+def test_audit_objects_to_pq3315_structured_remote_bazel_obligations():
+    fixture = Path(__file__).with_name("fixtures") / "intake-executor-capability" / "prismaquant-3315.json"
+    case = json.loads(fixture.read_text())
+    inputs = {
+        "issue": {"title": "", "body": "\n".join(
+            requirement.get("provenance", {}).get("quote", "")
+            for requirement in case["ingest"]["evidence_contract"])},
+        "ingest": copy.deepcopy(case["ingest"]),
+        "tool_capabilities": case["tool_capabilities"],
+    }
+    reply = copy.deepcopy(case["audit"])
+    assert reply["verdict"] == "agree"
+    assert inputs["ingest"]["evidence_errors"]
+    ROLES["audit"].check_reply(inputs, reply)
+    validate("audit-reply", reply)
+
+    assert reply["verdict"] == "disagree", "PQ #3315: audit must object before planning to remote Bazel obligations"
+    assert all(requirement in reply["evidence_contract"]
+               for requirement in case["ingest"]["evidence_contract"])
+    for target in ("//tests:test_stage_a_chain_resume", "//tests:test_duplication_baseline"):
+        assert any(target in error and "executor=authorized remote Bazel executor" in error
+                   for error in reply["evidence_errors"])
+        assert any(target in objection and "executor=authorized remote Bazel executor" in objection
+                   for objection in reply["objections"])
+
+
 @pytest.fixture
 def audit_evidence_case():
     fixture = Path(__file__).with_name("fixtures") / "intake-executor-capability" / "prismabuild-2815.json"
