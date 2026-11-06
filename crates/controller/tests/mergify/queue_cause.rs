@@ -447,7 +447,8 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut config = bootstrap();
     config.fail_fast = true;
-    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), None);
+    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now())));
+    let mut controller = queued_for_clock(settings, &api, root.path(), true, &[], config.clone(), Some(clock));
     let snapshot = controller.snapshot().unwrap();
     let row = snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == "0").unwrap();
     let mut value = row.value.clone();
@@ -473,6 +474,7 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             let snap = controller.snapshot().unwrap();
             let hold = snap.rows.iter().find(|r| r.table == "queue_holds").expect("hold");
             assert!(!hold.value["witness"].is_null(), "stored gates: {:?}, hold: {}", snap.rows.iter().filter(|r| r.table == "queue_gates").collect::<Vec<_>>(), hold.value);
+            controller.look_now().unwrap();
             controller.look_now().unwrap();
             assert_eq!(api.state.lock().unwrap().requeues,1,"r1.1: journaled T2 witness must recover delayed T1 failure; node {:?}; rows {:?}", controller.world().unwrap().nodes[0], controller.snapshot().unwrap().rows.iter().filter(|r| ["queue_holds","allowances"].contains(&r.table.as_str())).collect::<Vec<_>>());
         }
