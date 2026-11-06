@@ -95,6 +95,75 @@ def round_result(repository, before, after, check, *, controls=()):
     return results, base, head
 
 
+@pytest.mark.parametrize('reader', [
+    'path.read_text()',
+    'open(path).read()',
+    'path.read_bytes().decode()',
+    '__import__("io").open(path).read()',
+    '__import__("os").read(__import__("os").open(path, 0), 10000).decode()',
+    'open(__import__("importlib.util", fromlist=["find_spec"]).find_spec("app").origin).read()',
+    '__import__("inspect").getsource(app)',
+])
+@pytest.mark.parametrize('kind', [Kind.DEMONSTRATING, Kind.REPRODUCING])
+def test_subject_source_read_is_not_a_demonstration(repository, reader, kind):
+    # #933, found by: review, b8bfb8b1. A comment change cannot prove behaviour.
+    repo, save = repository
+    source = 'def value():\n    return 1\n'
+    base = save({'app.py': source})
+    observer = f'''def test_observer():
+    import app
+    from pathlib import Path
+    assert app.value() == 1
+    path = Path(__file__).parents[1] / 'app.py'
+    assert '# head' in {reader}, 'bug'
+'''
+    head = save({'app.py': source + '# head\n', 'tests/test_observer.py': observer})
+    node = 'tests/test_observer.py::test_observer'
+    result, = run_checks(repo, base, head, (
+        Check('source read', kind, (node,), proof=model.Proof(('app.py',), (), 'bug')),),
+        container=Container(IMAGE), reviewed=base if kind == Kind.REPRODUCING else None)
+    assert result.verdict == Verdict.FAIL, result
+    assert result.tests[0].base == Outcome.ERROR, result
+    assert 'subject_source_read' in result.tests[0].message
+    assert 'app.py' in result.tests[0].message
+    assert 'tests/test_observer.py:' in result.tests[0].message
+    assert "assert on behaviour; don't read subject source" in result.tests[0].message
+
+
+@pytest.mark.parametrize('read_side', ['base', 'head'])
+def test_subject_source_read_invalidates_either_proof_side(repository, read_side):
+    source = 'def value():\n    return 1\n'
+    observer = f'''def test_observer():
+    import app
+    from pathlib import Path
+    if app.value() == {1 if read_side == 'base' else 2}:
+        (Path(__file__).parents[1] / 'app.py').read_bytes()
+    assert app.value() == 2, 'bug'
+'''
+    results, _, _ = round_result(repository, {'app.py': source},
+        {'app.py': source.replace('return 1', 'return 2'), 'tests/test_observer.py': observer},
+        Check('source read', Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',),
+              proof=model.Proof(('app.py',), (), 'bug')))
+    result, = results
+    assert result.verdict == Verdict.FAIL, result
+    assert 'subject_source_read' in result.tests[0].message
+
+
+def test_honest_subject_import_data_read_and_traceback_stay_accepted(repository):
+    source = '''from pathlib import Path
+def value():
+    assert Path(__file__).with_name('data.txt').read_text() == 'data'
+    assert False, 'bug'
+    return 2
+'''
+    observer = 'def test_observer():\n    import app\n    assert app.value() == 2, "bug"\n'
+    results, _, _ = round_result(repository, {'app.py': source, 'data.txt': 'data'},
+        {'app.py': source.replace("    assert False, 'bug'\n", ''), 'tests/test_observer.py': observer},
+        Check('behaviour', Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',),
+              proof=model.Proof(('app.py',), (), 'bug')))
+    assert results[0].verdict == Verdict.PASS, results
+
+
 @pytest.mark.parametrize('case_id', [178, 195, 202, 206], ids=lambda n: f'request-{n}')
 def test_claimed_queue_diagnostics_keep_the_old_subject(repository, case_id):
     # Saved traces 0f0469e0, 0b98dbfd, 68436d6f, 27f7f232 differ in which

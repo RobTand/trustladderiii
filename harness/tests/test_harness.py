@@ -47,6 +47,81 @@ def run(tree, names, additions=frozenset(), *, notes=None):
         return tests, dict.fromkeys(tests, Outcome.NO_REPORT)
 
 
+def source_guard_run(tmp_path, body, *, proof=True, setup='', teardown='', subject=None, summary=False):
+    (tmp_path / 'app.py').write_text(subject or 'def value():\n    return 1\n')
+    (tmp_path / 'support.py').write_text(
+        'def source(path):\n    return path.read_bytes()\n')
+    tests = tmp_path / 'tests'
+    tests.mkdir()
+    (tests / 'test_product.py').write_text(f'''import pytest
+from pathlib import Path
+@pytest.fixture(autouse=True)
+def context():
+    import app
+{setup or '    pass'}
+    yield
+{teardown or '    pass'}
+def test_guard():
+    import app
+    path = Path(app.__file__)
+{body}
+def test_next():
+    import app
+    assert app.value() == 1
+''')
+    nodes = ('tests/test_product.py::test_guard', 'tests/test_product.py::test_next')
+    request = {'tests': nodes}
+    if proof:
+        request['proof_subjects'] = {nodes[0]: ['app.py'], nodes[1]: ['app.py']}
+    result = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(request),
+                             str(tmp_path), *(['--summary'] if summary else [])],
+                            capture_output=True, env={
+                                'PATH': os.environ['PATH'], 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'})
+    records = [decode(line) for line in result.stdout.splitlines()]
+    return nodes, records, result.returncode
+
+
+@pytest.mark.parametrize('body,setup', [
+    ('    from support import source\n    source(path)', ''),
+    ('    open(app.__cached__, "rb").read()',
+     '    import py_compile\n    py_compile.compile(app.__file__, doraise=True)'),
+    ('    import mmap, os\n    fd = os.open(path, os.O_RDONLY)\n'
+     '    with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as data:\n        data[:]\n    os.close(fd)', ''),
+    ('    import mmap, os\n    with mmap.mmap(app.fd, 0, access=mmap.ACCESS_READ) as data:\n        data[:]',
+     '    import os\n    app.fd = os.open(app.__file__, os.O_RDONLY)'),
+    ('    try:\n        path.read_text()\n    except Exception:\n        pass', ''),
+])
+def test_runner_source_guard_records_reads_and_resets_per_test(tmp_path, body, setup):
+    nodes, records, exit_code = source_guard_run(tmp_path, body, setup=setup)
+    notes = FailureNotes()
+    outcomes = parse(records, nodes, set(), exit_code, messages=notes)
+    assert outcomes == {nodes[0]: Outcome.ERROR, nodes[1]: Outcome.PASSED}, records
+    assert 'subject_source_read' in notes[nodes[0]]
+    assert ('support.py:2' if 'from support' in body else 'tests/test_product.py:') in notes[nodes[0]]
+    assert '__pycache__/app.' in notes[nodes[0]] if '__cached__' in body else 'app.py' in notes[nodes[0]]
+
+
+@pytest.mark.parametrize('case', ['import', 'self-source', 'setup-teardown', 'non-proof', 'write-only'])
+def test_runner_source_guard_allows_subject_reads_and_other_phases(tmp_path, case):
+    subject = ('from pathlib import Path\ndef value():\n'
+               '    assert "def value" in Path(__file__).read_text()\n    return 1\n')
+    nodes, records, exit_code = source_guard_run(tmp_path,
+        '    path.read_bytes()' if case == 'non-proof' else (
+            '    path.open("ab").close()' if case == 'write-only' else '    assert app.value() == 1'),
+        proof=case != 'non-proof', subject=subject if case == 'self-source' else None,
+        setup='    Path(app.__file__).read_bytes()' if case == 'setup-teardown' else '',
+        teardown='    Path(app.__file__).read_text()' if case == 'setup-teardown' else '')
+    assert parse(records, nodes, set(), exit_code) == dict.fromkeys(nodes, Outcome.PASSED), records
+
+
+def test_summary_source_guard_uses_existing_error_result(tmp_path):
+    nodes, records, exit_code = source_guard_run(tmp_path, '    path.read_bytes()', summary=True)
+    results = [record for record in records if record['event'] == 'result']
+    assert exit_code == 1, records
+    assert [(item['test'], item['outcome']) for item in results] == [(nodes[0], 'error'), (nodes[1], 'passed')]
+    assert 'subject_source_read' in results[0]['message']
+
+
 @pytest.mark.parametrize("kind,name,expected", [
     (Kind.DEMONSTRATING, "test_demonstrates", Verdict.PASS),
     (Kind.DEMONSTRATING, "test_new_name", Verdict.PASS),
