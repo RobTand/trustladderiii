@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 use std::time::UNIX_EPOCH;
 
 pub(crate) const PROGRESS_PREFIX: &str = "mergify:awaiting Mergify re-queue";
+/// The queue state and facts an existing read already observed (4g).
+pub(super) type Observed<'a> = Option<(&'a tl3_mergify::Observation, &'a [Observation])>;
 use lifecycle::Command;
 use tl3_mergify::decide::recovery::{budget, command, eligibility, schedule};
 
@@ -555,6 +557,7 @@ impl Adapter {
         &self,
         delivery: &Delivery,
         recovery: &mut Recovery,
+        sent_at: &mut Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Option<Reconciliation>> {
         let effects =
             self.recovery_decide(delivery, recovery, lifecycle::QueueEvent::CommandStatus)?;
@@ -581,9 +584,13 @@ impl Adapter {
         let comment = if refusal {
             false
         } else {
-            self.runtime
-                .block_on(github.reconcile_comments(&repo, number, &recovery.command_key))?
-                .is_some()
+            let found = self.runtime.block_on(github.reconcile_comments(
+                &repo,
+                number,
+                &recovery.command_key,
+            ))?;
+            *sent_at = found.as_ref().map(|comment| comment.created_at);
+            found.is_some()
         };
         let found = command::receipt_found(refusal, comment);
         let effects = self.recovery_decide(
@@ -605,6 +612,62 @@ impl Adapter {
             _ => Err(Error::Invalid("unexpected command receipt effect")),
         }
     }
+    /// 4g / #864, found by live probe (PQ #3309): Mergify answered a Sent
+    /// receipt when, on the same open head, its queue check later completed in
+    /// a dequeue. Such a receipt is spent, not awaiting acceptance.
+    fn answered(
+        sent_at: Option<chrono::DateTime<chrono::Utc>>,
+        head: &str,
+        state: &tl3_mergify::Observation,
+    ) -> bool {
+        sent_at.is_some_and(|sent| {
+            Self::dequeued(head, state)
+                && state
+                    .check
+                    .as_ref()
+                    .and_then(|check| check.completed_at)
+                    .is_some_and(|done| done > sent)
+        })
+    }
+    /// 4g: Mergify's own queue check shows this open head dequeued.
+    fn dequeued(head: &str, state: &tl3_mergify::Observation) -> bool {
+        let pull = &state.pull_request;
+        pull.head.sha == head
+            && pull.state == "open"
+            && pull.merged_at.is_none()
+            && matches!(
+                state.state,
+                QueueState::FailedCi | QueueState::Dequeued | QueueState::Conflict
+            )
+    }
+    /// 4g: the attempt ends at the observed dequeue; its facts go to #854.
+    fn ended(state: &tl3_mergify::Observation, facts: &[Observation]) -> Reconciliation {
+        let mut completion = Completion::confirmed(facts.to_vec());
+        completion.progress = Some(crate::executor::ProgressToken::Mergify(Progress::from(
+            state,
+        )));
+        Reconciliation::Found(Box::new(completion))
+    }
+    /// 4g: a pending command result whose receipt Mergify already answered ends
+    /// this queue attempt at that dequeue. Nothing is reported sent; the
+    /// dequeue facts from the same read go to #854 attribution (Q50/Q51).
+    fn command_ending(
+        &self,
+        delivery: &Delivery,
+        result: Reconciliation,
+        sent_at: Option<chrono::DateTime<chrono::Utc>>,
+        observed: Observed<'_>,
+    ) -> Result<Reconciliation> {
+        let Some((state, facts)) = observed else {
+            return Ok(result);
+        };
+        if !matches!(result, Reconciliation::Pending)
+            || !Self::answered(sent_at, enqueue(delivery)?.1, state)
+        {
+            return Ok(result);
+        }
+        Ok(Self::ended(state, facts))
+    }
     fn recovery_now_ms(&self) -> u64 {
         self.clock
             .now()
@@ -617,6 +680,7 @@ impl Adapter {
         &mut self,
         delivery: &Delivery,
         snapshot: Option<&Snapshot>,
+        observed: Observed<'_>,
     ) -> Result<Reconciliation> {
         let saved = self.recovery(delivery)?;
         let gate = match schedule::recovery_gate(saved.is_some(), None) {
@@ -628,10 +692,11 @@ impl Adapter {
         if gate == schedule::RecoveryGate::Pending {
             return Ok(Reconciliation::Pending);
         }
+        let mut sent_at = None;
         if let Some(mut recovery) = saved
-            && let Some(result) = self.reconcile_command(delivery, &mut recovery)?
+            && let Some(result) = self.reconcile_command(delivery, &mut recovery, &mut sent_at)?
         {
-            return Ok(result);
+            return self.command_ending(delivery, result, sent_at, observed);
         }
         let (state, _) = self.read(delivery, snapshot)?;
         if !self.recovery_eligible(delivery, &state, snapshot)? {
@@ -657,7 +722,7 @@ impl Adapter {
             Some(recovery) if schedule::saved_timer(recovery.eligible_since_ms) => recovery,
             _ => self.command_budget(delivery)?,
         };
-        if let Some(result) = self.reconcile_command(delivery, &mut recovery)? {
+        if let Some(result) = self.reconcile_command(delivery, &mut recovery, &mut sent_at)? {
             return Ok(result);
         }
         let effects = self.recovery_decide(
@@ -670,7 +735,7 @@ impl Adapter {
         )?;
         match effects.as_slice() {
             [lifecycle::Effect::Read(lifecycle::Need::Command)] => {
-                self.queue_command(delivery, Some(now_ms))
+                self.queue_command(delivery, Some(now_ms), None)
             }
             [lifecycle::Effect::Complete(lifecycle::Complete::Pending)] => {
                 Ok(Reconciliation::Pending)
@@ -683,11 +748,13 @@ impl Adapter {
         &mut self,
         delivery: &Delivery,
         recovery_tick_ms: Option<u64>,
+        observed: Observed<'_>,
     ) -> Result<Reconciliation> {
         let waiting = recovery_tick_ms.is_some();
         let mut recovery = self.command_budget(delivery)?;
-        if let Some(result) = self.reconcile_command(delivery, &mut recovery)? {
-            return Ok(result);
+        let mut sent_at = None;
+        if let Some(result) = self.reconcile_command(delivery, &mut recovery, &mut sent_at)? {
+            return self.command_ending(delivery, result, sent_at, observed);
         }
         let snapshot = self.snapshot()?;
         let (fresh, _) = self.read(delivery, snapshot.as_ref())?;
@@ -700,6 +767,13 @@ impl Adapter {
                         || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
                 }))
         {
+            // 4g (PQ #3318): an enqueue whose own read shows the held head
+            // dequeued ends there; it never reports a send it did not make.
+            if let Some((state, facts)) = observed
+                && Self::dequeued(enqueue(delivery)?.1, &fresh)
+            {
+                return Ok(Self::ended(state, facts));
+            }
             return Ok(Reconciliation::Pending);
         }
         let gate = match schedule::dispatch_gate(waiting, None) {
@@ -837,7 +911,7 @@ impl Adapter {
         if self.human_hold_in_events(delivery, Some(snapshot), &events)? {
             return Ok(());
         }
-        let _ = self.queue_command(delivery, None)?;
+        let _ = self.queue_command(delivery, None, None)?;
         if let Some(recovery) = self.recovery(delivery)?
             && recovery.command == Command::Sent
         {
@@ -912,8 +986,12 @@ impl Adapter {
         }
         let world = crate::snapshot::decode(&snapshot)?;
         let current = &world.nodes[delivery.node().0 as usize];
-        if current.phase != tl3_kernel::Phase::Queued
-            || current.paused
+        // 4g: a hold taken while the enqueue is still pending in Publishing
+        // retests the same way; the shared single requeue is unchanged.
+        if !matches!(
+            current.phase,
+            tl3_kernel::Phase::Publishing | tl3_kernel::Phase::Queued
+        ) || current.paused
             || current.waiting_incident
             || approved_head(&snapshot, current.approved)? != head
         {

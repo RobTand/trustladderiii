@@ -665,6 +665,9 @@ impl Controller {
                 state.delivery = hydrate(&effect, &snapshot)?;
             }
             github_due |= upstream(state.delivery.output) == Upstream::GitHub;
+            if self.look_legacy_dequeue(&snapshot, &state)? {
+                snapshot = self.store.load()?;
+            }
             if self.look_queue_hold(&snapshot, &mut state, now)? {
                 continue;
             }
@@ -729,6 +732,61 @@ impl Controller {
         Ok(())
     }
 
+    /// 4g / #864, found by live probe: a current-head queue failure journaled
+    /// before #854b has no cause and no hold. Classify it once through #854's
+    /// attribution. The kernel already received it, so nothing is charged,
+    /// requeued or sent to the kernel again.
+    fn look_legacy_dequeue(&mut self, snapshot: &Snapshot, state: &AllowanceState) -> Result<bool> {
+        use crate::adapters::mergify::{Evidence, QueueFact};
+        if upstream(state.delivery.output) != Upstream::Mergify {
+            return Ok(false);
+        }
+        let (Some(head), Some(number)) = (
+            state.delivery.head_sha.as_deref(),
+            state.delivery.pull_request,
+        ) else {
+            return Ok(false);
+        };
+        let node = state.delivery.node();
+        let world = snapshot::decode(snapshot)?;
+        let Some(current) = world.nodes.get(node.0 as usize) else {
+            return Ok(false);
+        };
+        if !matches!(current.phase, Phase::Publishing | Phase::Queued)
+            || crate::commit_sha(snapshot, current.head) != Some(head)
+            || crate::queue_cause::held(snapshot, node, head)?.is_some()
+        {
+            return Ok(false);
+        }
+        let repository = crate::request(snapshot, node)?.repo;
+        for row in snapshot.rows.iter().filter(|row| {
+            row.table == "queue_facts"
+                && row.value["evidence"]["CiFailed"]["head_check"] != true
+                && row.value["evidence"]["CiFailed"]["head"] == head
+                && row.value["evidence"]["CiFailed"]["details"]["cause"].is_null()
+        }) {
+            let mut fact: QueueFact = crate::decode_stored(row.value.clone())?;
+            let Evidence::CiFailed { details, .. } = &fact.evidence else {
+                continue;
+            };
+            if fact.repository != repository || fact.number != number {
+                continue;
+            }
+            let q58 = details.decision.as_deref() == Some("outside_change");
+            let mut commit = Commit::new(
+                format!("queue-legacy:{}:{}", row.id, snapshot.revision.get()),
+                json!({"queue_legacy":row.id}),
+                snapshot,
+            );
+            if !self.queue_failure_cause(snapshot, &mut fact, node, q58, &mut commit)? {
+                commit.rows.push(put("queue_facts", row.id.clone(), json!(fact)));
+            }
+            self.store.commit(&commit)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     /// #854b / Q50: this persisted hold uses the existing allowance clock. It
     /// consumes neither a failed round nor the generic upstream/Rob stall path.
     fn look_queue_hold(
@@ -778,12 +836,14 @@ impl Controller {
                     Observation::Queue(fact) => !fact.recorded(snapshot).unwrap_or(true),
                     _ => true,
                 });
-            if fresh {
-                if self
-                    .store
-                    .effect(&state.delivery.key)?
-                    .is_some_and(|effect| effect.state.is_pending())
-                {
+            // 4g: a pending enqueue ends at its observed dequeue even when the
+            // hold already journaled that fact; it never stays in admission.
+            let pending = self
+                .store
+                .effect(&state.delivery.key)?
+                .is_some_and(|effect| effect.state.is_pending());
+            if pending || fresh {
+                if pending {
                     self.complete(&state.delivery.key, *completion)?;
                 } else {
                     self.look_observations(&state.delivery, *completion)?;
