@@ -1,3 +1,5 @@
+#[path = "dispatch_liveness/lost_maker.rs"]
+mod lost_maker;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
@@ -391,6 +393,40 @@ fn startup_defers_dispatch_repair_while_counter_headroom_is_exhausted() {
     drain(&mut controller);
     assert_eq!(missing_incidents(&mut controller), 0);
     set_next_seq(&mut controller, &settings, next_seq);
+    // #817 makes the existing #771 halt visible even without a retained input.
+    // Restoring headroom still requires Rob's authorized clearance.
+    let incident = controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| {
+            r.table == "incidents"
+                && r.value["open"] == true
+                && r.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .unwrap();
+    controller
+        .observe(
+            "clear-repair-headroom",
+            Observation::GitHubComment {
+                repository: Repository {
+                    owner: "owner".into(),
+                    name: "repo".into(),
+                    installation: 1,
+                },
+                issue: 1,
+                comment: serde_json::from_value(serde_json::json!({
+                    "id":901,"body":format!("clear incident {}",incident.id),
+                    "user":{"id":42,"login":"rob"},
+                    "created_at":"2026-11-05T00:00:00Z","updated_at":"2026-11-05T00:00:00Z",
+                    "issue_url":"https://api.github.com/repos/owner/repo/issues/1"
+                }))
+                .unwrap(),
+            },
+        )
+        .unwrap();
+    drain(&mut controller);
     close(controller, &settings);
     let mut controller = open(&settings, root.path(), Role::Audit, &runs);
     drain(&mut controller);
@@ -552,4 +588,318 @@ fn unrelated_observations_and_idle_drives_visit_no_worker_waits() {
             .iter()
             .any(|r| r.table == "watches" && r.id == key)
     );
+}
+
+/// #816 P2 / counter headroom: unchanged drives and allowance wakes do no rescan.
+#[test]
+fn exhausted_recovery_is_parked_between_clearance_events() {
+    let mut db = support::Database::start();
+    let settings = db.create("t817_parked_repair");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    intake(&mut controller, 1);
+    let key = runs.borrow().starts[0].clone();
+    lose_watch(&settings, &key);
+    set_next_seq(&mut controller, &settings, u64::MAX);
+    close(controller, &settings);
+    let mut controller = open(&settings, root.path(), Role::Audit, &runs);
+    let mut scans = 0;
+    for _ in 0..12 {
+        controller
+            .drive_once_with(|boundary, _| {
+                if boundary == tl3_controller::Boundary::WorkerWaitHeadroom {
+                    scans += 1;
+                }
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        scans, 0,
+        "parked exhaustion recovery scanned on unrelated drives"
+    );
+}
+
+/// Q39 and state-table "Pausing": neither wait implies a dispatched operation.
+fn t817_assert_undispatched_wait(
+    controller: &mut Controller,
+    settings: &tl3_config::Store,
+    expected: tl3_kernel::Wait,
+) {
+    let classified = controller.dispatch_status(NodeId(2)).unwrap();
+    assert_eq!(
+        classified,
+        if expected == tl3_kernel::Wait::AgentPool {
+            tl3_controller::dispatch_liveness::DispatchStatus::PoolWait
+        } else {
+            tl3_controller::dispatch_liveness::DispatchStatus::Paused
+        }
+    );
+    let world = controller.world().unwrap();
+    assert!(world.valid());
+    assert!(world.consistent());
+    let node = world.nodes[2];
+    assert_eq!(node.phase, Phase::Ingesting);
+    assert_eq!(node.waiting_on(), expected);
+    assert_eq!(
+        node.ticket.is_some(),
+        expected == tl3_kernel::Wait::AgentPool
+    );
+    assert!(!node.pool);
+    assert!(node.effect.is_none() && node.run.is_none() && node.job.is_none());
+    assert_eq!(
+        node.next_seq, 0,
+        "this node has never dispatched any effect"
+    );
+    assert_eq!((node.run_failures, node.fx_failures), (0, 0));
+    assert!(!node.waiting_incident);
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot
+            .pending_effects
+            .iter()
+            .all(|e| !e.key.starts_with("effect:2:"))
+    );
+    assert!(
+        Reader::open(settings)
+            .unwrap()
+            .effects()
+            .unwrap()
+            .iter()
+            .all(|e| !e.key.starts_with("effect:2:"))
+    );
+    for row in &snapshot.rows {
+        if row.table == "watches" {
+            let delivery: Delivery = serde_json::from_value(row.value.clone()).unwrap();
+            assert_ne!(delivery.node(), NodeId(2), "case (a) has no watch");
+        }
+        if row.table == "allowances" {
+            let delivery: Delivery = serde_json::from_value(row.value["delivery"].clone()).unwrap();
+            assert_ne!(delivery.node(), NodeId(2), "case (c) has no deadline");
+        }
+        assert!(
+            row.table != "incidents" || row.value["open"] != true,
+            "case (d) has no open incident"
+        );
+    }
+    assert_eq!(
+        node.generation, 0,
+        "no operation has started for this request"
+    );
+    println!(
+        "T817_COUNTEREXAMPLE wait={expected:?} node=2 phase=Ingesting next_seq=0 run=None job=None failures=0 watches=0 allowances=0 open_incidents=0"
+    );
+}
+
+/// Q39 permits waiting behind occupied grants, including accepted starvation.
+#[test]
+fn t817_pool_wait_classifies_without_an_incident() {
+    let mut db = support::Database::start();
+    let settings = db.create("t817_pool_scope");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    for number in 1..=3 {
+        intake(&mut controller, number);
+    }
+    assert_eq!(runs.borrow().starts.len(), 2);
+    for _ in 0..3 {
+        t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::AgentPool);
+        let before = controller.world().unwrap();
+        for _ in 0..4 {
+            assert!(!controller.drive_once().unwrap());
+            assert_eq!(controller.world().unwrap(), before);
+        }
+        close(controller, &settings);
+        controller = open(&settings, root.path(), Role::Ingest, &runs);
+    }
+    t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::AgentPool);
+    assert_eq!(runs.borrow().starts.len(), 2);
+}
+
+/// State-table "Pausing" keeps the pending start until an authorized Resume.
+#[test]
+fn t817_pause_classifies_without_an_incident() {
+    let mut db = support::Database::start();
+    let settings = db.create("t817_resume_scope");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    for number in 1..=3 {
+        intake(&mut controller, number);
+    }
+    tl3_store::ConsoleCommands::open(&settings)
+        .unwrap()
+        .submit(
+            "00000000-0000-4000-8000-000000000817",
+            2,
+            &serde_json::json!({"kind":"pause"}),
+        )
+        .unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    drain(&mut controller);
+    for _ in 0..3 {
+        t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::Resume);
+        let before = controller.world().unwrap();
+        for _ in 0..4 {
+            assert!(!controller.drive_once().unwrap());
+            assert_eq!(controller.world().unwrap(), before);
+        }
+        close(controller, &settings);
+        controller = open(&settings, root.path(), Role::Ingest, &runs);
+    }
+    t817_assert_undispatched_wait(&mut controller, &settings, tl3_kernel::Wait::Resume);
+    assert_eq!(runs.borrow().starts.len(), 2);
+}
+
+/// Q39 / Pausing: a paused occupant retains its current operation's retry
+/// coverage; its ungranted neighbour still has a valid pool obstruction.
+#[test]
+fn paused_pool_occupant_retains_its_current_retry_evidence() {
+    use tl3_controller::dispatch_liveness::{DispatchStatus, decision::RetryPending};
+    let mut db = support::Database::start();
+    let settings = db.create("t817_paused_occupant");
+    let root = tempfile::tempdir().unwrap();
+    let runs = Rc::new(RefCell::new(Runs::default()));
+    let mut controller = open(&settings, root.path(), Role::Ingest, &runs);
+    for number in 1..=3 {
+        intake(&mut controller, number);
+    }
+    tl3_store::ConsoleCommands::open(&settings)
+        .unwrap()
+        .submit(
+            "00000000-0000-4000-8000-000000000818",
+            0,
+            &serde_json::json!({"kind":"pause"}),
+        )
+        .unwrap();
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].waiting_on(),
+        tl3_kernel::Wait::Resume
+    );
+    assert_eq!(
+        controller.dispatch_status(NodeId(0)).unwrap(),
+        DispatchStatus::Retry(RetryPending::Allowance)
+    );
+    assert_eq!(
+        controller.dispatch_status(NodeId(2)).unwrap(),
+        DispatchStatus::PoolWait
+    );
+    assert_eq!(runs.borrow().starts.len(), 2);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.value["open"] == true)
+    );
+}
+
+/// #817 / Once: SubmitChecks before execute has no adapter binding yet.
+#[test]
+fn intended_checks_without_an_action_binding_are_a_retry() {
+    use tl3_controller::dispatch_liveness::{DispatchStatus, decision::RetryPending};
+    let mut db = support::Database::start();
+    let settings = db.create("checks_no_binding");
+    let root = tempfile::tempdir().unwrap();
+    // This fixture never submits an action. The real adapter has an empty
+    // binding directory and an inert tool, so unintended execution fails.
+    let tool = tl3_prismabuild::Tool {
+        program: "/bin/false".into(),
+        args: vec![],
+    };
+    let client = tl3_prismabuild::PrismaBuild::new(tl3_prismabuild::Options {
+        queue_root: root.path().join("queue"),
+        tool: tool.clone(),
+        bell_url: "http://127.0.0.1:9/".into(),
+    })
+    .unwrap();
+    let mut owner =
+        tl3_controller::Ownership::claim(Store::open(&db.create("checks_adapter_owner")).unwrap())
+            .unwrap();
+    let adapter = adapters::prismabuild::Adapter::new(
+        client,
+        adapters::prismabuild::Settings {
+            records: root.path().join("bindings"),
+            harness: root.path().join("unused-harness"),
+            python: vec!["/bin/false".into()],
+            image: format!("sha256:{}", "a".repeat(64)),
+            demand: tl3_prismabuild::Demand {
+                cpus: 1.try_into().unwrap(),
+                mem_gb: 1,
+                gpu: false,
+            },
+            quiet: std::time::Duration::from_secs(120),
+            priority: -10,
+            result_tool: tool,
+        },
+        &mut owner,
+    )
+    .unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::PrismaBuild, adapter);
+    let mut controller = Controller::open(
+        Store::open(&settings).unwrap(),
+        registry,
+        Bootstrap {
+            repos: vec![Repository {
+                owner: "owner".into(),
+                name: "repo".into(),
+                installation: 1,
+            }],
+            operations: None,
+            rob: 42,
+            slots: 2,
+            pool: 2,
+            fail_fast: true,
+        },
+    )
+    .unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "no-binding".into(),
+            owner: "owner".into(),
+            repo: "repo".into(),
+            installation: 1,
+            number: 1,
+            title: "Pending checks".into(),
+            actor: 42,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    for _ in 0..300 {
+        if controller.world().unwrap().nodes[0]
+            .effect
+            .is_some_and(|e| e.kind == EffectKind::SubmitChecks)
+        {
+            let node = controller.world().unwrap().nodes[0];
+            let key = format!("effect:0:{}", node.effect.unwrap().seq);
+            let effect = Store::open(&settings)
+                .unwrap()
+                .effect(&key)
+                .unwrap()
+                .unwrap();
+            assert_eq!(effect.state, tl3_store::EffectState::Intended);
+            let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+            assert!(matches!(
+                adapters::prismabuild::Fake::new(root.path())
+                    .reconcile(&delivery)
+                    .unwrap(),
+                Reconciliation::Absent
+            ));
+            assert_eq!(
+                controller.dispatch_status(NodeId(0)).unwrap(),
+                DispatchStatus::Retry(RetryPending::Allowance),
+                "an immutable intended row has no action binding"
+            );
+            close(controller, &settings);
+            return;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    panic!("did not reach pre-dispatch checks");
 }

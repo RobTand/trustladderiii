@@ -207,6 +207,18 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.backend(delivery).stop_stalled(delivery)
     }
+    fn dispatch_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<(tl3_controller::dispatch_liveness::ProcessEvidence, bool)> {
+        self.backend(delivery).dispatch_evidence(delivery)
+    }
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<tl3_controller::dispatch_liveness::decision::ContractEvidence> {
+        self.backend(delivery).contract_evidence(delivery)
+    }
     fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         self.primary().recover_deliveries(after, since_ms)
     }
