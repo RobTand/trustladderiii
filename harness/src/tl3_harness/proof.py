@@ -357,6 +357,8 @@ def validate_support_calls(tree, module, allowed, context):
                        '(for example through __getattr__ or __instancecheck__)')
             else:
                 why = f'{callee} calls a method on another object, which can run its code or change it'
+                if isinstance(node.func, ast.Attribute) and node.func.attr in REFLECTIVE_SUPPORT_ATTRIBUTES:
+                    why += '; for string formatting use an f-string over local values'
             raise ProofRefusal('support cannot rebind or mutate existing objects; support may call only functions '
                                'defined in this support and these allowed builtins, with literal arguments: '
                                f'{listed(PURE_SUPPORT_BUILTINS)}; {why}; move this check into the observer test '
