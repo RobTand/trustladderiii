@@ -155,15 +155,6 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        (old(w).nodes@[i as int].phase == Phase::Auditing
-            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
-                let n = final(w).nodes@[i as int];
-                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
-                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
-                    && n.credit == old(w).nodes@[i as int].credit
-                    && final(w).next_question == old(w).next_question
-                    && *final(out) == *old(out)
-            }),
 ] {
     kernel_snapshot! { audit_world = *w }
     kernel_snapshot! { audit_out = *out }

@@ -40,5 +40,8 @@ pub(super) proof fn audit_spent(b: Node, a: Node)
 pub(super) proof fn audit_result(b: Node, a: Node)
     requires audit_post(b, a),
     ensures a == port_t860_contracts::audit_node(b),
-{ reveal(audit_post); reveal(port_t860_contracts::audit_node); }
+        (b.phase == Phase::Auditing && b.audit_rounds >= 1 ==>
+            a.phase == Phase::Stopping(Outcome::Stopped) && a.question.is_none()
+                && a.review_stop == Some(ReviewStop::AuditDisagreement) && a.credit == b.credit),
+{ reveal(audit_post); reveal(port_t860_contracts::audit_node); reveal(retirement::stopped); }
 }
