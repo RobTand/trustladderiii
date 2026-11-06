@@ -1,0 +1,248 @@
+{
+ "source": {
+  "trace": "tr-f390ec0ef16cec9ae5330de0627c2207",
+  "request": "RobTand/tessera#1574",
+  "role": "planner",
+  "note": "Sanitized projection: the first draft, its one objection, the repair message and the complete entries of the rejected correction. Brief, memories, forecast and tool output are omitted. The trace truncated the raw draft before checks, so draft.kind, draft.files and the first check are taken from the completed reply (files there include code-added generated outputs). The rejected correction had three evidence_contract entries; its first was truncated and is omitted."
+ },
+ "inputs": {
+  "base_sha": "6589e0bb6d25791fd3caf63d975a7d7ad7852b64",
+  "tool_capabilities": [
+   {
+    "artifacts": [
+     "action_key",
+     "cas_receipt",
+     "sha",
+     "logs",
+     "terminal_verdict"
+    ],
+    "executor": "prismabuild_pytest",
+    "methods": [
+     "red_green",
+     "declared_symptom",
+     "head",
+     "base_head",
+     "subject_observer",
+     "forced_reproduction.environment",
+     "forced_reproduction.patches"
+    ],
+    "protected_files": [],
+    "runner_features": [
+     "base_head",
+     "repeat",
+     "parallel",
+     "always_tests",
+     "native_threads_2"
+    ],
+    "tool": "run_tests"
+   },
+   {
+    "artifacts": [
+     "action_key",
+     "cas_receipt",
+     "input_tree",
+     "output_tree",
+     "artifact_sha256",
+     "logs",
+     "terminal_verdict"
+    ],
+    "executor": "prismabuild_generator",
+    "methods": [
+     "configured_generation"
+    ],
+    "protected_files": [],
+    "runner_features": [
+     "git_index",
+     "scoped_outputs",
+     "idempotent_import"
+    ],
+    "tool": "run_generator"
+   }
+  ],
+  "audit_evidence_contract": [
+   {
+    "artifacts": [
+     "action_key",
+     "cas_receipt",
+     "sha",
+     "logs",
+     "terminal_verdict"
+    ],
+    "executor": "prismabuild_pytest",
+    "methods": [
+     "red_green",
+     "base_head",
+     "head"
+    ],
+    "protected_files": [],
+    "provenance": {
+     "kind": "source",
+     "quote": "A new test will use a made-up install folder. In it, Tessera is a folder install with no commit. A different package next to it has a Git commit. The test must fail on the old code and pass on the new code.",
+     "source": "issue comment by tl3-robtand[bot] (effect [REDACTED])"
+    },
+    "requirement": "The regression test must fail on the base code and pass on the fix. It uses a synthetic install directory. In it, Tessera is a directory install with `dir_info: {}` and no commit. A separate distribution beside it has a Git commit. The test must assert that `_installed_commit_id()` does not return the sibling's commit. The failure on base must come from that assertion on the commit result.",
+    "runner_features": [
+     "base_head"
+    ],
+    "tool": "run_tests"
+   },
+   {
+    "artifacts": [
+     "action_key",
+     "cas_receipt",
+     "sha",
+     "logs",
+     "terminal_verdict"
+    ],
+    "executor": "prismabuild_pytest",
+    "methods": [
+     "head"
+    ],
+    "protected_files": [],
+    "provenance": {
+     "kind": "source",
+     "quote": "If Tessera records its own Git commit, the code will still return that commit. The existing tests must still pass.",
+     "source": "issue comment by tl3-robtand[bot] (effect [REDACTED])"
+    },
+    "requirement": "The existing tests must still pass on head. These include `test_the_exporter_resolves_an_installed_layout` in `tests/test_serving_plan_schema.py` and the tests in `tests/test_export_fail_fast.py`. Tessera's own Git record must still be returned.",
+    "runner_features": [],
+    "tool": "run_tests"
+   },
+   {
+    "artifacts": [
+     "logs",
+     "terminal_verdict"
+    ],
+    "executor": "prismabuild_pytest",
+    "methods": [
+     "head"
+    ],
+    "protected_files": [],
+    "provenance": {
+     "kind": "method"
+    },
+    "requirement": "Add the new test in the existing file `tests/test_serving_plan_schema.py`. It should include a second case for Tessera's own Git record. This placement and the second case are method choices. They are not source requirements.",
+    "runner_features": [],
+    "tool": "run_tests"
+   }
+  ],
+  "ingest": {
+   "goals": [
+    {
+     "description": "Change `_installed_commit_id()` in `src/tessera/serving_parts.py` so that it reads `direct_url.json` only from the distribution that owns the imported Tessera package (distribution name `tessera-quant`, `tessera.DISTRIBUTION`, compared by normalised name). It must ignore every other distribution in the same directory. It must return the commit from Tessera's own Git `vcs_info.commit_id` if present. It must return None when Tessera's own record has no VCS commit, for example a directory install with `dir_info: {}`, even when a sibling distribution records a Git commit.",
+     "verification": "test"
+    },
+    {
+     "description": "Keep the `git_hash()` source order unchanged: git, then `TESSERA_GIT`, then the install record, then the existing `SystemExit` refusal beginning \"cannot stamp the Tessera commit\". Keep the function name and signature of `_installed_commit_id`, which existing tests monkeypatch. Do not change numerical code, qualification gates, `src/tessera/serving/runtime_contract.json` or any protected path.",
+     "verification": "review"
+    },
+    {
+     "description": "Add a regression test, preferably in `tests/test_serving_plan_schema.py`. It must use a synthetic install directory in which Tessera is a directory install with no commit (`dir_info: {}`) and a separate distribution beside it has a Git commit. It must assert that the sibling's commit is not returned and that the stamp is refused or None. Add a second assertion or test showing that Tessera's own Git record is still returned. The first test must fail on the base code and pass on the fix. It must assert on the commit result itself, not just on a non-empty stamp.",
+     "verification": "test"
+    },
+    {
+     "description": "All existing tests must still pass. These include `test_the_exporter_resolves_an_installed_layout` in `tests/test_serving_plan_schema.py` and the tests in `tests/test_export_fail_fast.py`. If a new test file is added, regenerate the Bazel BUILD files with the configured generator. Do not hand-edit generated outputs.",
+     "verification": "test"
+    }
+   ],
+   "evidence_contract": []
+  }
+ },
+ "draft": {
+  "kind": "leaf",
+  "files": [
+   "BUILD.bazel",
+   "experiments/BUILD.bazel",
+   "src/tessera/BUILD.bazel",
+   "src/tessera/serving_parts.py",
+   "tests/BUILD.bazel",
+   "tests/test_serving_plan_schema.py",
+   "tools/BUILD.bazel"
+  ],
+  "checks": [
+   {
+    "kind": "demonstrating",
+    "node_ids": [
+     "tests/test_serving_plan_schema.py::test_installed_commit_ignores_a_sibling_distribution"
+    ],
+    "goal_ids": [
+     0,
+     2
+    ],
+    "proof": {
+     "subjects": [
+      "src/tessera/serving_parts.py::_installed_commit_id"
+     ],
+     "observer_support": [],
+     "red_message": "a sibling distribution's commit was returned for a directory install of Tessera"
+    }
+   },
+   {
+    "kind": "regression",
+    "node_ids": [
+     "tests/test_serving_plan_schema.py::test_the_exporter_resolves_an_installed_layout",
+     "tests/test_export_fail_fast.py::test_unstampable_commit_refuses_before_any_write",
+     "tests/test_export_fail_fast.py::test_tessera_git_export_stamps_the_same_value"
+    ],
+    "goal_ids": [
+     1,
+     3
+    ]
+   }
+  ],
+  "no_design_questions": true,
+  "lands_on_its_own": true,
+  "estimated_exploration_turns": 2,
+  "estimated_tool_turns": 16
+ },
+ "objections": [
+  {
+   "rule": "evidence.contract_missing",
+   "items": {
+    "field": "evidence_contract"
+   }
+  }
+ ],
+ "repair_message": "Use only already-read facts. Freeze every unnamed declaration. Return cant_meet if needed.\nevidence.contract_missing field=\"evidence_contract\": Add only missing evidence_contract as []; inherited requirements remain code-owned. Return evidence_contract with source requirements and separately marked method choices.",
+ "correction_evidence_contract": [
+  {
+   "tool": "run_tests",
+   "executor": "prismabuild_pytest",
+   "runner_features": [],
+   "artifacts": [
+    "action_key",
+    "cas_receipt",
+    "sha",
+    "logs",
+    "terminal_verdict"
+   ],
+   "methods": [
+    "head"
+   ],
+   "protected_files": [],
+   "requirement": "The existing tests must still pass on head. These include `test_the_exporter_resolves_an_installed_layout` in `tests/test_serving_plan_schema.py` and the tests in `tests/test_export_fail_fast.py`. Tessera's own Git record must still be returned.",
+   "provenance": {
+    "kind": "source",
+    "source": "issue comment by tl3-robtand[bot] (effect [REDACTED])",
+    "quote": "If Tessera records its own Git commit, the code will still return that commit. The existing tests must still pass."
+   }
+  },
+  {
+   "tool": "run_tests",
+   "executor": "prismabuild_pytest",
+   "runner_features": [],
+   "artifacts": [
+    "logs",
+    "terminal_verdict"
+   ],
+   "methods": [
+    "head"
+   ],
+   "protected_files": [],
+   "requirement": "Add the new test in the existing file `tests/test_serving_plan_schema.py`. It should include a second case for Tessera's own Git record. This placement and the second case are method choices. They are not source requirements.",
+   "provenance": {
+    "kind": "method"
+   }
+  }
+ ]
+}

@@ -1,6 +1,8 @@
 use crate::{EffectKind, Node, Phase};
 
 /// The evidence or resource a settled node needs next.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Wait {
     Incident,
