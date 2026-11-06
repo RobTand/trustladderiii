@@ -825,7 +825,7 @@ impl World {
             let owner = &self.nodes[i];
             // #839: preserve the existing dependency frame for every valid world,
             // including restored pre-planning questions and teardown phases.
-            let revocable = owner.planning_started
+            let revocable = !owner.planning_started
                 && matches!(owner.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned
                     | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_))
                 && !matches!(owner.question, Some(q) if !matches!(q.cont,
@@ -913,7 +913,7 @@ impl World {
             notice(
                 out,
                 i,
-                Notice::Note(NoteKind::DependencyCycle {
+                Notice::Note(NoteKind::DependencyAbandoned {
                     number: dependency.target.number,
                 }),
             );
