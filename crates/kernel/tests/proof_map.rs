@@ -158,12 +158,12 @@ fn proven() -> BTreeSet<&'static str> {
 }
 
 /// A mapped name ending in `_by_phase` stands for one proof per phase, named
-/// like the per-phase advance proofs: `pr_merged_by_phase` means
+/// like the per-phase progress proofs: `pr_merged_by_phase` means
 /// `pr_merged_ingesting`, `pr_merged_auditing`, and so on.
 fn expand(mapped: BTreeSet<&'static str>) -> BTreeSet<String> {
     let phases: Vec<&str> = mapped
         .iter()
-        .filter_map(|m| m.strip_prefix("advance_"))
+        .filter_map(|m| m.strip_prefix("progress_from_"))
         .collect();
     let mut names = BTreeSet::new();
     for m in &mapped {
