@@ -104,7 +104,7 @@ class RustDependencyTests(unittest.TestCase):
                 name: {"path": "tests/" + name + ".rs"}
                 for name in ["core_defects", "workers", "publishing", "prismabuild",
                              "github", "hindsight", "writer_references", "writer_blocker",
-                             "mergify", "simulation"]})
+                             "mergify", "simulation", "contract_schemas"]})
 
     def dependencies(self, target):
         pending, found = [":" + target], set()
@@ -143,6 +143,11 @@ class RustDependencyTests(unittest.TestCase):
         self.assertIn("//workers/tests:fixtures", binary["compile_data"])
         self.assertNotIn("//tools/bazel:worker_python",
                          self.dependencies("test_test_writer_blocker"))
+
+    def test_contract_inventory_stages_nonmodel_artifacts(self):
+        deps = self.dependencies("test_test_contract_schemas")
+        self.assertIn("//crates/contracts:schema/violation.json", deps)
+        self.assertIn("//crates/contracts:ROLE_API.md", deps)
 
     def test_staged_harness_and_role_directory_inputs_are_kept(self):
         for name in ["workers", "publishing", "prismabuild"]:

@@ -76,6 +76,7 @@ class MirrorLintTests(unittest.TestCase):
             ({}, True),
             ({'crates/contracts/generated/manifest.json': json.dumps({'files': [{'path': path}]})}, False),
             ({'crates/contracts/tests/schema_drift.rs': f'const X: &str = include_str!("../../../{path}");'}, False),
+            ({'crates/controller/tests/contract_schemas.rs': f'const X: &str = include_str!("../../../{path}");'}, False),
         ]
         for extra, expected in cases:
             with self.subTest(extra=extra):

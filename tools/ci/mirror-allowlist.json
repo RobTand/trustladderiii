@@ -965,41 +965,6 @@
     "owner": "#878"
   },
   {
-    "path": "workers/src/tl3_workers/schemas/audit-reply.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
-    "path": "workers/src/tl3_workers/schemas/budget-wire.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
-    "path": "workers/src/tl3_workers/schemas/harness-wire.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
-    "path": "workers/src/tl3_workers/schemas/planner-reply.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
-    "path": "workers/src/tl3_workers/schemas/postmortem-reply.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
-    "path": "workers/src/tl3_workers/schemas/quota-event.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
-    "path": "workers/src/tl3_workers/schemas/reviewer-reply.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
     "path": "workers/tests/fixtures/stderr-redactor-before.txt",
     "detector": "frozen-copy",
     "owner": "#878/controller-core/reference-copy-cleanup"

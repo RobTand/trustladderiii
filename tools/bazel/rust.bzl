@@ -87,6 +87,7 @@ _CONTROLLER_TEST_DATA = [
     "//crates/store:sources",
 ]
 _CONTROLLER_TEST_COMPILE_DATA = {
+    "tests/contract_schemas.rs": ["//crates/contracts:schema/violation.json", "//crates/contracts:ROLE_API.md"],
     "tests/writer_blocker.rs": ["//workers/tests:fixtures"],
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
@@ -396,6 +397,8 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/verus-runner":
         sources = [source]
     compile_data = options["compile_data"]
+    if source == "tests/schema_drift.rs" and native.package_name() == "crates/contracts":
+        compile_data = compile_data + ["schema/violation.json", "ROLE_API.md"]
     if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
         if native.package_name() == "crates/mergify":

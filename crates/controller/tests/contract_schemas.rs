@@ -1,7 +1,29 @@
 //! Complete inventory, bytes and dependency-owner coverage, without prompt changes.
+const CONTROLLER_SCHEMAS: &[(&str, &str)] = &[
+    (
+        "workers/src/tl3_workers/schemas/budget-wire.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/budget-wire.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/harness-wire.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/harness-wire.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/quota-event.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/quota-event.json"),
+    ),
+];
+
 #[test]
 fn complete_generated_inventory_and_bytes() {
     let files = tl3_controller::contract_schemas::generated();
+    for (path, committed) in CONTROLLER_SCHEMAS {
+        assert_eq!(
+            files.iter().find(|file| file.path == *path).unwrap().text,
+            *committed,
+            "{path}"
+        );
+    }
     let names: std::collections::BTreeSet<_> =
         files.iter().map(|file| file.path.as_str()).collect();
     assert_eq!(names.len(), files.len(), "one generator owner per artifact");

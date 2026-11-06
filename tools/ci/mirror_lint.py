@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ALLOWLIST = Path('tools/ci/mirror-allowlist.json')
 MANIFEST = Path('crates/contracts/generated/manifest.json')
 DRIFT_TEST = Path('crates/contracts/tests/schema_drift.rs')
+CONTROLLER_DRIFT_TEST = Path('crates/controller/tests/contract_schemas.rs')
 TEST_DIRS = {'test', 'tests', 'fixture', 'fixtures', 'testdata', '__tests__'}
 DECLARATION = re.compile(
     r'\b(?:mirror\s+of\b|(?<!git )mirrors\s+(?!(?:and|or|are|the|a|an|in|for|to|from)\b)'
@@ -235,11 +236,9 @@ def generated_paths(root):
                 raise ValueError(f'{MANIFEST}: invalid output path')
             paths.add(Path(path))
         return paths
-    drift = root / DRIFT_TEST
-    if not drift.exists():
-        return set()
-    return {(drift.parent / value).resolve().relative_to(root)
-            for _, value in rust_includes(rust_tokens(drift.read_text()))}
+    return {(root / drift.parent / value).resolve().relative_to(root)
+            for drift in (DRIFT_TEST, CONTROLLER_DRIFT_TEST) if (root / drift).exists()
+            for _, value in rust_includes(rust_tokens((root / drift).read_text()))}
 
 
 def shingles(text, suffix):
