@@ -521,6 +521,8 @@ pub(super) const REVIEW_MODES: &[&str] = &[
     "terminal-hold",
     "gate-retention",
     "retry-no-time-restart",
+    "reporter-union",
+    "reporter-revalidate",
 ];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
@@ -575,6 +577,63 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
         });
     }
     match mode {
+        "reporter-union" | "reporter-revalidate" => {
+            // #854b r2.A: complete A first, then A plus unidentified B.
+            let set_reporters = |unidentified: bool| {
+                let mut checks: Value = serde_json::from_str(include_str!(
+                    "../fixtures/mergify/pq3221/draft-checks.json"
+                ))
+                .unwrap();
+                let mut a = checks["check_runs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|c| c["conclusion"] == "failure")
+                    .unwrap()
+                    .clone();
+                a["name"] = json!("A");
+                let mut b = a.clone();
+                b["name"] = json!("B");
+                b["id"] = json!(99101);
+                b["app"] = Value::Null;
+                checks["check_runs"] = if unidentified { json!([a, b]) } else { json!([a]) };
+                let mut state = api.state.lock().unwrap();
+                state.cause_fixture.as_mut().unwrap().checks = Some(checks);
+                if unidentified {
+                    state.queue_check_mut()["id"] = json!(99102);
+                }
+            };
+            set_reporters(false);
+            failure(&mut controller, &api, &config);
+            let before = controller.snapshot().unwrap();
+            let original = before.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            assert_eq!(original.value["reporters_complete"], true);
+            assert_eq!(original.value["reporters"].as_array().unwrap().len(), 1);
+            if mode == "reporter-revalidate" {
+                batch_health(&mut controller, &api, &config, &["A"],
+                    "ffffffffffffffffffffffffffffffffffffffff", "main");
+                assert!(controller.snapshot().unwrap().rows.iter().any(|r|
+                    r.table == "queue_holds" && !r.value["witness"].is_null()));
+            }
+            set_reporters(true);
+            failure(&mut controller, &api, &config);
+            if mode == "reporter-union" {
+                batch_health(&mut controller, &api, &config, &["A"],
+                    "ffffffffffffffffffffffffffffffffffffffff", "main");
+            }
+            controller.look_now().unwrap();
+            controller.look_now().unwrap();
+            assert_eq!(api.state.lock().unwrap().requeues, 0,
+                "r2.A: a later unidentified reporter must invalidate A-only health");
+            let after = controller.snapshot().unwrap();
+            let hold = after.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            assert!(hold.value["witness"].is_null());
+            assert_eq!(hold.value["reporters_complete"], false);
+            assert_eq!(hold.value["since_ms"], original.value["since_ms"]);
+            assert_eq!(hold.value["retry"], original.value["retry"]);
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            assert_eq!(controller.world().unwrap().nodes[0].credit.spent, 0);
+        }
         "witness-before" => {
             // T2 is delivered first; the later-delivered failed check completed at T1<T2.
             health(
