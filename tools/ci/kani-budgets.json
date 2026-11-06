@@ -7,25 +7,11 @@
    "seconds": 237.1,
    "tier": "pr"
   },
-  "advance_awaiting_rob": {
-   "cpu_seconds": 199.2,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 2.07,
-   "seconds": 193.1,
-   "tier": "pr"
-  },
   "advance_checking": {
    "cpu_seconds": 244.9,
    "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
    "peak_gb": 3.8,
    "seconds": 234.6,
-   "tier": "pr"
-  },
-  "advance_closed": {
-   "cpu_seconds": 144.9,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 1.82,
-   "seconds": 140.6,
    "tier": "pr"
   },
   "advance_ingesting": {
