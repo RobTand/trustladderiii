@@ -22,6 +22,7 @@ tl3_crate(
     ],
     bins = [
         "tl3",
+        "tl3-run-backend",
         "tl3-worker-supervisor",
         "tl3d",
     ],
