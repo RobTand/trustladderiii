@@ -599,15 +599,18 @@ impl std::fmt::Debug for Flux {
 
 impl Flux {
     fn validate(&self) -> Result<(), Error> {
-        if self.instance_generation.is_empty() || self.instance_generation.len() > 128
-            || !self.instance_generation.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        let generation = self.instance_generation.as_str();
+        let (run, invocation) = generation.split_once('/').map_or((generation, None), |(run, id)| (run, Some(id)));
+        if run.is_empty() || matches!(run, "." | "..") || generation.len() > 128
+            || !run.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || invocation.is_some_and(|id| id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
         {
-            return Err(invalid("flux.instance_generation", "use a distinct operator-assigned generation of 1..128 ASCII letters, digits, dots, hyphens or underscores"));
+            return Err(invalid("flux.instance_generation", "use an operator-assigned generation or run-name/32-lowercase-hex-InvocationID; it is an identity, never a filesystem path"));
         }
         absolute("flux.executable", &self.executable)?;
         nonempty("flux.uri", &self.uri)?;
         let uri = Url::parse(&self.uri).map_err(|_| invalid("flux.uri", "use an explicit local:/// absolute Flux socket path"))?;
-        if uri.scheme() != "local" || uri.host_str().is_some() || !uri.path().starts_with('/')
+        if !self.uri.starts_with("local:///") || uri.scheme() != "local" || uri.host_str().is_some() || !uri.path().starts_with('/')
             || uri.path() == "/" || uri.query().is_some() || uri.fragment().is_some()
         {
             return Err(invalid("flux.uri", "use an explicit local:/// absolute Flux socket path"));

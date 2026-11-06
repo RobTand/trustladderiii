@@ -60,8 +60,12 @@ fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
     for (field, value) in [
         ("instance_generation", ""),
         ("instance_generation", "stable URI is not a generation"),
+        ("instance_generation", "../61f47a7f95af46d794ca89c3a71f0654"),
+        ("instance_generation", "fv1-model/not-an-invocation"),
+        ("instance_generation", "fv1-model/61f47a7f95af46d794ca89c3a71f0654/extra"),
         ("executable", "flux"),
         ("uri", "local:///"),
+        ("uri", "local:/run/flux/local-0"),
         ("uri", "ssh://remote/instance"),
         ("uri", "local:///run/flux?secret=fixture"),
         ("staging_root", "/mnt/shared"),
@@ -79,6 +83,9 @@ fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
     document["flux"]["staging_root"] = "/mnt/shared/tl3-inputs".into();
     document["flux"]["output_root"] = "/mnt/shared/flux-out/tl3/nested".into();
     Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    document["flux"]["instance_generation"] = "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into();
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.flux.unwrap().instance_generation, "fv1-model/61f47a7f95af46d794ca89c3a71f0654");
 }
 
 #[test]
@@ -98,6 +105,9 @@ fn flux_environment_rejects_reserved_variables_and_never_displays_values() {
     let mut document = flux_document();
     document["flux"]["environment"].as_table_mut().unwrap().remove("PATH");
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    let mut config = Config::parse(&toml::to_string(&flux_document()).unwrap()).unwrap();
+    config.flux.as_mut().unwrap().environment.insert("PATH".into(), "/private-fixture-value".into());
+    assert!(!format!("{config:?}").contains("private-fixture-value"));
 }
 
 #[test]

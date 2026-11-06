@@ -16,6 +16,9 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     use tl3_store::Store;
 
     config.validate()?;
+    if config.execution_backend == tl3_config::ExecutionBackend::Flux {
+        require_drained_pb(&config.workers.runs.join(".controller/prismabuild"))?;
+    }
     config.validate_secret_files()?;
     let bootstrap = Bootstrap::from_config(config)?;
     if bootstrap.operations.is_none() {
@@ -30,6 +33,36 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     let mut ownership = crate::Ownership::claim(Store::connect(&config.store)?)?;
     ownership.migrate()?;
     register_owned(config, bootstrap, listen, ownership)
+}
+
+/// Keep legacy PB evidence on its original route until ops has reconciled it.
+fn require_drained_pb(root: &std::path::Path) -> Result<()> {
+    use std::{fs, io::ErrorKind};
+    const HOLD: &str = "Flux selection requires ops to drain or explicitly hold retained PrismaBuild bindings on the PB route";
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let retained = |path: &std::path::Path| {
+        path.extension().is_some_and(|suffix| matches!(suffix.to_str(), Some("job" | "wait" | "done")))
+    };
+    for entry in entries {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if retained(&entry.path()) || kind.is_symlink() {
+            return Err(crate::Error::Invalid(HOLD));
+        }
+        if kind.is_dir() {
+            for child in fs::read_dir(entry.path())? {
+                let child = child?;
+                if retained(&child.path()) || child.file_type()?.is_symlink() {
+                    return Err(crate::Error::Invalid(HOLD));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn register_owned(
