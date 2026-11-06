@@ -1148,7 +1148,7 @@ fn mandatory_a3_boundary_errors() {
             },
             Entry::Webhook,
         );
-        assert!(r["result"].get("error").is_some(), "{r:#}");
+        assert_eq!(r["result"].get("error").is_some(), malformed != 4, "{r:#}");
     }
     for op in [
         "github.pull",
