@@ -1,7 +1,7 @@
 """Test-only recording plugin. No source from the served repository is executed."""
 import ast
 import base64
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 import functools
 import hashlib
 import json
@@ -23,11 +23,13 @@ def serial(value):
     if hasattr(value, 'value'):
         return value.value
     if is_dataclass(value):
-        return {key: serial(item) for key, item in asdict(value).items()}
+        return {field.name: serial(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, dict):
         return {key: serial(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
         return [serial(item) for item in value]
+    if hasattr(value, '__dict__'):
+        return {key: serial(item) for key, item in vars(value).items()}
     return value
 
 

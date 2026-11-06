@@ -34,7 +34,7 @@ fn tree_hash(tree: &Tree) -> String {
             digest.update((value.len() as u64).to_be_bytes()); digest.update(value);
         }
     }
-    format!("{digest:x}")
+    format!("{:x}", digest.finalize())
 }
 fn text(tree: &Tree, name: &str) -> Option<String> {
     tree.get(name).map(|f| String::from_utf8_lossy(&f.bytes).into_owned())
