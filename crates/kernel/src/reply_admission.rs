@@ -382,6 +382,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         port_replies_contracts::transition_post(*old(w), *final(w), i as int,
             old(w).nodes@[i as int], reply, *old(out), *final(out)),
 ] proof [reveal(port_review_reply::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);
+    reveal(port_review_reply::accepted_reply);
     reveal(port_replies_contracts::transition_post); reveal(reply_bounds);] {
     kernel_snapshot! { worker_before = *w }
     match reply {
