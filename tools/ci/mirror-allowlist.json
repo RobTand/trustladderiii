@@ -2,12 +2,12 @@
   {
     "path": "crates/controller/src/adapters/prismabuild/results/tests/evidence-current.rs",
     "detector": "frozen-copy",
-    "owner": "unassigned"
+    "owner": "#878/controller-core/reference-copy-cleanup"
   },
   {
     "path": "crates/controller/src/adapters/prismabuild/results/tests/mod.rs",
     "detector": "source-include",
-    "owner": "unassigned"
+    "owner": "#878/controller-core/reference-copy-cleanup"
   },
   {
     "path": "crates/controller/src/dispatch_recovery_tests.rs",
@@ -17,12 +17,12 @@
   {
     "path": "crates/controller/src/executor.rs",
     "detector": "source-include",
-    "owner": "unassigned"
+    "owner": "#878"
   },
   {
     "path": "crates/controller/src/prompt_render/tests.rs",
     "detector": "source-include",
-    "owner": "unassigned"
+    "owner": "#890"
   },
   {
     "path": "crates/controller/tests/budget_parity/exploration.txt",
@@ -950,11 +950,6 @@
     "owner": "#925"
   },
   {
-    "path": "crates/harness-core/tests/fixtures/limits/seed_mutant.py",
-    "detector": "source-include",
-    "owner": "unassigned"
-  },
-  {
     "path": "crates/kernel/tests/proof_map.rs",
     "detector": "source-include",
     "owner": "#912"
@@ -968,6 +963,16 @@
     "path": "crates/mergify/tests/enqueue_reference.rs.txt",
     "detector": "frozen-copy",
     "owner": "#915"
+  },
+  {
+    "path": "tools/ci/test_bazel_workspace.py",
+    "detector": "source-include",
+    "owner": "#878"
+  },
+  {
+    "path": "tools/ci/test_graph_impact.py",
+    "detector": "source-include",
+    "owner": "#878"
   },
   {
     "path": "workers/src/tl3_workers/schemas/audit-reply.json",
@@ -1007,7 +1012,7 @@
   {
     "path": "workers/tests/fixtures/stderr-redactor-before.txt",
     "detector": "frozen-copy",
-    "owner": "unassigned"
+    "owner": "#878/controller-core/reference-copy-cleanup"
   },
   {
     "path": "workers/tests/p5/main_reference.py",
