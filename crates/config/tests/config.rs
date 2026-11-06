@@ -143,6 +143,22 @@ fn flux_environment_rejects_reserved_variables_and_never_displays_values() {
 }
 
 #[test]
+fn flux_access_environment_accepts_only_provisioned_home_and_runtime_dir() {
+    let mut document = flux_document();
+    let environment = document["flux"]["environment"].as_table_mut().unwrap();
+    environment.insert("HOME".into(), "/home/rob".into());
+    environment.insert("XDG_RUNTIME_DIR".into(), "/run/user/1000".into());
+    Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    for (name, value) in [("HOME", "/unprovisioned-home"), ("XDG_RUNTIME_DIR", "/run/user/another-user"), ("DBUS_SESSION_BUS_ADDRESS", "unprovisioned-bus")] {
+        let mut wrong = document.clone();
+        wrong["flux"]["environment"].as_table_mut().unwrap().insert(name.into(), value.into());
+        let error = Config::parse(&toml::to_string(&wrong).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("flux.environment"));
+        assert!(!error.contains(value), "validation printed an environment value");
+    }
+}
+
+#[test]
 fn repository_test_demand_is_optional_and_bounded() {
     assert!(
         Config::parse(EXAMPLE).unwrap().github.repos[0]
