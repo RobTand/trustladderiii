@@ -209,6 +209,7 @@ impl RunBackend for Flux {
             let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
             self.instance(&current)?;
             cleanup::ownership(&current, &owned)?;
+            if current.runtime_ownership.as_ref() == Some(&owned) { return Ok(()); }
             if current.cancel_requested || current.terminal.is_some() { return Err(BackendError::unknown("execution held after cancel/terminal")); }
             if current.runtime_ownership.as_ref().is_some_and(|existing| existing != &owned) {
                 return Err(BackendError::invalid("runtime ownership is immutable"));

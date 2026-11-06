@@ -94,6 +94,10 @@ impl Flux {
 
     pub fn retain_cleanup(&self, owner: &Owner, reference: &BlobRef) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
+        if record.terminal.is_some() {
+            let valid = record.cleanup_evidence.as_ref().is_some_and(|reference| record.runtime_ownership.as_ref().is_some_and(|owned| stopped(&record, &owned.run, reference).unwrap_or(false)));
+            return Ok(CleanupResult { stopped: valid, evidence: record.cleanup_evidence, reason: "committed terminal cleanup is immutable".into() });
+        }
         self.mark_cleanup_debt(&record)?;
         let Some(owned) = &record.runtime_ownership else {
             return Ok(CleanupResult { stopped: false, evidence: None, reason: "runtime ownership was not durably retained before execution".into() });
@@ -107,6 +111,7 @@ impl Flux {
                 if current.runtime_ownership != record.runtime_ownership || current.binding != record.binding {
                     return Err(BackendError::unknown("runtime identity changed during cleanup"));
                 }
+                if current.terminal.is_some() { return Ok(()); }
                 current.cleanup_evidence = Some(reference.clone());
                 save(dir, &current)
             })?;
@@ -123,6 +128,10 @@ impl Flux {
 
     pub(super) fn run_cleanup(&self, owner: &Owner) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
+        if let Some(reference) = &record.cleanup_evidence
+            && record.runtime_ownership.as_ref().is_some_and(|owned| stopped(&record, &owned.run, reference).unwrap_or(false)) {
+            return Ok(CleanupResult { stopped: true, evidence: Some(reference.clone()), reason: "previous exact runtime cleanup already verified".into() });
+        }
         self.mark_cleanup_debt(&record)?;
         let Some(ownership) = record.runtime_ownership.clone() else {
             return Ok(CleanupResult { stopped: false, evidence: None, reason: "no retained runtime ownership; cleanup remains unknown".into() });
@@ -145,7 +154,7 @@ impl Flux {
         }
         let stdout = reply.stdout;
         let _: CleanupEvidence = serde_json::from_slice(&stdout)?;
-        let reference = blob(&record.intent.output_dir.join("cleanup.json"), &stdout)?;
+        let reference = blob(&record.intent.output_dir.join(format!("cleanup-{}.json", digest(&stdout))), &stdout)?;
         self.retain_cleanup(owner, &reference)
     }
 }

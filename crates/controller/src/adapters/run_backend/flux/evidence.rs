@@ -118,6 +118,7 @@ impl Flux {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
         input.run.validate()?;
+        if record.terminal.is_some() { return Err(BackendError::invalid("collector cannot replace committed terminal evidence")); }
         if input.run.instance != record.intent.instance || input.run.uri != record.intent.uri
             || record.binding.as_ref().is_some_and(|binding| binding.id != input.run) {
             return Err(BackendError::invalid("collector run differs from retained dispatch"));
@@ -220,7 +221,8 @@ impl Flux {
             return Ok(Observation::Unknown { binding: Some(binding), reason: "native completion lacks semantic report or authoritative cleanup/loss evidence".into() });
         };
         let report_ref = if report.is_some() {
-            Some(blob(&record.intent.output_dir.join("retained-report.json"), &serde_json::to_vec(&report)?)?)
+            let path = record.intent.output_dir.join("retained-report.json");
+            Some(blob(&path, &read(&path)?)?)
         } else { None };
         let terminal = self.terminal(owner, ending, reason, evidence, report_ref)?;
         Ok(Observation::Terminal { binding: Some(binding), terminal })

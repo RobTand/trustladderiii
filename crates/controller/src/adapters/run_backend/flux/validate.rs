@@ -9,8 +9,12 @@ pub(super) fn options(options: &Options) -> Result<()> {
         || options.arguments.len() > 32 || !options.environment.contains_key("PATH") {
         return Err(BackendError::invalid("explicit executable, PATH, generation and journal root required"));
     }
+    if options.instance_generation.contains('/') && (options.environment.get("HOME").map(String::as_str) != Some("/home/rob")
+        || options.environment.get("XDG_RUNTIME_DIR").map(String::as_str) != Some("/run/user/1000")) {
+        return Err(BackendError::invalid("live generation guard requires exact authorized HOME/XDG user-bus environment"));
+    }
     for (name, value) in &options.environment {
-        if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH" | "FLUX_URI" | "FLUX_VANILLA_RUN" | "LANG" | "HOME" | "XDG_RUNTIME_DIR" | "DBUS_SESSION_BUS_ADDRESS")
+        if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH" | "FLUX_URI" | "FLUX_VANILLA_RUN" | "LANG" | "HOME" | "XDG_RUNTIME_DIR")
             || value.len() > 4096 || value.chars().any(char::is_control) || safe(value)? != *value {
             return Err(BackendError::invalid("unsupported or sensitive access environment; values withheld"));
         }
@@ -72,12 +76,11 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
     if request.runner.arguments.iter().any(|s| s.len() > 16_384 || s.chars().any(char::is_control) || safe(s).map_or(true, |v| v != *s)) {
         return Err(BackendError::invalid("invalid trusted-runner arguments"));
     }
-    if let Some(cleanup) = &request.runtime.cleanup {
-        if !absolute(&cleanup.executable) || !cleanup.executable.starts_with("/mnt/shared")
+    if let Some(cleanup) = &request.runtime.cleanup
+        && (!absolute(&cleanup.executable) || !cleanup.executable.starts_with("/mnt/shared")
             || !hex(&cleanup.executable_digest, 64) || cleanup.arguments.len() > 128
-            || cleanup.arguments.iter().any(|argument| argument.len() > 4096 || safe(argument).map_or(true, |value| value != *argument)) {
+            || cleanup.arguments.iter().any(|argument| argument.len() > 4096 || safe(argument).map_or(true, |value| value != *argument))) {
             return Err(BackendError::invalid("independent cleanup must be an immutable trusted shared executable"));
-        }
     }
     match &request.runtime.runtime {
         ExecutionRuntime::Native { interpreter } => {
@@ -128,10 +131,9 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
         || (matches!(request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) && !preflight.image_present) {
         return Err(BackendError::invalid("runtime/image identity or architecture is missing or unqualified"));
     }
-    if let Some(cleanup) = &request.runtime.cleanup {
-        if digest(&read(&cleanup.executable)?) != cleanup.executable_digest || !std::fs::metadata(&cleanup.executable)?.permissions().readonly() {
+    if let Some(cleanup) = &request.runtime.cleanup
+        && (digest(&read(&cleanup.executable)?) != cleanup.executable_digest || !std::fs::metadata(&cleanup.executable)?.permissions().readonly()) {
             return Err(BackendError::invalid("trusted cleanup executable changed or is mutable"));
-        }
     }
     if let ExecutionRuntime::RootlessPodman { mode, .. } = &request.runtime.runtime {
         if preflight.mode != Some(*mode) || match mode {
