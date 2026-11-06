@@ -1,4 +1,5 @@
 """Measured delivery proofs and real-source mutant qualification, on remote compute."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,12 +14,12 @@ import time
 # Each seed changes executable source, with the contract left intact.
 MUTANTS = {
     'fresh_sent': ('dispatch', 'start', 'State::Sent => Action::Transition(State::Uncertain),', 'State::Sent => intended(view),'),
-    'pending_absent': ('converges', 'reconciled', 'Evidence::Absent => {', 'Evidence::Absent | Evidence::Pending => {'),
-    'predecessor_bypass': ('approval', 'history', 'if predecessor { Stage::SentAmbiguous }', 'if false { Stage::SentAmbiguous }'),
+    'pending_absent': ('converges', 'reconciled', 'match evidence {', 'match if evidence == Evidence::Pending { Evidence::Absent } else { evidence } {'),
+    'predecessor_bypass': ('approval', 'history', 'if predecessor {\n                Stage::SentAmbiguous', 'if false {\n                Stage::SentAmbiguous'),
     'retain_grant': ('approval', 'commit_sent', 'spend_grant: view.approval != ApprovalGate::Ordinary,', 'spend_grant: false,'),
-    'changed_revision': ('dispatch', 'observed', 'if revision_changed { return Action::Return; }', 'if false { return Action::Return; }'),
+    'changed_revision': ('dispatch', 'observed', 'if revision_changed {', 'if false {'),
     'omit_bridge': ('core', 'completion', 'let bridge = state == State::Uncertain && ack != Ack::Confirmed;', 'let bridge = false;'),
-    'omit_retirement': ('converges', 'consume', 'let retire_retry = view.kind == DeliveryKind::KernelEffect && ack == Ack::Retryable && plan.to == State::Intended;', 'let retire_retry = false;'),
+    'omit_retirement': ('converges', 'consume', 'let retire_retry = view.kind == DeliveryKind::KernelEffect\n        && ack == Ack::Retryable\n        && plan.to == State::Intended;', 'let retire_retry = false;'),
     'reject_equal': ('fence', 'accepts_fence', '!matches!(order, EpochOrder::Older)\n}', 'matches!(order, EpochOrder::Newer)\n}'),
     'admit_older': ('fence', 'accepts_fence', '!matches!(order, EpochOrder::Older)\n}', 'true\n}'),
 }
@@ -97,8 +98,6 @@ def main():
             if body.count(before) != 1:
                 raise RuntimeError(f'{name}: seed must match exactly once in {obligation}')
             body = body.replace(before, after)
-            if name == 'pending_absent':
-                body = body.replace('Evidence::Pending => {', 'Evidence::Pending if false => {')
             path.write_text(original[:start] + body + original[end:])
             result, elapsed = verify(verifier, z3, rustc, root / 'proofs' / (group + '.rs'), obligation)
             print(result.stdout, flush=True)
@@ -107,10 +106,16 @@ def main():
                     or re.search(r'error\[E\d+\]|unrecognized option', result.stdout)):
                 raise RuntimeError(f'{name}: expected obligation failure, never a frontend error or timeout')
             receipt['mutant'] = {'name': name, 'obligation': 'delivery::' + obligation,
+                                 'source_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                                  'rejection': 'verification obligation', 'seconds': elapsed}
+    inventory = {'proofs': {label: {'kind': 'verus', 'expected_obligations': expected,
+                                    'verified': verdict['verified'], 'threads': 1,
+                                    'seconds': seconds, 'module': mode}}}
+    print('VERUS_PROOF ' + json.dumps(inventory, sort_keys=True), flush=True)
     print('DELIVERY_VERUS ' + json.dumps(receipt, sort_keys=True), flush=True)
     output = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR')
     if output:
+        Path(output, 'inventory.json').write_text(json.dumps(inventory) + '\n')
         Path(output, 'delivery-verus.json').write_text(json.dumps(receipt, indent=2) + '\n')
         Path(output, 'verifier.json').write_text(json.dumps(stats, indent=2) + '\n')
     return 0
