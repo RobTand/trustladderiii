@@ -412,8 +412,9 @@ def test_os_error_does_not_expose_host_path(tree, monkeypatch):
         tools = tools_for(worktree)
         def denied(*args, **kwargs):
             raise PermissionError("host private path /controller/fixture")
-        monkeypatch.setattr(os, "open", denied)
-        result = invoke(tools["read"], "src/code.py")
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "open", denied)
+            result = invoke(tools["read"], "src/code.py")
     assert result.status == "error"
     # Q50: an environment failure carries an id a blocked reply can cite.
     assert result.text == "Worktree tool rejected the path or operation. Tool error id: tool-error-1."
