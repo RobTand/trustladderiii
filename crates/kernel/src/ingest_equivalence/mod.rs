@@ -1,4 +1,6 @@
 //! Compare the real dispatcher to its verbatim body before private extraction.
+#![cfg(test)]
+
 use super::*;
 use proptest::prelude::*;
 
