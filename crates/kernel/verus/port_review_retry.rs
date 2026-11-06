@@ -3,17 +3,20 @@ use super::*;
 
 verus! {
 /// State-table credit rows: the dependency-aware one-credit decision.
+#[verifier::inline]
 pub(super) open spec fn funded(n: Node) -> bool {
     !n.credit.withheld && n.credit.start as int + n.credit.earned as int
         + n.credit.added as int >= n.credit.spent as int + 1
 }
 
 /// State-table paid retry rows: every other credit field is unchanged.
+#[verifier::inline]
 pub(super) open spec fn paid(n: Node) -> Node {
     Node { credit: Credit { spent: (n.credit.spent + 1) as u64, ..n.credit }, ..n }
 }
 
 /// State-table AwaitingRob rows: the real ask_rob node update.
+#[verifier::inline]
 pub(super) open spec fn asked(n: Node, id: u64, kind: QKind, cont: Cont) -> Node {
     retirement::phased(Node { holds: false,
         question: Some(Question { id, kind, cont, cost: 1, clarified: false }), ..n },
@@ -21,6 +24,7 @@ pub(super) open spec fn asked(n: Node, id: u64, kind: QKind, cont: Cont) -> Node
 }
 
 /// Q54: stopping for review records the reason before the real stopping update.
+#[verifier::inline]
 pub(super) open spec fn review_stopped(n: Node, step: ReviewStop) -> Node {
     retirement::stopped(Node { review_stop: Some(step), ..n }, Outcome::Stopped)
 }
@@ -75,6 +79,7 @@ pub(super) open spec fn rechecked(n: Node, target: Phase, id: u64) -> (Node, u64
 }
 
 /// Q30: abandoning an operation cancels only its start effect.
+#[verifier::inline]
 pub(super) open spec fn abandoned(n: Node) -> Node {
     Node { run: None, job: None, pool: false, effect: match n.effect {
         Some(e) => Some(InFlight { cancelling: e.cancelling || matches!(e.kind,
@@ -94,4 +99,18 @@ pub(super) open spec fn failed_run(n: Node) -> Node {
         retirement::incident(Node { run_failures: 0, run_incidents: count, ..m }, count >= 2)
     } else { m }
 }
+
+/// #806: exact recheck pair, opaque to unrelated frame and arithmetic proofs.
+#[verifier::opaque]
+pub(super) open spec fn recheck_post(n: Node, after: Node, target: Phase, id: u64, next: u64) -> bool {
+    (after, next) == rechecked(n, target, id)
+}
+
+/// #806: exact retry ladder pair, opaque to unrelated caller obligations.
+#[verifier::opaque]
+pub(super) open spec fn rung_post(n: Node, after: Node, fail_fast: bool, id: u64,
+    next: u64, step: ReviewStop) -> bool {
+    (after, next) == rung(n, fail_fast, id, step)
+}
+
 }
