@@ -662,7 +662,8 @@ impl World {
             final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] proof [reveal(dependency_frame);] {
+    ] {
+        kernel_snapshot! { before_withhold = *self }
         if !self.dependencies_delivered(NodeId(i as u64))
             && !self.nodes[i].planning_started
             && matches!(
@@ -674,6 +675,9 @@ impl World {
             if n.credit.ready {
                 n.credit.withheld = true;
             }
+        }
+        kernel_proof! {
+            assert(dependency_frame(before_withhold@, *self, i as int)) by { reveal(dependency_frame); }
         }
     }
     }
