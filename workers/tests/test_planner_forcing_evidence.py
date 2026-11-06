@@ -58,6 +58,19 @@ def test_invalid_forcing_is_a_planner_violation(planner_request, deflake_worktre
                for item in deflake_worktree['violations'])
 
 
+def test_forcing_repair_names_the_actual_check_index(planner_request, deflake_worktree):
+    from tl3_workers.roles.planner import check_reply
+
+    check = deflake_worktree['checks'][0]
+    deflake_worktree['checks'] = [copy.deepcopy(check) for _ in range(4)]
+    deflake_worktree['checks'][3]['forcing']['patches'][0]['raises'] = 'AssertionError'
+    check_reply(planner_request['inputs'], deflake_worktree)
+    refusal = next(item for item in deflake_worktree['violations'] if item.startswith('Invalid forcing:'))
+    assert 'forcing.raise_class' in refusal
+    assert '/checks/3/forcing/patches/0/raises' in refusal
+    assert '/checks/0/forcing/patches/0/raises' not in refusal
+
+
 @pytest.mark.parametrize('change', [
     {'code': 'print(1)'},
     {'symptom': ''},
