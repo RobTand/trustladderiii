@@ -44,6 +44,7 @@ struct Fixture {
     options: Options,
     config: PathBuf,
     membership: Vec<u8>,
+    bundles: Vec<PathBuf>,
 }
 
 fn immutable(path: &Path, bytes: &[u8], executable: bool) {
@@ -111,7 +112,7 @@ case "$1" in
 submit)
     printf '%s\n' "$@" > "$fixture/args"
     /usr/bin/python3 "$fixture/jobspec.py" "$fixture" "$@";;
-jobs) if [ "$mode" = quiet-jobs ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi; cat "$fixture/jobs.json";;
+jobs) if [ "$mode" = query-error ]; then exit 1; fi; if [ "$mode" = quiet-jobs ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi; cat "$fixture/jobs.json";;
 cancel) printf 'acknowledged\n';;
 resource)
     case "$3" in --states=all) cat "$fixture/all.json";; --states=free) cat "$fixture/free.json";; *) exit 9;; esac;;
@@ -148,7 +149,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             instance_generation: "fixture-generation".into(), uri: "local:///fixture".into(), journal_root: p.join("journal"),
             bootstrap: HostBootstrap { cli: env!("CARGO_BIN_EXE_tl3-run-backend").into(), config: config.clone() } };
         fs::write(&config, serde_json::to_vec(&options).unwrap()).unwrap();
-        Self { root, request, intent, options, config, membership }
+        Self { root, request, intent, options, config, membership, bundles: vec![] }
     }
 
     fn call(&self, command: Value) -> Vec<Value> {
@@ -199,7 +200,13 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
     fn calls(&self) -> String { fs::read_to_string(self.root.path().join("calls")).unwrap_or_default() }
 }
 impl Drop for Fixture {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.intent.output_dir); }
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.intent.output_dir);
+        fn release(path: &Path) {
+            if path.is_dir() { let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700)); if let Ok(children) = fs::read_dir(path) { for child in children.flatten() { release(&child.path()); } } }
+        }
+        for bundle in &self.bundles { release(bundle); let _ = fs::remove_dir_all(bundle); }
+    }
 }
 
 fn completed(status: u32) -> Vec<Value> {
@@ -498,24 +505,29 @@ fn exact_original_spec_rejects_resource_placement_and_duration_changes() {
 impl Fixture {
     fn podman(&mut self, mode: ContainerMode, prerequisites: bool) {
         let p = self.root.path();
-        let image = ImageIdentity { inventory: api::durable::blob(&p.join("image-map.json"), &serde_json::to_vec(&json!({"profiles":[{
-            "profile":"fixture","registry_ref":format!("fixture.invalid/test@sha256:{}", "a".repeat(64)),"manifest_digest":format!("sha256:{}", "a".repeat(64)),
-            "config_digest":format!("sha256:{}", "b".repeat(64)),"platform":"linux/amd64"}]})).unwrap()).unwrap(),
-            profile: "fixture".into(), reference: format!("fixture.invalid/test@sha256:{}", "a".repeat(64)), index_digest: None,
-            manifest_digest: format!("sha256:{}", "a".repeat(64)), config_digest: format!("sha256:{}", "b".repeat(64)), platform: "linux/amd64".into() };
-        let trusted = p.join("tl3_harness"); fs::create_dir(&trusted).unwrap(); immutable(&trusted.join("runner.py"), b"# trusted fixture\n", false);
-        let cleanup = p.join("cleanup-helper"); immutable(&cleanup, b"#!/bin/sh\ncat\n", true);
-        self.request.runtime.runtime = ExecutionRuntime::RootlessPodman { mode, executable: "/usr/bin/podman".into(), image: image.reference.clone(), trusted_root: trusted,
-            interpreter: "/usr/bin/python3".into(), memory_limit_bytes: (mode == ContainerMode::OwnScope).then(|| 1_073_741_824.try_into().unwrap()) };
-        self.request.runtime.expected_image = Some(image.reference.clone());
-        self.request.runtime.image = Some(image.clone());
-        self.request.runtime.cleanup = Some(CleanupProgram { executable: cleanup, executable_digest: digest(b"#!/bin/sh\ncat\n"), arguments: vec![] });
-        let bytes = serde_json::to_vec(&RuntimePreflight { schema: "tl3.runtime_preflight.v1".into(), architecture: "x86_64".into(), image_identity: Some(image.reference.clone()),
-            image_present: true, identity_verified: true, image: Some(image), mode: Some(mode), no_cgroups_supported: prerequisites, init_available: prerequisites, user_scope_supported: prerequisites }).unwrap();
-        immutable(&p.join("podman-preflight.json"), &bytes, false);
-        self.request.runtime.preflight = BlobRef { path: p.join("podman-preflight.json"), sha256: digest(&bytes), bytes: bytes.len() as u64 };
-        self.request.environment.insert("HOME".into(), "/home/rob".into());
-        self.request.environment.insert("XDG_RUNTIME_DIR".into(), "/run/user/1000".into());
+        let image_map = p.join("image-map.json");
+        fs::write(&image_map, json!({"profiles":[{"profile":"fixture","registry_ref":format!("fixture.invalid/test@sha256:{}", "a".repeat(64)),
+            "manifest_digest":format!("sha256:{}", "a".repeat(64)),"config_digest":format!("sha256:{}", "b".repeat(64)),"platform":"linux/amd64"}]}).to_string()).unwrap();
+        let image_inspect = p.join("image-inspect.json");
+        fs::write(&image_inspect, json!({"Id":format!("sha256:{}", "b".repeat(64)),"Architecture":"amd64","Os":"linux"}).to_string()).unwrap();
+        let source = p.join("host-source"); let trusted = source.join("lib/tl3_harness"); fs::create_dir_all(&trusted).unwrap();
+        fs::write(trusted.join("runner.py"), b"# trusted runner fixture\n").unwrap();
+        fs::write(trusted.join("runtime.py"), b"# trusted imported module fixture\n").unwrap();
+        fs::write(source.join("host-collector"), b"#!/usr/bin/python3.14 -I\n# trusted collector fixture\n").unwrap();
+        fs::write(source.join("cleanup-helper"), b"#!/usr/bin/python3\nimport json,sys,pathlib\nfacts=json.load(sys.stdin)\nowned=facts['ownership']\npath=pathlib.Path('/mnt/shared/flux-out/tl3')/owned['owner']['correlation']/('trusted-stop-'+owned['execution']+'.json')\nprint(path.read_text())\n").unwrap();
+        let files = ["lib/tl3_harness/runner.py", "lib/tl3_harness/runtime.py"].into_iter().map(|path| { let raw = fs::read(source.join(path)).unwrap(); CodeFile { path: path.into(), sha256: digest(&raw), bytes: raw.len() as u64 } }).collect();
+        fs::write(source.join("code.json"), serde_json::to_vec(&CodeInventory { interpreter: "/usr/bin/python3.14".into(), files }).unwrap()).unwrap();
+        let input = PrepareBundleInput { source_root: source, code_inventory: "code.json".into(), collector: "host-collector".into(), cleanup: "cleanup-helper".into(), trusted_root: "lib/tl3_harness".into(), producer_commit: "a".repeat(40), image_inventory: image_map, image_inspect, profile: "fixture".into(), mode,
+            prerequisites: ModePrerequisites { no_cgroups_supported: prerequisites, init_available: prerequisites, user_scope_supported: prerequisites } };
+        let frames = self.call(json!({"op":"prepare_runtime_bundle","input":input}));
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+        let bundle: BlobRef = serde_json::from_value(frames.last().unwrap()["result"]["bundle"].clone()).unwrap();
+        self.bundles.push(bundle.path.parent().unwrap().to_owned());
+        let prepared = self.call(json!({"op":"prepare_runtime","bundle":bundle.path,"reservation":self.request.reservation,"arguments":["--fixture"]}));
+        assert_eq!(prepared.last().unwrap()["kind"], "result", "{prepared:?}");
+        let prepared: PreparedRuntime = serde_json::from_value(prepared.last().unwrap()["result"]["prepared"].clone()).unwrap();
+        self.request.runner = prepared.runner; self.request.runtime = prepared.runtime; self.request.scratch_root = prepared.scratch_root;
+        self.request.environment.insert("HOME".into(), "/home/rob".into()); self.request.environment.insert("XDG_RUNTIME_DIR".into(), "/run/user/1000".into());
         self.intent.request_digest = digest(&serde_json::to_vec(&self.request).unwrap());
     }
 
@@ -579,7 +591,7 @@ fn own_scope_runtime_mapping_compares_golden_dl380_sets_and_effective_cap() {
     let allocation = api::durable::blob(&f.intent.output_dir.join("R.json"), &serde_json::to_vec(&json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"21-23,30"}}],"nodelist":["dl380g10"]}})).unwrap()).unwrap();
     let topology = api::durable::blob(&f.intent.output_dir.join("topology.json"), &serde_json::to_vec(&TopologyMapping { run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), ranks: vec![RankMapping { rank: 0, host: "dl380g10".into(), cores: [21,22,23,30].into_iter().map(|i| CoreMapping { flux_core: i, os_pus: format!("{i},{}", i+40) }).collect() }] }).unwrap()).unwrap();
     let scope = owned.container.as_ref().unwrap().scope.as_ref().unwrap();
-    let mut facts = RuntimeBindingInput { execution: owned.execution.clone(), run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), allocation, topology,
+    let mut facts = RuntimeBindingInput { execution: owned.execution.clone(), container_id: owned.container.as_ref().map(|container| container.id.clone()), run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), allocation, topology,
         host: ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: "0::/user.slice/native-broker".into() },
         container: Some(ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: format!("0::{}", scope.cgroup) }),
         container_scope: Some(ContainerScopeFacts { unit: scope.unit.clone(), invocation_id: scope.invocation_id.clone(), cgroup: format!("0::{}", scope.cgroup), cpuset_effective: "21-23,30,61-63,70".into(), memory_max: Some(1_073_741_824), memory_swap_max: Some(0), container_id: owned.container.as_ref().unwrap().id.clone() }) };
@@ -600,11 +612,7 @@ fn own_scope_runtime_mapping_compares_golden_dl380_sets_and_effective_cap() {
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_loss() {
     let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true);
-    let executable = f.root.path().join("independent-cleanup");
-    let program = b"#!/bin/sh\ncat \"$1\"\n";
-    immutable(&executable, program, true);
-    f.request.runtime.cleanup = Some(CleanupProgram { executable, executable_digest: digest(program), arguments: vec![f.intent.output_dir.join("trusted-stop-facts.json").to_string_lossy().into_owned()] });
-    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap()); f.submit();
+    f.submit();
     let owned = f.container_ownership();
     let retained = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
     assert_eq!(retained.last().unwrap()["kind"], "result");
@@ -612,7 +620,7 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
     let facts = CleanupEvidence { schema: "tl3.cleanup_evidence.v1".into(), ownership: owned.clone(), launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3), container: Some(ContainerStop { id: container.id.clone(), remove_exit: 0, exists_exit: 1, sweep_ids: vec![container.id.clone()],
             scope: Some(ScopeStop { identity: scope.clone(), observed_invocation_id: None, cgroup_events: None, cgroup_procs: String::new(), active_state: "not-found".into() }) }) };
-    fs::write(f.intent.output_dir.join("trusted-stop-facts.json"), serde_json::to_vec(&facts).unwrap()).unwrap();
+    fs::write(f.intent.output_dir.join("trusted-stop-fixture-execution.json"), serde_json::to_vec(&facts).unwrap()).unwrap();
     let cancel = f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
     assert_eq!(cancel.last().unwrap()["result"]["acknowledgement"]["acknowledged"], true, "{cancel:?}");
     assert!(!f.intent.output_dir.join("report.json").exists());
@@ -624,4 +632,72 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
     fs::write(&f.config, serde_json::to_vec(&options).unwrap()).unwrap();
     let cleanup = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
     assert_eq!(cleanup.last().unwrap()["result"]["cleanup"]["stopped"], true, "{cleanup:?}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn imported_module_tamper_refuses_before_dispatch_without_manifest_or_executable_change() {
+    let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true);
+    let exe = fs::read(&f.request.runner.executable).unwrap(); let manifest = fs::read(&f.request.runner.manifest).unwrap();
+    let imported = f.request.runner.manifest.parent().unwrap().join("lib/tl3_harness/runtime.py");
+    fs::set_permissions(&imported, fs::Permissions::from_mode(0o600)).unwrap(); fs::write(&imported, b"# changed trusted import\n").unwrap();
+    fs::set_permissions(imported, fs::Permissions::from_mode(0o400)).unwrap();
+    assert_eq!(fs::read(&f.request.runner.executable).unwrap(), exe);
+    assert_eq!(fs::read(&f.request.runner.manifest).unwrap(), manifest);
+    assert_eq!(f.submit()["terminal"]["ending"], "refused");
+    assert!(!f.calls().contains("job submit "));
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn append_only_container_executions_require_every_independent_stop() {
+    let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true); f.submit();
+    let first = f.container_ownership(); let mut second = first.clone(); second.execution = "second-execution".into();
+    let container = second.container.as_mut().unwrap(); container.id = "e".repeat(64); container.labels.insert("tl3.execution".into(), second.execution.clone());
+    let scope = container.scope.as_mut().unwrap(); scope.unit = format!("libpod-{}.scope", container.id); scope.invocation_id = "f".repeat(32);
+    scope.cgroup = format!("/user.slice/user-1000.slice/user@1000.service/app.slice/{}", scope.unit);
+    for owned in [&first, &second] {
+        let frames = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    }
+    for (index, owned) in [&first, &second].into_iter().enumerate() {
+        let container = owned.container.as_ref().unwrap(); let scope = container.scope.as_ref().unwrap();
+        let facts = CleanupEvidence { schema: "tl3.cleanup_evidence.v1".into(), ownership: owned.clone(), launcher: ProcessStop::Absent, process_group_probe_errno: Some(3),
+            container: Some(ContainerStop { id: container.id.clone(), remove_exit: 0, exists_exit: 1, sweep_ids: vec![container.id.clone()],
+                scope: Some(ScopeStop { identity: scope.clone(), observed_invocation_id: None, cgroup_events: None, cgroup_procs: String::new(), active_state: "not-found".into() }) }) };
+        let reference = api::durable::blob(&f.intent.output_dir.join(format!("stop-{index}.json")), &serde_json::to_vec(&facts).unwrap()).unwrap();
+        let frames = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
+        assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], index == 1, "{frames:?}");
+        assert_eq!(frames.last().unwrap()["result"]["cleanup"]["accepted_execution"], owned.execution);
+    }
+    f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
+    let frames = f.attach();
+    assert_eq!(frames.last().unwrap()["result"]["observation"]["terminal"]["ending"], "cancelled", "{frames:?}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() {
+    let f = Fixture::new(); f.submit();
+    let jobs = |state| fs::write(f.root.path().join("jobs.json"), json!({"jobs":[{"name":f.intent.correlation,"jobid":"fABC","state":state}]}).to_string()).unwrap();
+    for (state, phase) in [("SCHED", "queued"), ("RUN", "running"), ("CLEANUP", "finishing")] {
+        jobs(state);
+        let frames = f.call(json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation}));
+        assert_eq!(frames.last().unwrap()["result"]["liveness"]["phase"], phase, "{frames:?}");
+        assert_eq!(frames.last().unwrap()["result"]["liveness"]["authority"], "fresh_native");
+    }
+    f.events(&completed(0)); fs::write(f.root.path().join("mode"), "interrupted").unwrap();
+    let streamed = f.attach();
+    assert_eq!(streamed[0]["event"]["progress"]["authority"], "historical");
+    assert_eq!(streamed[0]["event"]["progress"]["run"]["job"], "fABC");
+    fs::write(f.root.path().join("mode"), "query-error").unwrap();
+    let lost = f.call(json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(lost.last().unwrap()["result"]["liveness"]["phase"], "unknown");
+    assert_eq!(lost.last().unwrap()["result"]["liveness"]["authority"], "unknown");
+    fs::write(f.root.path().join("mode"), "normal").unwrap(); jobs("RUN");
+    f.report(ReportOutcome::Passed, true); f.attach();
+    let terminal = f.call(json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(terminal.last().unwrap()["result"]["liveness"]["phase"], "terminal");
+    assert_eq!(terminal.last().unwrap()["result"]["liveness"]["authority"], "committed_terminal");
 }

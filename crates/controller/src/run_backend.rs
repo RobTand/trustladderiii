@@ -590,6 +590,7 @@ pub struct CpuGrant {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeBindingInput {
     pub execution: String,
+    pub container_id: Option<String>,
     pub run: BackendId,
     pub request_digest: String,
     pub allocation: BlobRef,
