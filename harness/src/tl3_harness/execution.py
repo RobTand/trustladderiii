@@ -16,7 +16,7 @@ from .node_ids import validate_always_tests
 from .report import InvalidReport, decode, parse
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
 from .scratch import directory as scratch_directory
-from . import selection
+from . import selection, runtime
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
                     changed_files, changed_protected, commit, configuration, export, git, is_test, own_base,
                     )
@@ -72,8 +72,11 @@ class Container:
 
 
 def container_command(tree: Path, container: Container, tests: tuple[str, ...]) -> list[str]:
-    harness = Path(__file__).resolve().parent
+    context = runtime.launch_context()
     scratch = scratch_directory()
+    if context is not None:
+        return runtime.command(tree, scratch)
+    harness = Path(__file__).resolve().parent
     owner = scratch.parent.stat()
     return [
         "docker", "run", "--init", "--interactive", "--rm", "--pull=never", "--network=none", "--read-only",
@@ -91,6 +94,9 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
 
 
 def require_admission():
+    if runtime.launch_context() is not None:
+        runtime.prepare_scratch()
+        return
     required = ("PRISMABUILD_CONTAINER_OWNER", "PRISMABUILD_CONTAINER_MARKER",
                 "PRISMABUILD_ACTION_PROGRESS_PATH", "PRISMABUILD_ACTION_PROGRESS_TOKEN")
     if not all(os.environ.get(name) for name in required):
@@ -106,6 +112,13 @@ def require_admission():
 class Progress:
     def __init__(self):
         self.units = 0
+        context = runtime.launch_context()
+        self.flux_journal = Path(context['progress']['journal']) if context is not None else None
+        if self.flux_journal is not None:
+            if self.flux_journal.exists():
+                with self.flux_journal.open() as journal:
+                    self.units = sum(1 for _ in journal)
+            return
         path = os.environ.get("PRISMABUILD_ACTION_PROGRESS_PATH")
         if path and Path(path).exists():
             record = json.loads(Path(path).read_text())
@@ -116,6 +129,13 @@ class Progress:
 
     def commit(self, test: str):
         self.units += 1
+        if self.flux_journal is not None:
+            # Raw completion observations, with no PB token or backend ending claim.
+            with self.flux_journal.open('a') as journal:
+                journal.write(json.dumps(test) + '\n')
+                journal.flush()
+                os.fsync(journal.fileno())
+            return
         path = Path(os.environ["PRISMABUILD_ACTION_PROGRESS_PATH"])
         record = {"schema": "prismabuild.action_progress.v1",
                   "token": os.environ["PRISMABUILD_ACTION_PROGRESS_TOKEN"],
@@ -134,6 +154,7 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
              progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
              messages: dict[str, str] | None = None, forcing: Forcing | None = None,
              selected: SelectedRun | None = None) -> dict[str, Outcome]:
+    report = runtime.journal_path(report)
     missing = {test for test in tests if not (tree / test.split("::")[0]).is_file()}
     records = []
     invalid = False
@@ -142,7 +163,7 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     retained_bytes = 0
     # The container gets no writable report mount or PB token. Its event stream
     # is journalled and parsed by this host process, outside the checkout.
-    with report.open("wb") as journal, tempfile.TemporaryFile() as selection:
+    with report.open("wb") as journal, tempfile.TemporaryFile(dir=runtime.temporary_root()) as selection:
         # The forcing travels with the selection to the read-only runner, outside the checkout (#393).
         request = tests
         if forcing is not None:
@@ -573,7 +594,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             return refused(plan, tampering)
     if reviewed is not None:
         reviewed = commit(repo, reviewed)
-    with tempfile.TemporaryDirectory(prefix="tl3-checks-") as directory:
+    with runtime.workspace(prefix="tl3-checks-") as directory:
         root = Path(directory)
         root.chmod(0o755)
         old, new = [root / name for name in ("base", "head")]

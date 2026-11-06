@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import json
 import os
+from pathlib import Path
 import selectors
 import signal
 import subprocess
@@ -12,6 +13,7 @@ import uuid
 from .limits import MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES
 from .report import decode
 from .redaction import Redactor
+from . import runtime
 
 
 MAX_STDERR_BYTES = 16_384
@@ -94,27 +96,41 @@ class Supervised:
     """
 
     def __init__(self, command, selection, tests):
-        quiet = json.loads(os.environ.get('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{}')).get('tests', 120)
-        if type(quiet) not in (int, float) or not 0 < quiet <= 86400:
+        quiet = runtime.no_progress_seconds()
+        if quiet is not None and (type(quiet) not in (int, float) or not 0 < quiet <= 86400):
             raise ValueError('invalid test progress allowance')
         # Leave the remaining allowance for termination, diagnostics and publication.
-        self.allowance = quiet * 0.7
-        self.cleanup_seconds = min(2, quiet * 0.1)
+        self.allowance = quiet * 0.7 if quiet is not None else None
+        self.cleanup_seconds = min(2, quiet * 0.1) if quiet is not None else 2
         self.report_started = False
         self.exit_code = None
         self.container = None
+        self.runtime = None
+        self.cleanup_confirmed = False
+        self.evidence = None
+        self.evidence_buffer = b''
+        self.pending_input = None
         self.stderr_tail = b''
         self.stderr_diagnostic = ''
         self.stderr_withheld = False
         command = list(command)
-        if command[:2] == ['docker', 'run']:
+        if len(command) > 1 and Path(command[0]).name in ('docker', 'podman') and command[1] == 'run':
+            self.runtime = command[0]
             self.container = 'tl3-test-' + uuid.uuid4().hex
             command[2:2] = ['--name', self.container]
+            if Path(self.runtime).name == 'podman':
+                runtime.container_pending(self.container)
         self.command, self.selection = command, selection
 
     def __enter__(self):
+        if self.runtime and Path(self.runtime).name == 'podman':
+            try:
+                self.evidence = runtime.evidence_sink(self.container)
+            except (OSError, RuntimeError, ValueError, StopIteration) as error:
+                raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'host_evidence_unavailable') from error
         try:
-            self.child = subprocess.Popen(self.command, stdin=self.selection, stdout=subprocess.PIPE,
+            self.child = subprocess.Popen(self.command, stdin=subprocess.PIPE if self.evidence else self.selection,
+                                          stdout=subprocess.PIPE,
                                           stderr=subprocess.PIPE, start_new_session=True)
         except OSError as error:
             raise ExecutionFailure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'runtime_unavailable') from error
@@ -129,6 +145,32 @@ class Supervised:
         return ExecutionFailure(outcome, phase, reason, stderr_tail=self.stderr_diagnostic)
 
     def capture_stderr(self, chunk):
+        if self.evidence is not None and not self.evidence.container_seen:
+            self.evidence_buffer += chunk
+            if len(self.evidence_buffer) > MAX_STDERR_BYTES:
+                raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'missing_runtime_evidence')
+            while b'\n' in self.evidence_buffer:
+                line, self.evidence_buffer = self.evidence_buffer.split(b'\n', 1)
+                try:
+                    observed = self.evidence.observe(line)
+                except (ValueError, OSError) as error:
+                    raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'invalid_runtime_evidence') from error
+                if not observed:
+                    self.capture_diagnostic(line + b'\n')
+                if observed:
+                    try:
+                        runtime.validate_runtime_binding(self.evidence)
+                    except (RuntimeError, OSError, ValueError) as error:
+                        raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime',
+                                           'runtime_binding_unqualified') from error
+                    self.pending_input = memoryview(b'\x01' + self.selection.read())
+                    self.capture_diagnostic(self.evidence_buffer)
+                    self.evidence_buffer = b''
+                    break
+            return
+        self.capture_diagnostic(chunk)
+
+    def capture_diagnostic(self, chunk):
         if self.stderr_withheld:
             return
         # #826: never forget matching context while publishing subsequent bytes.
@@ -142,15 +184,15 @@ class Supervised:
         self.stderr_diagnostic = safe_stderr(self.stderr_tail.decode('utf-8', errors='replace'))
 
     def records(self):
-        deadline = time.monotonic() + self.allowance
+        deadline = time.monotonic() + self.allowance if self.allowance is not None else None
         buffer = b''
         total = 0
         with selectors.DefaultSelector() as ready:
             ready.register(self.child.stdout, selectors.EVENT_READ)
             ready.register(self.child.stderr, selectors.EVENT_READ)
             while ready.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
+                remaining = deadline - time.monotonic() if deadline is not None else None
+                if remaining is not None and remaining <= 0:
                     raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'unknown', 'no_progress')
                 events = ready.select(remaining)
                 if not events:
@@ -163,6 +205,20 @@ class Supervised:
                             self.capture_stderr(chunk)
                         else:
                             ready.unregister(key.fileobj)
+                if self.pending_input is not None and self.child.stdin not in ready.get_map():
+                    os.set_blocking(self.child.stdin.fileno(), False)
+                    ready.register(self.child.stdin, selectors.EVENT_WRITE)
+                for key, _ in events:
+                    if key.fileobj is self.child.stdin:
+                        try:
+                            count = os.write(key.fd, self.pending_input[:65536])
+                        except (BrokenPipeError, OSError) as error:
+                            raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'input_gate_lost') from error
+                        self.pending_input = self.pending_input[count:]
+                        if not self.pending_input:
+                            ready.unregister(self.child.stdin)
+                            self.child.stdin.close()
+                            self.pending_input = None
                 if not any(key.fileobj is self.child.stdout for key, _ in events):
                     continue
                 chunk = os.read(self.child.stdout.fileno(), 65536)
@@ -191,11 +247,13 @@ class Supervised:
                     yield line + b'\n'
                     if record.get('event') == 'result' or (
                             record.get('event') == 'phase' and record.get('when') == 'teardown'):
-                        deadline = time.monotonic() + self.allowance
+                        deadline = time.monotonic() + self.allowance if self.allowance is not None else None
                 if len(buffer) > MAX_REPORT_LINE_BYTES:
                     raise ValueError('oversized report line')
             try:
-                self.exit_code = self.child.wait(timeout=max(0.001, deadline - time.monotonic()))
+                self.exit_code = self.child.wait(timeout=max(0.001, deadline - time.monotonic()) if deadline is not None else None)
+                if self.evidence is not None and not self.evidence.container_seen:
+                    raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'missing_runtime_evidence')
             except subprocess.TimeoutExpired as error:
                 # EOF and a report's finish record do not prove the runner exited:
                 # the direct child may still be Docker's attach/wait transport.
@@ -211,13 +269,26 @@ class Supervised:
             self.child.wait(timeout=self.cleanup_seconds)
         except subprocess.TimeoutExpired:
             pass
+        if self.child.stdin is not None:
+            self.child.stdin.close()
         self.child.stdout.close()
         self.child.stderr.close()
         if self.container is not None:
             try:
-                subprocess.run(['docker', 'rm', '--force', self.container], stdin=subprocess.DEVNULL,
+                subprocess.run([self.runtime, 'rm', '--force', self.container], stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                timeout=self.cleanup_seconds, check=False)
+                if Path(self.runtime).name == 'podman':
+                    absent = subprocess.run([self.runtime, 'container', 'exists', self.container],
+                                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.DEVNULL, timeout=self.cleanup_seconds, check=False)
+                    self.cleanup_confirmed = absent.returncode == 1
             except (OSError, subprocess.TimeoutExpired):
-                # PB still owns and verifies its container scope before pbwait --until cleaned.
                 pass
+            if self.cleanup_confirmed:
+                runtime.container_stopped(self.container, self.command)
+            if self.evidence is not None:
+                self.evidence.record('cleanup', {'confirmed': self.cleanup_confirmed})
+            if Path(self.runtime).name == 'podman' and not self.cleanup_confirmed:
+                raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'cleanup',
+                                   'container_cleanup_unconfirmed')

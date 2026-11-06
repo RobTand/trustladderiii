@@ -15,6 +15,7 @@ def launcher(tmp_path, monkeypatch):
     runtime.write_text(f'''#!{sys.executable}
 import json
 import pathlib
+import os
 import sys
 args = sys.argv[1:]
 with pathlib.Path({str(calls)!r}).open('a') as log:
@@ -24,6 +25,9 @@ if args[0] == 'run':
     if evidence.exists():
         sys.stderr.write(evidence.read_text())
         sys.stderr.flush()
+        if os.read(0, 1) != b'\\x01':
+            sys.exit(125)
+        pathlib.Path({str(tmp_path / 'payload')!r}).write_bytes(sys.stdin.buffer.read())
     print('{{"event":"start","schema":1}}', flush=True)
     sys.exit(0)
 if args[:2] == ['container', 'exists']:
@@ -88,7 +92,8 @@ def test_flux_command_at_launcher_boundary(launcher):
             list(process.records())
     arguments = json.loads(calls.read_text().splitlines()[0])
     for flag in ('--cgroups=disabled', '--network=none', '--read-only', '--init', '--userns=keep-id',
-                 '--pull=never', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private'):
+                 '--pull=never', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private',
+                 '--read-only-tmpfs=false'):
         assert flag in arguments
     mounts = [arguments[i + 1] for i, flag in enumerate(arguments) if flag == '--mount']
     assert len(mounts) == 3
@@ -139,6 +144,7 @@ def test_runtime_evidence_is_retained_outside_report(launcher, monkeypatch, evid
     facts = {'Cpus_allowed_list': '2-3', 'cgroup': '0::/flux/job-fixture\n'}
     monkeypatch.setattr(runtime.Evidence, 'host_snapshot', staticmethod(lambda: facts))
     monkeypatch.setattr(runtime, 'evidence_sink', lambda name: runtime.Evidence(output, name))
+    monkeypatch.setattr(runtime, 'validate_runtime_binding', lambda evidence: None)
     if evidence_present:
         (executable.parent / 'stderr').write_text(PREFIX + json.dumps(facts) + '\n')
     with calls.with_suffix('.stdin').open('w+b') as selection:
