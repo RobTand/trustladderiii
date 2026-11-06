@@ -249,3 +249,145 @@ proptest! {
         }
     }
 }
+
+fn queue_payload(payload: serde_json::Value) -> CheckRun {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    serde_json::from_value(serde_json::json!({
+        "id": 1, "name": QUEUE_CHECK, "head_sha": "head", "status": "completed",
+        "conclusion": "neutral", "output": {"summary": format!(
+            "<span itemprop=\"mergify.v1.{}\"></span>",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap())
+        )}
+    }))
+    .unwrap()
+}
+
+fn queue_conditions(nodes: serde_json::Value) -> CheckRun {
+    queue_payload(serde_json::json!({"version":1,"state":"waiting","required_conditions":nodes}))
+}
+
+/// #854 r1: boundary identities round-trip through arbitrarily satisfied groups.
+proptest! {
+    #![proptest_config(Config { failure_persistence: None, ..Config::default() })]
+    #[test]
+    fn queue_check_identity_round_trips(
+        name in "[A-Za-z_][A-Za-z0-9_ /.-]{0,48}",
+        app in proptest::option::of("[a-z][a-z0-9-]{0,20}"),
+        groups in proptest::collection::vec(any::<bool>(), 0..9),
+        matched in any::<bool>(),
+    ) {
+        use tl3_mergify::QueueEntryCondition;
+        let identity = app.as_ref().map_or_else(|| name.clone(), |app| format!("@{app}/{name}"));
+        let mut node = serde_json::json!({"description":format!("check-success = {identity}"), "match":matched});
+        for (index, matched) in groups.iter().enumerate() {
+            node = serde_json::json!({"description":if index % 2 == 0 {"all of"} else {"any of"}, "match":matched, "subconditions":[node]});
+        }
+        let parsed = tl3_mergify::queue_entry_conditions(&queue_conditions(serde_json::json!([node])));
+        let expected = if matched || groups.iter().any(|matched| *matched) {
+            vec![]
+        } else {
+            vec![QueueEntryCondition::Check { name, app }]
+        };
+        prop_assert_eq!(parsed, expected);
+    }
+}
+
+/// #854 r1: app-qualified identities never match a same-named check from another app.
+#[test]
+fn queue_attribution_keeps_app_identity_and_display_text() {
+    use serde_json::json;
+    let queue = queue_conditions(json!([
+        {"description":"scopes-available","match":true},
+        {"description":"all of","match":false,"note":"  blocked  ","subconditions":[
+            {"description":"any of","match":false,"subconditions":[
+                {"description":"check-success = @github-actions/Bazel","match":false}
+            ]}
+        ]}
+    ]));
+    assert_eq!(tl3_mergify::unmet_conditions(&queue), ["all of: blocked"]);
+    let parsed = tl3_mergify::queue_entry_conditions(&queue);
+    assert_eq!(parsed.len(), 1);
+    let mut check = queue.clone();
+    check.name = "Bazel".into();
+    check.app = Some(CheckApp {
+        id: 15368,
+        slug: "github-actions".into(),
+    });
+    assert!(parsed[0].matches(&check));
+    check.app.as_mut().unwrap().slug = "other-app".into();
+    assert!(!parsed[0].matches(&check));
+    check.app = None;
+    assert!(!parsed[0].matches(&check));
+    let unqualified =
+        queue_conditions(json!([{"description":"check-neutral = Bazel","match":false}]));
+    assert!(tl3_mergify::queue_entry_conditions(&unqualified)[0].matches(&check));
+    let scopes = queue_conditions(json!([{"description":"scopes-available","match":false}]));
+    assert!(tl3_mergify::queue_entry_conditions(&scopes)[0].matches(&check));
+}
+
+/// #854 r1: malformed/unknown nodes must not acquire a child's attribution.
+#[test]
+fn queue_attribution_ignores_unknown_or_malformed_nodes() {
+    use serde_json::json;
+    let leaf = json!({"description":"check-success = @github-actions/Bazel","match":false});
+    for node in [
+        json!(null),
+        json!({"description":"all of","subconditions":[leaf]}),
+        json!({"description":"all of","match":"false","subconditions":[leaf]}),
+        json!({"description":"unknown group","match":false,"subconditions":[leaf]}),
+        json!({"description":"all of","match":false,"subconditions":{}}),
+        json!({"description":"any of","match":true,"subconditions":[leaf]}),
+        json!({"description":"check-success = @/Bazel","match":false}),
+        json!({"description":"check-success = @github-actions","match":false}),
+        json!({"description":"check-success = ","match":false}),
+        json!({"description":"check-success = Bazel","match":false,"subconditions":[leaf]}),
+    ] {
+        assert!(tl3_mergify::queue_entry_conditions(&queue_conditions(json!([node]))).is_empty());
+    }
+    for payload in [
+        json!({"version":2,"state":"waiting","required_conditions":[leaf]}),
+        json!({"version":1,"state":"unknown","required_conditions":[leaf]}),
+        json!({"version":1,"state":"waiting","required_conditions":{}}),
+        json!({"version":1,"state":"waiting"}),
+    ] {
+        assert!(tl3_mergify::queue_entry_conditions(&queue_payload(payload)).is_empty());
+    }
+    let mut queue = queue_conditions(json!([leaf]));
+    queue.output.as_mut().unwrap().summary =
+        Some("<span itemprop=\"mergify.v1.invalid!\"></span>".into());
+    assert!(tl3_mergify::queue_entry_conditions(&queue).is_empty());
+}
+
+/// #854 r1: oversized input, too many nodes and deep JSON fail closed without panicking.
+#[test]
+fn queue_attribution_has_byte_node_and_depth_bounds() {
+    use serde_json::json;
+    let leaf = json!({"description":"check-skipped = Bazel","match":false});
+    assert_eq!(
+        tl3_mergify::queue_entry_conditions(&queue_conditions(json!(vec![leaf.clone(); 256])))
+            .len(),
+        256
+    );
+    assert!(
+        tl3_mergify::queue_entry_conditions(&queue_conditions(json!(vec![leaf.clone(); 257])))
+            .is_empty()
+    );
+    for depth in [16, 17, 140] {
+        let mut node = leaf.clone();
+        for _ in 0..depth {
+            node = json!({"description":"all of","match":false,"subconditions":[node]});
+        }
+        let parsed = tl3_mergify::queue_entry_conditions(&queue_conditions(json!([node])));
+        assert_eq!(parsed.len(), usize::from(depth == 16), "depth {depth}");
+    }
+    let mut oversized = queue_conditions(json!([leaf]));
+    oversized
+        .output
+        .as_mut()
+        .unwrap()
+        .summary
+        .as_mut()
+        .unwrap()
+        .push_str(&" ".repeat(256 * 1024));
+    assert!(tl3_mergify::queue_entry_conditions(&oversized).is_empty());
+}

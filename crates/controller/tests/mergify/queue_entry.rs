@@ -3,6 +3,9 @@ use super::*;
 pub(super) const MODES: &[&str] = &[
     "repair",
     "nested-repair",
+    "nested-satisfied",
+    "nested-other-app",
+    "nested-unknown",
     "queue-running",
     "suite-running",
     "suite-nonempty",
@@ -92,13 +95,38 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.suites = suites["check_suites"].clone();
         state.entry_fixture = Some(Fixture { mode: mode.into() });
         match mode {
-            "nested-repair" => {
-                state.queue_check_mut()["output"]["summary"] =
-                    json!(include_str!("../fixtures/mergify/tessera1639/nested-summary.txt"));
+            "nested-repair" | "nested-satisfied" | "nested-other-app" | "nested-unknown" => {
+                let summary = match mode {
+                    "nested-satisfied" => {
+                        include_str!("../fixtures/mergify/tessera1639/nested-satisfied-summary.txt")
+                    }
+                    "nested-other-app" => {
+                        include_str!("../fixtures/mergify/tessera1639/nested-other-app-summary.txt")
+                    }
+                    "nested-unknown" => {
+                        include_str!("../fixtures/mergify/tessera1639/nested-unknown-summary.txt")
+                    }
+                    _ => include_str!("../fixtures/mergify/tessera1639/nested-summary.txt"),
+                };
+                state.queue_check_mut()["output"]["summary"] = json!(summary);
                 for check in state.checks.as_array_mut().unwrap() {
                     if matches!(check["name"].as_str(), Some("pure" | "pr-gate")) {
                         check["conclusion"] = json!("success");
                     }
+                }
+                if mode == "nested-other-app" {
+                    let mut other = state
+                        .checks
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|check| check["name"] == "Bazel")
+                        .unwrap()
+                        .clone();
+                    other["id"] = json!(1);
+                    other["app"] = json!({"id": 999, "slug": "other-app"});
+                    other["conclusion"] = json!("success");
+                    state.checks.as_array_mut().unwrap().push(other);
                 }
                 for suite in state.suites.as_array_mut().unwrap() {
                     suite["status"] = json!("completed");
@@ -175,10 +203,13 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             if mode == "nested-repair" && node.phase != Phase::Making {
                 assert!(snapshot.rows.iter().any(|r| r.table == "queue_facts"
                     && r.value["evidence"].get("QueueBlocked").is_some()));
-                assert!(snapshot.rows.iter().any(|r| r.table == "incidents"
-                    && r.value["open"] == true
-                    && r.value["summary"].as_str().is_some_and(|text|
-                        text.contains("all of") && text.contains("Bazel"))));
+                assert!(snapshot.rows.iter().any(|r| {
+                    r.table == "incidents"
+                        && r.value["open"] == true
+                        && r.value["summary"]
+                            .as_str()
+                            .is_some_and(|text| text.contains("all of") && text.contains("Bazel"))
+                }));
             }
             assert_eq!(
                 node.phase,
@@ -204,7 +235,13 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             let expected: &[&str] = if mode == "nested-repair" {
                 &["Bazel", "test_installed_commit_owner.py"]
             } else {
-                &["Bazel", "pure", "pr-gate", "scopes-available", "test_installed_commit_owner.py"]
+                &[
+                    "Bazel",
+                    "pure",
+                    "pr-gate",
+                    "scopes-available",
+                    "test_installed_commit_owner.py",
+                ]
             };
             for expected in expected {
                 assert!(
@@ -224,10 +261,19 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 "{mode} must block D1/D2"
             );
             assert_eq!(node.round, before.round);
+            if mode.starts_with("nested-") {
+                assert!(snapshot.rows.iter().any(|row| row.table == "queue_facts"
+                    && row.value["evidence"].get("QueueBlocked").is_some()));
+            }
             assert!(!snapshot.rows.iter().any(|r| r.table == "queue_facts"
                 && (r.value["evidence"].get("CiFailed").is_some()
-                    || (mode != "unrelated-condition"
-                        && r.value["evidence"].get("QueueBlocked").is_some()))));
+                    || (!matches!(
+                        mode,
+                        "unrelated-condition"
+                            | "nested-satisfied"
+                            | "nested-other-app"
+                            | "nested-unknown"
+                    ) && r.value["evidence"].get("QueueBlocked").is_some()))));
             if mode == "queue-running" {
                 assert!(
                     snapshot.rows.iter().any(

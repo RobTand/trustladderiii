@@ -59,32 +59,24 @@ pub(super) async fn failure(
     let completed_queue = state.check.as_ref().is_some_and(|check| {
         check.status == "completed" && check.head_sha == state.pull_request.head.sha
     });
-    // Parse the displayed queue condition at this boundary. Missing scopes
-    // evidence failed detection/gates (#854); unrelated labels do not.
-    let failed_conditions = !failed.is_empty()
-        && conditions.iter().any(|condition| {
-            let matches = |description: &str| {
-                condition == description
-                    || condition
-                        .strip_prefix(description)
-                        .is_some_and(|tail| tail.starts_with(": "))
-            };
-            matches("scopes-available")
-                || state
-                    .check_runs
-                    .iter()
-                    .filter(|check| failed.contains(&check.name))
-                    .any(|check| {
-                        ["check-success", "check-neutral", "check-skipped"]
-                            .iter()
-                            .any(|kind| {
-                                matches(&format!("{kind} = {}", check.name))
-                                    || check.app.as_ref().is_some_and(|app| {
-                                        matches(&format!("{kind} = @{}/{}", app.slug, check.name))
-                                    })
-                            })
-                    })
-        });
+    let attribution = state
+        .check
+        .as_ref()
+        .map(tl3_mergify::queue_entry_conditions)
+        .unwrap_or_default();
+    let views = tl3_mergify::views(&state.check_runs, &state.pull_request.head.sha, |_| false);
+    let checks: Vec<_> = state
+        .check_runs
+        .iter()
+        .enumerate()
+        .filter(|(index, check)| {
+            failed.contains(&check.name)
+                && facts::blocking_failure(&views, *index)
+                && attribution.iter().any(|condition| condition.matches(check))
+        })
+        .map(|(_, check)| check.clone())
+        .collect();
+    let failed_conditions = !checks.is_empty();
     let ours = if completed_queue && failed_conditions {
         snapshot
             .filter(|snapshot| {
@@ -115,15 +107,7 @@ pub(super) async fn failure(
             .transpose()?
             .unwrap_or(false)
         {
-            // Read only the non-required failures responsible for this queue-entry fact.
-            let checks: Vec<_> = state
-                .check_runs
-                .iter()
-                .filter(|check| {
-                    check.head_sha == state.pull_request.head.sha && failed.contains(&check.name)
-                })
-                .cloned()
-                .collect();
+            // Only failed checks identified by active unmet conditions supply evidence.
             let mut details = ci_evidence::read_checks(github, &full_name(repo), &checks).await;
             details.checks.insert(
                 0,
