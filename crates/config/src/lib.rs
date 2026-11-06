@@ -9,6 +9,9 @@ use std::{
 };
 use url::Url;
 
+/// Q29: operator capacity ceiling for gate slots per repository.
+pub const MAX_GATE_SLOTS: u32 = 8;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{field}: {message}")]

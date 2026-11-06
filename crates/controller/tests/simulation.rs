@@ -186,6 +186,10 @@ fn main() {
             gate_migration::q48_ticket_order,
         ),
         ("gate_capacity_reopen", gate_migration::reopen),
+        (
+            "gate_capacity_above_three",
+            gate_migration::configured_width_above_three,
+        ),
         ("gate_capacity_downgrade", gate_migration::downgrade),
         (
             "gate_capacity_idle_downgrade",

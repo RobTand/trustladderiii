@@ -297,6 +297,7 @@ fn planner_ladder_has_a_next_model_for_a_rerun() {
 
 #[test]
 fn invalid_values_name_the_setting_and_the_fix() {
+    let gate_range = format!("1..={}", tl3_config::MAX_GATE_SLOTS);
     let cases = [
         (
             vec!["limits", "context_tokens"],
@@ -316,7 +317,12 @@ fn invalid_values_name_the_setting_and_the_fix() {
             "limits.fit_tokens",
             "less than",
         ),
-        (vec!["limits", "w"], Value::Integer(0), "limits.w", "1..=3"),
+        (
+            vec!["limits", "w"],
+            Value::Integer(0),
+            "limits.w",
+            gate_range.as_str(),
+        ),
         (
             vec!["github", "rob", "id"],
             Value::Integer(0),
@@ -971,12 +977,23 @@ fn gate_width_accepts_approved_limits() {
 
 #[test]
 fn gate_width_rejects_values_outside_approval() {
-    for w in [256, 4, 8, 255, 0, i64::from(u32::MAX)] {
+    for w in [
+        256,
+        i64::from(tl3_config::MAX_GATE_SLOTS) + 1,
+        255,
+        0,
+        i64::from(u32::MAX),
+    ] {
         let mut document: Value = EXAMPLE.parse().unwrap();
         document["limits"]["w"] = Value::Integer(w);
         let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err();
         assert!(error.to_string().contains("limits.w"), "{w}: {error}");
-        assert!(error.to_string().contains("1..=3"), "{w}: {error}");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("1..={}", tl3_config::MAX_GATE_SLOTS)),
+            "{w}: {error}"
+        );
     }
 }
 
@@ -1776,4 +1793,22 @@ fn removed_postmortem_daily_limit_is_rejected_clearly() {
         .to_string();
     assert!(error.contains("postmortems_per_day"), "{error}");
     assert!(error.contains("unknown field"), "{error}");
+}
+
+/// Q29 / #846: capacity can be raised above the old model-checking bound.
+#[test]
+fn gate_width_four_loads() {
+    let config = Config::parse(&changed(&["limits", "w"], Value::Integer(4))).unwrap();
+    assert_eq!(config.limits.w, 4);
+}
+
+/// Q29 / #846: the documented capacity ceiling is accepted.
+#[test]
+fn gate_width_config_maximum_loads() {
+    let config = Config::parse(&changed(
+        &["limits", "w"],
+        Value::Integer(i64::from(tl3_config::MAX_GATE_SLOTS)),
+    ))
+    .unwrap();
+    assert_eq!(config.limits.w, tl3_config::MAX_GATE_SLOTS);
 }

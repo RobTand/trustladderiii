@@ -539,3 +539,41 @@ pub(super) fn q48_ticket_order(settings: &tl3_config::Store) {
     assert!(w.nodes[2].holds && !w.nodes[1].holds);
     assert!(w.valid() && w.is_settled());
 }
+
+/// Q29 / #232 / #846: opening a stored world reconciles every repository's W
+/// from parsed config, in both directions, and persists it without repeat writes.
+pub(super) fn configured_width_above_three(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    for width in [3, 5, 3] {
+        let config = tl3_config::Config::parse(
+            &include_str!("../../../config/example.toml").replace("w = 1", &format!("w = {width}")),
+        )
+        .unwrap();
+        let mut bootstrap = Bootstrap::from_config(&config).unwrap();
+        let mut second = bootstrap.repos[0].clone();
+        second.name = "second-repository".into();
+        bootstrap.repos.push(second);
+        let mut c = Controller::open(
+            Store::open(settings).unwrap(),
+            registry(root.path()),
+            bootstrap.clone(),
+        )
+        .unwrap();
+        let world = c.world().unwrap();
+        assert_eq!(world.gates.len(), 2);
+        assert!(world.gates.iter().all(|gate| u32::from(gate.w) == width));
+        assert!(world.valid() && world.is_settled());
+        let after = close(c, settings);
+        let c = Controller::open(
+            Store::open(settings).unwrap(),
+            registry(root.path()),
+            bootstrap,
+        )
+        .unwrap();
+        assert_eq!(
+            close(c, settings),
+            after,
+            "reopen must not repeat reconciliation"
+        );
+    }
+}
