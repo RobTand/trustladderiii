@@ -206,8 +206,9 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                         w.nodes@[i as int], w.next_question);
                 }
                 kernel_proof! { reveal(retry_bounds); }
-            } else {
-                kernel_proof! { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
+            }
+            kernel_proof! {
+                if !published { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
             }
         }
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
@@ -388,7 +389,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_runtime::ci_post(old(w).nodes@[i as int], final(w).nodes@[i as int], infra,
             old(w).fail_fast, old(w).next_question, final(w).next_question),
-] hide [current_item, items, settle_shape, ordinary_await] {
+] hide [current_item, items, settle_shape] {
     kernel_snapshot! { ci_world = *w }
     kernel_snapshot! { ci_out = *out }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
