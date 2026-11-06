@@ -82,6 +82,9 @@ use allocation::*;
 mod reply_admission;
 use reply_admission::*;
 mod ingest;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/ingest_facts.rs"]
+mod ingest_facts;
 use ingest::*;
 mod work_replies;
 use work_replies::*;

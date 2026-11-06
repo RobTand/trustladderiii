@@ -81,20 +81,30 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
                     && *final(out) == *old(out)
             }),
 ] {
+    kernel_snapshot! { ingest_before = *w }
+    kernel_snapshot! { ingest_out = *out }
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);
+            kernel_proof! { ingest_facts::output_bound(ingest_before@, *w, i as int, ingest_out@.len, out.len); }
             kernel_proof! { reveal(port_t860_contracts::transition_post); }
         }
         Reply::IngestEarlyEnd(e) => {
             finish_ingest(w, i, 1, Some(e));
+            kernel_proof! { ingest_facts::output_bound(ingest_before@, *w, i as int, ingest_out@.len, out.len); }
             kernel_proof! { reveal(port_t860_contracts::transition_post); }
         }
         Reply::AuditAgrees => {
             reply_audit_agrees(w, i, out);
             kernel_proof! { reveal(port_t860_contracts::transition_post); }
         },
-        Reply::AuditDisagrees => reply_audit_disagrees(w, i, out),
+        Reply::AuditDisagrees => {
+            reply_audit_disagrees(w, i, out);
+            kernel_proof! {
+                ingest_facts::audit_result(ingest_before@.nodes@[i as int], w.nodes@[i as int]);
+                reveal(port_t860_contracts::transition_post);
+            }
+        },
         Reply::ProtectedPaths => {
             kernel_proof! { reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); }
             enter_stopping(&mut w.nodes[i], Outcome::NotActionable);
@@ -136,8 +146,7 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures port_t860_contracts::transition_post(*old(w), *final(w), i as int,
-            Reply::AuditDisagrees, *old(out), *final(out)),
+    ensures ingest_facts::audit_post(old(w).nodes@[i as int], final(w).nodes@[i as int]),
         (successful_reply_input(old(w).nodes@[i as int], Reply::AuditDisagrees)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
@@ -160,13 +169,13 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
     if m.audit_rounds < 2 {
         // Ingest revises once with the audit's objections.
         set_phase(m, Phase::Ingesting);
-        kernel_proof! { port_t860_link::audit_finished(before_audit@, w.nodes@[i as int]); }
+        kernel_proof! { ingest_facts::audit_first(before_audit@, w.nodes@[i as int]); }
     } else {
         // Intake cannot split. The one repair is spent.
         stop_for_review(m, ReviewStop::AuditDisagreement);
-        kernel_proof! { port_t860_link::audit_finished(before_audit@, w.nodes@[i as int]); }
+        kernel_proof! { ingest_facts::audit_spent(before_audit@, w.nodes@[i as int]); }
     }
-    kernel_proof! { reveal(port_t860_contracts::transition_post); reveal(reply_bounds); }
+    kernel_proof! { reveal(reply_bounds); }
 }
 }
 
