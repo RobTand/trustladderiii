@@ -161,19 +161,68 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
-        Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
+        Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {
+            kernel_proof! { facts_transition_lemmas::pack(before_transition@, *w, i, fact, before_out@, *out); }
+        }
         Fact::Priority(priority) => {
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
             }
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! { facts_transition_lemmas::inline_fields(before_transition@.nodes@[i as int], fact); }
+            kernel_proof! { facts_transition_lemmas::pack(before_transition@, *w, i, fact, before_out@, *out); }
         }
-        Fact::PrClosedByPerson => {
+        Fact::PrClosedByPerson => fact_pr_closed(w, i, out, report),
+        Fact::PrDequeuedByPerson => fact_pr_dequeued(w, i, out, report),
+        Fact::PushByOther { head } => fact_push_by_other(w, i, head, out, report),
+        Fact::CiFailed { infra } => fact_ci_failed(w, i, infra, out, report),
+        Fact::Conflict => {
+            let m = &mut w.nodes[i];
+            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
+                set_phase(m, Phase::Rebasing);
+            }
+            kernel_proof! { facts_transition_lemmas::inline_fields(before_transition@.nodes@[i as int], fact); }
+            kernel_proof! { facts_transition_lemmas::pack(before_transition@, *w, i, fact, before_out@, *out); }
+        }
+        Fact::UpstreamStalled => fact_upstream_stalled(w, i, out, report),
+        Fact::IncidentCleared { by_rob } => fact_incident_cleared(w, i, by_rob, out, report),
+    }
+    kernel_proof! {
+        facts_transition_lemmas::unpack(before_transition@, *w, i, fact, before_out@, *out);
+        if !(fact is CiFailed) {
+            report::lemmas::forward_round(before_report@, report.entries@,
+                NodeId(i as u64), report::fact_failure(report_phase@, report_item@, fact));
+        }
+    }
+}
+}
+
+kernel_fn! {
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_pr_closed(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::PrClosedByPerson, *old(out), *final(out)),
+        report::forwards(old(report).entries@, final(report).entries@,
+            Seq::empty()),
+] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
+    kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
+    kernel_proof! { report::lemmas::fact_kind(report_phase@, report_item@, Fact::PrClosedByPerson); report::lemmas::unchanged(report.entries@); }
+
             let m = &mut w.nodes[i];
             if !m.pr_open {
-                kernel_proof! { reveal(retirement::fact_node); }
+                kernel_proof! { facts_transition_lemmas::inline_fields(before_transition@.nodes@[i as int], Fact::PrClosedByPerson); }
                 kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
-                    NodeId(i as u64), report::fact_failure(report_phase@, report_item@, fact)); }
+                    NodeId(i as u64), report::fact_failure(report_phase@, report_item@, Fact::PrClosedByPerson)); }
+                kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::PrClosedByPerson, before_out@, *out);
+    }
                 return;
             }
             m.pr_open = false;
@@ -181,14 +230,68 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 notice(out, i, Notice::Note(NoteKind::PrClosed));
                 enter_stopping(m, Outcome::Stopped);
             }
-            kernel_proof! { reveal(retirement::fact_node); }
-        }
-        Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
-        Fact::PushByOther { head } => {
+            kernel_proof! { facts_transition_lemmas::inline_fields(before_transition@.nodes@[i as int], Fact::PrClosedByPerson); }
+            kernel_proof! { report::lemmas::unchanged(report.entries@); }
+    kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::PrClosedByPerson, before_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_pr_dequeued(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::PrDequeuedByPerson, *old(out), *final(out)),
+        report::forwards(old(report).entries@, final(report).entries@,
+            Seq::empty()),
+] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
+    kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
+    kernel_proof! { report::lemmas::fact_kind(report_phase@, report_item@, Fact::PrDequeuedByPerson); report::lemmas::unchanged(report.entries@); }
+
+            pr_dequeued(w, i, out);
+    kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
+    kernel_proof! { report::lemmas::unchanged(report.entries@); }
+    kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::PrDequeuedByPerson, before_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_push_by_other(w: &mut World, i: usize, head: HeadId, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::PushByOther { head }, *old(out), *final(out)),
+        report::forwards(old(report).entries@, final(report).entries@,
+            Seq::empty()),
+] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
+    kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
+    kernel_proof! { report::lemmas::fact_kind(report_phase@, report_item@, Fact::PushByOther { head }); report::lemmas::unchanged(report.entries@); }
+
             let m = &w.nodes[i];
             if !m.had_pr {
                 kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
-                    NodeId(i as u64), report::fact_failure(report_phase@, report_item@, fact)); }
+                    NodeId(i as u64), report::fact_failure(report_phase@, report_item@, Fact::PushByOther { head })); }
+                kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::PushByOther { head }, before_out@, *out);
+    }
                 return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
@@ -199,40 +302,108 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
-                kernel_proof! { reveal(retry_bounds); }
+                kernel_proof! { facts_transition_lemmas::retry_consequences(before_transition@, *w, i, before_out@, *out); }
             }
-        }
-        Fact::CiFailed { infra } => {
+            kernel_proof! { report::lemmas::unchanged(report.entries@); }
+    kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::PushByOther { head }, before_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::CiFailed { infra }, *old(out), *final(out)),
+        report::forwards(old(report).entries@, final(report).entries@,
+            report::round_entries(NodeId(i as u64), report::fact_failure(old(w).nodes@[i as int].phase, current_item(old(w).nodes@[i as int]), Fact::CiFailed { infra }))),
+] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
+    kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
+    kernel_proof! { report::lemmas::fact_kind(report_phase@, report_item@, Fact::CiFailed { infra }); report::lemmas::unchanged(report.entries@); }
+
             ci_failed(w, i, infra, out, report);
             kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
                 NodeId(i as u64), report::ci_failure(report_phase@, report_item@, infra)); }
-        }
-        Fact::Conflict => {
-            let m = &mut w.nodes[i];
-            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
-                set_phase(m, Phase::Rebasing);
-            }
-            kernel_proof! { reveal(retirement::fact_node); }
-        }
-        Fact::UpstreamStalled => {
+            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
+    kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
+        NodeId(i as u64), report::fact_failure(report_phase@, report_item@, Fact::CiFailed { infra })); }
+    kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::CiFailed { infra }, before_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_upstream_stalled(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::UpstreamStalled, *old(out), *final(out)),
+        report::forwards(old(report).entries@, final(report).entries@,
+            Seq::empty()),
+] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
+    kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
+    kernel_proof! { report::lemmas::fact_kind(report_phase@, report_item@, Fact::UpstreamStalled); report::lemmas::unchanged(report.entries@); }
+
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued || m.waiting_incident {
                 kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
-                    NodeId(i as u64), report::fact_failure(report_phase@, report_item@, fact)); }
+                    NodeId(i as u64), report::fact_failure(report_phase@, report_item@, Fact::UpstreamStalled)); }
+                kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::UpstreamStalled, before_out@, *out);
+    }
                 return;
             }
             m.run_incidents = (m.run_incidents + 1).min(2);
             let needs_rob = m.run_incidents >= 2;
             raise_incident(w, i, needs_rob, out);
-        }
-        Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
-    }
-    kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
-                NodeId(i as u64), report::fact_failure(report_phase@, report_item@, fact)); }
+            kernel_proof! { report::lemmas::unchanged(report.entries@); }
     kernel_proof! {
-        if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
-            facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
-        }
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::UpstreamStalled, before_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_incident_cleared(w: &mut World, i: usize, by_rob: bool, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::IncidentCleared { by_rob }, *old(out), *final(out)),
+        report::forwards(old(report).entries@, final(report).entries@,
+            Seq::empty()),
+] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
+    kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
+    kernel_proof! { report::lemmas::fact_kind(report_phase@, report_item@, Fact::IncidentCleared { by_rob }); report::lemmas::unchanged(report.entries@); }
+
+            incident_cleared(w, i, by_rob, out);
+    kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
+    kernel_proof! { report::lemmas::unchanged(report.entries@); }
+    kernel_proof! {
+        facts_transition_lemmas::pack(before_transition@, *w, i, Fact::IncidentCleared { by_rob }, before_out@, *out);
     }
 }
 }
@@ -382,17 +553,18 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox, 
         infra ==> final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra }),
         infra ==> final(w).next_question == old(w).next_question,
         infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retirement::fact_frame);] {
+] {
     kernel_snapshot! { before_report = report.entries@ }
     kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
     kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
     kernel_proof! { report::lemmas::ci_kind(report_phase@, report_item@, infra); }
+    kernel_snapshot! { before_world = *w }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
     if m.phase != Phase::Queued && !before_enqueue {
-        kernel_proof! { reveal(retirement::fact_node); }
+        kernel_proof! { facts_ci_failed_lemmas::ignored_fields(before_ci@, infra); facts_ci_failed_lemmas::no_change(before_world@, *w, i, *out); }
         kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
                 NodeId(i as u64), report::ci_failure(report_phase@, report_item@, infra)); }
         return;
@@ -405,6 +577,44 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox, 
     kernel_snapshot! { prepared_ci = *w }
     kernel_snapshot! { prepared_out = *out }
     if !infra {
+        ci_failed_round(w, i, out, report);
+        kernel_proof! {
+            report::lemmas::read_failed_round(before_report@, report.entries@,
+                NodeId(i as u64), FailedRoundCause::CiFailed);
+        }
+    } else {
+    kernel_proof! {
+        facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
+    }
+        ci_failed_infrastructure(w, i, out, report);
+        kernel_proof! { report::lemmas::read_forwards(before_report@, report.entries@, Seq::empty()); }
+    }
+    kernel_proof! {
+        report::lemmas::forward_round(before_report@, report.entries@,
+            NodeId(i as u64), report::ci_failure(report_phase@, report_item@, infra));
+        facts_ci_failed_lemmas::prepared_frame(before_world@, prepared_ci@, *w, i, prepared_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+fn ci_failed_round(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        old(w).nodes@[i as int].phase == Phase::Queued ||
+            old(w).nodes@[i as int].phase == Phase::Publishing
+                && current_item(old(w).nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue)),
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        report::failed_round(old(report).entries@, final(report).entries@,
+            NodeId(i as u64), FailedRoundCause::CiFailed),
+] {
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { report_phase = w.nodes@[i as int].phase }
+    kernel_snapshot! { report_item = current_item(w.nodes@[i as int]) }
+    kernel_snapshot! { prepared_ci = *w }
+    kernel_snapshot! { prepared_out = *out }
+
         failed_round(w, i, ReviewStop::CiFailed, out, report);
         kernel_proof! {
             report::lemmas::failure_kind(ReviewStop::CiFailed);
@@ -414,16 +624,28 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox, 
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
         }
-        kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
-                NodeId(i as u64), report::ci_failure(report_phase@, report_item@, infra)); }
         return;
     }
-    kernel_proof! {
-        facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
-    }
+}
+
+kernel_fn! {
+fn ci_failed_infrastructure(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        old(w).nodes@[i as int].phase == Phase::Queued ||
+            old(w).nodes@[i as int].phase == Phase::Publishing
+                && current_item(old(w).nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue)),
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra: true }),
+        final(w).next_question == old(w).next_question,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        report::forwards(old(report).entries@, final(report).entries@, Seq::empty()),
+] {
+
     ci_infrastructure(w, i, out);
-    kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
-                NodeId(i as u64), report::ci_failure(report_phase@, report_item@, infra)); }
+    kernel_proof! { report::lemmas::unchanged(report.entries@); }
+
 }
 }
 
