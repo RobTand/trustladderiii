@@ -164,6 +164,9 @@ pub fn never_lands(before: Upstream) -> Upstream {
 }
 
 /// Stable upstream object identity, separate from volatile list accounting.
+/// IDs and the original operation's canonical conclusion/output are immutable.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CopyState {
     pub id: u64,
@@ -171,11 +174,15 @@ pub struct CopyState {
     pub conclusion: u64,
     pub output: u64,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepairKind {
     Delete,
     Patch,
 }
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepairRequest {
     pub target: u64,
@@ -183,21 +190,54 @@ pub struct RepairRequest {
     pub conclusion: u64,
     pub output: u64,
 }
+/// The HTTP request is independent of the process-local cursor. There may be
+/// arbitrarily many such requests; each carries the immutable selected target ID.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepairFlight {
     pub request: RepairRequest,
     pub issued: bool,
     pub cursor: bool,
 }
+/// github/client.rs:746-758 and publishing.rs:463-483: issue DELETE/PATCH
+/// without applying it. A timeout may leave this request in the network forever.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out.request == request, out.issued, out.cursor,
+))]
+pub fn issue_repair(request: RepairRequest) -> RepairFlight {
+    RepairFlight {
+        request,
+        issued: true,
+        cursor: true,
+    }
+}
+/// State-table :753 / Q27. Restart erases only the volatile cursor, not a request
+/// already issued. Delayed application remains enabled at any later point.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out.request == before.request, out.issued == before.issued, !out.cursor,
+))]
 pub fn restart_repair(before: RepairFlight) -> RepairFlight {
     RepairFlight {
-        issued: false,
         cursor: false,
         ..before
     }
 }
+/// State-table messages / Q27. Application by immutable target identity, never by
+/// the restarted process's cursor. DELETE is idempotent. PATCH sets BOTH fields,
+/// and never recreates a deleted object. Repeated/late applications remain enabled.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out.id == copy.id,
+    out.exists == (copy.exists && !(flight.issued && copy.id == flight.request.target && flight.request.kind == RepairKind::Delete)),
+    out.conclusion == if flight.issued && copy.id == flight.request.target && copy.exists && flight.request.kind == RepairKind::Patch {
+        flight.request.conclusion
+    } else {copy.conclusion},
+    out.output == if flight.issued && copy.id == flight.request.target && copy.exists && flight.request.kind == RepairKind::Patch {
+        flight.request.output
+    } else {copy.output},
+))]
 pub fn apply_repair(copy: CopyState, flight: RepairFlight) -> CopyState {
-    if !flight.issued || copy.id != flight.request.target {
+    if !flight.issued || copy.id != flight.request.target || !copy.exists {
         return copy;
     }
     match flight.request.kind {
@@ -210,5 +250,22 @@ pub fn apply_repair(copy: CopyState, flight: RepairFlight) -> CopyState {
             output: flight.request.output,
             ..copy
         },
+    }
+}
+/// An HTTP response is not a mutation. Lost responses retain the complete request,
+/// just as timeout retains creation requests. Quiescence must cover BOTH kinds.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == before))]
+pub fn lose_repair_response(before: RepairFlight) -> RepairFlight {
+    before
+}
+/// Stop tracking a flight only on a known response/nonapplication. The scheduler
+/// can also replay the same immutable request, which apply_repair proves harmless.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
+    out.request == before.request, !out.issued, out.cursor == before.cursor,
+))]
+pub fn finish_repair(before: RepairFlight) -> RepairFlight {
+    RepairFlight {
+        issued: false,
+        ..before
     }
 }

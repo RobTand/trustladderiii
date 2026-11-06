@@ -146,7 +146,7 @@ fn run(
     crash: u8,
 ) -> Outcome {
     let mut calls = Vec::new();
-    let persisted = b"pre-transaction".to_vec();
+    let mut persisted = b"pre-transaction".to_vec();
     for (index, sample) in reads.iter().enumerate() {
         let candidate = if sample & 1 == 0 { requested } else { other };
         calls.push(Call::Read(candidate.as_bytes().to_vec()));
@@ -164,6 +164,7 @@ fn run(
         }
         if index == 0 {
             calls.push(Call::Commit(b"queued completion".to_vec()));
+            persisted = b"queued completion".to_vec();
             if crash == 1 {
                 return Outcome {
                     calls,

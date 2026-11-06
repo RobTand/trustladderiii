@@ -23,6 +23,8 @@ enum Answer {
     Found,
     Absent,
     Pending,
+    Retryable,
+    Ambiguous,
 }
 #[derive(Default)]
 struct Script {
@@ -52,6 +54,11 @@ impl Executor for Recording {
         script.calls.push(format!("execute:{}", delivery.key));
         match script.answers.pop_front().unwrap() {
             Answer::Found => Ok(Completion::confirmed(vec![])),
+            Answer::Retryable => Ok(Completion {
+                ack: tl3_kernel::Ack::Retryable,
+                ..Completion::confirmed(vec![])
+            }),
+            Answer::Ambiguous => Err(tl3_controller::Error::ApprovalAmbiguous),
             Answer::Timeout => Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "scheduled lost response",
@@ -317,4 +324,416 @@ fn cancelling_conforms_for_found_and_absent() {
             0
         );
     }
+}
+
+#[path = "support/controller_restart.rs"]
+mod controller_restart;
+
+/// Complete durable projection at each real committed boundary. The enqueue
+/// commit and the input transaction are observed independently through Store's
+/// hook; no expected intermediate state is inferred from the final state.
+#[derive(Clone, Debug)]
+struct Durable {
+    key: String,
+    event: serde_json::Value,
+    effect: State,
+    rows: Vec<(String, String, serde_json::Value)>,
+}
+type Trace = Arc<Mutex<Vec<Durable>>>;
+fn traced_open(
+    settings: &tl3_config::Store,
+    key: &str,
+    script: Arc<Mutex<Script>>,
+) -> (Controller, Trace) {
+    let mut sql = fixture_connection(settings);
+    controller_restart::wait_for_owner_release(&mut sql);
+    let mut store = Store::open(settings).unwrap();
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let trace = captured.clone();
+    let settings_copy = settings.clone();
+    let target = key.to_string();
+    store.set_boundary_hook(move |point, key, event| {
+        if matches!(
+            point,
+            tl3_store::SavePoint::AfterCommit | tl3_store::SavePoint::InputAfterCommit
+        ) {
+            let mut other = Store::open(&settings_copy).unwrap();
+            let snapshot = other.load().unwrap();
+            if other.effect(&target).unwrap().is_some() {
+                let mut rows: Vec<_> = snapshot
+                    .rows
+                    .into_iter()
+                    .map(|r| (r.table, r.id, r.value))
+                    .collect();
+                rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+                trace.lock().unwrap().push(Durable {
+                    key: key.into(),
+                    event: event.clone(),
+                    effect: actual(&settings_copy, &target),
+                    rows,
+                });
+            }
+        }
+    });
+    let mut registry = Registry::default();
+    registry.register(Upstream::GitHub, Recording(script, settings.clone()));
+    let controller = Controller::open(
+        store,
+        registry,
+        Bootstrap {
+            repos: vec![repo()],
+            rob: 42,
+            slots: 1,
+            pool: 1,
+            fail_fast: false,
+            operations: None,
+        },
+    )
+    .unwrap();
+    captured.lock().unwrap().clear();
+    (controller, captured)
+}
+fn ready_approval(settings: &tl3_config::Store) -> String {
+    let root = tempfile::tempdir().unwrap();
+    let registry = tl3_controller::adapters::simulation(root.path()).unwrap();
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap {
+            repos: vec![repo()],
+            rob: 42,
+            slots: 1,
+            pool: 1,
+            fail_fast: false,
+            operations: None,
+        },
+    )
+    .unwrap();
+    controller
+        .intake(tl3_controller::LabelledIssue {
+            delivery: "delivery-conformance".into(),
+            owner: "owner".into(),
+            repo: "sandbox".into(),
+            installation: 3,
+            number: 12,
+            title: "Fix the value".into(),
+            actor: 42,
+            label: "tl3".into(),
+            labels: vec![],
+        })
+        .unwrap();
+    for _ in 0..300 {
+        if let Some(effect) = controller
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .into_iter()
+            .find(|e| {
+                let d: Delivery = serde_json::from_value(e.payload.clone()).unwrap();
+                matches!(
+                    d.output,
+                    tl3_controller::executor::Output::Effect {
+                        kind: tl3_kernel::EffectKind::PostApproval,
+                        ..
+                    }
+                )
+            })
+        {
+            return effect.key;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    panic!("no approval");
+}
+fn history(settings: &tl3_config::Store, key: &str) {
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = Commit::new("legacy-history", json!(null), &snapshot);
+    for (from, to) in [
+        (EffectState::Intended, EffectState::Sent),
+        (EffectState::Sent, EffectState::Intended),
+    ] {
+        commit.transitions.push(EffectTransition {
+            key: key.into(),
+            from,
+            to,
+        });
+    }
+    for row in snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "approval_lineage_admitted" && r.id == key)
+    {
+        commit.rows.push(tl3_store::RowChange::Delete {
+            table: row.table.clone(),
+            id: row.id.clone(),
+        });
+    }
+    store.commit(&commit).unwrap();
+}
+fn has_row(d: &Durable, table: &str, key: &str) -> bool {
+    d.rows.iter().any(|r| r.0 == table && r.1 == key)
+}
+
+/// R1: actual history Found/Pending commits Sent separately before either the
+/// durable completion queue/consumption or the durable ambiguity incident.
+#[test]
+fn approval_history_matches_each_durable_mirror_boundary() {
+    let mut database = database::Database::start();
+    for (name, answer, read) in [
+        ("history_found", Answer::Found, Read::Found),
+        ("history_pending", Answer::Pending, Read::Pending),
+    ] {
+        let settings = database.create(name);
+        let key = ready_approval(&settings);
+        history(&settings, &key);
+        let script = Arc::new(Mutex::new(Script {
+            answers: VecDeque::from([answer]),
+            ..Script::default()
+        }));
+        let (mut controller, trace) = traced_open(&settings, &key, script.clone());
+        controller.drive_once().unwrap();
+        let trace = trace.lock().unwrap();
+        let sent = trace
+            .iter()
+            .position(|d| d.key.starts_with("delivery:") && d.event["to"] == "Sent")
+            .unwrap();
+        let path = mirror::approval_history(true, false, false, read);
+        assert_eq!(trace[sent].effect, path.sent);
+        assert!(!has_row(
+            &trace[sent],
+            "approval_retry_authorizations",
+            &key
+        ));
+        match path.outcome {
+            Action::Complete => {
+                let queued = trace
+                    .iter()
+                    .position(|d| d.key.starts_with("queue:completion:"))
+                    .unwrap();
+                let consumed = trace
+                    .iter()
+                    .position(|d| d.effect == State::Confirmed)
+                    .unwrap();
+                assert!(sent < queued && queued < consumed);
+                assert_eq!(trace[queued].effect, State::Sent);
+                assert!(
+                    trace[queued]
+                        .rows
+                        .iter()
+                        .any(|r| r.0 == "pending_kernel_events")
+                );
+                assert!(
+                    !trace[consumed]
+                        .rows
+                        .iter()
+                        .any(|r| r.0 == "pending_kernel_events")
+                );
+            }
+            Action::Ambiguous => {
+                let ambiguous = trace
+                    .iter()
+                    .position(|d| has_row(d, "approval_dispatch_recovery", &key))
+                    .unwrap();
+                assert!(sent < ambiguous);
+                assert_eq!(trace[ambiguous].effect, State::Sent);
+            }
+            _ => panic!("history outcome"),
+        }
+        assert!(
+            !script
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .any(|s| s.starts_with("execute:"))
+        );
+    }
+}
+
+/// R1/R2: Retryable kernel completion cancels the old key, removes its watch,
+/// queues retirement and grants its real replacement in the SAME transaction.
+#[test]
+fn retryable_approval_completion_matches_atomic_retirement_and_replacement() {
+    let mut database = database::Database::start();
+    let settings = database.create("retryable_kernel");
+    let key = ready_approval(&settings);
+    let script = Arc::new(Mutex::new(Script {
+        answers: VecDeque::from([Answer::Retryable]),
+        ..Script::default()
+    }));
+    let (mut controller, trace) = traced_open(&settings, &key, script);
+    controller.drive_once().unwrap();
+    assert_eq!(
+        actual(&settings, &key),
+        mirror::consumed_completion(State::Sent, Ack::Retryable, true)
+    );
+    let snapshot = controller.snapshot().unwrap();
+    let next = snapshot
+        .pending_effects
+        .iter()
+        .find(|e| {
+            let d: Delivery = serde_json::from_value(e.payload.clone()).unwrap();
+            matches!(
+                d.output,
+                tl3_controller::executor::Output::Effect {
+                    kind: tl3_kernel::EffectKind::PostApproval,
+                    ..
+                }
+            )
+        })
+        .expect("kernel retry has a fresh sequence");
+    assert_ne!(next.key, key);
+    let trace = trace.lock().unwrap();
+    let consumed = trace.iter().find(|d| d.effect == State::Cancelled).unwrap();
+    assert!(has_row(
+        consumed,
+        "approval_retry_authorizations",
+        &next.key
+    ));
+    assert!(has_row(consumed, "approval_lineage_admitted", &next.key));
+    assert!(has_row(consumed, "retiring_effects", &key));
+    assert!(!has_row(consumed, "watches", &key));
+}
+
+/// R2: unknown dispatch needs clear. Stop after the real input transaction has
+/// created the grant and restart BEFORE Sent. The next Sent consumes it once.
+#[test]
+fn approval_clear_is_durable_and_single_use_across_restart() {
+    let mut database = database::Database::start();
+    for restart in [false, true] {
+        let settings = database.create(if restart {
+            "grant_restart"
+        } else {
+            "grant_live"
+        });
+        let key = ready_approval(&settings);
+        let script = Arc::new(Mutex::new(Script {
+            answers: VecDeque::from([Answer::Ambiguous, Answer::Pending]),
+            ..Script::default()
+        }));
+        let (mut controller, _) = traced_open(&settings, &key, script.clone());
+        controller.drive_once().unwrap();
+        controller.drive_once().unwrap();
+        controller.drive_once().unwrap();
+        assert_eq!(
+            script
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .filter(|s| s.starts_with("execute:"))
+                .count(),
+            1
+        );
+        let snapshot = controller.snapshot().unwrap();
+        let incident = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "incidents" && r.value["open"] == true && r.value["effect"] == key)
+            .unwrap();
+        controller
+            .observe(
+                "one-clear",
+                tl3_controller::executor::Observation::GitHubComment {
+                    repository: repo(),
+                    issue: 12,
+                    comment: tl3_github::Comment {
+                        id: 900,
+                        body: format!("clear incident {}", incident.id),
+                        user: tl3_github::Actor {
+                            id: 42,
+                            login: "rob".into(),
+                        },
+                        created_at: chrono::DateTime::UNIX_EPOCH,
+                        updated_at: chrono::DateTime::UNIX_EPOCH,
+                        issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
+                    },
+                },
+            )
+            .unwrap();
+        // Do not drain here: that would pass the grant/Sent crash cut.
+        for _ in 0..20 {
+            if controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "approval_retry_authorizations" && r.id == key)
+            {
+                break;
+            }
+            controller.drive_once().unwrap();
+        }
+        assert_eq!(actual(&settings, &key), State::Intended);
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "approval_retry_authorizations" && r.id == key)
+        );
+        if restart {
+            drop(controller);
+            (controller, _) = traced_open(&settings, &key, script.clone());
+        }
+        script.lock().unwrap().answers = VecDeque::from([Answer::Ambiguous, Answer::Pending]);
+        let (mut controller, trace) = if restart {
+            drop(controller);
+            traced_open(&settings, &key, script.clone())
+        } else {
+            (controller, Arc::new(Mutex::new(Vec::new())))
+        };
+        controller.drive_once().unwrap();
+        assert_eq!(
+            script
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .filter(|s| s.starts_with("execute:"))
+                .count(),
+            2
+        );
+        assert!(
+            !controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "approval_retry_authorizations" && r.id == key)
+        );
+        controller.drive_once().unwrap();
+        controller.drive_once().unwrap();
+        assert_eq!(
+            script
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .filter(|s| s.starts_with("execute:"))
+                .count(),
+            2
+        );
+        if restart {
+            let trace = trace.lock().unwrap();
+            let sent = trace
+                .iter()
+                .find(|d| d.key.starts_with("delivery:") && d.event["to"] == "Sent")
+                .unwrap();
+            assert!(!has_row(sent, "approval_retry_authorizations", &key));
+        }
+    }
+}
+
+fn fixture_connection(settings: &tl3_config::Store) -> postgres::Client {
+    postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
 }
