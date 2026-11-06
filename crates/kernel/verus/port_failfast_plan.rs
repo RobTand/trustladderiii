@@ -17,6 +17,7 @@ pub(super) proof fn worker_result(before: World, after: World, source: Node,
         retirement::notices_only(initial_out) ==> retirement::notices_only(out),
 {
     reveal(port_replies_contracts::transition_post);
+    reveal(port_review_reply::accepted_reply);
     reveal(port_failfast_diversion::plan_result);
 }
 
