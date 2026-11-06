@@ -89,7 +89,7 @@ impl Source {
         let mut stopped = None;
         // Enqueue before waiting. Restart recovery follows the same attach boundary.
         for owner in self.recovered.drain(..) {
-            let _ = owner; // Red checkpoint: recovered owners are not attached yet.
+            self.handle.watch(owner)?;
         }
         let result = (|| -> Result<()> {
             while let Ok(command) = self.commands.recv() {
