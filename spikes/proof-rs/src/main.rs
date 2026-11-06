@@ -121,11 +121,7 @@ fn line_span(source: &str, stmt: &Stmt) -> (usize, usize) {
     let last = source[..end].bytes().filter(|c| *c == b'\n').count() + 1;
     (first, last)
 }
-fn source_unit(
-    source: &str,
-    identity: &str,
-    optional: bool,
-) -> R<Option<SourceUnit>> {
+fn source_unit(source: &str, identity: &str, optional: bool) -> R<Option<SourceUnit>> {
     let parts: Vec<_> = identity.split("::").collect();
     if parts.len() == 1 {
         return Ok(Some((source.to_owned(), None)));
@@ -190,11 +186,17 @@ fn ast_bound(body: &[Stmt]) -> Set {
     struct Bound(Set);
     impl<'a> Visitor<'a> for Bound {
         fn visit_expr(&mut self, e: &'a Expr) {
-            if let Expr::Name(n)=e && n.ctx==ExprContext::Store {self.0.insert(n.id.to_string());}
-            visitor::walk_expr(self,e);
+            if let Expr::Name(n) = e
+                && n.ctx == ExprContext::Store
+            {
+                self.0.insert(n.id.to_string());
+            }
+            visitor::walk_expr(self, e);
         }
     }
-    let mut result=Bound(Set::new());result.visit_body(body);result.0
+    let mut result = Bound(Set::new());
+    result.visit_body(body);
+    result.0
 }
 
 #[derive(Default)]
@@ -376,17 +378,17 @@ fn written(source: &str, module: &str, namespace: &[String]) -> R<Set> {
             if let Stmt::Global(n) = s {
                 self.out.extend(n.names.iter().map(ToString::to_string));
             }
-            if let Some(n) = name(s) {
-                if self.function == 0 {
-                    self.out.insert(
-                        self.path
-                            .iter()
-                            .map(String::as_str)
-                            .chain([n])
-                            .collect::<Vec<_>>()
-                            .join("::"),
-                    );
-                }
+            if let Some(n) = name(s)
+                && self.function == 0
+            {
+                self.out.insert(
+                    self.path
+                        .iter()
+                        .map(String::as_str)
+                        .chain([n])
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                );
             }
             match s {
                 Stmt::FunctionDef(n) => {
@@ -403,19 +405,18 @@ fn written(source: &str, module: &str, namespace: &[String]) -> R<Set> {
             }
         }
         fn visit_expr(&mut self, e: &'a Expr) {
-            if self.function == 0 {
-                if let Expr::Name(n) = e {
-                    if n.ctx == ExprContext::Store {
-                        self.out.insert(
-                            self.path
-                                .iter()
-                                .map(String::as_str)
-                                .chain([n.id.as_str()])
-                                .collect::<Vec<_>>()
-                                .join("::"),
-                        );
-                    }
-                }
+            if self.function == 0
+                && let Expr::Name(n) = e
+                && n.ctx == ExprContext::Store
+            {
+                self.out.insert(
+                    self.path
+                        .iter()
+                        .map(String::as_str)
+                        .chain([n.id.as_str()])
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                );
             }
             visitor::walk_expr(self, e);
         }
@@ -532,20 +533,15 @@ fn allowed_loader(
                         subject.split("::").next().unwrap()
                     );
                     if let Ok(mut t) = parse(&template, module) {
-                        if let Stmt::FunctionDef(tn) = &mut t[0] {
-                            if n.body.len() == 6 {
-                                if let (Stmt::Assign(a), Stmt::Assign(b)) =
-                                    (&n.body[2], &mut tn.body[2])
-                                {
-                                    if let (Expr::Call(a), Expr::Call(b)) =
-                                        (a.value.as_ref(), b.value.as_mut())
-                                    {
-                                        if let Some(first) = a.arguments.args.first() {
-                                            b.arguments.args[0] = first.clone();
-                                        }
-                                    }
-                                }
-                            }
+                        if let Stmt::FunctionDef(tn) = &mut t[0]
+                            && n.body.len() == 6
+                            && let (Stmt::Assign(a), Stmt::Assign(b)) =
+                                (&n.body[2], &mut tn.body[2])
+                            && let (Expr::Call(a), Expr::Call(b)) =
+                                (a.value.as_ref(), b.value.as_mut())
+                            && let Some(first) = a.arguments.args.first()
+                        {
+                            b.arguments.args[0] = first.clone();
                         }
                         if ComparableStmt::from(stmt) == ComparableStmt::from(&t[0]) {
                             allowed.push((usize::from(stmt.start()), usize::from(stmt.end())));
@@ -597,24 +593,23 @@ fn namespace(body: &[Stmt], module: &str, allowed: &[(usize, usize)]) -> R<()> {
                     let imported = n.module.as_ref().map_or("", |m| m.as_str());
                     if ["operator", "_operator"].contains(&imported)
                         && n.names.iter().any(|a| contains(NS_NAMES, a.name.as_str()))
-                    || contains(NS_MODULES, imported.split('.').next().unwrap())
-                        && !self.allowed.iter().any(|(a, b)| {
-                            usize::from(s.start()) >= *a && usize::from(s.end()) <= *b
-                        })
+                        || contains(NS_MODULES, imported.split('.').next().unwrap())
+                            && !self.allowed.iter().any(|(a, b)| {
+                                usize::from(s.start()) >= *a && usize::from(s.end()) <= *b
+                            })
                     {
                         self.event("proof.support.namespace_api", "");
                     }
                 }
-                Stmt::Import(n) => {
+                Stmt::Import(n)
                     if n.names
                         .iter()
                         .any(|a| contains(NS_MODULES, a.name.split('.').next().unwrap()))
                         && !self.allowed.iter().any(|(a, b)| {
                             usize::from(s.start()) >= *a && usize::from(s.end()) <= *b
-                        })
-                    {
-                        self.event("proof.support.namespace_api", "");
-                    }
+                        }) =>
+                {
+                    self.event("proof.support.namespace_api", "");
                 }
                 _ => {}
             }
@@ -755,7 +750,8 @@ fn support_calls(
                         let safe = matches!(
                             n.left.as_ref(),
                             Expr::StringLiteral(_) | Expr::BytesLiteral(_)
-                        ) && !matches!(n.left.as_ref(), Expr::StringLiteral(n) if n.value.to_str().contains("__")) && literal(&n.left).is_some()
+                        ) && !matches!(n.left.as_ref(), Expr::StringLiteral(n) if n.value.to_str().contains("__"))
+                            && literal(&n.left).is_some()
                             && literal(&n.right).is_some();
                         if !safe {
                             self.event("proof.support.percent_format", "");
@@ -846,18 +842,17 @@ fn partial(source: &str, module_source: &str, module: &str, symbol: &str) -> R<(
                     if matches!(e,Expr::Name(n) if n.id.as_str()==self.symbol) {
                         self.wrong = true;
                     }
-                    if matches!(e,Expr::Attribute(n) if n.ctx!=ExprContext::Load)
-                        || matches!(e,Expr::Subscript(n) if n.ctx!=ExprContext::Load)
+                    if (matches!(e,Expr::Attribute(n) if n.ctx!=ExprContext::Load)
+                        || matches!(e,Expr::Subscript(n) if n.ctx!=ExprContext::Load))
+                        && matches!(root(e),Expr::Name(n) if n.id.as_str()==self.symbol)
                     {
-                        if matches!(root(e),Expr::Name(n) if n.id.as_str()==self.symbol) {
-                            self.write = true;
-                        }
+                        self.write = true;
                     }
-                    if let Expr::Call(n) = e {
-                        if matches!(n.func.as_ref(),Expr::Name(n) if n.id.as_str()==self.symbol) {
-                            self.visit_arguments(&n.arguments);
-                            return;
-                        }
+                    if let Expr::Call(n) = e
+                        && matches!(n.func.as_ref(),Expr::Name(n) if n.id.as_str()==self.symbol)
+                    {
+                        self.visit_arguments(&n.arguments);
+                        return;
                     }
                     visitor::walk_expr(self, e);
                 }
@@ -929,17 +924,17 @@ fn stdlib_shadow(tree: &Tree, observer: &str) -> R<()> {
             let source = String::from_utf8_lossy(&file.bytes);
             let mut in_path = false;
             for line in source.lines() {
-                if let Some((key, value)) = line.split_once('=') {
-                    if key.trim() == "pythonpath" {
-                        in_path = true;
-                        configured.extend(
-                            value
-                                .split(['[', ']', ',', '\'', '"', ' '])
-                                .filter(|p| !p.is_empty())
-                                .map(str::to_owned),
-                        );
-                        continue;
-                    }
+                if let Some((key, value)) = line.split_once('=')
+                    && key.trim() == "pythonpath"
+                {
+                    in_path = true;
+                    configured.extend(
+                        value
+                            .split(['[', ']', ',', '\'', '"', ' '])
+                            .filter(|p| !p.is_empty())
+                            .map(str::to_owned),
+                    );
+                    continue;
                 }
                 if in_path && line.starts_with(char::is_whitespace) {
                     configured.extend(line.split_whitespace().map(str::to_owned));
@@ -1086,41 +1081,41 @@ fn assemble(input: &Value, reduced: bool) -> R<(Value, Tree)> {
                     .iter()
                     .filter(|s| support.contains(s))
                     .any(|s| n.bound.contains(s.split("::").last().unwrap()))
-                {
-                    if let Err(e) = validate_support(
+                    && let Err(e) = validate_support(
                         &norm(&stmt_text(&new, statement)),
                         module,
                         false,
                         &subjects,
                         &[],
-                    ) {
-                        collected.get_or_insert(e);
-                    }
+                    )
+                {
+                    collected.get_or_insert(e);
                 }
             }
         }
         let mut support_required = Set::new();
         for item in requested.iter().filter(|s| support.contains(s)) {
             let src = match source_unit(&new, item, false) {
-                Ok(Some((source,_))) => source,
+                Ok(Some((source, _))) => source,
                 Ok(None) => unreachable!(),
                 Err(error) => return Err(collected.take().unwrap_or(error)),
             };
-            if !reduced {
-                if let Err(e) = validate_support(
+            if !reduced
+                && let Err(e) = validate_support(
                     &src,
                     module,
                     observer_context && item == module,
                     &subjects,
                     &context,
-                ) {
-                    collected.get_or_insert(e);
-                }
+                )
+            {
+                collected.get_or_insert(e);
             }
-            if exists && item.contains("::") {
-                if let Err(e) = partial(&src, &new, module, item.split("::").last().unwrap()) {
-                    collected.get_or_insert(e);
-                }
+            if exists
+                && item.contains("::")
+                && let Err(e) = partial(&src, &new, module, item.split("::").last().unwrap())
+            {
+                collected.get_or_insert(e);
             }
             if item != module {
                 support_required.extend(global_names(&src, module)?);
@@ -1131,16 +1126,15 @@ fn assemble(input: &Value, reduced: bool) -> R<(Value, Tree)> {
                 && !names(std::slice::from_ref(statement))
                     .bound
                     .is_disjoint(&support_required)
-            {
-                if let Err(e) = validate_support(
+                && let Err(e) = validate_support(
                     &norm(&stmt_text(&new, statement)),
                     module,
                     false,
                     &subjects,
                     &[],
-                ) {
-                    collected.get_or_insert(e);
-                }
+                )
+            {
+                collected.get_or_insert(e);
             }
         }
         if let Some(e) = collected {
