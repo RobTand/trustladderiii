@@ -57,7 +57,7 @@ fn observer_shutdown_stops_all_local_watches_before_joining() {
     let finish: Finish = Arc::new(|_, _| panic!("stopped observation must not publish"));
     let mut second = owner();
     second.correlation = "second-effect".into();
-    let (_handle, source) = Source::new(backend, vec![owner(), second], finish);
+    let (handle, source) = Source::new(backend, vec![owner(), second], finish);
     let (sender, _inputs) = mpsc::channel::<Input>();
     let running = source.spawn(sender);
     let first = attached.recv_timeout(Duration::from_secs(5));
@@ -65,10 +65,15 @@ fn observer_shutdown_stops_all_local_watches_before_joining() {
     if first.is_err() || second.is_err() { release(&released); }
     let first = first.unwrap().1;
     let second = second.unwrap().1;
+    // The stop acknowledgement is also a barrier behind these duplicate notifications.
+    handle.watch(owner()).unwrap();
+    handle.watch(owner()).unwrap();
     let stopped = running.stop();
     let both_stopped = first.is_stopped() && second.is_stopped();
+    let duplicate = attached.try_recv().is_ok();
     release(&released);
     assert!(stopped.is_ok());
     assert!(both_stopped);
+    assert!(!duplicate, "one owner acquired multiple concurrent observers");
     running.join().unwrap();
 }

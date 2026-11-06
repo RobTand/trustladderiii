@@ -4,6 +4,7 @@ use crate::sync::mpsc::Sender as InputSender;
 use std::{collections::BTreeMap, sync::{Arc, mpsc}, thread};
 
 /// The adapter must journal its final completion before returning an ingress input.
+/// This callback performs bounded local journal work, with no upstream wait or retry loop.
 pub type Finish = Arc<dyn Fn(&Owner, Observation) -> Result<Option<Input>> + Send + Sync>;
 pub type Backend = Arc<dyn RunBackend + Send + Sync>;
 
