@@ -17,8 +17,8 @@ import remote_gate  # noqa: E402
 
 CASES = {
     'report_pr_closed_cause': ('crates/kernel/src/report.rs',
-        '    ] {\n        match phase {\n            Phase::Stopping(Outcome::Merged)',
-        '    ] {\n        let pr_closed = false;\n        match phase {\n            Phase::Stopping(Outcome::Merged)',
+        '        match phase {\n            Phase::Stopping(Outcome::Merged)',
+        '        let pr_closed = false;\n        match phase {\n            Phase::Stopping(Outcome::Merged)',
         '//crates/kernel:verus_report_stop_kind'),
     'report_stale_omitted': ('crates/kernel/src/reply_admission.rs',
         'report.record_stale(NodeId(i as u64), ReplyKind::of(reply));',
@@ -29,8 +29,8 @@ CASES = {
         'match None::<CounterExhaustion> {',
         '//crates/kernel:verus_step_checked'),
     'report_ci_failed_runtime': ('crates/kernel/src/facts.rs',
-        'failed_round(w, i, ReviewStop::CiFailed, out, report);',
-        'failed_round(w, i, ReviewStop::CiFailed, out, &mut Report::new());',
+        'report.record_failed_round(NodeId(i as u64), cause);',
+        'let _ = cause;',
         '//crates/kernel:test_test_step_report'),
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',

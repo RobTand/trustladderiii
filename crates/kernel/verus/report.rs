@@ -240,4 +240,29 @@ pub(in super::super) proof fn settle_result(before: Seq<Phase>, after: Seq<Phase
     ensures settled_forwards(before, after, r0, r1),
 { reveal(settled_forwards); unchanged(r0); }
 
+pub(in super::super) proof fn stop_kind_value(phase: Phase, review: Option<ReviewStop>,
+    pr_closed: bool, user_stop: bool)
+    ensures stop_kind(phase, review, pr_closed, user_stop) == match phase {
+            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
+            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
+            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
+            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
+            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
+            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
+                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
+        },
+{ reveal(stop_kind); }
+
+pub(in super::super) proof fn stop_agreement(r0: Seq<ReportEntry>, middle: Seq<ReportEntry>,
+    r1: Seq<ReportEntry>, node: NodeId, before: Phase, after: Phase, cause: StopCause,
+    entries: Seq<ReportEntry>, ci_gap: bool)
+    requires ci_gap || forwards(r0, middle, entries),
+        stop_cause(middle, r1, node, before, after, cause),
+    ensures agrees_except_ci_failed(r0, r1, node, before, after, cause, entries, ci_gap),
+{
+    reveal(agrees_except_ci_failed);
+    assert(exists|m: Seq<ReportEntry>| (ci_gap || forwards(r0, m, entries))
+        && stop_cause(m, r1, node, before, after, cause));
+}
+
 }

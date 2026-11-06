@@ -116,6 +116,31 @@ pub closed spec fn counter_exhausted(headroom: bool, refused: bool) -> bool {
 }
 
 #[verifier::opaque]
+pub(super) closed spec fn stop_kind(phase: Phase, review: Option<ReviewStop>,
+    pr_closed: bool, user_stop: bool) -> StopCause {
+match phase {
+            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
+            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
+            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
+            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
+            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
+            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
+                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
+        }
+}
+
+/// The CiFailed failed-round prefix is unproven, owner K3 #907.
+/// Stop entries remain required, including when the failed-round prefix is excluded.
+#[verifier::opaque]
+pub(super) closed spec fn agrees_except_ci_failed(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
+    node: NodeId, before: Phase, after: Phase, cause: StopCause,
+    entries: Seq<ReportEntry>, ci_gap: bool) -> bool {
+    exists|middle: Seq<ReportEntry>| (ci_gap || forwards(r0, middle, entries))
+        && stop_cause(middle, r1, node, before, after, cause)
+}
+
+
+#[verifier::opaque]
 pub(super) closed spec fn round_entries(node: NodeId, cause: Option<FailedRoundCause>) -> Seq<ReportEntry> {
     match cause {
         Some(cause) => seq![ReportEntry::FailedRound { node, cause }],
@@ -313,16 +338,9 @@ kernel_fn! {
 impl StopCause {
     pub(super) fn from_phase(phase: Phase, review: Option<ReviewStop>,
         pr_closed: bool, user_stop: bool) -> (result: Self) [
-        ensures result == match phase {
-            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
-            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
-            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
-            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
-            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
-            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
-                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
-        },
+        ensures result == stop_kind(phase, review, pr_closed, user_stop),
     ] {
+        kernel_proof! { lemmas::stop_kind_value(phase, review, pr_closed, user_stop); }
         match phase {
             Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
             Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,

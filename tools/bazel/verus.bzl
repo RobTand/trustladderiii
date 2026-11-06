@@ -914,6 +914,8 @@ def verus_proofs():
             "report_kind_value": ("kernel::report::lemmas#kind_value", 1),
             "report_read_stale": ("kernel::report::lemmas#read_stale", 1),
             "report_reply_result": ("kernel::report::lemmas#reply_result", 1),
+            "report_stop_kind_value": ("kernel::report::lemmas#stop_kind_value", 1),
+            "report_stop_agreement": ("kernel::report::lemmas#stop_agreement", 1),
             "report_quiet": ("kernel::report::lemmas#quiet", 1),
             "report_read_quiet": ("kernel::report::lemmas#read_quiet", 1),
             "report_phase_refl": ("kernel::report::lemmas#phase_refl", 1),

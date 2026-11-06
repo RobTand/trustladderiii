@@ -164,7 +164,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             }
         }
     }
-    if let Some(node) = target {
+    if let Some(node) = if matches!(event, Event::Fact { .. }) { None } else { target } {
         if let Some(before) = before_phase {
             if let Some(i) = w.index(node) {
                 let after = w.nodes[i].phase;
