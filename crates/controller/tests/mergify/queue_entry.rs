@@ -115,7 +115,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     if mode == "foreign" {
         // No TL3 store/binding: preserve the adapter's existing #447 setup fact.
         let snapshot = controller.snapshot().unwrap();
-        let delivery: Delivery = serde_json::from_value(
+        let mut delivery: Delivery = serde_json::from_value(
             snapshot
                 .rows
                 .iter()
@@ -128,6 +128,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 .clone(),
         )
         .unwrap();
+        delivery.pull_request = api.state.lock().unwrap().pull["number"].as_u64();
         let observations = api
             .adapter(&root.path().join("foreign"), 0)
             .observations(&delivery)
