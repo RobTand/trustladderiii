@@ -124,7 +124,7 @@ class TurnControl(AgentMiddleware):
         return handler(request)
 
 
-def repaired(control, history, ask, check, *, guard_after_check=False):
+def repaired(control, history, ask, check):
     """Return check(ask()), giving an invalid reply one repair turn in the same run."""
     text = ask()
     original = text
@@ -142,7 +142,7 @@ def repaired(control, history, ask, check, *, guard_after_check=False):
             control.repair_unavailable = 'input_allowance'
             raise first from None
         try:
-            deferred = guard_after_check and getattr(first, 'rule_role', None) == 'planner'
+            deferred = getattr(first, 'guard_after_check', False)
             result = check(text) if deferred else None
             violations = () if deferred else getattr(first, 'rule_violations', ())
             if violations:

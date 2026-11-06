@@ -338,7 +338,8 @@ def _run(request, emit):
             ask = lambda: _run_agent(agent, history, emit)
             if role.reply_contract is not None:
                 contract = role.reply_contract(request['inputs'], worktree)
-                reply = contract.run(control, history, ask)
+                reply = contract.run(control, history, ask, repaired, lambda draft, **kwargs: _checked(
+                    role, request['inputs'], draft, worktree=worktree, **kwargs))
                 plan_check = contract.provenance
             else:
                 reply = repaired(control, history, ask, lambda text: _checked(

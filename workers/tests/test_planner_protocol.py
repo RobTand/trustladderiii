@@ -502,8 +502,8 @@ def _row_case(rule_id):
                  'unit': 'pkg.py::target', 'node': 'test.py::test_old'}
         witness = ['pkg.py'] if footprint in {'FILES_FILL', 'FILE_PATH'} else ['test.py', 'pkg.py']
     elif footprint in {'COVERAGE', 'GOAL_ADD', 'GOAL_DROP', 'GOAL_SANITIZE'}:
-        check['goal_ids'] = [9, 0, 0] if footprint in {'GOAL_DROP', 'GOAL_SANITIZE'} else []
-        items, witness = {'check': 0, 'goals': [0], 'unknown': [9]}, [0]
+        check['goal_ids'] = [9, 0, 0, True, 0.0] if footprint == 'GOAL_SANITIZE' else [9, 0, 0] if footprint == 'GOAL_DROP' else []
+        items, witness = {'check': 0, 'goals': [0], 'unknown': [9]}, [0, 0] if footprint == 'GOAL_DROP' else [0]
         proof['subjects'] = ['pkg.py::target']
     elif footprint in {'PIECE_GOALS', 'PIECE_DROP', 'PIECE_COVER'}:
         draft = {'kind': 'split', 'reason': 'multiple_repos', 'pieces': [
@@ -691,3 +691,35 @@ def test_a1_ambiguous_patch_mode_has_no_bounded_repair(patch):
     found = violations(facts)
     assert found and all(isinstance(item.rule.repair(item.facts), CantMeet) for item in found)
     assert permits(found, facts['draft'], CANT_MEET, role='planner')
+
+
+def test_a1_unknown_and_missing_citations_share_one_repair():
+    """#880 dropping a bad citation must compose with adding the named missing one."""
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('check.goal_unknown')
+    facts['inputs']['ingest']['goals'].append({'description': 'The second obligation.'})
+    facts['draft']['checks'][0]['goal_ids'] = [9, 0]
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    facts['diagnostics'] = [named('check.goal_unknown', '', {'check': 0, 'unknown': [9]}),
+                            named('goal.coverage', '', {'goals': [1]})]
+    after = copy.deepcopy(facts['draft'])
+    after['checks'][0]['goal_ids'] = [0, 1]
+    assert permits(violations(facts), facts['draft'], after, role='planner')
+
+
+def test_a1_subject_addition_composes_with_proof_deduplication():
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('proof.units_repeat')
+    facts['draft']['checks'][0]['proof']['subjects'] = ['pkg.py::kept', 'pkg.py::kept']
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    facts['diagnostics'] = [named('proof.units_repeat', '', {'check': 0}),
+                            named('proof.subject_missing', '', {'check': 0, 'subjects': ['pkg.py::target']})]
+    after = copy.deepcopy(facts['draft'])
+    after['checks'][0]['proof']['subjects'] = ['pkg.py::kept', 'pkg.py::target']
+    assert permits(violations(facts), facts['draft'], after, role='planner')

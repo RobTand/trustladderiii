@@ -25,7 +25,7 @@ from tl3_harness.trees import git, test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
-from tl3_workers.turns import InvalidReply, Unrepairable, repaired
+from tl3_workers.turns import InvalidReply, Unrepairable
 from tl3_workers.rules import Allowed as WorkerAllowed, CantMeet, Edit, Name, Rule, at, evaluate, register
 
 
@@ -216,6 +216,14 @@ def proof_fill(f):
     if 'red_message' in missing and not quotes:
         return [CantMeet('No ingest proof_obligation quote permits red_message; return cant_meet without inventing an assertion.')]
     changes = {key: {'enum': quotes} if key == 'red_message' else {'const': []} for key in missing}
+    local = [item for item in f['diagnostics'] if item.items.get('check') == index]
+    if any(inventory()[item.rule]['footprint'] == 'PROOF_DEDUP' for item in local):
+        changes.update({key: {'const': unique(value)} for key, value in proof.items()
+                        if key in {'subjects', 'observer_support'} and unique(value) != value})
+    red = unique(item.items['obligation']['quote'] for item in local
+                 if inventory()[item.rule]['footprint'] == 'RED_FILL' and item.items.get('obligation', {}).get('quote'))
+    if red and not proof.get('red_message', '').strip():
+        changes['red_message'] = {'enum': red}
     subject_rows = [item for item in f['diagnostics'] if item.items.get('check') == index
                     and inventory()[item.rule]['footprint'] == 'SUBJECT_ADD']
     if subject_rows:
@@ -241,6 +249,9 @@ def subjects(f):
     if type(index) is not int:
         return cannot_repair(f)
     before = f['draft']['checks'][index].get('proof', {}).get('subjects', [])
+    if any(item.items.get('check') == index and inventory()[item.rule]['footprint'] == 'PROOF_DEDUP'
+           for item in f['diagnostics']):
+        before = unique(before)
     required = [unit for item in f['diagnostics'] if item.items.get('check') == index
                 and inventory()[item.rule]['footprint'] == 'SUBJECT_ADD'
                 for unit in item.items.get('subjects', item.items.get('obligation', {}).get('subjects', []))]
@@ -320,41 +331,40 @@ def citations(f):
     goals = f['inputs']['ingest']['goals']
     operation, item, draft = f['footprint'], f['items'], f['draft']
     pieces = operation.startswith('PIECE_')
-    field = 'pieces' if pieces else 'checks'
+    field, identity = ('pieces', 'piece') if pieces else ('checks', 'check')
     values = draft.get(field, [])
-    indexes = range(len(values)) if operation in {'COVERAGE', 'PIECE_COVER'} else [item.get('piece' if pieces else 'check')]
+    indexes = range(len(values)) if operation in {'COVERAGE', 'PIECE_COVER'} else [item.get(identity)]
+    missing = sorted(set(range(len(goals))) - {g for value in values for g in value['goal_ids']})
+    coverage = [g for diagnostic in f['diagnostics'] if diagnostic.rule == 'goal.coverage'
+                for g in diagnostic.items['goals']]
     repairs = []
-    covered = {g for value in values for g in value['goal_ids']}
-    missing = sorted(set(range(len(goals))) - covered)
     for index in indexes:
         if type(index) is not int or index >= len(values):
             continue
         value = values[index]
         before = value['goal_ids']
-        if operation in {'GOAL_DROP', 'PIECE_DROP', 'GOAL_SANITIZE'}:
-            result = unique(g for g in before if type(g) is int and 0 <= g < len(goals))
-            if result != before:
-                repairs.append(edit(f, f'/{field}/{index}/goal_ids', fixed(result)))
-            continue
-        additions = []
-        if operation == 'COVERAGE':
-            additions = sorted({g for diagnostic in f['diagnostics'] if diagnostic.rule == 'goal.coverage'
-                                for g in diagnostic.items['goals']})
-        elif pieces:
-            candidates = missing if operation == 'PIECE_COVER' else range(len(goals)) if not before else []
+        local = {inventory()[diagnostic.rule]['footprint'] for diagnostic in f['diagnostics']
+                 if diagnostic.items.get(identity) == index}
+        retained = before
+        if local & {'GOAL_DROP', 'PIECE_DROP'}:
+            retained = [g for g in retained if g in range(len(goals))]
+        if 'GOAL_SANITIZE' in local:
+            retained = unique(g for g in retained if type(g) is int and 0 <= g < len(goals))
+        additions = list(coverage) if not pieces else []
+        if pieces:
+            candidates = missing if any(d.rule == 'split.goal_missing' for d in f['diagnostics']) else []
+            if not before and 'PIECE_GOALS' in local:
+                candidates = range(len(goals))
             additions = [g for g in candidates if goals[g]['description'] in value['brief']
                          and all(unit.split('::')[0] in value['files'] for unit in goals[g].get('proof_obligation', {}).get('subjects', []))]
-        elif not before:
+        elif not before and 'GOAL_ADD' in local:
             proof = value.get('proof', {})
-            additions = [g for g, goal in enumerate(goals) if 'proof_obligation' in goal
-                         and proof.get('red_message') == goal['proof_obligation']['quote']
-                         and all(any(subject_covers(unit, required) for unit in proof.get('subjects', []))
-                                 for required in goal['proof_obligation']['subjects'])]
-        if not pieces and operation == 'GOAL_ADD':
-            additions = unique([*additions, *(g for diagnostic in f['diagnostics'] if diagnostic.rule == 'goal.coverage'
-                                              for g in diagnostic.items['goals'])])
-        if additions:
-            repairs.append(edit(f, f'/{field}/{index}/goal_ids', Allowed('schema', append_constraint(before, additions))))
+            additions.extend(g for g, goal in enumerate(goals) if 'proof_obligation' in goal
+                             and proof.get('red_message') == goal['proof_obligation']['quote']
+                             and all(any(subject_covers(unit, required) for unit in proof.get('subjects', []))
+                                     for required in goal['proof_obligation']['subjects']))
+        if retained != before or additions:
+            repairs.append(edit(f, f'/{field}/{index}/goal_ids', Allowed('schema', append_constraint(retained, additions))))
     return repairs or cannot_repair(f)
 
 
@@ -407,9 +417,7 @@ def deduplicate(f):
     check = f['draft']['checks'][index]
     if f['footprint'] == 'NODE_DEDUP':
         return [edit(f, f'/checks/{index}/node_ids', fixed(unique(check['node_ids'])))]
-    proof = check.get('proof', {})
-    result = {key: unique(value) if key in {'subjects', 'observer_support'} else value for key, value in proof.items()}
-    return [edit(f, f'/checks/{index}/proof', fixed(result))] if result != proof else cannot_repair(f)
+    return proof_fill(f)
 
 
 def drop_edits(f):
@@ -648,6 +656,7 @@ class PlanConsistencyError(ValueError):
     """A complete planner refusal, rendered and guarded by registered rows."""
 
     rule_role = 'planner'
+    guard_after_check = True
 
     def __init__(self, raw, completed, diagnostics, inputs, *, base_nodes=(), base_sources=None):
         from tl3_workers.rules import render_all
@@ -1164,7 +1173,7 @@ class PlannerContract:
                     plan_errors=plan_errors)
         return reply
 
-    def run(self, control, history, ask):
+    def run(self, control, history, ask, repair, check):
         from jsonschema import ValidationError
         from tl3_workers.contracts import read_reply
 
@@ -1179,7 +1188,7 @@ class PlannerContract:
             captured = []
             try:
                 self.candidate = read_reply(text)
-                result = self.check(deepcopy(self.candidate), plan_errors=captured)
+                result = check(deepcopy(self.candidate), plan_errors=captured)
             except Unrepairable:
                 raise
             except (ValueError, ValidationError) as error:
@@ -1206,13 +1215,13 @@ class PlannerContract:
         def refused(failure):
             self.candidate = {'kind': 'cant_meet', 'files': [], 'evidence_contract': [], 'report': failure['message']}
             captured = []
-            self.completed = self.check(deepcopy(self.candidate), plan_errors=captured)
+            self.completed = check(deepcopy(self.candidate), plan_errors=captured)
             capture(captured[-1])
             return self.completed
 
         failed = None
         try:
-            reply = repaired(control, history, ask, checked, guard_after_check=True)
+            reply = repair(control, history, ask, checked)
         except (PlanConsistencyError, InvalidReply) as error:
             if self.origin is None:
                 raise
