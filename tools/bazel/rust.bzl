@@ -319,7 +319,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         deps = deps + script,
     )
     for name in bins:
-        standalone_verifier = name == "verus-runner" and directory == "crates/mergify"
+        standalone_verifier = name == "verus-runner" and directory == "crates/verus-runner"
         binary_sources = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources
         if directory == "crates/contracts":
             binary_sources = library_sources + ["src/bin/%s.rs" % name]
@@ -360,7 +360,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         _crate_test("lib", package, crate + "_loom", "src/lib.rs", True, loom_options)
     for name in bins:
         binary_options = dict(options)
-        if name == "verus-runner" and directory == "crates/mergify":
+        if name == "verus-runner" and directory == "crates/verus-runner":
             binary_options["deps"] = ["@crates//:serde_json"]
         _crate_test("bin", package, name, "src/bin/%s.rs" % name, True, binary_options)
     for name, source in examples.items():
@@ -393,7 +393,7 @@ def _crate_test(kind, package, name, source, harness, options):
             sources = sources + ["tests/measure_equivalence/reference.rs"]
         if native.package_name() == "crates/store":
             sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
-    if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
+    if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/verus-runner":
         sources = [source]
     compile_data = options["compile_data"]
     if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
