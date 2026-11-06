@@ -462,6 +462,17 @@ fn infrastructure_retry(m: &mut Node) -> (result: Option<bool>) [
     } else {
         m.run_failures = 0;
         m.run_incidents = (m.run_incidents + 1).min(2);
+        kernel_proof! {
+            assert(m.run_incidents == if before_retry@.run_incidents < 2 {
+                (before_retry@.run_incidents + 1) as u8
+            } else { 2u8 }) by {
+                if before_retry@.run_incidents < 2 {
+                    assert(m.run_incidents == before_retry@.run_incidents + 1);
+                } else {
+                    assert(m.run_incidents == 2);
+                }
+            }
+        }
         let needs_rob = m.run_incidents >= 2;
         kernel_proof! {
             assert((*m, Some(needs_rob)) == retirement::infrastructure_retry(before_retry@)) by {
