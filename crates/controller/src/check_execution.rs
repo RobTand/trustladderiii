@@ -5,35 +5,30 @@ use tl3_store::{Commit, RowChange, Snapshot};
 
 pub use crate::contracts::execution::{Diagnostic, Outcome};
 
-impl Diagnostic {
-    pub(crate) fn from_log(raw: &[u8]) -> Option<Self> {
-        let line = raw
-            .split(|byte| *byte == b'\n')
-            .rev()
-            .find_map(|line| line.strip_prefix(b"TL3_EXECUTION_FAILURE "))?;
-        if line.len() <= 16_384
-            && let Ok(diagnostic) = serde_json::from_slice(line)
-        {
-            return Some(diagnostic);
-        }
-        // Never log invalid producer text: it can itself carry a secret.
-        eprintln!("invalid TL3_EXECUTION_FAILURE record in verified action log");
-        Some(Diagnostic {
-            outcome: Outcome::UnknownIncomplete,
-            phase: crate::contracts::bounded::Text::new("diagnostic_decode")
-                .expect("literal bound"),
-            termination_reason: crate::contracts::bounded::Text::new(
-                "invalid_execution_diagnostic",
-            )
-            .expect("literal bound"),
-            test_started: false,
-            test: None,
-            stderr_tail: crate::contracts::bounded::Text::new(
-                "[malformed execution diagnostic omitted]",
-            )
-            .expect("literal bound"),
-        })
+pub(crate) fn from_log(raw: &[u8]) -> Option<Diagnostic> {
+    let line = raw
+        .split(|byte| *byte == b'\n')
+        .rev()
+        .find_map(|line| line.strip_prefix(b"TL3_EXECUTION_FAILURE "))?;
+    if line.len() <= 16_384
+        && let Ok(diagnostic) = serde_json::from_slice(line)
+    {
+        return Some(diagnostic);
     }
+    // Never log invalid producer text: it can itself carry a secret.
+    eprintln!("invalid TL3_EXECUTION_FAILURE record in verified action log");
+    Some(Diagnostic {
+        outcome: Outcome::UnknownIncomplete,
+        phase: crate::contracts::bounded::Text::new("diagnostic_decode").expect("literal bound"),
+        termination_reason: crate::contracts::bounded::Text::new("invalid_execution_diagnostic")
+            .expect("literal bound"),
+        test_started: false,
+        test: None,
+        stderr_tail: crate::contracts::bounded::Text::new(
+            "[malformed execution diagnostic omitted]",
+        )
+        .expect("literal bound"),
+    })
 }
 
 /// Read the diagnostic for the operation that raised this incident, including
@@ -112,7 +107,7 @@ mod tests {
     /// #826 review: a malformed producer record is visible operator evidence.
     #[test]
     fn malformed_diagnostic_is_visible() {
-        let diagnostic = Diagnostic::from_log(b"TL3_EXECUTION_FAILURE {}\n");
+        let diagnostic = from_log(b"TL3_EXECUTION_FAILURE {}\n");
         assert!(
             diagnostic.is_some(),
             "malformed diagnostic disappeared silently"
@@ -125,18 +120,15 @@ mod tests {
         let mut value = json!({"outcome":"setup_failure", "phase":"container_start",
             "termination_reason":"incomplete_report", "test_started":false, "stderr_tail":"shim refused"});
         let log = |value: &serde_json::Value| format!("noise\nTL3_EXECUTION_FAILURE {value}\n");
-        assert!(Diagnostic::from_log(log(&value).as_bytes()).is_some());
+        assert!(from_log(log(&value).as_bytes()).is_some());
         for bad in [json!("x".repeat(1025)), json!(null)] {
             value["stderr_tail"] = bad;
             assert_eq!(
-                Diagnostic::from_log(log(&value).as_bytes())
-                    .unwrap()
-                    .phase
-                    .as_str(),
+                from_log(log(&value).as_bytes()).unwrap().phase.as_str(),
                 "diagnostic_decode"
             );
         }
-        assert!(Diagnostic::from_log(b"TL3_EXECUTION_FAILURE \xff\n").is_some());
-        assert!(Diagnostic::from_log(b"TL3_EXECUTION_FAILURE {}\n").is_some());
+        assert!(from_log(b"TL3_EXECUTION_FAILURE \xff\n").is_some());
+        assert!(from_log(b"TL3_EXECUTION_FAILURE {}\n").is_some());
     }
 }

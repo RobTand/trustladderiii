@@ -89,7 +89,7 @@ for kind in ('ini', 'csv', 'private-key'):
     else:
         header = b'-----BEGIN PRIVATE KEY-----\n'
         first = (header + (b'A' * 64 + b'\n') * 256)[:MAX_STDERR_BYTES]
-        value = secret
+        value = secret + '\n-----END PRIVATE KEY-----'
     process = Supervised([], None, ())
     for chunk in (first, ('\n' + value + '\n' + cause + '\n').encode(), b'\n'):
         assert len(chunk) <= MAX_STDERR_BYTES

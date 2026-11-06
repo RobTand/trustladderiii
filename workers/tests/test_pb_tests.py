@@ -675,7 +675,7 @@ def test_stderr_raw_boundary_keeps_section_context_before_redaction(context_kind
     else:
         header = b'-----BEGIN PRIVATE KEY-----\n'
         first = (header + (b'A' * 64 + b'\n') * 256)[:MAX_STDERR_BYTES]
-        value = secret
+        value = secret + '\n-----END PRIVATE KEY-----'
     later = ('\n' + value + '\ncontainer shim refused\n').encode()
     assert secret not in supervision._redactor.window((first + later).decode(), 0, len(first + later))
     # Both the exact review sequence and the earlier incomplete-boundary regression.

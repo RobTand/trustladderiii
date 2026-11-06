@@ -269,7 +269,7 @@ fn evidence_with_read(
         };
         if let Some(parsed) = parsed {
             if !rejudged(&parsed, job) {
-                return Ok((false, false, vec![], vec![], JUDGE_MISMATCH_CLASS));
+                return Ok((false, false, vec![], vec![], JUDGE_MISMATCH_CLASS, None));
             }
             failed_tests = parsed
                 .results
@@ -309,7 +309,7 @@ fn evidence_with_read(
             failure = Some(HARNESS);
         }
         if !report {
-            diagnostic = crate::check_execution::Diagnostic::from_log(&raw);
+            diagnostic = crate::check_execution::from_log(&raw);
         }
     } else if matches!(ending.status.as_str(), "executed" | "cache_hit") {
         // A receipt-only cache hit can outlive its queue record. Missing result evidence is unknown.
