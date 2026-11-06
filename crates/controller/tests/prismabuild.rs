@@ -3776,6 +3776,68 @@ fn main() {
     ];
     type DatabaseScenario = fn(&mut support::Database);
     let database_cases: &[(&str, DatabaseScenario)] = &[
+        ("retained_results_failure_cause_true_sync", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_true_sync"),
+                "sync",
+                "retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_true_source", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_true_source"),
+                "source",
+                "retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_true_watch", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_true_watch"),
+                "watch",
+                "retained_results",
+            );
+        }),
+        (
+            "retained_results_failure_cause_true_allowance",
+            |database| {
+                completion_failure_cause(
+                    &database.create("pb_retained_true_allowance"),
+                    "allowance",
+                    "retained_results",
+                );
+            },
+        ),
+        ("retained_results_failure_cause_false_sync", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_false_sync"),
+                "sync",
+                "failed_retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_false_source", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_false_source"),
+                "source",
+                "failed_retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_false_watch", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_false_watch"),
+                "watch",
+                "failed_retained_results",
+            );
+        }),
+        (
+            "retained_results_failure_cause_false_allowance",
+            |database| {
+                completion_failure_cause(
+                    &database.create("pb_retained_false_allowance"),
+                    "allowance",
+                    "failed_retained_results",
+                );
+            },
+        ),
         ("completion_failure_cause_sync_true", |database| {
             completion_failure_cause(
                 &database.create("pb_cause_sync_true"),
