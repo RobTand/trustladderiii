@@ -96,8 +96,12 @@ def create_model(request):
         return Model(responses=[AIMessage(content='stop', usage_metadata={'input_tokens': inputs['context_size'], 'output_tokens': 1, 'total_tokens': inputs['context_size'] + 1})])
     if mode == 'needs-files' and 'helper.py' not in inputs['plan']['files']:
         return Model(responses=[AIMessage(content=json.dumps({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'The shared greeting is here.'}]}))])
-    path = 'outside.py' if mode == 'outside' else 'greeting.py'
+    path = 'greeting.py'
     content = f"def greet(): return 'hello'\n# {mode} attempt {inputs['attempt']} round {inputs['round']}\n"
+    if mode == 'outside':
+        # The maker's write tool refuses undeclared paths (#875). The controller's
+        # footprint check still guards a head that carries one by another route.
+        Path(request['worktree'], 'outside.py').write_text(content)
     if mode == 'rebase-edits':
         content += f"# visit {request['operation']['generation']}\n"
     reply = {'kind': 'done', 'self_check': [{'goal_id': goal['id'], 'status': 'met', 'evidence': 'Recorded self-check passed; check greeting.'} for goal in inputs['goals']]}
@@ -118,7 +122,7 @@ def create_model(request):
     return Model(responses=[
         call('recall', {'query': 'greeting decisions'}),
         *reproducing_turns,
-        call('write', {'path': path, 'content': content}),
+        call('read', {'path': path}) if mode == 'outside' else call('write', {'path': path, 'content': content}),
         call('run_tests', {'tests': ['test_greeting.py::test_hello']}),
         AIMessage(content=json.dumps(reply)),
     ])

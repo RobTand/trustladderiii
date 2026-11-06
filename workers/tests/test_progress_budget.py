@@ -175,6 +175,8 @@ def test_new_evidence_can_leave_no_progress_reserve(maker_request, monkeypatch):
 
 
 def test_progress_tracking_allows_new_files_and_parent_directories(maker_request, monkeypatch):
+    # Writes reach only declared files (#875); new files are declared like any other.
+    maker_request['inputs']['plan']['files'] += ['new.py', 'new/package.py']
     model, reply = run(maker_request, monkeypatch, [
         ('write', {'path': 'new.py', 'content': 'new = True\n'}),
         ('write', {'path': 'new/package.py', 'content': 'nested = True\n'}),
