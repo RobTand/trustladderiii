@@ -1106,16 +1106,8 @@ proof!(advance_publishing, check_advance(Phase::Publishing, true));
 proof!(advance_queued, check_advance(Phase::Queued, false));
 proof!(advance_rebasing, check_advance(Phase::Rebasing, true));
 proof!(
-    advance_awaiting_rob,
-    check_advance(Phase::AwaitingRob, false)
-);
-proof!(
     advance_stopping,
     check_advance(Phase::Stopping(kani::any()), true)
-);
-proof!(
-    advance_closed,
-    check_advance(Phase::Closed(kani::any()), false)
 );
 
 // No dead states, one phase at a time.

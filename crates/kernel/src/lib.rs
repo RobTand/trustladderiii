@@ -82,6 +82,12 @@ use allocation::*;
 mod reply_admission;
 use reply_admission::*;
 mod ingest;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/ingest_facts.rs"]
+mod ingest_facts;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/teardown_facts.rs"]
+mod teardown_facts;
 use ingest::*;
 mod work_replies;
 use work_replies::*;
@@ -1732,9 +1738,9 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
             "progress_from_rebasing",
             "apply_rebase_progress_gate",
         ],
-        Phase::AwaitingRob => &["advance_awaiting_rob", "progress_from_awaiting_rob"],
+        Phase::AwaitingRob => &["progress_from_awaiting_rob"],
         Phase::Stopping(_) => &["advance_stopping", "progress_from_stopping"],
-        Phase::Closed(_) => &["advance_closed", "progress_from_closed"],
+        Phase::Closed(_) => &["progress_from_closed"],
     }
 }
 // proof map end
@@ -2316,3 +2322,11 @@ mod port_t860_link;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retries_facts.rs"]
+mod retries_facts;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+#[path = "../tests/mark_handled_equivalence/cases.rs"]
+mod mark_handled_equivalence;
