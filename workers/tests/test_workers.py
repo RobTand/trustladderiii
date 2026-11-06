@@ -1272,3 +1272,23 @@ def test_ep2_retained_source_identity():
     assert len(EP2_RETAINED['evidence_contract_presented_to_final_audit']) == 4
     assert len(EP2_RETAINED['final_audit']['evidence_contract']) == 5
     assert len(EP2_RETAINED['goals_presented_to_final_audit']) == 16
+
+
+@pytest.mark.parametrize('dimension,value', [
+    ('artifacts', 'missing_tools'), ('artifacts', 'exit_status'), ('artifacts', 'skips'),
+    ('artifacts', 'terminal_records'), ('runner_features', 'priority'),
+    ('runner_features', 'resource_admission'), ('runner_features', 'worker_bound'),
+    ('runner_features', 'native_threads_2'),
+])
+def test_ep2_unknown_substantive_dimension_is_not_reporting(dimension, value):
+    from tl3_workers.evidence import preflight
+
+    entry = route_requirement('The verifier must emit and validate the ' + value + ' field.')
+    entry[dimension] = [value]
+    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+                  'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+                  'methods': [], 'protected_files': []}
+    reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
+    preflight({'tool_capabilities': [capability]}, reply)
+    assert reply['evidence_contract'] == [entry]
+    assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
