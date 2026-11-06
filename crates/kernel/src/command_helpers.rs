@@ -43,16 +43,7 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
 ] {
     kernel_snapshot! { before_handled = *m }
     if let Some(Item::Teardown(kind)) = m.current() {
-        match kind {
-            EffectKind::StopRun => {
-                m.run = None;
-                m.pool = false;
-            }
-            EffectKind::WithdrawJob => m.job = None,
-            EffectKind::ClosePr => m.pr_open = false,
-            EffectKind::RemoveWorktree => m.worktree = false,
-            _ => {}
-        }
+        mark_handled_resources(m, kind);
         m.pos += 1;
     }
     kernel_proof! {
@@ -62,6 +53,43 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
             && matches!(current_item(before), Some(Item::Teardown(_))) {
             cleanup_lemmas::teardown_progress(before_handled@, *m);
         }
+    }
+}
+}
+
+kernel_fn! {
+/// Resource writes used when marking a teardown item handled.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
+    ensures final(m).phase == old(m).phase,
+        final(m).repo == old(m).repo,
+        final(m).footprint == old(m).footprint,
+        final(m).generation == old(m).generation,
+        final(m).next_seq == old(m).next_seq,
+        final(m).effect == old(m).effect,
+        final(m).ticket == old(m).ticket,
+        final(m).holds == old(m).holds,
+        final(m).paused == old(m).paused,
+        final(m).last_cmd == old(m).last_cmd,
+        final(m).question == old(m).question,
+        final(m).waiting_incident == old(m).waiting_incident,
+        final(m).credit == old(m).credit,
+        final(m).pos == old(m).pos,
+        final(m).run == if kind == EffectKind::StopRun { None } else { old(m).run },
+        final(m).pool == if kind == EffectKind::StopRun { false } else { old(m).pool },
+        final(m).job == if kind == EffectKind::WithdrawJob { None } else { old(m).job },
+        final(m).pr_open == if kind == EffectKind::ClosePr { false } else { old(m).pr_open },
+        final(m).worktree == if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
+] {
+    match kind {
+        EffectKind::StopRun => {
+            m.run = None;
+            m.pool = false;
+        }
+        EffectKind::WithdrawJob => m.job = None,
+        EffectKind::ClosePr => m.pr_open = false,
+        EffectKind::RemoveWorktree => m.worktree = false,
+        _ => {}
     }
 }
 }
