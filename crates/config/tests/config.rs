@@ -91,6 +91,7 @@ fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
     }
     let mut document = flux_document();
     document["flux"]["staging_root"] = "/mnt/shared/tl3-inputs".into();
+    document["flux"]["container_image"] = format!("dl380g10:5000/tl3/harness@sha256:{}", "a".repeat(64)).into();
     document["flux"]["output_root"] = "/mnt/shared/flux-out/tl3/nested".into();
     Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     document["flux"]["instance_generation"] = "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into();

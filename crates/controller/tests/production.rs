@@ -1,6 +1,8 @@
 mod prismabuild_fixture;
 #[path = "production/startup.rs"]
 mod startup;
+#[path = "production/flux_options.rs"]
+mod flux_options;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
