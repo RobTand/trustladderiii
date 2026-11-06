@@ -950,13 +950,12 @@ fn legacy_delivery_upstream_snapshot_still_routes() {
     let snapshot = controller.snapshot().unwrap();
     let mut commit = tl3_store::Commit::new("legacy-upstream-snapshot", json!({}), &snapshot);
     // This is the deployed structured incident signature shape.
-    let signature: tl3_controller::looks::Signature = serde_json::from_value(json!({
-        "upstream": "Mergify", "class": "upstream_read",
-    })).unwrap();
-    assert_eq!(signature.upstream, Upstream::Delivery);
-    assert_eq!(serde_json::to_value(&signature).unwrap()["upstream"], "Mergify");
-    assert_eq!(signature.upstream.kind(), "Mergify");
-    assert_eq!(tl3_controller::executor::upstream(delivery.output), signature.upstream);
+    let signature = json!({"upstream": "Mergify", "class": "upstream_read"});
+    let upstream: Upstream = serde_json::from_value(signature["upstream"].clone()).unwrap();
+    assert_eq!(upstream, Upstream::Delivery);
+    assert_eq!(serde_json::to_value(upstream).unwrap(), "Mergify");
+    assert_eq!(upstream.kind(), "Mergify");
+    assert_eq!(tl3_controller::executor::upstream(delivery.output), upstream);
     commit.rows.push(tl3_store::RowChange::Put {
         table: "legacy_upstream_fixture".into(), id: delivery.key.clone(), value: serde_json::to_value(signature).unwrap(),
     });
@@ -964,8 +963,8 @@ fn legacy_delivery_upstream_snapshot_still_routes() {
     drop(controller);
     let mut controller = fixture.open(&settings);
     let restored = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "legacy_upstream_fixture").unwrap();
-    let restored: tl3_controller::looks::Signature = serde_json::from_value(restored.value).unwrap();
-    assert_eq!(restored.upstream, Upstream::Delivery);
+    let restored: Upstream = serde_json::from_value(restored.value["upstream"].clone()).unwrap();
+    assert_eq!(restored, Upstream::Delivery);
     fixture.check(Some("success"));
     fixture.check_event(&settings);
     drain(&mut controller);
