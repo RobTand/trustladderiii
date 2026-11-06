@@ -67,4 +67,34 @@ pub(super) proof fn release_frame(n: Node, ticket: u64, c: AdvanceContext, out: 
 {
     reveal(exact); reveal(node_after); reveal(outputs); reveal(effect_kind);
 }
+/// Publishing/Stopping / #806: finished branches without closure preserve all outputs.
+pub(super) proof fn finished_quiet(n: Node, ticket: u64, c: AdvanceContext, out: Outbox)
+    requires !(n.phase is Closed), !n.waiting_incident, n.effect.is_none(),
+        current_item(n).is_none(),
+    ensures n.phase == Phase::Publishing ==> exact(n, retirement::phased(n, Phase::Queued),
+            ticket, ticket, c, out, out),
+        n.phase != Phase::Publishing && (!(n.phase is Stopping) || n.question.is_some())
+            ==> exact(n, n, ticket, ticket, c, out, out),
+{
+    reveal(exact); reveal(node_after); reveal(outputs); reveal(effect_kind);
+}
+
+/// Stopping / #806: compose close_node's ordered exact notices without rank arithmetic.
+pub(super) proof fn finished_close(n: Node, ticket: u64, c: AdvanceContext,
+    before: Outbox, after: Outbox, outcome: Outcome)
+    requires n.phase == Phase::Stopping(outcome), !n.waiting_incident,
+        n.effect.is_none(), n.question.is_none(), current_item(n).is_none(),
+        after.len == before.len + if outcome == Outcome::Replaced { 2usize } else { 1usize },
+        after.items@ == if outcome == Outcome::Replaced {
+            before.items@.update(before.len as int,
+                Some(Out::Notice { node: NodeId(c.node as u64), notice: Notice::Summary(outcome) }))
+                .update(before.len as int + 1,
+                    Some(Out::Notice { node: NodeId(c.node as u64), notice: Notice::FileReplacement }))
+        } else { before.items@.update(before.len as int,
+            Some(Out::Notice { node: NodeId(c.node as u64), notice: Notice::Summary(outcome) })) },
+    ensures exact(n, closed(n, outcome), ticket, ticket, c, before, after),
+{
+    reveal(exact); reveal(node_after); reveal(outputs); reveal(effect_kind);
+}
+
 }

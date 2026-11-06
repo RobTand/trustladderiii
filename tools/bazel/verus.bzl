@@ -930,6 +930,8 @@ def verus_proofs():
             "port_advance_step_teardown_quiet": ("kernel::port_advance_step_frames#teardown_quiet", 1),
             "port_advance_step_teardown_emit": ("kernel::port_advance_step_frames#teardown_emit", 1),
             "port_advance_step_release_frame": ("kernel::port_advance_step_frames#release_frame", 1),
+            "port_advance_step_finished_quiet": ("kernel::port_advance_step_frames#finished_quiet", 1),
+            "port_advance_step_finished_close": ("kernel::port_advance_step_frames#finished_close", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

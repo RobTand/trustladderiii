@@ -662,10 +662,9 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
-    ] proof [reveal(port_advance_contracts::exact);
-        reveal(port_advance_contracts::node_after);
-        reveal(port_advance_contracts::outputs);
-        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
+    ] proof [port_advance_step_frames::finished_quiet(*node, *_next_ticket, context, *out);
+        reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { advance_out = *out }
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -674,6 +673,8 @@ kernel_fn! {
             }
             Phase::Stopping(outcome) if n.question.is_none() => {
                 close_node(node, context.node, outcome, out);
+                kernel_proof! { port_advance_step_frames::finished_close(n, *_next_ticket,
+                    context, advance_out@, *out, outcome); }
                 true
             }
             _ => false,
@@ -956,15 +957,19 @@ kernel_fn! {
             else if port_advance_contracts::gone(n, kind) {
                 Node { pool: n.pool && kind != EffectKind::StopRun, pos: (n.pos + 1) as u8, ..n }
             } else { port_advance_contracts::emitted(n, kind) };
-        assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by {
-            reveal(advance_post); reveal(distance);
-            assert(n.phase is Stopping);
-            if n.question.is_some() {} else if port_advance_contracts::gone(n, kind) {
-                match kind {
-                    EffectKind::StopRun => {}, EffectKind::WithdrawJob => {},
-                    EffectKind::ClosePr => {}, EffectKind::RemoveWorktree => {}, _ => {},
-                }
-            } else {}
+        assert(n.phase is Stopping);
+        if n.question.is_some() {
+            assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); }
+        } else if port_advance_contracts::gone(n, kind) {
+            match kind {
+                EffectKind::StopRun => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
+                EffectKind::WithdrawJob => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
+                EffectKind::ClosePr => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
+                EffectKind::RemoveWorktree => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
+                _ => {},
+            }
+        } else {
+            assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); }
         }
     ] {
         kernel_snapshot! { advance_out = *out }
