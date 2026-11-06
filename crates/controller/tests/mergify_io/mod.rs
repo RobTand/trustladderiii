@@ -2112,7 +2112,7 @@ macro_rules! a2_entry {
             if heal {
                 let mut pull = io::c1_pull();
                 if config.foreign { pull.head.branch = "foreign".into(); }
-                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false };
+                let snapshot = Snapshot { rows: vec![io::Row { table: "nodes", id: "0".into(), value: json!({"inactive":config.inactive}), version: io::Version(0) }], repaired: false, revision: ::tl3_store::Revision::ZERO };
                 match a.heal_body(d, &pull, Some(&snapshot)) {
                     Ok(edited) => json!({"edited":edited}),
                     Err(error) => json!({"error":error.to_string()}),

@@ -558,6 +558,8 @@ pub(crate) struct Row {
 pub(crate) struct Snapshot {
     pub rows: Vec<Row>,
     pub repaired: bool,
+    /// #854b r2: production keys destination rebinds by the loaded revision.
+    pub revision: ::tl3_store::Revision,
 }
 impl Snapshot {
     pub fn held(&self) -> bool {
@@ -589,6 +591,7 @@ impl Store {
                 version: Version(0),
             }],
             repaired,
+            revision: ::tl3_store::Revision::ZERO,
         }))
     }
     pub fn commit(&mut self, commit: &super::tl3_store::Commit) -> Result<()> {
