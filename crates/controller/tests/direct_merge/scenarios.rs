@@ -1087,13 +1087,15 @@ fn r1_direct_conflict_repeats_after_same_head_rebase() {
     fixture.check_event(&settings);
     ingress::drain(&mut controller).unwrap();
     let mut rebased = false;
+    let mut republished = false;
     for _ in 0..150 {
         let node = controller.world().unwrap().nodes[0];
         rebased |= node.phase == Phase::Rebasing;
+        republished |= rebased && node.phase == Phase::Publishing;
         let conflicts = Store::open(&settings).unwrap().events_after(tl3_store::Revision::ZERO,4000).unwrap().iter()
             .filter(|event| event.receipt.result["kernel_event"]["Fact"]["fact"] == "Conflict").count();
         if conflicts == 2 {
-            assert!(rebased);
+            assert!(rebased && republished, "the second conflict must follow a same-head rebase and return to Publishing");
             assert_eq!(node.phase, Phase::Rebasing);
             assert_eq!(delivery.head_sha.as_deref(), fixture.api.state.lock().unwrap().pull["head"]["sha"].as_str());
             assert!(!controller.snapshot().unwrap().rows.iter().any(|row|row.table=="delivery_outcomes" && row.id.contains("/conflict:")));
