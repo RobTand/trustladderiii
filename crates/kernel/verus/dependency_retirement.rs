@@ -110,7 +110,11 @@ pub(super) proof fn preserves(before: World, after: World, incoming: DependencyS
 {
     reveal(dependencies::dependency_frame);
     reveal(retirement::node_rules);
+    reveal(node_checked);
+    reveal(arithmetic_consistent);
     reveal(dependencies::zero_credit);
+    footprint::storage_frame(before, after, before.nodes@[0].footprint,
+        before.nodes@[0].footprint);
     assert(after.nodes@[0].phase == before.nodes@[0].phase);
     if !prepared(before, incoming, None) {
         if after.nodes@[0].credit.withheld && !before.nodes@[0].credit.withheld {
@@ -120,6 +124,9 @@ pub(super) proof fn preserves(before: World, after: World, incoming: DependencyS
             }
         }
     }
+    assert(node_checked(after, after.nodes@[0]));
+    assert(retirement::node_rules(after, after.nodes@[0]));
+    assert(edge_rules(after));
 }
 
 /// #693 / #839: the exact arbitrary-node/status fact harness, through the real
