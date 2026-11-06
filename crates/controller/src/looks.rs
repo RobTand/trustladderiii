@@ -2291,12 +2291,17 @@ impl Controller {
                 });
             // Q53 / #817: a current quota deadline covers a lost result watch.
             // Keep that durable retry until the existing quota path releases it.
-            let quota_held = crate::dispatch_liveness::quota_held(
-                snapshot,
-                &[],
-                state.delivery.node(),
-                &world.nodes[state.delivery.node().0 as usize],
-            )?;
+            // A quota hold belongs to a kernel node's maker effect: a delivery
+            // whose node the world does not hold has none.
+            let quota_held = match world.nodes.get(state.delivery.node().0 as usize) {
+                Some(node) => crate::dispatch_liveness::quota_held(
+                    snapshot,
+                    &[],
+                    state.delivery.node(),
+                    node,
+                )?,
+                None => false,
+            };
             if !pending && !watched && !incident_open && !maintenance_pending && !quota_held {
                 if state.external_wait.is_some()
                     && !self.retire_wait(snapshot, &state.delivery, &mut commit)?
