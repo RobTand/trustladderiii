@@ -1212,3 +1212,24 @@ def test_t842_r2_partial_function_cannot_omit_rebinding(tmp_path, rebinding):
     case['proof']['observer_support'] = ['tests/test_observer.py::data']
     with pytest.raises(model.ProofRefusal):
         assemble_t842_case(tmp_path, case)
+
+
+@pytest.mark.parametrize('mutation', [
+    'data.__defaults__ = (1,)',
+    'alias = data\nalias.__defaults__ = (1,)',
+])
+def test_t842_r2_partial_factory_cannot_omit_function_object_mutation(repository, mutation):
+    path = 'tests/test_observer.py'
+    subject = 'def value():\n    # base\n    return 1\n'
+    source = 'def data(expected=0):\n    return expected\n' + mutation + '\n'
+    source += 'def test_observer():\n    import app\n    assert app.value() == data(), "bug"\n'
+    check = Check('factory object mutation', Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof(('app.py::value',), (path + '::data',), 'bug'))
+    results, _, _ = round_result(repository, {'app.py': subject, path: 'def test_control(): pass\n'},
+                                {'app.py': subject.replace('# base', '# head'), path: source}, check)
+    print('R2_FACTORY_OBJECT', mutation, results, flush=True)
+    if results[0].verdict == Verdict.PASS:
+        assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert results[0].tests[0].base == Outcome.UNCOLLECTED
+    assert 'Proof assembly refused' in results[0].tests[0].message
