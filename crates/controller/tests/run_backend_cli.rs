@@ -1658,3 +1658,50 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
         "committed_terminal"
     );
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn prelaunch_crash_hang_and_cancel_recover_only_observed_named_container() {
+    for bind_after_cancel in [false, true] {
+        let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true); f.submit();
+        let observed = f.container_ownership();
+        let mut launcher = observed.clone(); launcher.container = None;
+        let again = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+        assert_eq!(again.last().unwrap()["code"], "conflict");
+        let none = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":launcher}));
+        assert_eq!(none.last().unwrap()["kind"], "error");
+        let absent = CleanupEvidence { schema:"tl3.cleanup_evidence.v1".into(), ownership:launcher.clone(), launcher:ProcessStop::Absent,
+            process_group_probe_errno:Some(3), container:None };
+        let reference = api::durable::blob(&f.intent.output_dir.join("launcher-only.json"), &serde_json::to_vec(&absent).unwrap()).unwrap();
+        let none = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
+        assert_eq!(none.last().unwrap()["result"]["cleanup"]["stopped"], false);
+        assert_eq!(none.last().unwrap()["result"]["cleanup"]["pending_executions"], json!([observed.execution]));
+        f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+        f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
+        assert_eq!(f.attach().last().unwrap()["result"]["observation"]["kind"], "unknown");
+        let held = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+        assert_eq!(held.last().unwrap()["kind"], "error");
+        if bind_after_cancel {
+            let bound = f.call(json!({"op":"bind_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"observed":observed}));
+            assert_eq!(bound.last().unwrap()["result"]["binding"]["payload_allowed"], false, "{bound:?}");
+        }
+        let container = observed.container.as_ref().unwrap(); let scope = container.scope.as_ref().unwrap();
+        let mut facts = CleanupEvidence { schema:"tl3.cleanup_evidence.v1".into(), ownership:observed.clone(), launcher:ProcessStop::Absent,
+            process_group_probe_errno:Some(3), container:Some(ContainerStop { name:container.name.clone(), name_exists_exit:1, sweep_exit:0,
+                remaining_ids:vec![container.id.clone()], id:container.id.clone(), remove_exit:0, exists_exit:1, sweep_ids:vec![container.id.clone()],
+                scope:Some(ScopeStop { identity:scope.clone(), observed_invocation_id:None,cgroup_events:None,cgroup_procs:String::new(),active_state:"not-found".into() }) }) };
+        let path = f.intent.output_dir.join(format!("trusted-stop-{}.json", observed.execution));
+        fs::write(&path,serde_json::to_vec(&facts).unwrap()).unwrap();
+        let pending = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
+        assert_eq!(pending.last().unwrap()["result"]["cleanup"]["stopped"], false, "{pending:?}");
+        facts.container.as_mut().unwrap().remaining_ids.clear();
+        fs::write(&path,serde_json::to_vec(&facts).unwrap()).unwrap();
+        let stopped = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
+        assert_eq!(stopped.last().unwrap()["result"]["cleanup"]["stopped"], true, "{stopped:?}");
+        let terminal=f.attach();
+        assert_eq!(terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"], "cancelled", "{terminal:?}");
+        let reference:BlobRef=serde_json::from_value(terminal.last().unwrap()["result"]["observation"]["terminal"]["receipt"].clone()).unwrap();
+        let receipt:Receipt=serde_json::from_slice(&fs::read(reference.path).unwrap()).unwrap();
+        assert_eq!(receipt.container_launches.len(),1); assert_eq!(receipt.runtime_ownerships,[observed]);
+    }
+}

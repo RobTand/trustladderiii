@@ -385,6 +385,16 @@
       "description": "One bounded JSON stdin request to the trusted independent runtime cleanup entry.",
       "type": "object",
       "properties": {
+        "launch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContainerLaunchIntent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ownership": {
           "$ref": "#/$defs/RuntimeOwnership"
         },
@@ -459,6 +469,38 @@
     },
     "CliResult": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "launch": {
+              "$ref": "#/$defs/ContainerLaunchIntent"
+            },
+            "op": {
+              "type": "string",
+              "const": "begin_container_launch"
+            }
+          },
+          "required": [
+            "op",
+            "launch"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "binding": {
+              "$ref": "#/$defs/ContainerLaunchBinding"
+            },
+            "op": {
+              "type": "string",
+              "const": "bind_container_launch"
+            }
+          },
+          "required": [
+            "op",
+            "binding"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -823,6 +865,56 @@
     },
     "Command": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "correlation": {
+              "type": "string"
+            },
+            "launcher": {
+              "$ref": "#/$defs/RuntimeOwnership"
+            },
+            "op": {
+              "type": "string",
+              "const": "begin_container_launch"
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "owner",
+            "correlation",
+            "launcher"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "correlation": {
+              "type": "string"
+            },
+            "observed": {
+              "$ref": "#/$defs/RuntimeOwnership"
+            },
+            "op": {
+              "type": "string",
+              "const": "bind_container_launch"
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "owner",
+            "correlation",
+            "observed"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -1259,6 +1351,58 @@
         }
       ]
     },
+    "ContainerLaunchBinding": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/ContainerLaunchIntent"
+        },
+        "ownership": {
+          "$ref": "#/$defs/RuntimeOwnership"
+        },
+        "payload_allowed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "intent",
+        "ownership",
+        "payload_allowed"
+      ]
+    },
+    "ContainerLaunchIntent": {
+      "description": "Durable before Podman invocation. Observed ID/scope are retained separately.",
+      "type": "object",
+      "properties": {
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "launcher": {
+          "$ref": "#/$defs/RuntimeOwnership"
+        },
+        "mode": {
+          "$ref": "#/$defs/ContainerMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "launcher",
+        "name",
+        "mode",
+        "labels"
+      ]
+    },
     "ContainerMode": {
       "type": "string",
       "enum": [
@@ -1281,6 +1425,9 @@
         "mode": {
           "$ref": "#/$defs/ContainerMode"
         },
+        "name": {
+          "type": "string"
+        },
         "scope": {
           "anyOf": [
             {
@@ -1294,6 +1441,7 @@
       },
       "additionalProperties": false,
       "required": [
+        "name",
         "mode",
         "id",
         "labels"
@@ -1354,6 +1502,19 @@
         "id": {
           "type": "string"
         },
+        "name": {
+          "type": "string"
+        },
+        "name_exists_exit": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "remaining_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "remove_exit": {
           "type": "integer",
           "format": "int32"
@@ -1368,6 +1529,10 @@
             }
           ]
         },
+        "sweep_exit": {
+          "type": "integer",
+          "format": "int32"
+        },
         "sweep_ids": {
           "description": "Label-filtered sweep may only account for the retained exact container.",
           "type": "array",
@@ -1378,6 +1543,10 @@
       },
       "additionalProperties": false,
       "required": [
+        "name",
+        "name_exists_exit",
+        "sweep_exit",
+        "remaining_ids",
         "id",
         "remove_exit",
         "exists_exit",
@@ -3020,6 +3189,12 @@
             "$ref": "#/$defs/BlobRef"
           }
         },
+        "container_launches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContainerLaunchIntent"
+          }
+        },
         "ending": {
           "$ref": "#/$defs/Ending"
         },
@@ -3094,6 +3269,7 @@
         "native_events",
         "evidence",
         "runtime_ownerships",
+        "container_launches",
         "cleanup"
       ]
     },
