@@ -18,6 +18,7 @@ struct WireSchema {
     topology: TopologyMapping,
     receipt: Receipt,
     runtime_preflight: RuntimePreflight,
+    cleanup: CleanupFacts,
 }
 
 pub fn cli() -> std::result::Result<String, serde_json::Error> {

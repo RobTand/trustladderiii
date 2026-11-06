@@ -9,9 +9,10 @@ pub enum Command {
     Submit { request: Request, intent: SubmissionIntent },
     Attach { owner: String, correlation: String },
     Cancel { owner: String, correlation: String },
-    Probe { reservation: Reservation },
+    Probe { reservation: Reservation, placement: Placement },
     LaunchContext { owner: String, correlation: String, job: String },
     ValidateRuntimeBinding { owner: String, correlation: String, facts: RuntimeBindingInput },
+    CollectRunner { owner: String, correlation: String, facts: CollectorInput },
     StopWatch,
 }
 
@@ -44,6 +45,7 @@ pub enum CliResult {
     Probe { probe: Probe },
     LaunchContext { context: LaunchContext },
     ValidateRuntimeBinding { qualification: RuntimeQualification },
+    CollectRunner { report: BlobRef, payload: BlobRef },
 }
 
 struct Writer { sequence: u64 }
@@ -96,9 +98,13 @@ pub fn main() -> i32 {
                 CliResult::Attach { observation: backend.attach(&Owner { owner, correlation }, &stop, &mut |event| writer.frame(FrameBody::Event { event: event.clone() }))? }
             }
             Command::Cancel { owner, correlation } => CliResult::Cancel { acknowledgement: backend.cancel(&Owner { owner, correlation })? },
-            Command::Probe { reservation } => CliResult::Probe { probe: backend.probe(&reservation)? },
+            Command::Probe { reservation, placement } => CliResult::Probe { probe: backend.probe(&reservation, &placement)? },
             Command::LaunchContext { owner, correlation, job } => CliResult::LaunchContext { context: backend.launch_context(&Owner { owner, correlation }, &job)? },
             Command::ValidateRuntimeBinding { owner, correlation, facts } => CliResult::ValidateRuntimeBinding { qualification: backend.validate_runtime_binding(&Owner { owner, correlation }, &facts)? },
+            Command::CollectRunner { owner, correlation, facts } => {
+                let (report, payload) = backend.collect_runner(&Owner { owner, correlation }, &facts)?;
+                CliResult::CollectRunner { report, payload }
+            }
             Command::StopWatch => return Err(BackendError::invalid("stop_watch is a second-line attach control frame only")),
         };
         writer.frame(FrameBody::Result { result })

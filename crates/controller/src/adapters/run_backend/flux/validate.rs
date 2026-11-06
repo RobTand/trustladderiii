@@ -15,7 +15,7 @@ pub(super) fn options(options: &Options) -> Result<()> {
             return Err(BackendError::invalid("unsupported or sensitive access environment; values withheld"));
         }
     }
-    if options.arguments.iter().any(|s| s.len() > 4096 || s.chars().any(char::is_control) || safe(s).map_or(true, |v| v != *s)) {
+    if options.arguments.iter().any(|s| s.len() > 4096 || s.chars().any(char::is_control)) {
         return Err(BackendError::invalid("invalid provisioned CLI arguments"));
     }
     Ok(())
@@ -46,15 +46,15 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
         if !absolute(path) { return Err(BackendError::invalid("input and runtime paths must be absolute")); }
     }
     for path in [&request.tree.root, &request.tree.manifest, &request.runner.executable, &request.runner.manifest, &request.runtime.manifest] {
-        if !path.starts_with("/mnt/shared") { return Err(BackendError::invalid("immutable inputs must reside under shared storage")); }
+        if !path.starts_with("/mnt/shared") { return Err(BackendError::invalid("immutable inputs must reside under approved shared input root")); }
     }
     if request.scratch_root.starts_with("/mnt/shared") { return Err(BackendError::invalid("working scratch must be local, outside shared storage")); }
     match &request.suite {
         Suite::Full { membership_digest } | Suite::SelectedCases { membership_digest } => {
             if !hex(membership_digest, 64) { return Err(BackendError::invalid("membership digest required")); }
         }
-        Suite::DaytimeChecks { plan_digest, base, reviewed } => {
-            if !hex(plan_digest, 64) || !hex(base, 40) || reviewed.as_ref().is_some_and(|reviewed| !hex(reviewed, 40)) { return Err(BackendError::invalid("daytime plan/base and optional reviewed identity required")); }
+        Suite::DaytimeChecks { plan_digest, base, head, reviewed } => {
+            if !hex(plan_digest, 64) || !hex(base, 40) || !hex(head, 40) || reviewed.as_ref().is_some_and(|reviewed| !hex(reviewed, 40)) { return Err(BackendError::invalid("daytime plan/base/head and optional reviewed identity required")); }
         }
     }
     if request.environment.len() > 64 || !request.environment.contains_key("PATH") || request.runner.arguments.len() > 128 {
@@ -92,7 +92,15 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
     Ok(())
 }
 
+pub(super) fn placement(placement: &Placement) -> Result<()> {
+    if placement.architecture != "x86_64" || !placement.host_dependency.as_ref().is_some_and(|host| host.host == "dl380g10" && !host.reason.is_empty() && host.reason.len() <= 4096) {
+        return Err(BackendError::invalid("first-cut TL3 CPU runtime requires dl380g10/x86_64 with recorded image dependency"));
+    }
+    Ok(())
+}
+
 pub(super) fn preflight(request: &Request) -> Result<()> {
+    placement(&request.runtime.placement())?;
     if request.reservation.memory_guarantee == MemoryGuarantee::RequireAdmission {
         return Err(BackendError::invalid("native request-derived memory admission is unqualified"));
     }
@@ -113,7 +121,8 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
     }
     for (path, expected) in [(&request.tree.manifest, &request.tree.input_digest), (&request.runner.executable, &request.runner.executable_digest),
         (&request.runner.manifest, &request.runner.manifest_digest), (&request.runtime.manifest, &request.runtime.manifest_digest)] {
-        if digest(&read(path)?) != *expected || !std::fs::metadata(path)?.permissions().readonly() {
+        if !std::fs::canonicalize(path)?.starts_with("/mnt/shared")
+            || digest(&read(path)?) != *expected || !std::fs::metadata(path)?.permissions().readonly() {
             return Err(BackendError::invalid("immutable input/runner/runtime digest or read-only permission mismatch"));
         }
     }

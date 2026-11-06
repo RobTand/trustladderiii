@@ -96,6 +96,45 @@ fn retain_json(out: &Path, name: &str, bytes: &[u8]) -> Result<BlobRef> {
 }
 
 impl Flux {
+    /// Convert only the trusted host stdout protocol. Existing daytime judging remains in FX2.
+    pub fn collect_runner(&self, owner: &Owner, input: &CollectorInput) -> Result<(BlobRef, BlobRef)> {
+        let record = self.journal.load(owner)?;
+        self.instance(&record)?;
+        input.run.validate()?;
+        if input.run.instance != record.intent.instance || input.run.uri != record.intent.uri
+            || record.binding.as_ref().is_some_and(|binding| binding.id != input.run) {
+            return Err(BackendError::invalid("collector run differs from retained dispatch"));
+        }
+        if !matches!(record.request.suite, Suite::DaytimeChecks { .. }) {
+            return Err(BackendError::invalid("TL3_CHECKS collector is only for the daytime protocol; full-run rollup is separate"));
+        }
+        let raw = checked_blob(&input.stdout, &record.intent.output_dir)?;
+        let mut frames = raw.split(|byte| *byte == b'\n').filter_map(|line| line.strip_prefix(b"TL3_CHECKS "));
+        let payload = frames.next().ok_or_else(|| BackendError::invalid("stdout lacks TL3_CHECKS frame"))?;
+        if frames.next().is_some() || payload.is_empty() {
+            return Err(BackendError::invalid("stdout has duplicate or empty TL3_CHECKS frames"));
+        }
+        let _: crate::contracts::report::CheckReport = serde_json::from_slice(payload)?;
+        let value: serde_json::Value = serde_json::from_slice(payload)?;
+        let mut sanitized = value.clone();
+        sanitized_json(&mut sanitized, 0)?;
+        if sanitized != value { return Err(BackendError::invalid("TL3_CHECKS frame requires producer redaction or exceeds text bounds")); }
+        let out = &record.intent.output_dir;
+        let payload = blob(&out.join("retained-payload.json"), payload)?;
+        let log = safe(&String::from_utf8_lossy(&raw[..raw.len().min(65_536)]))?;
+        let retained = blob(&out.join("retained-stdout.txt"), log.as_bytes())?;
+        blob(&out.join("stdout-digests.json"), &serde_json::to_vec(&serde_json::json!({"raw":input.stdout,"retained":retained,"truncated":raw.len()>65_536}))?)?;
+        let cleanup_complete = input.cleanup.as_ref().is_some_and(|reference| cleanup_stopped(&record, &input.run, reference).unwrap_or(false));
+        let report = RunnerReport {
+            schema: "tl3.runner_report.v1".into(), run: input.run.clone(), request_digest: record.intent.request_digest.clone(), tree: record.request.tree.clone(),
+            runner_digest: record.request.runner.executable_digest.clone(), runtime_digest: record.request.runtime.manifest_digest.clone(), suite: record.request.suite.clone(),
+            complete: true, cleanup_complete, tests_started: 0, outcome: ReportOutcome::ChecksCompleted,
+            cases: vec![], payload: Some(payload.clone()), runtime_binding: input.runtime_binding.clone(), cleanup: input.cleanup.clone(), stdout: Some(input.stdout.clone()),
+        };
+        let report = blob(&out.join("report.json"), &serde_json::to_vec(&report)?)?;
+        Ok((report, payload))
+    }
+
     pub(super) fn collect(&self, owner: &Owner, binding: RunBinding) -> Result<Observation> {
         let record = self.journal.load(owner)?;
         if let Some(terminal) = record.terminal { return Ok(Observation::Terminal { binding: Some(binding), terminal }); }
@@ -169,7 +208,7 @@ impl Flux {
         }
         if report.cleanup_complete {
             let Some(cleanup) = &report.cleanup else { return Ok(false); };
-            checked_blob(cleanup, &record.intent.output_dir)?;
+            if !cleanup_stopped(record, &binding.id, cleanup)? { return Ok(false); }
         }
         if matches!(report.outcome, ReportOutcome::RefusedBeforeTests) {
             return Ok(report.tests_started == 0 && report.cases.is_empty());
@@ -217,6 +256,24 @@ impl Flux {
             }
         }
     }
+}
+
+fn cleanup_stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> Result<bool> {
+    let facts: CleanupFacts = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
+    if facts.schema != "tl3.cleanup_facts.v1" || facts.run != *run || facts.request_digest != record.intent.request_digest
+        || facts.scopes.is_empty() || facts.scopes.len() > 1024 { return Ok(false); }
+    let mut identities = BTreeSet::new();
+    let mut process = false;
+    let mut container = false;
+    for scope in facts.scopes {
+        if scope.identity.is_empty() || scope.identity.len() > 4096 || safe(&scope.identity)? != scope.identity
+            || !identities.insert((format!("{:?}", scope.kind), scope.identity)) || scope.present || scope.running == Some(true) { return Ok(false); }
+        match scope.kind {
+            OwnedScopeKind::ProcessGroup => { if scope.reaped_status.is_none() { return Ok(false); } process = true; }
+            OwnedScopeKind::PodmanContainer => container = true,
+        }
+    }
+    Ok(process && (!matches!(record.request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) || container))
 }
 
 fn classify(record: &Record, report: Option<&RunnerReport>) -> Option<(Ending, &'static str)> {

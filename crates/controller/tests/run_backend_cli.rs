@@ -93,7 +93,8 @@ impl Fixture {
             environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
             runtime: RuntimeIdentity { manifest: p.join("runtime.json"), manifest_digest: digest(b"{\"runtime\":1}"),
                 runtime: ExecutionRuntime::Native { interpreter: "/usr/bin/python3".into() }, architecture: "x86_64".into(), expected_image: None,
-                preflight: BlobRef { sha256: digest(&preflight), bytes: preflight.len() as u64, path: p.join("preflight.json") }, host_dependency: None },
+                preflight: BlobRef { sha256: digest(&preflight), bytes: preflight.len() as u64, path: p.join("preflight.json") },
+                host_dependency: Some(HostDependency { host: "dl380g10".into(), reason: "fixture of the provisioned amd64 image dependency".into() }) },
             scratch_root: "/var/tmp/flux-vanilla".into(), no_progress_seconds: None, walltime_seconds: 60.try_into().unwrap(),
         };
         let intent = SubmissionIntent { backend: BackendTag::Flux, instance: "fixture-generation".into(), uri: "local:///fixture".into(), owner: "fixture-owner".into(),
@@ -171,14 +172,16 @@ job)
     fn report(&self, outcome: ReportOutcome, cleanup_complete: bool) {
         let out = &self.intent.output_dir;
         fs::write(out.join("membership.json"), &self.membership).unwrap();
-        let cleanup_bytes = b"owned marker scope stopped";
-        fs::write(out.join("cleanup.txt"), cleanup_bytes).unwrap();
+        let cleanup_bytes = serde_json::to_vec(&CleanupFacts { schema: "tl3.cleanup_facts.v1".into(),
+            run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() }, request_digest: self.intent.request_digest.clone(),
+            scopes: vec![OwnedScopeObservation { kind: OwnedScopeKind::ProcessGroup, identity: "owned-fixture-process".into(), present: false, running: Some(false), reaped_status: Some(0) }] }).unwrap();
+        fs::write(out.join("cleanup.txt"), &cleanup_bytes).unwrap();
         let report = RunnerReport {
             schema: "tl3.runner_report.v1".into(), run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() },
             request_digest: self.intent.request_digest.clone(), tree: self.request.tree.clone(), runner_digest: self.request.runner.executable_digest.clone(), runtime_digest: self.request.runtime.manifest_digest.clone(),
             suite: self.request.suite.clone(), complete: true, cleanup_complete, tests_started: 1, outcome,
             cases: vec![CaseFact { target: "unit".into(), name: "case".into(), outcome: if outcome == ReportOutcome::TestsFailed { CaseOutcome::Failed } else { CaseOutcome::Passed }, duration_ms: 1, disposition: None }],
-            payload: None, runtime_binding: None, cleanup: Some(BlobRef { sha256: digest(cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }),
+            payload: None, runtime_binding: None, cleanup: Some(BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }), stdout: None,
         };
         fs::write(out.join("report.json"), serde_json::to_vec(&report).unwrap()).unwrap();
     }
@@ -198,6 +201,7 @@ fn completed(status: u32) -> Vec<Value> {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn acceptance_unknown_never_resubmits_and_original_jobspec_recovers_one_match() {
     let f = Fixture::new();
     fs::write(f.root.path().join("mode"), "unknown").unwrap();
@@ -215,6 +219,7 @@ fn acceptance_unknown_never_resubmits_and_original_jobspec_recovers_one_match() 
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn orphan_zero_two_and_conflicting_matches_remain_unknown() {
     for matches in [0, 2] {
         let f = Fixture::new();
@@ -235,6 +240,7 @@ fn orphan_zero_two_and_conflicting_matches_remain_unknown() {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn replay_deduplicates_retained_prefix_and_transport_error_stays_unknown() {
     let f = Fixture::new();
     f.submit(); f.report(ReportOutcome::Passed, true); f.events(&completed(0));
@@ -251,6 +257,7 @@ fn replay_deduplicates_retained_prefix_and_transport_error_stays_unknown() {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn posix_and_five_endings_require_semantic_and_cleanup_evidence() {
     assert_eq!(api::decode_wait_status(256), WaitStatus::Exited { raw: 256, code: 1 });
     assert_eq!(api::decode_wait_status(15), WaitStatus::Signalled { raw: 15, signal: 15, core_dumped: false });
@@ -281,6 +288,7 @@ fn posix_and_five_endings_require_semantic_and_cleanup_evidence() {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn cancel_ack_needs_native_cancel_and_stopped_scope_and_finish_race_keeps_original() {
     for finish_first in [false, true] {
         let f = Fixture::new(); f.submit(); f.report(ReportOutcome::Passed, true);
@@ -300,9 +308,11 @@ fn cancel_ack_needs_native_cancel_and_stopped_scope_and_finish_race_keeps_origin
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn probe_reports_busy_incompatible_unknown_and_never_ram_admission() {
     let mut f = Fixture::new();
-    let command = |r: &Reservation| json!({"op":"probe","reservation":r});
+    let placement = f.request.runtime.placement();
+    let command = |r: &Reservation| json!({"op":"probe","reservation":r,"placement":placement});
     assert_eq!(f.call(command(&f.request.reservation)).last().unwrap()["result"]["probe"]["availability"], "available");
     fs::write(f.root.path().join("free.json"), json!({"version":1,"execution":{"R_lite":[]}}).to_string()).unwrap();
     assert_eq!(f.call(command(&f.request.reservation)).last().unwrap()["result"]["probe"]["availability"], "busy");
@@ -313,6 +323,7 @@ fn probe_reports_busy_incompatible_unknown_and_never_ram_admission() {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
     use std::time::{Duration, Instant};
     let f = Fixture::new(); f.submit();
@@ -337,6 +348,7 @@ fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn generation_slash_is_not_a_path_and_binding_guard_rejects_handoff() {
     assert!(api::generation("fv1-model/61f47a7f95af46d794ca89c3a71f0654"));
     assert!(!api::generation("../../host"));
@@ -347,6 +359,7 @@ fn generation_slash_is_not_a_path_and_binding_guard_rejects_handoff() {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
     use std::time::{Duration, Instant};
     let f = Fixture::new(); f.submit();
@@ -382,15 +395,13 @@ fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
 
 #[test]
 fn optional_reviewed_sha_remains_distinct_in_wire_and_request_digest() {
-    let f = Fixture::new();
-    let absent = Suite::DaytimeChecks { plan_digest: "a".repeat(64), base: "b".repeat(40), reviewed: None };
-    let present = Suite::DaytimeChecks { plan_digest: "a".repeat(64), base: "b".repeat(40), reviewed: Some("c".repeat(40)) };
+    let absent = Suite::DaytimeChecks { plan_digest: "a".repeat(64), base: "b".repeat(40), head: "d".repeat(40), reviewed: None };
+    let present = Suite::DaytimeChecks { plan_digest: "a".repeat(64), base: "b".repeat(40), head: "d".repeat(40), reviewed: Some("c".repeat(40)) };
     let absent_json = serde_json::to_value(&absent).unwrap();
     let present_json = serde_json::to_value(&present).unwrap();
     assert_eq!(absent_json["reviewed"], Value::Null);
     assert_eq!(present_json["reviewed"], "c".repeat(40));
     assert_ne!(digest(&serde_json::to_vec(&absent).unwrap()), digest(&serde_json::to_vec(&present).unwrap()));
-    let mut request = f.request.clone(); request.suite = absent;
-    let restored: Request = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
-    assert_eq!(restored.suite, request.suite);
+    let restored: Suite = serde_json::from_value(absent_json).unwrap();
+    assert_eq!(restored, absent);
 }

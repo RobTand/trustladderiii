@@ -172,6 +172,18 @@ pub struct RuntimeIdentity {
     pub preflight: BlobRef,
     pub host_dependency: Option<HostDependency>,
 }
+impl RuntimeIdentity {
+    pub fn placement(&self) -> Placement {
+        Placement { architecture: self.architecture.clone(), host_dependency: self.host_dependency.clone() }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Placement {
+    pub architecture: String,
+    pub host_dependency: Option<HostDependency>,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -207,7 +219,7 @@ pub enum MemoryGuarantee { DeclaredOnly, RequireAdmission }
 pub enum Suite {
     Full { membership_digest: String },
     SelectedCases { membership_digest: String },
-    DaytimeChecks { plan_digest: String, base: String, reviewed: Option<String> },
+    DaytimeChecks { plan_digest: String, base: String, head: String, reviewed: Option<String> },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -303,6 +315,8 @@ pub struct BlobRef {
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
     pub schema: String,
+    pub issuer: ReceiptIssuer,
+    pub request: BlobRef,
     pub intent: SubmissionIntent,
     pub binding: Option<RunBinding>,
     pub tree: TreeIdentity,
@@ -314,6 +328,10 @@ pub struct Receipt {
     pub native_events: Vec<Event>,
     pub evidence: Vec<BlobRef>,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptIssuer { Tl3 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -342,6 +360,7 @@ pub struct RunnerReport {
     pub payload: Option<BlobRef>,
     pub runtime_binding: Option<RuntimeBindingInput>,
     pub cleanup: Option<BlobRef>,
+    pub stdout: Option<BlobRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -421,7 +440,7 @@ pub trait RunBackend {
     fn submit(&self, request: Request, intent: SubmissionIntent) -> Result<Submission>;
     fn attach(&self, owner: &Owner, stop: &WatchStop, emit: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation>;
     fn cancel(&self, owner: &Owner) -> Result<CancelAck>;
-    fn probe(&self, reservation: &Reservation) -> Result<Probe>;
+    fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe>;
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext>;
 }
 
@@ -536,3 +555,35 @@ pub struct RuntimeQualification {
     pub reason: String,
     pub evidence: Vec<BlobRef>,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CollectorInput {
+    pub run: BackendId,
+    pub stdout: BlobRef,
+    pub runtime_binding: Option<RuntimeBindingInput>,
+    pub cleanup: Option<BlobRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupFacts {
+    pub schema: String,
+    pub run: BackendId,
+    pub request_digest: String,
+    pub scopes: Vec<OwnedScopeObservation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OwnedScopeObservation {
+    pub kind: OwnedScopeKind,
+    pub identity: String,
+    pub present: bool,
+    pub running: Option<bool>,
+    pub reaped_status: Option<i32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnedScopeKind { ProcessGroup, PodmanContainer }
