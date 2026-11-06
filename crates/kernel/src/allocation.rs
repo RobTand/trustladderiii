@@ -337,7 +337,8 @@ pub(super) fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].next_seq < u64::MAX,
-    ensures final(w).nodes@[i as int] == (Node {
+    ensures port_review_output::effect_post(old(out).items@, old(out).len, final(out).items@, old(w).nodes@[i as int], i, kind),
+        final(w).nodes@[i as int] == (Node {
         next_seq: (old(w).nodes@[i as int].next_seq + 1) as u64,
         effect: Some(InFlight { seq: old(w).nodes@[i as int].next_seq, kind, cancelling: false }),
         worktree: old(w).nodes@[i as int].worktree || kind == EffectKind::PrepareWorktree,
@@ -366,7 +367,8 @@ kernel_fn! {
     /// #771: effect allocation increases next_seq by exactly one.
     pub(super) fn emit_node(m: &mut Node, i: usize, kind: EffectKind, out: &mut Outbox) -> (result: ()) [
     requires old(m).next_seq < u64::MAX, old(out).len < OUTBOX,
-    ensures *final(m) == (Node {
+    ensures port_review_output::effect_post(old(out).items@, old(out).len, final(out).items@, *old(m), i, kind),
+        *final(m) == (Node {
         next_seq: (old(m).next_seq + 1) as u64,
         effect: Some(InFlight { seq: old(m).next_seq, kind, cancelling: false }),
         worktree: old(m).worktree || kind == EffectKind::PrepareWorktree,
@@ -376,6 +378,9 @@ kernel_fn! {
     }),
     final(out).len == old(out).len + 1,
     ] {
+        kernel_snapshot! { emitted_node = *m }
+        kernel_snapshot! { emitted_items = out.items@ }
+        kernel_snapshot! { emitted_len = out.len }
         let seq = m.next_seq;
         m.next_seq += 1;
         m.effect = Some(InFlight {
@@ -397,11 +402,21 @@ kernel_fn! {
             }
             _ => None,
         };
+        kernel_proof! {
+            assert(head == port_review_output::selected_head(emitted_node@, kind)) by {
+                reveal(port_review_output::selected_head);
+            }
+        }
         out.push(Out::Effect {
             node: NodeId(i as u64),
             seq,
             kind,
             head,
         });
+        kernel_proof! {
+            assert(port_review_output::effect_post(emitted_items@, emitted_len@, out.items@, emitted_node@, i, kind)) by {
+                reveal(port_review_output::effect_post);
+            }
+        }
     }
 }
