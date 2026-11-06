@@ -324,6 +324,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
         registration.adapters,
         Bootstrap::from_config(&config)?,
     )?;
+    controller.reconcile_repository_delivery(&config.github.repos)?;
     controller.set_allowances(config.allowances.clone());
     controller.set_model_quota_policy(
         &config.models,
